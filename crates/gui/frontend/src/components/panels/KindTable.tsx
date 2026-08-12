@@ -32,7 +32,7 @@ import {
   PencilSquareIcon,
   TrashIcon,
 } from "@heroicons/react/16/solid";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { readTextScale } from "../../textScale";
@@ -46,6 +46,7 @@ import {
   editorRowHeight,
   editorRowHover,
   editorRowStyle,
+  offerDatalist,
   RowActionsCell,
   SortTh,
   useVirtualRows,
@@ -71,6 +72,7 @@ export function KindTable({
   onSelect,
   onEdit,
   onMove,
+  referenceIds,
   onReveal,
   onRename,
   onDelete,
@@ -113,6 +115,16 @@ export function KindTable({
    * selection and a trip elsewhere. An engine that cannot rename shows
    * no rename; the column disappears entirely when none are given.
    */
+  /**
+   * Ids this table's reference columns may name, by kind — the answer
+   * to a column's `references`.
+   *
+   * Supplied rather than fetched, so this stays a component that draws
+   * what it is given. Absent for a kind, and its cells are plain text
+   * fields: a reference with no list is still typeable, and the engine
+   * still refuses a name that means nothing.
+   */
+  referenceIds?: Record<string, string[]>;
   onReveal?: (id: string) => void;
   onRename?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -233,6 +245,24 @@ export function KindTable({
   // are never converted on the way in, so they are never converted on
   // the way out, and they carry no quantity for the same reason. A
   // model may be a map or a drawing and this table cannot tell.
+  // One datalist per referenced kind, not per cell: the options are the
+  // same down a column, and a copy per row is tens of thousands of
+  // `<option>` nodes rebuilt on every scroll — which hangs the tab
+  // outright at model scale.
+  const listPrefix = useId();
+  const lists = useMemo(() => {
+    const out: Array<{ key: string; ids: string[] }> = [];
+    for (const c of elements.columns) {
+      const ids = c.references ? referenceIds?.[c.references] : undefined;
+      // Above the cutoff the list is dropped rather than truncated: a
+      // shortened list silently hides valid ids, and the browser's own
+      // filter is the bottleneck at that size anyway. The cell stays a
+      // text field and the engine still judges what was typed.
+      if (ids && offerDatalist(ids.length)) out.push({ key: c.key, ids });
+    }
+    return out;
+  }, [elements.columns, referenceIds]);
+
   const placed = elements.positions.length === elements.ids.length;
   const hasActions = !!(onReveal || onRename || onDelete);
   const columnCount =
@@ -312,6 +342,13 @@ export function KindTable({
         </div>
       ) : (
         <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
+          {lists.map((l) => (
+            <datalist key={l.key} id={`${listPrefix}-${l.key}`}>
+              {l.ids.map((id) => (
+                <option key={id} value={id} />
+              ))}
+            </datalist>
+          ))}
           <table
             style={{
               width: "100%",
@@ -464,6 +501,11 @@ export function KindTable({
                             <CellText
                               label={`${id} ${c.label}`}
                               value={editor.value}
+                              listId={
+                                lists.some((l) => l.key === c.key)
+                                  ? `${listPrefix}-${c.key}`
+                                  : undefined
+                              }
                               onCommit={(next) =>
                                 onEdit?.(id, c.key, next, editor.value)
                               }
@@ -598,10 +640,14 @@ function CellSelect({
 function CellText({
   label,
   value,
+  listId,
   onCommit,
 }: {
   label: string;
   value: string;
+  /** The shared datalist of ids this cell may name, when it is a
+   * reference and the list is small enough to be worth offering. */
+  listId?: string;
   onCommit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
@@ -609,6 +655,7 @@ function CellText({
   return (
     <input
       aria-label={label}
+      list={listId}
       value={draft}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => setDraft(e.target.value)}

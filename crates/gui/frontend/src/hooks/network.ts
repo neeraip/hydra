@@ -1462,6 +1462,11 @@ export interface KindColumn {
    * for a valve type, a yes/no for a check valve and a number for a
    * diameter, without naming any of them. */
   kind: OptionKind;
+  /** The kind id whose elements this column may name, for a column that
+   * is a reference. Absent for ordinary text — and also for a reference
+   * whose target may be more than one kind, which the field cannot
+   * describe. */
+  references?: string;
   /** Present for numeric columns; values are SI and convert through it. */
   quantity?: ElementAttributeQuantity;
   /** Number, string, or null where the element lacks the attribute. */
@@ -1604,6 +1609,44 @@ export function useKindCounts(
     };
   }, [projectId, scenarioId]);
   return counts;
+}
+
+/**
+ * The ids of every element of each named kind, for the reference
+ * columns that may name them (§4.5.1.1).
+ *
+ * One fetch per kind, and none at all for the common case of a table
+ * with no reference columns. Kinds are named by the columns themselves,
+ * so a table never asks for a catalog it does not draw.
+ */
+export function useReferenceIds(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+  kinds: string[],
+): Record<string, string[]> {
+  const [ids, setIds] = useState<Record<string, string[]>>({});
+  // The array identity changes every render; its contents are what
+  // decide, so the effect follows those.
+  const key = kinds.join("\u0000");
+  useEffect(() => {
+    if (!projectId || key === "") {
+      setIds({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      key.split("\u0000").map(async (kind) => {
+        const elements = await getKindElements(projectId, scenarioId, kind);
+        return [kind, elements.ids] as const;
+      }),
+    ).then((pairs) => {
+      if (!cancelled) setIds(Object.fromEntries(pairs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, key]);
+  return ids;
 }
 
 /**

@@ -17,7 +17,7 @@ import type { KindColumn } from "../../hooks";
 export type CellEditor =
   | { kind: "none" }
   | { kind: "number"; value: number }
-  | { kind: "text"; value: string }
+  | { kind: "text"; value: string; references?: string }
   | {
       kind: "choice";
       value: string;

@@ -371,3 +371,27 @@ export function RowActionsCell({
     </td>
   );
 }
+
+/* ── Reference completions ───────────────────────────────────────────────── */
+
+/**
+ * Above this many options a reference `<datalist>` is dropped entirely.
+ *
+ * One shared list is fine at moderate sizes — it is N nodes rendered
+ * once per table — but at tens of thousands the browser's own typing
+ * filter becomes the bottleneck, re-scanning the whole list on the UI
+ * thread at every keystroke.
+ */
+export const REF_DATALIST_MAX_OPTIONS = 5000;
+
+/**
+ * Whether to offer completions for this many ids.
+ *
+ * Dropped rather than truncated above the cutoff: a shortened list
+ * silently hides valid ids while still looking authoritative, and the
+ * cell remains a text field either way — the engine judges what was
+ * typed, so losing the list costs convenience and never correctness.
+ */
+export function offerDatalist(optionCount: number): boolean {
+  return optionCount <= REF_DATALIST_MAX_OPTIONS;
+}

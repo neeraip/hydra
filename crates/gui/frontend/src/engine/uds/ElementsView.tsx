@@ -27,6 +27,7 @@ import {
   useElementKinds,
   useKindCounts,
   useKindElements,
+  useReferenceIds,
 } from "../../hooks";
 import { useElementAttributeWrite } from "../../hooks/useAttributeWrite";
 import { useElementRename } from "../../hooks/useElementRename";
@@ -99,6 +100,19 @@ export function UdsElementsView() {
     project?.id,
     activeScenarioId,
     kind,
+  );
+
+  // The ids a reference column may name. Fetched here rather than in
+  // the table, which draws what it is given — and only for the kinds
+  // this kind's columns actually reference, which is usually none.
+  const referenced = useMemo(
+    () => [...new Set(elements.columns.flatMap((c) => c.references ?? []))],
+    [elements.columns],
+  );
+  const referenceIds = useReferenceIds(
+    project?.id,
+    activeScenarioId,
+    referenced,
   );
 
   // The table redraws from a refetch rather than from what was typed:
@@ -296,6 +310,7 @@ export function UdsElementsView() {
             onSelect={select}
             onEdit={onEdit}
             onMove={onMove}
+            referenceIds={referenceIds}
             onReveal={spatial ? onReveal : undefined}
             onRename={setRenaming}
             onDelete={setDeleting}

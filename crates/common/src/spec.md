@@ -620,6 +620,39 @@ elements of that kind may have, and an element that has none for a given
 key has no value to change. A consumer needs both answers, and confusing
 them offers an input that would create a value the model never held.
 
+#### 4.5.1.1 References
+
+An attribute whose value names *another element* says which kind it
+names.
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `references` | Kind id (§4.2) whose elements this attribute may name | Absent for a value that is not a reference. |
+
+Without it a reference is indistinguishable from free text, and an
+application can only offer a box to type a name into — where the names
+are the model's own, frequently numerous, and a typo produces a
+reference to nothing. With it, the same generic surface can offer the
+ids that exist, and can say that a value naming no element is wrong
+before the engine has to.
+
+**A value that may name more than one kind declares nothing.** The field
+holds one kind id, and an attribute whose target may be a node *or* an
+areal element — a drainage subcatchment's outlet is exactly this — cannot
+be described by it. Naming one of the possibilities would offer a list
+that omits most of the valid answers, and a list that looks complete is
+read as complete. Widening this to several kinds is an additive change
+here when an engine's editor needs it; guessing in the meantime is not.
+
+It is advisory like the rest of the schema: an engine validates
+references itself, and remains free to accept one this field did not
+describe. It is also not a foreign key — this layer defines no
+referential integrity, does not require the named element to exist, and
+says nothing about what happens to the reference when it stops
+existing. Those are the engine's own rules, expressed through its
+validation and its removal (§4.5.4), which is where a reference that
+cannot be repaired refuses.
+
 #### 4.5.2 Position
 
 Elements of the spatial classes (§4.1: `point`, `polyline`, `region`)

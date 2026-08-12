@@ -233,6 +233,10 @@ pub struct KindColumnDto {
     /// `ElementAttributeDto` carries per row, and true for exactly the
     /// same (kind, key) pairs.
     pub editable: bool,
+    /// The kind whose elements this column may name (§4.5.1.1), for a
+    /// column that is a reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub references: Option<String>,
     /// The value's shape and bounds (§3.2.1 vocabulary, reused by §4.4).
     ///
     /// A table that knows only "number or text" can offer a field and a
@@ -926,6 +930,7 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
                 .collect();
             KindColumnDto {
                 editable: attr.editable,
+                references: attr.references,
                 kind: attr.kind,
                 key: attr.key,
                 label: attr.label,

@@ -277,7 +277,26 @@ fn descriptor(
         kind,
         quantity: quantity.map(str::to_string),
         editable,
+        references: referenced_kind(key).map(str::to_string),
     }
+}
+
+/// The kind an attribute names, for the attributes that name one
+/// (spec §4.5.1.1).
+///
+/// Keyed by attribute key rather than declared at each call site
+/// because the answer is a property of the key: wherever a schema
+/// publishes it, it means the same thing. A key absent from here is not
+/// a reference, which is the common case.
+fn referenced_kind(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "demandPattern" => "pattern",
+        "headPattern" => "pattern",
+        "speedPattern" => "pattern",
+        "volumeCurve" => "curve",
+        "headCurve" => "curve",
+        _ => return None,
+    })
 }
 
 fn num() -> OptionKind {
@@ -398,6 +417,28 @@ fn cat(value: i64, label: &str, severity: CategorySeverity) -> CategoryItem {
 
 #[cfg(test)]
 mod tests {
+
+    /// A reference names a kind, and a kind id that no catalog entry
+    /// answers to is a completion list that can never be built (spec
+    /// §4.5.1.1). Cheap to assert, and the only thing that catches a
+    /// key renamed on one side of the pair.
+    #[test]
+    fn every_declared_reference_names_a_kind_that_exists() {
+        let mut seen = 0;
+        for kind in ELEMENT_KINDS {
+            for a in attribute_schema(kind.id) {
+                let Some(target) = a.references else { continue };
+                assert!(
+                    ELEMENT_KINDS.iter().any(|k| k.id == target),
+                    "{}.{} references '{target}', which is not a kind",
+                    kind.id,
+                    a.key
+                );
+                seen += 1;
+            }
+        }
+        assert!(seen > 0, "no attribute declares a reference");
+    }
 
     /// The editing contract's one hard rule about the catalog
     /// (hydra-common §4.5.3): a kind that cannot be created has to say

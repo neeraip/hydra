@@ -520,3 +520,88 @@ describe("KindTable row actions", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A column whose value names another element (§4.5.1.1) offers the ids
+ * that exist. Without it a reference is a box to type a name into,
+ * where the names are the model's own and a typo produces a reference
+ * to nothing.
+ */
+describe("KindTable references", () => {
+  const withRef: KindElements = {
+    ids: ["J1"],
+    columns: [
+      {
+        key: "demandPattern",
+        label: "Demand pattern",
+        editable: true,
+        kind: { type: "text", default: null },
+        references: "pattern",
+        values: ["P1"],
+      },
+    ],
+    positions: [],
+  } as KindElements;
+
+  it("offers the ids of the kind the column names", () => {
+    const { container } = render(
+      <KindTable
+        elements={withRef}
+        onEdit={() => {}}
+        referenceIds={{ pattern: ["P1", "P2"] }}
+      />,
+    );
+    const options = [...container.querySelectorAll("datalist option")].map(
+      (o) => o.getAttribute("value"),
+    );
+    expect(options).toEqual(["P1", "P2"]);
+    expect(
+      screen.getByLabelText("J1 Demand pattern").getAttribute("list"),
+    ).toBeTruthy();
+  });
+
+  it("stays a plain field when there is nothing to offer", () => {
+    // A reference with no list is still typeable, and the engine still
+    // refuses a name that means nothing.
+    const { container } = render(
+      <KindTable elements={withRef} onEdit={() => {}} />,
+    );
+    expect(container.querySelector("datalist")).toBeNull();
+    expect(
+      screen.getByLabelText("J1 Demand pattern").getAttribute("list"),
+    ).toBeNull();
+  });
+
+  it("drops the list rather than truncating it when it is too long", () => {
+    // A shortened list silently hides valid ids while still looking
+    // authoritative, and the browser's own filter is the bottleneck at
+    // that size anyway.
+    const many = Array.from({ length: 5001 }, (_, i) => `P${i}`);
+    const { container } = render(
+      <KindTable
+        elements={withRef}
+        onEdit={() => {}}
+        referenceIds={{ pattern: many }}
+      />,
+    );
+    expect(container.querySelector("datalist")).toBeNull();
+  });
+
+  it("draws one list per column, not one per row", () => {
+    // A copy per row is tens of thousands of option nodes rebuilt on
+    // every scroll, which hangs the tab outright at model scale.
+    const rows: KindElements = {
+      ...withRef,
+      ids: ["J1", "J2", "J3"],
+      columns: [{ ...withRef.columns[0], values: ["P1", "P2", "P1"] }],
+    };
+    const { container } = render(
+      <KindTable
+        elements={rows}
+        onEdit={() => {}}
+        referenceIds={{ pattern: ["P1", "P2"] }}
+      />,
+    );
+    expect(container.querySelectorAll("datalist")).toHaveLength(1);
+  });
+});

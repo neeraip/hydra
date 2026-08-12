@@ -143,6 +143,20 @@ pub struct AttributeDescriptor {
     /// contract deserialises, offering nothing rather than everything.
     #[serde(default)]
     pub editable: bool,
+    /// The kind id whose elements this attribute may name (spec
+    /// §4.5.1.1), or `None` for a value that is not a reference.
+    ///
+    /// Without it a reference is indistinguishable from free text, and
+    /// an application can only offer a box to type a name into — where
+    /// the names are the model's own and a typo produces a reference to
+    /// nothing.
+    ///
+    /// Not a foreign key: this layer defines no referential integrity
+    /// and does not require the named element to exist. What happens to
+    /// a reference when its target is removed is the engine's rule,
+    /// expressed through its removal (§4.5.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<String>,
 }
 
 #[cfg(test)]
