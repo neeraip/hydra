@@ -59,6 +59,7 @@ export function ElementsView() {
     selectedNodeId,
     selectedLinkId,
     selectedRegionId,
+    clearSelection,
     zoomToNode,
     zoomToLink,
   } = useCanvasSelection();
@@ -397,6 +398,12 @@ export function ElementsView() {
           const target = deleting;
           setDeleting(null);
           if (!target || !kind) return;
+          // Before the delete, not after: everything that follows the
+          // selection — the inspector and its result charts — asks the
+          // backend about the element it names, and an element that has
+          // just stopped existing is one nothing can answer for. The
+          // canvas's own delete has always done this; this one did not.
+          if (target === selectedId) clearSelection();
           try {
             const removed = await deleteElement(kind, target);
             const summary = deletionSummary(removed);

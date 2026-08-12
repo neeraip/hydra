@@ -640,7 +640,7 @@ fn element_series_from_out(
     out_path: &std::path::Path,
     kind: &str,
     index: u32,
-) -> Result<SeriesDto, String> {
+) -> Result<Option<SeriesDto>, String> {
     use hydra::io::out_reader::ElementKind;
 
     let meta = hydra::io::out_reader::read_metadata_checked(out_path).map_err(|e| e.to_string())?;
@@ -656,10 +656,15 @@ fn element_series_from_out(
             ))
         }
     };
+    // An element the results do not reach is the same answer as a run
+    // that has not happened: these results hold nothing for it. It is a
+    // normal state, not a failure — results describe the model as it was
+    // when it ran, and any element added since is beyond them. Reported
+    // as an error, it surfaced as a toast when a newly added element was
+    // selected, and again when it was deleted and something asked once
+    // more before noticing.
     if idx >= count {
-        return Err(format!(
-            "{kind} index {idx} out of range: results hold {count} {kind}s"
-        ));
+        return Ok(None);
     }
 
     let series = hydra::io::out_reader::read_element_series(out_path, &meta, element_kind, idx)?;
@@ -684,10 +689,10 @@ fn element_series_from_out(
         })
         .collect();
 
-    Ok(SeriesDto {
+    Ok(Some(SeriesDto {
         times: series.times.iter().map(|&t| t as u32).collect(),
         fields,
-    })
+    }))
 }
 
 /// Return the full time series of every result field for one element.
@@ -717,7 +722,7 @@ pub fn get_element_series(
     // Engine-dispatched: each engine's reader serves its own series. Field
     // names are variable ids — wds's fixed set or the uds §6 catalog's.
     match super::projects::project_engine_key(&app_data, &project_id).as_str() {
-        "wds" => element_series_from_out(&out_path, &kind, index).map(Some),
+        "wds" => element_series_from_out(&out_path, &kind, index),
         "uds" => {
             let network =
                 uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
@@ -1319,7 +1324,9 @@ Duration  0
 
         // Node series: fields in wire order, one value per period, values
         // identical to what the period reader returns.
-        let series = element_series_from_out(&out, "node", 0).unwrap();
+        let series = element_series_from_out(&out, "node", 0)
+            .unwrap()
+            .expect("a series");
         let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["pressure", "head", "demand"], "no quality run");
         assert_eq!(series.times.len(), out_meta.n_periods);
@@ -1333,23 +1340,63 @@ Duration  0
         assert_eq!(series.times[0], out_meta.report_start as u32);
 
         // Link series.
-        let series = element_series_from_out(&out, "link", 1).unwrap();
+        let series = element_series_from_out(&out, "link", 1)
+            .unwrap()
+            .expect("a series");
         let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["flow", "velocity", "headloss", "status"]);
         assert_eq!(series.fields[0].values[0], pr0.link_flow[1] as f64);
         assert_eq!(series.fields[3].values[0], pr0.link_status[1] as f64);
     }
 
+    /// An element the results do not reach has no series, and that is an
+    /// answer rather than a failure.
+    ///
+    /// Results describe the model as it was when it ran, so any element
+    /// added since is beyond them — which is the ordinary state between
+    /// an edit and the next run. Reported as an error it reached the
+    /// user as a toast: adding a junction to a simulated network and
+    /// then deleting it produced "node index 407 out of range" from
+    /// whatever asked about it once more on the way out.
     #[test]
-    fn element_series_from_out_bounds_and_kind_errors() {
+    fn an_element_beyond_the_results_has_no_series() {
         let dir = tempfile::tempdir().unwrap();
         let out = generated_results_out(dir.path());
         let out_meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
 
-        let err = element_series_from_out(&out, "node", out_meta.n_nodes as u32).unwrap_err();
-        assert!(err.contains("out of range"), "unexpected error: {err}");
-        let err = element_series_from_out(&out, "link", out_meta.n_links as u32).unwrap_err();
-        assert!(err.contains("out of range"), "unexpected error: {err}");
+        assert!(
+            element_series_from_out(&out, "node", out_meta.n_nodes as u32)
+                .expect("not an error")
+                .is_none()
+        );
+        assert!(
+            element_series_from_out(&out, "link", out_meta.n_links as u32)
+                .expect("not an error")
+                .is_none()
+        );
+        // Far beyond, not merely one past: a model can grow by more than
+        // one element between runs.
+        assert!(
+            element_series_from_out(&out, "node", out_meta.n_nodes as u32 + 500)
+                .expect("not an error")
+                .is_none()
+        );
+        // The last element the results *do* hold still answers, so this
+        // is a bound rather than a blanket refusal.
+        assert!(
+            element_series_from_out(&out, "node", out_meta.n_nodes as u32 - 1)
+                .expect("not an error")
+                .is_some()
+        );
+    }
+
+    /// A kind this reader does not know is still an error: nobody asks
+    /// for a "pipe" series by accident, and answering nothing would hide
+    /// a caller using the wrong vocabulary.
+    #[test]
+    fn an_unknown_element_kind_is_still_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = generated_results_out(dir.path());
         let err = element_series_from_out(&out, "pipe", 0).unwrap_err();
         assert!(err.contains("unknown element kind"), "unexpected: {err}");
     }
