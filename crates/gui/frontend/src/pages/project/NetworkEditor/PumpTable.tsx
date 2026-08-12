@@ -1,13 +1,15 @@
 import type React from "react";
+import {
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "../../../components/panels/editorTable";
 import type { PumpRow } from "../../../hooks";
 import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   RefInputCell,
   RefOptionsDatalist,
-  SortTh,
-  useVirtualRows,
-  VirtualSpacerRow,
 } from "./TablePrimitives";
 import { shouldUseRefDatalist } from "./tableSearch";
 

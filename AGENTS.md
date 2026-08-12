@@ -350,19 +350,25 @@ TypeScript interface are hand-mirrored, so a claim that matters on both
 sides (an engine publishes a catalog but does not serve generic periods)
 is asserted in both places. Neither test alone would have caught the drift.
 
-**Two things make a component untestable in jsdom, and both are worth
-knowing before spending an afternoon on it.** A **virtualised list**
-renders no rows: `useVirtualizer` measures its scroll element, jsdom
-reports zero height, and the list concludes nothing is visible — so the
-row behaviour of the network list, the editor tables and the curve points
-table cannot be reached there. And **`AppProvider` cannot be mounted**: it
-registers Tauri event listeners that do not exist under jsdom and throws
-before its children render, so a component reading app state has to have
-that one hook mocked rather than the provider supplied.
+**`AppProvider` cannot be mounted** in jsdom: it registers Tauri event
+listeners that do not exist there and throws before its children render,
+so a component reading app state has to have that one hook mocked rather
+than the provider supplied.
+
+**Virtualised lists used to be untestable too**, and are not any more.
+`useVirtualizer` measures its scroll container with `offsetHeight`, jsdom
+performs no layout and answers zero, and the list concluded no row was
+visible — so the network list, the editor tables and the curve points
+table all rendered an empty `<tbody>`. `src/test-setup.ts` now gives
+every element a plausible box, so rows mount and their behaviour can be
+asserted. Two things follow: a virtualised list's *rows* are ordinary
+component-test material, and a test wanting a real measurement still
+belongs in the layout project, because that box is a stub and not a
+layout.
 
 **Not currently covered, and known:** no end-to-end test drives the real
 Tauri shell; nothing checks *appearance* — the layout layer measures
 geometry, so a stray gradient or a wrong colour still passes everything
-here; and no test exercises a virtualised row's own interactions, for the
-reason above.
+here; and the water-distribution editor tables and the network list have
+no row-level tests, which is now a gap rather than an impossibility.
 

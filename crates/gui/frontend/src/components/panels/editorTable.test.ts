@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TEXT_SCALES } from "../../../textScale";
-import { editorRowHeight } from "./TablePrimitives";
+import { TEXT_SCALES } from "../../textScale";
+import { editorRowHeight } from "./editorTable";
 
 describe("editorRowHeight", () => {
   it("is unchanged at the default scale", () => {

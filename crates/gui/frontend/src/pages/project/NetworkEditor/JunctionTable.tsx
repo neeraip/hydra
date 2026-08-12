@@ -1,4 +1,9 @@
 import type React from "react";
+import {
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "../../../components/panels/editorTable";
 import type { JunctionRow } from "../../../hooks";
 import {
   formatCoordValue,
@@ -8,12 +13,7 @@ import {
   useUnitSystem,
 } from "../../../units";
 import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
-import {
-  EditableCell,
-  SortTh,
-  useVirtualRows,
-  VirtualSpacerRow,
-} from "./TablePrimitives";
+import { EditableCell } from "./TablePrimitives";
 
 const COL_COUNT = 6;
 

@@ -1,4 +1,9 @@
 import type React from "react";
+import {
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "../../../components/panels/editorTable";
 import type { ValveRow } from "../../../hooks";
 import {
   formatQtyValue,
@@ -13,9 +18,6 @@ import {
   EditableCell,
   RefInputCell,
   RefOptionsDatalist,
-  SortTh,
-  useVirtualRows,
-  VirtualSpacerRow,
 } from "./TablePrimitives";
 import { shouldUseRefDatalist } from "./tableSearch";
 

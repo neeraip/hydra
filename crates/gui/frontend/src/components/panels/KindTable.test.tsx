@@ -6,6 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { KindElements } from "../../hooks";
 import { KindTable } from "./KindTable";
 
+/** A sortable header is a real control; the click goes to the button. */
+function sortButton(th: Element): HTMLButtonElement {
+  const button = th.querySelector("button");
+  if (!button) throw new Error(`"${th.textContent}" has no sort button`);
+  return button;
+}
+
 const junctions: KindElements = {
   ids: ["J1", "J2"],
   columns: [{ key: "invert", label: "Invert", values: [12, 4] }],
@@ -166,13 +173,18 @@ describe("KindTable", () => {
     expect(neutral).toBeTruthy();
 
     if (!idHeader) throw new Error("no ID header");
-    fireEvent.click(idHeader);
+    // The button inside, not the cell: a sortable header is a real
+    // control, so it is keyboard-focusable and Enter/Space toggle it.
+    // Clicking the `<th>` used to sort because the handler was on the
+    // cell, which is exactly what made it unreachable without a mouse.
+    const sortById = () => fireEvent.click(sortButton(idHeader));
+    sortById();
     const ascending = idHeader.querySelector("svg")?.innerHTML;
     expect(ascending).not.toBe(neutral);
     // The column that is not sorted keeps the neutral mark.
     expect(invertHeader?.querySelector("svg")?.innerHTML).toBe(neutral);
 
-    fireEvent.click(idHeader);
+    sortById();
     const descending = idHeader.querySelector("svg")?.innerHTML;
     expect(descending).not.toBe(ascending);
     expect(descending).not.toBe(neutral);
@@ -251,7 +263,8 @@ describe("KindTable editing", () => {
     );
     const [, invertHeader] = [...container.querySelectorAll("th")];
     if (!invertHeader) throw new Error("no Invert header");
-    fireEvent.click(invertHeader); // ascending: J2 (4) first
+    // The header's button — see the sort-mark test above.
+    fireEvent.click(sortButton(invertHeader)); // ascending: J2 first
     const first = container.querySelector("tbody tr");
     expect(first?.querySelector("td")?.textContent).toBe("J2");
     const cell = screen.getByLabelText("J2 Invert");
@@ -278,5 +291,67 @@ describe("KindTable editing", () => {
     render(<KindTable elements={sparse} onEdit={() => {}} />);
     expect(screen.queryByLabelText("J1 Initial depth")).toBeNull();
     expect(screen.getByText("—")).toBeDefined();
+  });
+});
+
+/**
+ * The point of virtualising, and the thing that had no test because
+ * until now a virtualised list rendered nothing at all under jsdom.
+ *
+ * A drainage model has thousands of conduits. This table used to mount
+ * every one of them.
+ */
+describe("KindTable virtualisation", () => {
+  const many: KindElements = {
+    ids: Array.from({ length: 5000 }, (_, i) => `C${i + 1}`),
+    columns: [
+      {
+        key: "length",
+        label: "Length",
+        editable: false,
+        values: Array.from({ length: 5000 }, (_, i) => i),
+      },
+    ],
+  } as KindElements;
+
+  it("mounts a windowful of rows, not the whole model", () => {
+    const { container } = render(<KindTable elements={many} />);
+    const rows = container.querySelectorAll(
+      "tbody tr[data-selected], tbody tr",
+    );
+    // Spacer rows are counted here too, which is why this is a bound
+    // rather than an exact number — what matters is the order of
+    // magnitude, and 5000 rows is what it used to be.
+    expect(rows.length).toBeLessThan(200);
+    expect(rows.length).toBeGreaterThan(1);
+  });
+
+  it("keeps the scrollbar the height of the whole model", () => {
+    // The spacer rows above and below the window stand in for the rows
+    // that are not mounted. Without them the table is as tall as its
+    // window and the scrollbar reaches the end after one screen.
+    const { container } = render(<KindTable elements={many} />);
+    const spacers = [...container.querySelectorAll("tbody tr[aria-hidden]")];
+    const total = spacers.reduce(
+      (sum, tr) => sum + Number.parseInt((tr as HTMLElement).style.height, 10),
+      0,
+    );
+    // 5000 rows at 30px, less the mounted window.
+    expect(total).toBeGreaterThan(100_000);
+  });
+
+  it("reveals a row that is nowhere near the top", async () => {
+    const { container, rerender } = render(
+      <KindTable elements={many} activeId="C4000" revealToken={1} />,
+    );
+    const scroller = container.querySelector<HTMLElement>(
+      "div[style*='overflow']",
+    );
+    if (!scroller) throw new Error("no scroll container");
+    rerender(<KindTable elements={many} activeId="C4000" revealToken={2} />);
+    // Scrolled by arithmetic, because the row is not mounted and cannot
+    // be scrolled into view by asking it to. On the next frame, so that
+    // the rows the token cleared the search for have been laid out.
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(100_000));
   });
 });

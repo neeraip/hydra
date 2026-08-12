@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
 import { useCanvasSelection } from "../../../canvas/selection-context";
 import { RenameElementModal } from "../../../components/modals/RenameElementModal";
+import { editorRowHeight } from "../../../components/panels/editorTable";
 import {
   type JunctionRow,
   type PipeRow,
@@ -28,7 +29,6 @@ import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
 import type { RowAction } from "./RowActionsCell";
 import { referenceIds } from "./referenceIds";
-import { editorRowHeight } from "./TablePrimitives";
 import { TankTable } from "./TankTable";
 import {
   compareIds,

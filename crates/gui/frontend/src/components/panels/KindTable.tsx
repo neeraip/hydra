@@ -19,61 +19,30 @@
 // the backend's own answer to whether that attribute can be written, and
 // this file never asks which engine it is drawing. A column that cannot
 // be written renders exactly as it did before editing existed.
+//
+// Everything about how it *looks and scrolls* comes from `editorTable`,
+// which the water-distribution tables use too. This file had its own row
+// metrics, its own header styling and no virtualisation, and the two
+// tables had visibly drifted: uppercase headers, rows four pixels
+// shorter, separators too faint to read as a grid, no hover, and every
+// row of a several-thousand-conduit model mounted at once.
 
-import {
-  ChevronDownIcon,
-  ChevronUpDownIcon,
-  ChevronUpIcon,
-} from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { editableNumberOf, formatElementAttribute } from "../../hooks/network";
+import { readTextScale } from "../../textScale";
 import { useUnitSystem } from "../../units";
 import { EditableNumber } from "../ui/EditableNumber";
+import {
+  EDITOR_TD,
+  editorRowHeight,
+  editorRowStyle,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./editorTable";
 
 type SortDir = "asc" | "desc";
-
-/**
- * The sort mark beside a column heading.
- *
- * Sized in `em` rather than pixels because it sits inside the heading's
- * own text: the app's text-size setting moves that text through five
- * steps, and an icon pinned to one of them drifts from the word it
- * belongs to at the other four. The baseline nudge centres it against
- * lowercase rather than letting it sit on the baseline.
- */
-const SORT_ICON: React.CSSProperties = {
-  width: "1em",
-  height: "1em",
-  marginLeft: 3,
-  verticalAlign: "-0.15em",
-  flexShrink: 0,
-};
-
-const TH: React.CSSProperties = {
-  padding: "6px 10px",
-  textAlign: "left",
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  letterSpacing: "0.05em",
-  textTransform: "uppercase",
-  color: "var(--text-tertiary)",
-  borderBottom: "1px solid var(--border)",
-  whiteSpace: "nowrap",
-  cursor: "pointer",
-  userSelect: "none",
-  position: "sticky",
-  top: 0,
-  background: "var(--bg-panel)",
-  zIndex: 1,
-};
-
-const TD: React.CSSProperties = {
-  padding: "5px 10px",
-  fontSize: "var(--text-md)",
-  borderBottom: "1px solid rgba(255,255,255,0.04)",
-  whiteSpace: "nowrap",
-};
 
 /**
  * One element kind's table.
@@ -119,19 +88,7 @@ export function KindTable({
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [query, setQuery] = useState("");
-  const activeRowRef = useRef<HTMLTableRowElement | null>(null);
-
-  // Reveal: clear any search first, because a filter that excludes the
-  // requested element would leave the table looking empty in response to
-  // "show me this element" — then scroll once the row has rendered.
-  useEffect(() => {
-    if (revealToken == null) return;
-    setQuery("");
-    const raf = requestAnimationFrame(() => {
-      activeRowRef.current?.scrollIntoView({ block: "center" });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [revealToken]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   function toggleSort(col: string) {
     if (sortCol !== col) {
@@ -181,13 +138,44 @@ export function KindTable({
     });
   }, [elements, sortCol, sortDir, matches]);
 
-  const indicator = (col: string) => {
-    if (sortCol !== col) {
-      return <ChevronUpDownIcon style={{ ...SORT_ICON, opacity: 0.25 }} />;
-    }
-    const Arrow = sortDir === "asc" ? ChevronUpIcon : ChevronDownIcon;
-    return <Arrow style={{ ...SORT_ICON, color: "var(--accent)" }} />;
-  };
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    order,
+    scrollRef,
+  );
+
+  // What the reveal below needs, read through refs rather than listed as
+  // dependencies. It has to run when the caller *asks* — the token — and
+  // not every time the sort order or the selection happens to change,
+  // which would yank the table back mid-scroll.
+  const revealTarget = useRef({ activeId, order, ids: elements.ids });
+  revealTarget.current = { activeId, order, ids: elements.ids };
+
+  // Reveal: clear any search first, because a filter that excludes the
+  // requested element would leave the table looking empty in response to
+  // "show me this element" — then scroll to the row.
+  //
+  // Scrolled by arithmetic rather than by `scrollIntoView`: the row is
+  // very likely not mounted, which is the point of virtualising, and an
+  // element that does not exist cannot be scrolled to.
+  useEffect(() => {
+    if (revealToken == null) return;
+    setQuery("");
+    const raf = requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      const { activeId: id, order: rows, ids } = revealTarget.current;
+      if (!container || id == null) return;
+      const row = rows.findIndex((i) => ids[i] === id);
+      if (row < 0) return;
+      const rowHeight = editorRowHeight(readTextScale());
+      container.scrollTop = Math.max(
+        0,
+        row * rowHeight - container.clientHeight / 2 + rowHeight / 2,
+      );
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [revealToken]);
+
+  const columnCount = elements.columns.length + 1;
 
   if (elements.ids.length === 0) {
     return (
@@ -212,12 +200,17 @@ export function KindTable({
         minHeight: 0,
       }}
     >
+      {/* The same bar the water-distribution editor puts above its
+          tables: 44px tall, search right-aligned in it. That editor also
+          has an Add button here; drainage adds elements on the map,
+          where a new one needs somewhere to go. */}
       <div
         style={{
+          height: 44,
           display: "flex",
           alignItems: "center",
           justifyContent: "flex-end",
-          padding: "8px 12px",
+          padding: "0 12px",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-panel)",
           flexShrink: 0,
@@ -227,7 +220,7 @@ export function KindTable({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search ids…"
+          placeholder="Search…"
           aria-label="Search ids"
           style={{
             width: 200,
@@ -237,8 +230,8 @@ export function KindTable({
             borderRadius: 5,
             padding: "0 8px",
             color: "var(--text-primary)",
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--text-md)",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--text-lg)",
             outline: "none",
           }}
         />
@@ -257,78 +250,74 @@ export function KindTable({
           No ids match “{query}”.
         </div>
       ) : (
-        <div style={{ overflow: "auto", flex: 1 }}>
+        <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
           <table
             style={{
               width: "100%",
               borderCollapse: "collapse",
-              WebkitUserSelect: "none",
-              userSelect: "none",
+              fontSize: "var(--text-lg)",
             }}
           >
             <thead>
               <tr>
-                <th style={TH} onClick={() => toggleSort("id")}>
-                  ID{indicator("id")}
-                </th>
+                <SortTh
+                  field="id"
+                  label="ID"
+                  sortField={sortCol}
+                  sortAsc={sortDir === "asc"}
+                  onSort={toggleSort}
+                  markUnsorted
+                />
                 {elements.columns.map((c) => (
-                  <th key={c.key} style={TH} onClick={() => toggleSort(c.key)}>
-                    {c.label}
-                    {c.quantity
-                      ? ` (${sys === "us" ? c.quantity.usLabel : c.quantity.siLabel})`
-                      : ""}
-                    {indicator(c.key)}
-                  </th>
+                  <SortTh
+                    key={c.key}
+                    field={c.key}
+                    label={
+                      c.quantity
+                        ? `${c.label} (${sys === "us" ? c.quantity.usLabel : c.quantity.siLabel})`
+                        : c.label
+                    }
+                    sortField={sortCol}
+                    sortAsc={sortDir === "asc"}
+                    onSort={toggleSort}
+                    markUnsorted
+                  />
                 ))}
               </tr>
             </thead>
             <tbody>
-              {order.map((i) => {
+              <VirtualSpacerRow height={paddingTop} colSpan={columnCount} />
+              {virtualItems.map((vi) => {
+                const i = order[vi.index];
                 const id = elements.ids[i];
-                const isActive = id === activeId;
+                const isSelected = id === activeId;
                 return (
                   <tr
                     key={id}
-                    ref={isActive ? activeRowRef : undefined}
+                    data-selected={isSelected ? "true" : undefined}
                     onClick={() => onSelect?.(id)}
-                    style={{
-                      cursor: onSelect ? "pointer" : undefined,
-                      background: isActive ? "var(--selection-bg)" : undefined,
-                      outline: isActive
-                        ? "1px solid var(--selection-border)"
-                        : undefined,
-                      outlineOffset: "-1px",
+                    onMouseEnter={(e) => {
+                      if (!isSelected)
+                        e.currentTarget.style.background =
+                          "var(--bg-card-hover)";
                     }}
+                    onMouseLeave={(e) => {
+                      if (!isSelected) e.currentTarget.style.background = "";
+                    }}
+                    style={editorRowStyle({
+                      selected: isSelected,
+                      clickable: !!onSelect,
+                    })}
                   >
-                    <td
-                      style={{
-                        ...TD,
-                        color: "var(--accent)",
-                        fontFamily: "var(--font-mono)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {id}
-                    </td>
+                    <td style={{ ...EDITOR_TD, fontWeight: 500 }}>{id}</td>
                     {elements.columns.map((c) => {
                       const v = c.values[i];
                       const editable = onEdit
                         ? editableNumberOf(c.editable, v)
                         : null;
-                      return (
-                        <td
-                          key={c.key}
-                          style={{
-                            ...TD,
-                            fontFamily: "var(--font-mono)",
-                            // The table suppresses text selection so that
-                            // dragging across rows does not highlight
-                            // them; a field the user is typing in needs
-                            // it back.
-                            userSelect: editable == null ? undefined : "text",
-                          }}
-                        >
-                          {editable != null ? (
+                      if (editable != null) {
+                        return (
+                          <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
                             <EditableNumber
                               value={editable}
                               quantity={c.quantity}
@@ -338,33 +327,39 @@ export function KindTable({
                               // id — together that is what a screen
                               // reader needs to place the field.
                               label={`${id} ${c.label}`}
+                              chrome="cell"
+                              align="left"
                               onCommit={(next) => onEdit?.(id, c.key, next)}
                             />
-                          ) : v == null ? (
-                            "—"
-                          ) : typeof v === "number" ? (
-                            formatElementAttribute(
-                              {
-                                // Formatting only — this row is a
-                                // table cell, not an addressable
-                                // attribute.
-                                key: "",
-                                editable: false,
-                                label: c.label,
-                                number: v,
-                                quantity: c.quantity,
-                              },
-                              sys,
-                            )
-                          ) : (
-                            v
-                          )}
+                          </td>
+                        );
+                      }
+                      return (
+                        <td key={c.key} style={EDITOR_TD}>
+                          {v == null
+                            ? "—"
+                            : typeof v === "number"
+                              ? formatElementAttribute(
+                                  {
+                                    // Formatting only — this row is a
+                                    // table cell, not an addressable
+                                    // attribute.
+                                    key: "",
+                                    editable: false,
+                                    label: c.label,
+                                    number: v,
+                                    quantity: c.quantity,
+                                  },
+                                  sys,
+                                )
+                              : v}
                         </td>
                       );
                     })}
                   </tr>
                 );
               })}
+              <VirtualSpacerRow height={paddingBottom} colSpan={columnCount} />
             </tbody>
           </table>
         </div>

@@ -50,6 +50,7 @@ export function EditableNumber({
   label,
   width = 72,
   align = "right",
+  chrome = "boxed",
   onCommit,
 }: {
   /** In the unit the backend serves — SI for a quantity-bearing value. */
@@ -60,18 +61,36 @@ export function EditableNumber({
   label: string;
   width?: number | string;
   align?: "left" | "right";
+  /**
+   * How the field is drawn.
+   *
+   * `boxed` is a field on a panel — a bordered input sized to its
+   * content, which is what a Properties row and a create dialog want.
+   * `cell` is a field that *is* a table cell: it fills the cell, carries
+   * the cell's own padding, and shows no chrome until focused, so a
+   * column of them reads as a column of values rather than a column of
+   * inputs. The padding is the shared `EDITOR_TD`'s, so an editable row
+   * is exactly as tall as a read-only one — a virtualised table
+   * estimates one height for every row and scrolls wrong if they differ.
+   */
+  chrome?: "boxed" | "cell";
   /** Given the new value in the same unit as `value`. */
   onCommit: (value: number) => Promise<void> | void;
 }) {
   const shown = editableNumberText(value, quantity, sys);
   const [draft, setDraft] = useState(shown);
   const [saving, setSaving] = useState(false);
+  // Only the cell presentation needs this: a field with no chrome at
+  // rest has to grow some while it is being typed in, or there is
+  // nothing on screen saying which cell the keystrokes are going to.
+  const [focused, setFocused] = useState(false);
   // The field redraws from a refetch after every write, and the unit
   // system can change under it; the draft follows the value it is
   // editing rather than stranding the user on a stale one.
   useEffect(() => setDraft(shown), [shown]);
 
   const commit = () => {
+    setFocused(false);
     if (draft === shown || saving) return;
     const next = parseElementAttribute(draft, quantity, sys);
     if (next == null) {
@@ -90,6 +109,7 @@ export function EditableNumber({
       onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
         setDraft(e.target.value)
       }
+      onFocus={() => setFocused(true)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
@@ -100,16 +120,40 @@ export function EditableNumber({
       }}
       disabled={saving}
       aria-label={label}
-      style={{
-        width,
-        textAlign: align,
-        background: "var(--surface-2)",
-        border: "1px solid var(--border)",
-        borderRadius: 4,
-        color: "inherit",
-        font: "inherit",
-        padding: "1px 4px",
-      }}
+      style={
+        chrome === "cell"
+          ? {
+              display: "block",
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "7px 10px",
+              background: focused
+                ? "var(--bg-input, rgba(255,255,255,0.05))"
+                : saving
+                  ? "rgba(220, 160, 40, 0.05)"
+                  : "transparent",
+              border: "none",
+              outline: focused
+                ? "1px solid var(--border-focus, rgba(100,160,255,0.5))"
+                : "none",
+              outlineOffset: "-1px",
+              borderRadius: 0,
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-md)",
+              textAlign: align,
+            }
+          : {
+              width,
+              textAlign: align,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "inherit",
+              font: "inherit",
+              padding: "1px 4px",
+            }
+      }
     />
   );
 }

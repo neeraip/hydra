@@ -27,13 +27,10 @@ import {
 import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { inpIdError } from "../../inpId";
-import {
-  EditableCell,
-  useVirtualRows,
-  VirtualSpacerRow,
-} from "../../pages/project/NetworkEditor/TablePrimitives";
+import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
 import { useUnitSystem } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { useVirtualRows, VirtualSpacerRow } from "../panels/editorTable";
 import { curveRoleLabel } from "./curveRole";
 import { EditorSidebarList } from "./EditorSidebarList";
 
