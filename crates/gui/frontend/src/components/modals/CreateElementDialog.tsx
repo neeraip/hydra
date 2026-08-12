@@ -19,6 +19,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { ElementAttributeQuantity } from "../../hooks";
 import { inpIdError } from "../../inpId";
+import { DialogActions, DialogButton } from "../ui/DialogButton";
 import { EditableNumber } from "../ui/EditableNumber";
 
 /** One selectable element kind. */
@@ -270,32 +271,18 @@ export function CreateElementDialog({
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            className="tool-btn"
-            onClick={onCancel}
-            disabled={submitting}
-            style={{ fontSize: "var(--text-md)" }}
-          >
+        <DialogActions>
+          <DialogButton onClick={onCancel} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="tool-btn"
+          </DialogButton>
+          <DialogButton
+            intent="primary"
             disabled={!canSubmit}
             onClick={() => void submit()}
-            style={{
-              fontSize: "var(--text-md)",
-              background: "var(--accent-dim)",
-              color: "var(--accent)",
-              borderColor: "var(--accent)",
-              opacity: canSubmit ? 1 : 0.5,
-            }}
           >
             {submitting ? "Adding…" : "Add"}
-          </button>
-        </div>
+          </DialogButton>
+        </DialogActions>
       </div>
     </div>
   );

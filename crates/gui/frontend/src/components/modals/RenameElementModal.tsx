@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { inpIdError } from "../../inpId";
+import { DialogButton } from "../ui/DialogButton";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,41 +147,10 @@ export function RenameElementModal({
             background: "rgba(0,0,0,0.18)",
           }}
         >
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--text-secondary)",
-              borderRadius: 5,
-              padding: "7px 14px",
-              fontSize: "var(--text-md)",
-              cursor: "pointer",
-              fontFamily: "var(--font-ui)",
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit}
-            style={{
-              background: canSubmit ? "var(--accent)" : "var(--bg-card)",
-              border: `1px solid ${canSubmit ? "var(--accent)" : "var(--border)"}`,
-              color: canSubmit ? "var(--accent-fg)" : "var(--text-disabled)",
-              borderRadius: 5,
-              padding: "7px 16px",
-              fontSize: "var(--text-md)",
-              fontWeight: 600,
-              cursor: canSubmit ? "pointer" : "not-allowed",
-              opacity: canSubmit ? 1 : 0.6,
-              fontFamily: "var(--font-ui)",
-            }}
-          >
+          <DialogButton onClick={onClose}>Cancel</DialogButton>
+          <DialogButton intent="primary" disabled={!canSubmit} onClick={submit}>
             Rename
-          </button>
+          </DialogButton>
         </div>
       </div>
     </ModalBackdrop>

@@ -44,10 +44,6 @@ import type {
 import type { Criterion, Valuation } from "../../components/analysis/criteria";
 import { toDisplayValue } from "../../components/analysis/criteria";
 import { CreateLinkModal } from "../../components/modals/CreateLinkModal";
-import {
-  CreateNodeModal,
-  type NodeCreatePayload,
-} from "../../components/modals/CreateNodeModal";
 import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import {
   LinkInspector,
@@ -57,7 +53,6 @@ import {
 import { engineComponents } from "../../engine/registry";
 import {
   createLink,
-  createNode,
   deleteElement,
   type GenericPeriodValues,
   type GenericQuantity,
@@ -2264,63 +2259,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     [],
   );
 
-  const handleConfirmCreateNode = useCallback(
-    async (payload: NodeCreatePayload) => {
-      if (!pendingCreateNode || !project) return;
-      // A basemap click arrives in WGS84 and is inverse-projected into the
-      // source CRS the backend stores (identity for EPSG:4326); a plan
-      // click is already in it. Throws on failure, which the modal catches
-      // and displays, so an unconvertible point never commits a corrupt
-      // coordinate.
-      const [x, y] = sourceCoordinate(pendingCreateNode, (lngLat) =>
-        wgs84ToSourceCrs(lngLat, sourceCrs),
-      );
-      // Throws on backend error — the modal catches and stays open with the error message.
-      await createNode(
-        payload.kind,
-        payload.id,
-        x,
-        y,
-        payload.elevation,
-        payload.minLevel,
-        payload.maxLevel,
-        payload.initialLevel,
-      );
-      // Only runs on success:
-      setPendingCreateNode(null);
-      pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
-        label: `Added ${payload.id}`,
-        undo: { deletes: [{ kind: payload.kind, id: payload.id }] },
-        redo: {
-          recreates: [
-            {
-              elementType: "node",
-              kind: payload.kind,
-              id: payload.id,
-              // Redo recreates through the same source-CRS coordinate store,
-              // so it records the converted values, not raw WGS84.
-              x,
-              y,
-              elevation: payload.elevation,
-              ...(payload.kind === "tank"
-                ? {
-                    minLevel: payload.minLevel,
-                    maxLevel: payload.maxLevel,
-                    initialLevel: payload.initialLevel,
-                  }
-                : null),
-              patches: [],
-            },
-          ],
-        },
-      });
-      await saveProjectOnDisk(project.id, activeScenarioId);
-      markEdited(project.id, activeScenarioId);
-      // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
-    },
-    [pendingCreateNode, project, activeScenarioId, markEdited, sourceCrs],
-  );
-
   const handleConfirmCreateLink = useCallback(
     async (kind: string, id: string) => {
       if (!pendingCreateLink || !project) return;
@@ -2917,24 +2855,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
-      {/* An engine that supplies its own create dialogs gets them; the
-          water-distribution pair is the fallback, as everywhere else in
-          the registry. Selected once, here, rather than branched on
-          inside either modal. */}
-      {EngineCreateNode ? (
+      {/* The registry's dialog, for whichever engine this is. There is
+          no fallback for a node any more: the shared one is built from
+          the catalogs, so every engine has it. */}
+      {EngineCreateNode && (
         <EngineCreateNode
           open={!!pendingCreateNode}
           suggestId={suggestNodeId}
           position={createNodePosition}
           onCreated={handleEngineCreated}
-          onCancel={() => setPendingCreateNode(null)}
-        />
-      ) : (
-        <CreateNodeModal
-          open={!!pendingCreateNode}
-          suggestId={suggestNodeId}
-          at={pendingCreateNode}
-          onConfirm={handleConfirmCreateNode}
           onCancel={() => setPendingCreateNode(null)}
         />
       )}

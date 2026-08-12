@@ -21,6 +21,7 @@
 
 import { ExclamationTriangleIcon } from "@heroicons/react/16/solid";
 import { type ReactNode, useEffect, useRef } from "react";
+import { DialogButton } from "../ui/DialogButton";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 /**
@@ -218,55 +219,12 @@ export function DeleteConfirmModal({
             gap: 8,
           }}
         >
-          <button
-            type="button"
-            ref={cancelRef}
-            onClick={onCancel}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              padding: "6px 14px",
-              fontSize: "var(--text-md)",
-              fontWeight: 500,
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color =
-                "var(--text-primary)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color =
-                "var(--text-secondary)";
-            }}
-          >
+          <DialogButton ref={cancelRef} onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            style={{
-              background: "#ef4444",
-              border: "none",
-              borderRadius: 6,
-              padding: "6px 14px",
-              fontSize: "var(--text-md)",
-              fontWeight: 600,
-              color: "#fff",
-              cursor: "pointer",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "#dc2626";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "#ef4444";
-            }}
-          >
+          </DialogButton>
+          <DialogButton intent="danger" onClick={onConfirm}>
             {confirmLabel}
-          </button>
+          </DialogButton>
         </div>
       </div>
     </ModalBackdrop>
