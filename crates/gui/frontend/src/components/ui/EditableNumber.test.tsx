@@ -194,4 +194,55 @@ describe("EditableNumber", () => {
     fireEvent.blur(field());
     expect(onCommit).toHaveBeenCalledWith(13);
   });
+
+  it("refuses a letter inside the number", () => {
+    // The reported defect: letters went in freely and were silently
+    // discarded on blur, which reads as the app losing the edit rather
+    // than as the app refusing the character.
+    render(
+      <EditableNumber
+        value={12.5}
+        quantity={LENGTH}
+        sys="si"
+        label="Invert"
+        onCommit={() => {}}
+      />,
+    );
+    // Typing appends to what is there; the field refuses the ones that
+    // are not part of a number, so they never appear at all.
+    for (const rejected of ["12.5a", "12.5m", "a12.5"]) {
+      fireEvent.change(field(), { target: { value: rejected } });
+      expect(field().value).toBe("12.5");
+    }
+    // Everything a number is spelled with still arrives, exponent and
+    // sign included.
+    for (const ok of ["12.5e", "12.5e-", "12.5e-3"]) {
+      fireEvent.change(field(), { target: { value: ok } });
+      expect(field().value).toBe(ok);
+    }
+    // After a space a letter is a unit, not a stray character — which
+    // is the same rule that lets a pasted "8.62 m" in, and the reason
+    // this is a rule about numbers rather than about keystrokes.
+    fireEvent.change(field(), { target: { value: "12.5 m" } });
+    expect(field().value).toBe("12.5 m");
+  });
+
+  it("lets a paste through, unit and all", () => {
+    // What is pasted is usually a value this app wrote — "8.62 m" out
+    // of a table cell — and the parse takes the unit off on the way in.
+    const onCommit = vi.fn();
+    render(
+      <EditableNumber
+        value={12.5}
+        quantity={LENGTH}
+        sys="si"
+        label="Invert"
+        onCommit={onCommit}
+      />,
+    );
+    fireEvent.change(field(), { target: { value: "8.62 m" } });
+    expect(field().value).toBe("8.62 m");
+    fireEvent.blur(field());
+    expect(onCommit).toHaveBeenCalledWith(8.62);
+  });
 });

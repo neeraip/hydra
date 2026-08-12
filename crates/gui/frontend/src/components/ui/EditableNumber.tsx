@@ -35,6 +35,10 @@ import {
  * - **A half-typed value is no value.** "-" and "1e" on the way to a
  *   number parse to nothing rather than to zero, and leave the model
  *   alone.
+ * - **A letter never arrives.** Typing one is refused at the keystroke,
+ *   so the field never holds something it will silently discard later.
+ *   A value that vanishes on blur reads as the app losing the edit
+ *   rather than as the app refusing the character.
  * - **A refused write restores what was there.** `onCommit` rejecting
  *   returns the field to the value the model still holds, rather than
  *   leaving a number on screen that was never stored.
@@ -43,6 +47,10 @@ import {
  * component has no opinion about toasts, and taking one would tie it to
  * app state it does not otherwise need.
  */
+/** Everything a number is spelled with, and nothing else — an empty
+ * field and a lone "-" included, since both are on the way to one. */
+const NUMERIC_DRAFT = /^[0-9.eE+-]*$/;
+
 export function EditableNumber({
   value,
   quantity,
@@ -106,9 +114,25 @@ export function EditableNumber({
   return (
     <input
       value={draft}
-      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-        setDraft(e.target.value)
-      }
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+        const next = e.target.value;
+        // Refused rather than accepted-and-discarded, so a letter never
+        // appears in the field at all. Two things are allowed: anything
+        // a number is spelled with, including a half-typed one, and any
+        // draft that parses whole — which is how a pasted "8.62 m",
+        // copied out of a table cell this app rendered, still arrives.
+        if (
+          NUMERIC_DRAFT.test(next) ||
+          parseElementAttribute(next, quantity, sys) != null
+        ) {
+          setDraft(next);
+        }
+      }}
+      // A decimal keypad where there is one to choose. Not `type=number`:
+      // that brings spinners, a locale-dependent decimal separator, and a
+      // browser that silently blanks the field on anything it dislikes —
+      // including the unit suffix this one accepts.
+      inputMode="decimal"
       // A click into a cell is a click into that cell, not onto the row
       // beneath it — the row's own handler selects, and selecting is a
       // different intent from typing. The water-distribution cells do

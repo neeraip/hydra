@@ -1316,8 +1316,19 @@ export function parseElementAttribute(
   quantity: ElementAttributeQuantity | undefined,
   sys: "si" | "us",
 ): number | null {
-  const entered = Number(text.trim());
-  if (text.trim() === "" || !Number.isFinite(entered)) return null;
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  let entered = Number(trimmed);
+  if (!Number.isFinite(entered)) {
+    // A value copied out of this app carries the unit this app put on
+    // it — a table cell reads "8.62 m" — so a paste of one is taken
+    // rather than rejected. Only with the space between: "1e" is a
+    // number half-typed on the way to "1e5", not one with a unit, and
+    // committing 1 for it would store a value nobody meant.
+    const withUnit = /^(\S+)\s+\S+$/.exec(trimmed);
+    entered = withUnit ? Number(withUnit[1]) : Number.NaN;
+    if (!Number.isFinite(entered)) return null;
+  }
   if (!quantity || sys === "si") return entered;
   return (entered - quantity.siToUsOffset) / quantity.siToUsScale;
 }
