@@ -381,6 +381,26 @@ fn linear_lookup(points: &[(f64, f64)], x: f64) -> f64 {
     points[points.len() - 1].1
 }
 
+/// The §11.2 step-size bands: six edges, largest first, spanning the
+/// routing step down to the step floor and spaced logarithmically. The
+/// report prints them as five intervals, so it wants the edges rather
+/// than the counts alone.
+pub fn step_bands(dt_user: f64) -> [f64; 6] {
+    let top = dt_user.max(DT_FLOOR);
+    let ratio = (DT_FLOOR / top).powf(0.2);
+    let mut edges = [top; 6];
+    for k in 1..6 {
+        edges[k] = edges[k - 1] * ratio;
+    }
+    edges
+}
+
+/// Which band an accepted step of `dt` falls in, largest band first.
+fn step_band(dt: f64, dt_user: f64) -> usize {
+    let edges = step_bands(dt_user);
+    (0..5).find(|&k| dt > edges[k + 1]).unwrap_or(4)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FlowClass {
     Subcritical,
@@ -532,8 +552,27 @@ pub struct RoutingReport {
     pub negative_out: f64,
     /// Stored volume at the start of the run (m³).
     pub initial_storage: f64,
-    /// Total channel evaporation and seepage volume (m³).
+    /// Total channel and storage evaporation and seepage volume (m³).
     pub losses: f64,
+    /// The evaporation half of `losses` (m³). Seepage is the remainder
+    /// rather than its own accumulator, so the two always sum to the
+    /// ledger term exactly and no rounding can open a gap between them.
+    pub evaporation: f64,
+    /// §11.2 step-size extremes (s). `dt_min` is zero until the first
+    /// step is accepted, which is why it is not seeded to infinity.
+    pub dt_min: f64,
+    pub dt_max: f64,
+    /// Iterations summed over accepted steps, and the count of accepted
+    /// steps that exhausted the trial budget without converging.
+    pub iterations: u64,
+    pub nonconverged: u64,
+    /// Routed time (s) — the accepted steps' summed duration, which is
+    /// the mean step's denominator.
+    pub elapsed: f64,
+    /// Accepted steps by step-size band, largest band first: five bands
+    /// spanning the step floor to the routing step, spaced
+    /// logarithmically (§11.2).
+    pub dt_bands: [u64; 5],
 }
 
 /// The §6 router over a validated network.
@@ -621,15 +660,54 @@ pub struct VertexStats {
     /// Maximum depth (m) and when it occurred (s).
     pub max_depth: f64,
     pub t_max_depth: f64,
-    /// Maximum flooding rate (m³/s) and total flooded time (s).
+    /// Time-weighted depth integral (m·s); over `obs_time` it is the
+    /// §11.2 mean depth.
+    pub depth_sum: f64,
+    /// Maximum depth seen at a reporting instant (m), which is not the
+    /// maximum over computational steps (§11.2).
+    pub reported_max_depth: f64,
+    /// Maximum flooding rate (m³/s), when it occurred (s), and total
+    /// flooded time (s).
     pub max_flood: f64,
+    pub t_max_flood: f64,
     pub flood_time: f64,
-    /// Flooded volume (m³).
+    /// Flooded volume (m³) and the maximum ponded volume (m³).
     pub flood_volume: f64,
-    /// Time above the highest connecting crown (s).
+    pub max_ponded_volume: f64,
+    /// Time above the highest connecting crown (s), the greatest height
+    /// reached above it (m), and the least depth left below the rim
+    /// while surcharged (m).
     pub surcharge_time: f64,
+    pub max_crown_height: f64,
+    pub min_rim_depth: f64,
+    /// Inflow (§11.2): peak lateral and total rates (m³/s), the instant
+    /// of the total peak (s), and both volumes (m³).
+    pub max_lat_inflow: f64,
+    pub max_total_inflow: f64,
+    pub t_max_total_inflow: f64,
+    pub lat_inflow_volume: f64,
+    pub total_inflow_volume: f64,
+    /// Volume leaving by every path (m³), for the vertex flow balance.
+    pub outflow_volume: f64,
+    /// Stored volume when statistics began and at the last accepted
+    /// step (m³) — the storage-change term of that balance.
+    pub initial_volume: f64,
+    pub final_volume: f64,
+    /// Storage vertices: volume integral (m³·s), peak volume (m³) and
+    /// its instant (s), the loss volumes (m³), and peak outflow (m³/s).
+    pub volume_sum: f64,
+    pub max_volume: f64,
+    pub t_max_volume: f64,
+    pub evap_loss_volume: f64,
+    pub exfil_loss_volume: f64,
+    pub max_outflow: f64,
+    /// The storage geometry's volume at its maximum depth (m³), fixed
+    /// at build; zero for every other vertex, which is how the report
+    /// tells storage apart. The percent-full columns divide by it.
+    pub full_volume: f64,
     /// Outfalls: discharge volume (m³), peak (m³/s), and flowing time
-    /// (s) against `steps` for the frequency.
+    /// (s) — against `obs_time` for the frequency, and dividing the
+    /// volume for the mean discharge while flowing.
     pub out_volume: f64,
     pub out_peak: f64,
     pub out_time: f64,
@@ -649,6 +727,38 @@ pub struct LinkStats {
     pub max_depth: f64,
     /// Time flowing full (s) — channels.
     pub full_time: f64,
+    /// Observed time (s), the denominator of every fraction below.
+    pub obs_time: f64,
+    /// Time in each §6.3 flow class (s), in the predecessor's column
+    /// order: dry, dry upstream, dry downstream, subcritical,
+    /// supercritical, critical upstream, critical downstream.
+    pub class_time: [f64; 7],
+    /// Time the normal-flow limiter bound the flow, and time §7.6
+    /// culvert inlet control capped it (s). Neither is a flow class:
+    /// a step may be in both, or in neither.
+    pub norm_limited_time: f64,
+    pub inlet_control_time: f64,
+    /// Conduit surcharge times (s): full at both ends, at the upstream
+    /// end alone, at the downstream end alone, above normal flow, and
+    /// capacity-limited.
+    pub full_both_time: f64,
+    pub full_up_time: f64,
+    pub full_down_time: f64,
+    pub above_normal_time: f64,
+    pub capacity_limited_time: f64,
+    /// The section's full depth (m) and full-flow capacity (m³/s), both
+    /// fixed at build. Zero for links that are not channels, which is
+    /// how the report tells the two apart.
+    pub full_depth: f64,
+    pub full_flow: f64,
+    /// Accepted steps whose flow reversed the sign of its change while
+    /// both neighbouring changes cleared the flow tolerance (§11.2),
+    /// the steps observed to divide it by, and the two previous flows
+    /// the test needs.
+    pub instability_count: u64,
+    pub steps: u64,
+    pub prev_flow: f64,
+    pub prev_delta: f64,
     // Pumps (§11.2): utilisation, startups, flow range, volume, energy,
     // and off-curve time booked to the correct end for every type.
     pub on_time: f64,
@@ -670,6 +780,8 @@ struct Trial {
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
     converged: bool,
+    /// Iterations this trial took (§11.2).
+    iterations: u32,
     flood_rate: Vec<f64>,
     /// Per-channel evaporation and seepage rates (m³/s), for §8.4.
     chan_evap: Vec<f64>,
@@ -1117,6 +1229,22 @@ impl Router {
             evap_rate: 0.0,
             report: RoutingReport::default(),
         };
+        // §11.2's Max/Full ratios divide by these, so they are taken
+        // once from the built geometry rather than re-derived per step.
+        for c in &r.chans {
+            let st = &mut r.link_stats[c.link];
+            st.full_depth = c.geom.sec.y_full();
+            st.full_flow = c.barrels
+                * c.geom.sec.a_full()
+                * c.geom.sec.r_full().powf(2.0 / 3.0)
+                * c.slope.sqrt()
+                / c.n;
+        }
+        for vi in 0..r.verts.len() {
+            if let VertClass::Storage(g) = &r.verts[vi].class {
+                r.vertex_stats[vi].full_volume = g.volume(r.verts[vi].y_max);
+            }
+        }
         r.seed_initial_state(net);
         r.report.initial_storage = (0..r.verts.len())
             .map(|v| r.vertex_volume_now(v))
@@ -1682,6 +1810,8 @@ impl Router {
         self.a_mid = trial.a_mid;
         self.net_flow = trial.net_flow;
         self.report.losses += trial.loss_rate * dt;
+        self.report.evaporation +=
+            (trial.chan_evap.iter().sum::<f64>() + trial.stor_evap.iter().sum::<f64>()) * dt;
         self.report.accepted += 1;
         // §7.2: orifice settings slew toward their targets at the
         // open/close rate; everything else follows instantly.
@@ -1701,35 +1831,155 @@ impl Router {
             }
         }
         self.worst_counts[trial.worst_vertex] += 1;
+        // §11.2: numerical-performance statistics span the whole run,
+        // unlike the per-object ones below.
+        self.report.dt_min = if self.report.dt_min == 0.0 {
+            dt
+        } else {
+            self.report.dt_min.min(dt)
+        };
+        self.report.dt_max = self.report.dt_max.max(dt);
+        self.report.elapsed += dt;
+        self.report.iterations += u64::from(trial.iterations);
+        if !trial.converged {
+            self.report.nonconverged += 1;
+        }
+        self.report.dt_bands[step_band(dt, self.dt_user)] += 1;
         // §11.2: per-object statistics, gated on the report start.
         if self.t >= self.stats_start {
-            self.accumulate_stats(dt);
+            self.accumulate_stats(dt, lat);
+        }
+    }
+
+    /// Record the depths standing at a reporting instant (§11.2).
+    ///
+    /// The maximum over reporting instants is not the maximum over
+    /// computational steps — the peak usually falls between two reports
+    /// — and the report prints both, because a reader who checks the
+    /// summary against the results file finds only this one there.
+    pub fn record_reported_depths(&mut self) {
+        for vi in 0..self.verts.len() {
+            let y = self.y[vi];
+            let st = &mut self.vertex_stats[vi];
+            st.reported_max_depth = st.reported_max_depth.max(y);
         }
     }
 
     /// Accumulate the §11.2 per-object statistics for one accepted step.
-    fn accumulate_stats(&mut self, dt: f64) {
+    fn accumulate_stats(&mut self, dt: f64, lat: &[f64]) {
         let t = self.t;
-        for (vi, v) in self.verts.iter().enumerate() {
+        let nv = self.verts.len();
+
+        // Everything that needs to read the whole router is gathered
+        // first: the statistics rows below are borrowed mutably one at a
+        // time, and no `&self` method can be called while one is held.
+        let mut q_in = vec![0.0; nv];
+        let mut q_out = vec![0.0; nv];
+        for (ci, c) in self.chans.iter().enumerate() {
+            let q = self.q[ci];
+            if q > 0.0 {
+                q_in[c.to] += q;
+                q_out[c.from] += q;
+            } else if q < 0.0 {
+                q_in[c.from] += -q;
+                q_out[c.to] += -q;
+            }
+        }
+        for (si, s) in self.structs.iter().enumerate() {
+            let q = self.sq[si];
+            if q > 0.0 {
+                q_in[s.to] += q;
+                q_out[s.from] += q;
+            } else if q < 0.0 {
+                q_in[s.from] += -q;
+                q_out[s.to] += -q;
+            }
+        }
+        let vol_now: Vec<f64> = (0..nv).map(|vi| self.vertex_volume_now(vi)).collect();
+        // One classification per channel per accepted step (§11.2) — the
+        // accepted state's class, not any trial's.
+        let classes: Vec<(FlowClass, bool, bool)> = (0..self.chans.len())
+            .map(|ci| self.classify_now(ci))
+            .collect();
+
+        for vi in 0..nv {
+            let y = self.y[vi];
+            let (crown, y_max, ponded_area, is_outfall, is_storage) = {
+                let v = &self.verts[vi];
+                (
+                    v.crown,
+                    v.y_max,
+                    v.ponded_area,
+                    matches!(v.class, VertClass::Outfall(_)),
+                    matches!(v.class, VertClass::Storage(_)),
+                )
+            };
+            let (fl, net, evap, seep) = (
+                self.flood_now[vi],
+                self.net_flow[vi],
+                self.stor_evap_now[vi],
+                self.stor_seep_now[vi],
+            );
+            let (qi, qo, vol, l) = (q_in[vi], q_out[vi], vol_now[vi], lat[vi]);
             let st = &mut self.vertex_stats[vi];
+            if st.steps == 0 {
+                st.initial_volume = vol;
+            }
+            st.final_volume = vol;
             st.steps += 1;
             st.obs_time += dt;
-            let y = self.y[vi];
+            st.depth_sum += y * dt;
             if y > st.max_depth {
                 st.max_depth = y;
                 st.t_max_depth = t;
             }
-            let fl = self.flood_now[vi];
             if fl > 0.0 {
                 st.flood_time += dt;
                 st.flood_volume += fl * dt;
-                st.max_flood = st.max_flood.max(fl);
+                if fl > st.max_flood {
+                    st.max_flood = fl;
+                    st.t_max_flood = t;
+                }
+                if ponded_area > 0.0 {
+                    st.max_ponded_volume =
+                        st.max_ponded_volume.max((y - y_max).max(0.0) * ponded_area);
+                }
             }
-            if v.crown > 0.0 && y > v.crown && !matches!(v.class, VertClass::Outfall(_)) {
+            if crown > 0.0 && y > crown && !is_outfall {
                 st.surcharge_time += dt;
+                st.max_crown_height = st.max_crown_height.max(y - crown);
+                // The least freeboard reached, and zero once it floods.
+                let rim = (y_max - y).max(0.0);
+                st.min_rim_depth = if st.surcharge_time <= dt {
+                    rim
+                } else {
+                    st.min_rim_depth.min(rim)
+                };
             }
-            if matches!(v.class, VertClass::Outfall(_)) {
-                let q = self.net_flow[vi].max(0.0);
+            // Inflow (§11.2). The lateral is part of the total, and a
+            // negative lateral is an outflow by its sign (§11.1).
+            let lat_in = l.max(0.0);
+            let total_in = qi + lat_in;
+            st.max_lat_inflow = st.max_lat_inflow.max(lat_in);
+            if total_in > st.max_total_inflow {
+                st.max_total_inflow = total_in;
+                st.t_max_total_inflow = t;
+            }
+            st.lat_inflow_volume += lat_in * dt;
+            st.total_inflow_volume += total_in * dt;
+            st.outflow_volume += (qo + (-l).max(0.0) + fl) * dt;
+            if is_storage {
+                st.volume_sum += vol * dt;
+                if vol > st.max_volume {
+                    st.max_volume = vol;
+                    st.t_max_volume = t;
+                }
+                st.evap_loss_volume += evap * dt;
+                st.exfil_loss_volume += seep * dt;
+                st.max_outflow = st.max_outflow.max(qo);
+            }
+            if is_outfall {
+                let q = net.max(0.0);
                 st.out_volume += q * dt;
                 st.out_peak = st.out_peak.max(q);
                 if q > Q_DRY {
@@ -1737,22 +1987,88 @@ impl Router {
                 }
             }
         }
-        for (ci, c) in self.chans.iter().enumerate() {
-            let st = &mut self.link_stats[c.link];
-            let q = self.q[ci].abs();
+        // Indexed rather than iterated: the body borrows `self.chans`
+        // again for the section width and `self.link_stats` mutably, so
+        // an iterator over `self.chans` would hold a borrow across both.
+        #[allow(clippy::needless_range_loop)]
+        for ci in 0..self.chans.len() {
+            let c = &self.chans[ci];
+            let (from, to, off1, off2, barrels, y_full) =
+                (c.from, c.to, c.off1, c.off2, c.barrels, c.geom.sec.y_full());
+            let q_signed = self.q[ci];
+            let q = q_signed.abs();
+            let a = self.a_mid[ci].max(DRY);
+            let y1 = (self.y[from] - off1).max(0.0);
+            let y2 = (self.y[to] - off2).max(0.0);
+            let (class, norm_limited, inlet_control) = classes[ci];
+            let link = c.link;
+            let st = &mut self.link_stats[link];
             if q > st.max_flow {
                 st.max_flow = q;
                 st.t_max_flow = t;
             }
-            let a = self.a_mid[ci].max(DRY);
-            st.max_velocity = st.max_velocity.max((q / c.barrels / a).min(V_MAX));
-            let y1 = (self.y[c.from] - c.off1).max(0.0);
-            let y2 = (self.y[c.to] - c.off2).max(0.0);
-            let y_mid = (0.5 * (y1 + y2)).min(c.geom.sec.y_full());
+            st.obs_time += dt;
+            st.max_velocity = st.max_velocity.max((q / barrels / a).min(V_MAX));
+            let y_mid = (0.5 * (y1 + y2)).min(y_full);
             st.max_depth = st.max_depth.max(y_mid);
-            if y1 >= c.geom.sec.y_full() && y2 >= c.geom.sec.y_full() {
+            let (up_full, down_full) = (y1 >= y_full, y2 >= y_full);
+            if up_full && down_full {
                 st.full_time += dt;
+                st.full_both_time += dt;
+            } else if up_full {
+                st.full_up_time += dt;
+            } else if down_full {
+                st.full_down_time += dt;
             }
+            // Supercritical is not a §6.3 class of its own: the
+            // classification returns subcritical and the Froude number
+            // separates the two (§11.2).
+            let idx = match class {
+                FlowClass::Dry => 0,
+                FlowClass::UpDry => 1,
+                FlowClass::DownDry => 2,
+                FlowClass::Subcritical => {
+                    let w = self.chans[ci].geom.width(y_mid.max(DRY));
+                    usize::from(froude(q / barrels / a, a, w) > 1.0) + 3
+                }
+                FlowClass::UpCritical => 5,
+                FlowClass::DownCritical => 6,
+            };
+            let st = &mut self.link_stats[link];
+            st.class_time[idx] += dt;
+            if norm_limited {
+                st.norm_limited_time += dt;
+            }
+            if inlet_control {
+                st.inlet_control_time += dt;
+            }
+            // The Max/Full ratios divide stored constants, so they are
+            // derived at report time; only the times are accumulated.
+            if st.full_flow > 0.0 && q > st.full_flow {
+                st.above_normal_time += dt;
+                if up_full && down_full {
+                    st.capacity_limited_time += dt;
+                }
+            }
+            // §11.2 instability: this step's change reversed the last
+            // one, both clearing the flow tolerance.
+            //
+            // The tolerance is a fraction of the section's *capacity*,
+            // not of the link's running peak. Every converged solution
+            // wanders in its last digits, so an absolute floor calls a
+            // quiescent link unstable; and a fraction of the peak makes
+            // the test tighten as the peak grows, so a link that has
+            // barely flowed is judged against a threshold near zero.
+            // Capacity is fixed for the run and is the scale the
+            // oscillation would have to matter against.
+            let dq = q_signed - st.prev_flow;
+            let tol = (0.02 * st.full_flow).max(0.02 * st.max_flow).max(Q_DRY);
+            if st.prev_delta * dq < 0.0 && st.prev_delta.abs() > tol && dq.abs() > tol {
+                st.instability_count += 1;
+            }
+            st.steps += 1;
+            st.prev_delta = dq;
+            st.prev_flow = q_signed;
         }
         for si in 0..self.structs.len() {
             let link = self.structs[si].link;
@@ -1835,6 +2151,9 @@ impl Router {
         let mut sq = self.sq.clone();
         let mut a_mid_new = self.a_mid.clone();
         let mut converged = false;
+        // §11.2 mean iterations per step; a trial that never converges
+        // has run the full budget.
+        let mut iterations = self.max_trials;
         let mut net_new = vec![0.0; nv];
         let mut chan_evap = vec![0.0; nc];
         let mut chan_seep = vec![0.0; nc];
@@ -2066,6 +2385,7 @@ impl Router {
                     )
             {
                 converged = true;
+                iterations = step + 1;
                 break;
             }
         }
@@ -2080,6 +2400,7 @@ impl Router {
             a_mid: a_mid_new,
             net_flow: net_new,
             converged,
+            iterations,
             flood_rate: flood,
             chan_evap,
             chan_seep,
@@ -2915,6 +3236,42 @@ impl Router {
         } else {
             FlowClass::Subcritical
         }
+    }
+
+    /// A channel's §6.3 flow class at the accepted state, with whether
+    /// the normal-flow limiter and §7.6 culvert inlet control bind there.
+    ///
+    /// Recomputed from the accepted state rather than carried out of the
+    /// winning trial: a step's class is a property of the state it
+    /// settled on, and a trial that was rejected classified a state that
+    /// never happened. It costs one classification per channel per
+    /// accepted step against the several per trial the solver already
+    /// pays.
+    fn classify_now(&self, ci: usize) -> (FlowClass, bool, bool) {
+        let c = &self.chans[ci];
+        let (z1, z2) = (c.z1(&self.verts), c.z2(&self.verts));
+        let h1 = (self.verts[c.from].invert + self.y[c.from]).max(z1);
+        let h2 = (self.verts[c.to].invert + self.y[c.to]).max(z2);
+        let y1 = (h1 - z1).max(DRY);
+        let y2 = (h2 - z2).max(DRY);
+        let q = self.q[ci] / c.barrels;
+        let mut cd = None;
+        let class = self.flow_class(ci, q, h1, h2, y1, y2, &mut cd);
+        let y_full = c.geom.sec.y_full();
+        let is_full = y1 >= y_full && y2 >= y_full;
+        // The same either/or the channel update applies (§6.6, §7.6).
+        let inlet_control =
+            q > 0.0 && !is_full && c.culvert > 0 && c.culvert < tables::CULVERT_PARAMS.len();
+        let norm_limited = !inlet_control
+            && q > 0.0
+            && y1 < y_full
+            && matches!(class, FlowClass::Subcritical)
+            && {
+                let (a1, r1) = c.geom.area_and_radius(y1);
+                let fr = froude(q / a1.max(DRY), a1.max(DRY), c.geom.width(y1.max(DRY)));
+                self.normal_flow_limit(ci, q, y1, y2, a1, r1, fr) < q
+            };
+        (class, norm_limited, inlet_control)
     }
 
     /// Normal and critical depths for a per-barrel flow (§6.6).

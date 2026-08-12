@@ -1146,6 +1146,10 @@ impl Simulation {
         while self.next_report <= self.router.time() + 1e-9 {
             let snap = self.record_snapshot(self.next_report);
             self.snapshots.push(snap);
+            // §11.2: the reported maximum is the maximum over these
+            // instants alone, which is what a reader finds in the
+            // results file.
+            self.router.record_reported_depths();
             self.next_report += self.report_step;
         }
         true
@@ -1915,7 +1919,8 @@ impl Simulation {
             self.vol_ext,
             r.outflow + r.negative_out,
             r.flooding,
-            r.losses,
+            r.evaporation,
+            r.losses - r.evaporation,
             r.initial_storage,
             stored_now,
             led.network.error_percent,
@@ -1945,11 +1950,33 @@ impl Simulation {
                 ));
             }
         }
-        let avg_dt = if r.accepted > 0 {
-            self.router.time() / r.accepted as f64
-        } else {
-            0.0
-        };
+        // The §11.1 surface-loading ledger, in the report's row order.
+        let mut loading = Vec::new();
+        if let Some(sq) = &self.surface_quality {
+            for (p, (id, l)) in self
+                .net
+                .constituents
+                .iter()
+                .map(|c| c.id.clone())
+                .zip(led.loading.iter().map(|(_, l)| *l))
+                .enumerate()
+            {
+                loading.push((
+                    id,
+                    [
+                        sq.initial_buildup[p],
+                        sq.buildup_in[p],
+                        sq.deposition[p],
+                        sq.swept[p],
+                        sq.infiltrated[p],
+                        sq.bmp_removed[p],
+                        sq.washed_off[p],
+                        sq.to_final[p] + sq.stored_mass(p),
+                        l.error_percent,
+                    ],
+                ));
+            }
+        }
         // §11.2 top-five governing vertices.
         let mut worst: Vec<(String, u64)> = self
             .router
@@ -1974,8 +2001,9 @@ impl Simulation {
                 subsurface,
                 flow,
                 quality,
+                loading,
                 actions: self.control_actions(),
-                performance: (r.accepted, r.rejected, r.degraded.len(), avg_dt),
+                performance: &self.router.report,
                 vertex_stats: &self.router.vertex_stats,
                 link_stats: &self.router.link_stats,
                 parcel_totals,
@@ -1984,6 +2012,7 @@ impl Simulation {
                     .as_ref()
                     .map(|sq| sq.washed_by_parcel.clone()),
                 outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
+                link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
                 worst,
             },
             w,

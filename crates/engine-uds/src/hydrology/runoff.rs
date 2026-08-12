@@ -281,6 +281,11 @@ pub struct ParcelTotals {
     pub infil: f64,
     pub runoff: f64,
     pub peak_runoff: f64,
+    /// Runoff by plane (m³), split before the §3.4 units redistribute
+    /// it, so the two sum to the sub-areas' yield rather than to the
+    /// parcel's outflow (§11.2).
+    pub imperv_runoff: f64,
+    pub perv_runoff: f64,
 }
 
 /// The surface compartment: every gage and parcel, advanced on the
@@ -772,6 +777,10 @@ impl Surface {
             self.infil_vol += f_rate * dt * p.sub[2].area;
             p.qstep.v_infil = f_rate * dt * p.sub[2].area;
             p.qstep.v_outflow = runoff.iter().sum::<f64>();
+            // §11.2: the plane split is taken here, before the units
+            // below capture and return any of it.
+            p.totals.imperv_runoff += runoff[0] + runoff[1];
+            p.totals.perv_runoff += runoff[2];
 
             // §3.4: units take their captured share of sub-area runoff
             // plus direct rainfall; overflow rejoins parcel runoff,

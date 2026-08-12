@@ -1569,16 +1569,23 @@ RES  TSS  EMC  50  0  0  0
         "Analysis Options",
         "Runoff Quantity Continuity",
         "Flow Routing Continuity",
-        "Quality Routing Continuity : TSS",
-        "Numerical Performance",
+        "Runoff Quality Continuity",
+        "Quality Routing Continuity",
+        "Routing Time Step Summary",
         "Continuity Error (%)",
         "Total Precipitation",
         "Wet Weather Inflow",
         "Subcatchment Runoff Summary",
         "Subcatchment Washoff Summary",
         "Node Depth Summary",
+        "Node Inflow Summary",
+        "Node Surcharge Summary",
+        "Node Flooding Summary",
         "Outfall Loading Summary",
         "Link Flow Summary",
+        "Flow Classification Summary",
+        "Conduit Surcharge Summary",
+        "Link Pollutant Load Summary",
     ] {
         assert!(rpt.contains(needle), "report missing '{needle}':\n{rpt}");
     }
@@ -1596,6 +1603,76 @@ RES  TSS  EMC  50  0  0  0
         .parse()
         .expect("volume");
     assert!((v - 0.1).abs() < 0.02, "wet-weather volume {v} ha-m");
+}
+
+#[test]
+fn the_report_holds_the_predecessors_column_geometry() {
+    // §14.9 makes the report a compatibility surface: tools parse it by
+    // column position, so a heading rule or a field width that drifts
+    // breaks readers even though every number is still right. The
+    // geometry is asserted here because nothing else would notice.
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EMC  50  0  0  0
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    let rpt = String::from_utf8(buf).expect("utf8");
+
+    // A continuity block's asterisk rule is a fixed 26 wide whatever the
+    // title's length, because the column headings sit on the same line
+    // and a rule that tracked the title would shift them per block.
+    let mut continuity_rules = 0;
+    for l in rpt.lines() {
+        let stars = l.chars().skip(2).take_while(|c| *c == '*').count();
+        if stars > 0 && l.starts_with("  *") && l.len() > stars + 2 {
+            assert_eq!(stars, 26, "continuity rule is not 26 wide: {l:?}");
+            continuity_rules += 1;
+        }
+    }
+    assert!(
+        continuity_rules >= 6,
+        "expected the continuity blocks' ruled headings, saw {continuity_rules}"
+    );
+
+    // Every continuity row's dot leader runs to column 28, so the first
+    // value column always starts there.
+    let mut leaders = 0;
+    for l in rpt.lines() {
+        if l.starts_with("  ") && l.contains(" ....") {
+            assert!(
+                l.len() > 28 && l[..28].ends_with('.'),
+                "continuity leader does not reach column 28: {l:?}"
+            );
+            leaders += 1;
+        }
+    }
+    assert!(leaders >= 10, "expected continuity rows, saw {leaders}");
+
+    // Each table is bracketed by dashed rules of one width, so no rule
+    // width should appear only once.
+    // Scanned from the options block on, because the banner's rule is
+    // not a table's and legitimately stands alone.
+    let body = rpt.split("Analysis Options").nth(1).expect("options block");
+    let mut widths: Vec<usize> = body
+        .lines()
+        .filter(|l| l.starts_with("  --") && l[2..].chars().all(|c| c == '-'))
+        .map(str::len)
+        .collect();
+    assert!(
+        widths.len() >= 8,
+        "expected a rule per table, got {widths:?}"
+    );
+    widths.sort_unstable();
+    for w in &widths {
+        assert!(
+            widths.iter().filter(|x| *x == w).count() >= 2,
+            "rule width {w} appears once, so a table is missing a rule"
+        );
+    }
 }
 
 // ── §7.8 street inlets ──────────────────────────────────────────────────

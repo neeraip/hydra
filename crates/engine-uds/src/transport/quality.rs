@@ -36,6 +36,10 @@ pub struct NetworkQuality {
     pub initial_mass: Vec<f64>,
     /// §11.2 per-outfall discharged mass `[constituent][vertex]`.
     pub outfall_load: Vec<Vec<f64>>,
+    /// §11.2 cumulative transported mass `[constituent][model link]`,
+    /// summed over the absolute flow so a link that reverses reports
+    /// what passed through it rather than the net.
+    pub link_load: Vec<Vec<f64>>,
     /// Vertex volumes at the previous step (m³).
     vol_prev: Vec<f64>,
     /// Channel volumes at the previous step (m³).
@@ -144,6 +148,7 @@ impl NetworkQuality {
             inflow_mass: vec![0.0; np],
             initial_mass,
             outfall_load: vec![vec![0.0; nv]; np],
+            link_load: vec![vec![0.0; net.links.len()]; np],
             vol_prev,
             chan_vol_prev,
             treatments,
@@ -222,7 +227,7 @@ impl NetworkQuality {
 
             // Inflowing links deliver their previous-step concentration
             // to their downstream vertex (§8.1).
-            for (k, &(_, from, to, q, _)) in chans.iter().enumerate() {
+            for (k, &(link, from, to, q, _)) in chans.iter().enumerate() {
                 if q > 0.0 {
                     mass_in[to] += q * self.c_channel[p][k] * dt;
                     flow_in[to] += q;
@@ -230,15 +235,18 @@ impl NetworkQuality {
                     mass_in[from] += -q * self.c_channel[p][k] * dt;
                     flow_in[from] += -q;
                 }
+                self.link_load[p][link] += q.abs() * self.c_channel[p][k] * dt;
             }
             // Volume-less structures pass their upstream vertex through.
-            for &(_, from, to, q) in &structs {
+            for &(link, from, to, q) in &structs {
                 if q > 0.0 {
                     mass_in[to] += q * self.c_vertex[p][from] * dt;
                     flow_in[to] += q;
+                    self.link_load[p][link] += q * self.c_vertex[p][from] * dt;
                 } else if q < 0.0 {
                     mass_in[from] += -q * self.c_vertex[p][to] * dt;
                     flow_in[from] += -q;
+                    self.link_load[p][link] += -q * self.c_vertex[p][to] * dt;
                 }
             }
             // §8.1 lateral sources; negative inflows are outflows and

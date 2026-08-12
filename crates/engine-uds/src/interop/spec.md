@@ -305,20 +305,48 @@ record order, pollutant names and concentration units, and the reporting
 clock (including undoing the backdated start, so served times are true
 record instants).
 
-**The text report** follows the predecessor's structure — banner, title,
-optional input echo, options summary, rainfall and RDII summaries, the
-control-actions log, the continuity balances of §11, the numerical-
-performance block, and the per-object summary tables with the predecessor's
-grouping and gating. Pollutant loads — the quality continuity balances, the
-subcatchment washoff summary, and the outfall loading summary — print in the
-predecessor's load units: pounds under US flow units, kilograms under SI,
-and log₁₀ of the count (zero when the count is zero) for count-type
-constituents, each column labelled with its unit word. Three content differences are inherent and carried
-openly: the flow-classification table's adjusted/actual length ratio is
-identically 1 (§6.5 retired the transform, the column stays for layout);
-the pumping table's off-curve columns are both live for every pump type
-(§11.2); and the step statistics report rejections and degraded-accuracy
-tallies in place of steady-state-skip time (§10.3).
+**The text report** reproduces the predecessor's layout, not merely its
+content. The report is a compatibility surface: it is read by people
+diffing this engine against the predecessor and by tools that parse the
+predecessor's reports, and both fail on a report that carries the right
+numbers in a different shape. So block order, block titles and their
+asterisk rules, column headings and their unit rows, dashed table rules,
+field widths, and decimal places are the predecessor's, and a block with
+nothing to report prints the predecessor's sentence saying so rather than
+an empty table.
+
+The blocks, in order: the banner and title; the analysis-options summary,
+including the process-model checklist; the runoff quantity and quality
+continuity balances; the flow routing and quality routing continuity
+balances; the control-actions log; the time-step critical elements, flow
+instability indexes, and non-converging vertices; the routing time-step
+summary; then the per-object summary tables — subcatchment runoff,
+subcatchment washoff, node depth, node inflow, node surcharge, node
+flooding, storage volume, outfall loading, link flow, flow classification,
+conduit surcharge, pumping, and link pollutant load — each gated as the
+predecessor gates it, and each drawn from the §11.2 catalogue. Continuity
+blocks whose subject is absent from the model do not print; the runoff
+blocks require a surface, the quality blocks require a constituent.
+
+Volumes print in acre-feet and 10⁶ gallons under US flow units,
+hectare-metres and 10⁶ litres under SI; depths in inches or millimetres.
+Pollutant loads — the quality continuity balances, the subcatchment washoff
+summary, the outfall loading summary, and the link pollutant load summary —
+print in the predecessor's load units: pounds under US flow units,
+kilograms under SI, and log₁₀ of the count (zero when the count is zero)
+for count-type constituents, each column labelled with its unit word.
+Instants print as the predecessor's elapsed `days hr:min`; control actions
+print as absolute dates.
+
+Four content differences are inherent and carried openly: the
+flow-classification table's adjusted/actual length ratio is identically 1
+(§6.5 retired the transform, the column stays for layout); the pumping
+table's off-curve columns are both live for every pump type (§11.2); the
+step statistics report rejections and degraded-accuracy tallies in place of
+steady-state-skip time (§10.3), so the predecessor's steady-state row is
+absent rather than zero; and the banner names this engine and its version,
+never the predecessor's — a report is evidence of what produced it, and a
+reader who cannot tell the two apart cannot use it as evidence.
 
 ### 14.10 Diagnostics
 

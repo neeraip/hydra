@@ -249,14 +249,92 @@ its implementation and have no counterpart here.
 ### 11.2 Statistics
 
 The engine accumulates per-object and numerical-performance statistics on
-every accepted step. The catalogue — surface water-balance totals and peaks;
-subsurface fluxes and time-weighted averages; wash-off loads; vertex depth,
-flooding, and above-crown statistics; storage volumes and losses; outfall
-frequencies, flows, and loads; link maxima and time-in-class; pump
-utilisation, startups, flows, volume, energy, and time off each end of its
-characteristic; and step-size, iteration, and rejection statistics with the
-top-five diagnostic lists — is adopted from the predecessor with three
-changes:
+every accepted step. The catalogue is adopted from the predecessor and
+enumerated here, because §14.9's report is defined against it: a statistic
+absent from this list is a column that cannot be printed.
+
+Time-weighted means are accumulated as $\sum x\,\Delta t$ against
+$\sum \Delta t$ over the same steps, never as unweighted step means — the
+step size varies, so the two differ.
+
+**Surface.** Per parcel: precipitation, run-on, evaporation, infiltration
+and runoff depths over the run; runoff separated into its impervious and
+pervious shares; peak runoff rate; and the runoff coefficient, the ratio of
+total runoff to total supply (precipitation plus run-on), zero when supply
+is zero. Wash-off load per parcel and constituent.
+
+**Subsurface.** Per aquifer: infiltration, evapotranspiration, deep
+percolation and lateral-flow volumes, and time-weighted mean zone moisture
+and water-table elevation.
+
+**Vertices.** Time-weighted mean depth; maximum depth and its instant;
+maximum hydraulic grade, the maximum depth referred to the invert; and the
+maximum depth observed *at reporting instants*, which is not the maximum
+over computational steps and is reported separately because a reader
+comparing the report against the results file sees the latter.
+
+Flooding: total flooded time, peak flooding rate and its instant, flooded
+volume, and maximum ponded volume.
+
+Surcharge, defined as depth above the highest connecting crown: total
+surcharged time, the maximum height above that crown, and the minimum depth
+below the rim reached while surcharged — zero when the vertex floods.
+
+Inflow: maximum lateral inflow; maximum total inflow and its instant;
+lateral and total inflow volumes; and the vertex flow-balance error, the
+§11.1 error statistic applied to that vertex alone, with its inflow volume
+against its outflow volume and storage change.
+
+Storage vertices additionally: time-weighted mean volume, mean and maximum
+percent full, maximum volume and its instant, evaporation and exfiltration
+losses as percentages of the mean volume, and maximum outflow.
+
+Outfalls additionally: the fraction of observed time discharging, the
+time-weighted mean and maximum discharge, discharge volume, and discharged
+load per constituent.
+
+**Links.** Maximum $|flow|$ and its instant; maximum $|velocity|$; maximum
+depth; the maximum flow as a fraction of the section's full-flow capacity
+and the maximum depth as a fraction of its full depth; and time flowing
+full.
+
+Time-in-class, as fractions of observed time, over the §6.3 classification:
+dry, dry at the upstream end, dry at the downstream end, subcritical,
+supercritical, critical at the upstream end, critical at the downstream
+end — subcritical and supercritical separated by the Froude number, which
+the classification already forms. Two further fractions are tallied
+independently, because a step is in exactly one flow class but may be in
+neither, either, or both of these: the time the §6.3 normal-flow limiter
+bound the flow, and the time §7.6 culvert inlet control capped it.
+
+Conduit surcharge times: full at both ends, full at the upstream end alone,
+full at the downstream end alone, above normal flow, and capacity-limited.
+
+The **flow instability index**: the count of accepted steps at which a
+link's flow reversed the sign of its change while both neighbouring changes
+exceeded the flow tolerance — a step-to-step oscillation that a converged
+solution should not show — as a fraction of accepted steps.
+
+Pumps additionally: utilisation time, startups, minimum, time-weighted mean
+and maximum flow, pumped volume, energy, and time off each end of the
+characteristic.
+
+**Constituents.** The §11.1 constituent ledger's inflow side is
+accumulated *by origin* — dry weather, wet weather, subsurface, sewer, and
+external — summing exactly to the total admitted load, so the constituent
+balance is reportable by source in the same partition the volumetric ledger
+uses. Per-link cumulative transported load is tallied alongside.
+
+**Numerical performance.** Accepted steps; rejected trials; the
+degraded-accuracy tally of §6.5; minimum, maximum, and time-weighted mean
+step size; mean iterations per step; the fraction of accepted steps that
+reached the trial limit without converging; and the distribution of step
+size over five bands spanning the step floor to the routing step, spaced
+logarithmically. The top-five diagnostic lists — governing vertices,
+least-stable links, most frequently non-converging vertices — accompany
+them.
+
+Three changes from the predecessor:
 
 - **Off-curve time is booked to the correct end for every pump type.** The
   predecessor's summary prints low-end and high-end columns for all pumps,
