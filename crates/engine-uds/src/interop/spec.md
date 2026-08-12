@@ -12,12 +12,13 @@ interpretation, and nothing in it constrains how results are computed.
 ### 14.1 Stance
 
 Import produces a §2 model from a predecessor input file; export writes
-results in forms the predecessor's readers accept. The physics of §3–§12 is
-defined without reference to either. Where the predecessor's file semantics
-presuppose behaviours this engine does not have — reduced routing forms,
-approximation switches — import maps them onto the model this engine does
-solve and **says so**: every substitution, mutation, and interpretation
-decision surfaces as a named, per-element notice, never a silent rewrite.
+both the model (§14.13) and its results in forms the predecessor's readers
+accept. The physics of §3–§12 is defined without reference to any of them.
+Where the predecessor's file semantics presuppose behaviours this engine
+does not have — reduced routing forms, approximation switches — import maps
+them onto the model this engine does solve and **says so**: every
+substitution, mutation, and interpretation decision surfaces as a named,
+per-element notice, never a silent rewrite.
 
 ### 14.2 Input Grammar
 
@@ -447,3 +448,153 @@ number, never skipped.
 The predecessor's archival formats (NWS and Environment-Canada tape and
 DSI layouts) are deferred (§1): a file in one of those layouts fails this
 format's parse and is refused with the parse's own reason.
+
+### 14.13 Model Export
+
+Export writes a §2 model as predecessor input text. It is the other half of
+§14.2's grammar and §14.5's section vocabulary: the columns export writes
+are the columns import reads, so this section defines only what the
+direction itself decides, never the layouts again.
+
+#### 14.13.1 What Is Written
+
+**The exported model is the post-validation model (§14.7), not the file as
+authored.** Import refuses, rewrites, and derives; a model in memory has
+already been through all three. Export therefore writes maximum depths
+raised to their crowns, regulator crests lifted to their downstream
+inverts, slopes floored, capped imperviousness, and enlarged infeasible
+radii — each as a plain value, with nothing marking it as a rewrite.
+
+This is the honest reading and it has a consequence worth stating plainly:
+**export is not a round trip through the original file.** A file that
+imports with mutation warnings, exported and compared against its source,
+differs everywhere a warning was raised. The engine holds a model, not a
+document; a consumer wanting the author's text must keep the author's text.
+
+Two mutations are *presentation* rather than substance, and export undoes
+them so the written file reads as its author wrote it:
+
+- an adverse-slope channel, reversed internally, is written in the user's
+  orientation with its original end order and sign conventions;
+- invert offsets are written in the convention the model's own option
+  declares, height or elevation, not the internal one.
+
+Quantities import *derives* are not written: the equivalent lengths and
+surface areas computed for orifices and weirs (§7.2–§7.3), and the
+transects compiled from street sections (§5.6). A street is written as a
+street, because that is what its author wrote and what its inlet placements
+name; writing its compiled transect instead would re-import as a model with
+no streets in it.
+
+#### 14.13.2 The Round-Trip Contract
+
+Three properties define correctness, in ascending strength:
+
+1. **Semantic round trip.** Import, export, and import again yields a model
+   identical to the first — every value, every identifier, every
+   relationship. This is the property that matters, and it is the one the
+   corpus is tested against.
+2. **Writer idempotence.** The second export is byte-identical to the
+   first. A writer that is semantically correct but not idempotent hides a
+   value that survives one cycle and drifts on the next.
+3. **Mutation quiescence.** Re-importing an exported file raises none of
+   §14.7's mutation warnings. The mutations were applied before the file
+   was written, so a second import finds nothing left to rewrite; a warning
+   on re-import means export wrote something import did not mean.
+
+The third is the sharpest test of the first. A depth already at its crown
+cannot be raised again, a floored slope cannot be floored further — so any
+mutation warning on re-import localises the defect to the section that
+raised it.
+
+Advisories (§14.7) are exempt: they flag properties of the model itself — a
+stub channel, an ambiguous pattern slot — and survive export because they
+describe something export faithfully preserved.
+
+#### 14.13.3 Units and Numeric Form
+
+Every stored quantity is written in the unit system the model's own
+flow-units selection declares, by the **exact inverse** of the conversion
+import applied (§14.6). The seven unit-dependent relations invert by their
+own entries in that table: coefficients converted per their exponents,
+curves pointwise, and user-written expressions written unchanged — an
+expression was never converted, only its inputs and result were, so there
+is nothing to invert.
+
+Numbers are written in **shortest round-trip decimal form**: the fewest
+digits that re-read as the same value. Fixed precision is not sufficient
+and the failure is not hypothetical — a tolerance or a decay constant set
+programmatically can sit below any fixed decimal precision, serialise as
+zero, and re-read as a value no test can satisfy. Where the predecessor's
+own readers require a fixed form for a field, that field's entry in §14.5
+governs and the constraint is noted there.
+
+Time-valued fields are written in the clock forms §14.4 defines, never as
+bare numbers. A bare number re-reads as decimal hours, so a duration
+written plainly would multiply by 3600 on every save-and-load cycle.
+
+Identifiers are written quoted when they contain any separator §14.2's
+lexer would split on, and unquoted otherwise, so that an identifier
+survives a cycle whatever it contains.
+
+#### 14.13.4 Defaults and Omission
+
+A field is written when it differs from the value import would assume in
+its absence, and omitted when it matches. The exception is a field whose
+import default is *derived* from another field rather than fixed: those are
+always written, because omitting them makes the re-read value depend on a
+neighbour that may itself have changed.
+
+Omission is never used to express meaning. A value that is absent because
+it is the default and a value that is absent because it is unset must not
+be the same file, so any model state with no defaulted spelling is written
+explicitly.
+
+#### 14.13.5 Sections and Ordering
+
+Sections are written in a fixed order — the predecessor's own, so a reader
+comparing an exported file against a hand-authored one finds them where it
+expects — and a section with nothing to write is omitted entirely rather
+than written empty.
+
+The nine display-metadata sections (§14.5) are written from what import
+preserved, verbatim, in their original order. They carry no engine
+semantics, so export neither validates nor normalises them; a consumer that
+put them there gets them back.
+
+`[REPORT]`'s selection lists round-trip as authored, including the
+`ALL`/`NONE` spellings, because they select what a results export carries
+(§14.9) and rewriting `ALL` as an enumeration would silently freeze a
+selection that was meant to follow the model.
+
+Auxiliary files are written **by name only**: the declarations naming
+climate records, rain records, hotstart state, and interface files are
+preserved, and their contents are not written. The engine performs no file
+I/O (§12.1), and a declaration is part of the model while the file it names
+is not.
+
+#### 14.13.6 What Export Loses, and What It Refuses
+
+Three things do not survive, all of them document rather than model, and
+all of them stated here so no consumer discovers them by comparison:
+
+- **Comments.** Every `;` comment, including the descriptive ones the
+  predecessor's own interface writes above object definitions.
+- **Original section order and whitespace.** §14.13.5's fixed order and
+  column layout replace whatever the source used.
+- **Unrecognised sections.** §14.2 discards them at import for forward
+  compatibility, so there is nothing left to write.
+
+> **CORRESPONDENCE:** the predecessor's interface preserves a file's
+> comments and its own object-description comments across a save. It can,
+> because it holds the document; this engine holds the model. An
+> application that must keep a user's comments has to keep the source text
+> alongside the model, and the interface layer is where that belongs.
+
+Export **refuses**, rather than writing something that will not re-read,
+when the model holds state with no spelling in the format: an identifier
+containing a line break, a quantity that is not finite, or a construct
+built programmatically that the grammar has no form for. A refusal names
+the element and what about it cannot be written. Silently dropping such
+state would produce a file that imports cleanly and means something else,
+which is the one outcome worse than failing to write at all.
