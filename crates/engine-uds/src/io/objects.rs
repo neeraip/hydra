@@ -375,7 +375,7 @@ impl UnitConverter {
     fn new(units: FlowUnits, offsets: LinkOffsets) -> Self {
         let us = units.is_us();
         UnitConverter {
-            len: if us { 0.3048 } else { 1.0 },
+            len: units.m_per_length_unit(),
             flow: match units {
                 FlowUnits::Cfs => 0.028_316_846_592,
                 FlowUnits::Gpm => 6.309_019_64e-5,

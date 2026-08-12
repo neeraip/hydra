@@ -54,6 +54,23 @@ impl FlowUnits {
         }
     }
 
+    /// Metres per one declared length unit — exactly 0.3048 for a
+    /// US-unit file, 1 for an SI one.
+    ///
+    /// Public for the same reason `m3s_per_unit` is: values a file
+    /// carries in its own units — a cross-section's geometry among them
+    /// (§5) — are only recoverable through the mapping the file was read
+    /// under, and a caller that writes such a value has to apply that
+    /// same mapping in reverse. Duplicating the constant outside the
+    /// engine is how the two come to disagree.
+    pub fn m_per_length_unit(self) -> f64 {
+        if self.is_us() {
+            0.3048
+        } else {
+            1.0
+        }
+    }
+
     /// The variant for a binary-results unit code (the discriminant the
     /// writer stores, §14.9), or `None` for an unknown code.
     pub fn from_code(code: i32) -> Option<Self> {
