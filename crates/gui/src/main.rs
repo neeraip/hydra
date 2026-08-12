@@ -132,6 +132,7 @@ fn main() {
             commands::rename_element,
             commands::create_node,
             commands::create_link,
+            commands::create_element,
             commands::create_uds_vertex,
             commands::create_uds_link,
             commands::create_curve,

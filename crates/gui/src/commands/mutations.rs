@@ -1065,6 +1065,10 @@ pub fn delete_element(
 /// Rejects empty IDs and any that contain whitespace, `;` (the INP comment
 /// character), or quotes — all of which would break INP tokenisation on the
 /// next round-trip. `what` names the thing being renamed for the error text.
+pub(crate) fn validate_element_id(raw: &str) -> Result<String, String> {
+    validate_inp_id(raw, "element")
+}
+
 fn validate_inp_id(raw: &str, what: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1289,65 +1293,95 @@ pub fn create_node(
     max_level: Option<f64>,
     initial_level: Option<f64>,
 ) -> Result<(), String> {
-    let elev_m = elevation.unwrap_or(0.0);
     mutate_structural(&app, &state, |network| {
-        let id = validate_inp_id(&id, "element")?;
-        // Node ids are unique among nodes only — a link may share the id
-        // (EPANET keeps node and link namespaces separate; the parser accepts
-        // it), so do not reject an id merely because a link holds it.
-        if network.nodes.iter().any(|n| n.base.id == id) {
-            return Err(format!("ID '{}' is already in use by another node", id));
-        }
-        let index = network.nodes.len() + 1;
-        // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
-        let min_m = min_level.unwrap_or(0.0);
-        let max_m = max_level.unwrap_or(10.0);
-        let init_m = initial_level.unwrap_or(5.0);
-        let node_kind = match kind.as_str() {
-            "junction" => hydra::NodeKind::Junction(hydra::Junction {
-                demands: vec![hydra::DemandCategory {
-                    base_demand: 0.0,
-                    pattern: None,
-                    name: None,
-                }],
-                emitter_coeff: 0.0,
-                emitter_exp: 0.5,
-            }),
-            "reservoir" => hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None }),
-            "tank" => hydra::NodeKind::Tank(hydra::Tank {
-                min_level: min_m,
-                max_level: max_m,
-                initial_level: init_m,
-                diameter: 10.0,
-                min_volume: 0.0,
-                volume_curve: None,
-                mix_model: hydra::MixModel::Cstr,
-                mix_fraction: 1.0,
-                bulk_coeff: 0.0,
-                overflow: false,
-            }),
-            other => return Err(format!("unknown node kind '{}'", other)),
-        };
-        // For tanks: EPANET stores base.elevation = bottom + min_level (the minimum
-        // piezometric head).  For junctions / reservoirs: base.elevation = elevation.
-        let base_elev = if matches!(node_kind, hydra::NodeKind::Tank(_)) {
-            elev_m + min_m
-        } else {
-            elev_m
-        };
-        network.nodes.push(hydra::Node {
-            base: hydra::NodeBase {
-                id: id.clone(),
-                index,
-                elevation: base_elev,
-                initial_quality: 0.0,
-            },
-            kind: node_kind,
-            source: None,
-        });
-        network.coordinates.insert(id.clone(), (x, y));
-        Ok(())
+        create_node_in_network(
+            network,
+            &kind,
+            &id,
+            x,
+            y,
+            elevation,
+            min_level,
+            max_level,
+            initial_level,
+        )
     })
+}
+
+/// Add a node, without the command wrapper — so the contract's own
+/// create can build one inside a larger, atomic mutation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_node_in_network(
+    network: &mut hydra::Network,
+    kind: &str,
+    id: &str,
+    x: f64,
+    y: f64,
+    elevation: Option<f64>,
+    min_level: Option<f64>,
+    max_level: Option<f64>,
+    initial_level: Option<f64>,
+) -> Result<(), String> {
+    let kind = kind.to_string();
+    let id = id.to_string();
+    let elev_m = elevation.unwrap_or(0.0);
+
+    let id = validate_inp_id(&id, "element")?;
+    // Node ids are unique among nodes only — a link may share the id
+    // (EPANET keeps node and link namespaces separate; the parser accepts
+    // it), so do not reject an id merely because a link holds it.
+    if network.nodes.iter().any(|n| n.base.id == id) {
+        return Err(format!("ID '{}' is already in use by another node", id));
+    }
+    let index = network.nodes.len() + 1;
+    // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
+    let min_m = min_level.unwrap_or(0.0);
+    let max_m = max_level.unwrap_or(10.0);
+    let init_m = initial_level.unwrap_or(5.0);
+    let node_kind = match kind.as_str() {
+        "junction" => hydra::NodeKind::Junction(hydra::Junction {
+            demands: vec![hydra::DemandCategory {
+                base_demand: 0.0,
+                pattern: None,
+                name: None,
+            }],
+            emitter_coeff: 0.0,
+            emitter_exp: 0.5,
+        }),
+        "reservoir" => hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None }),
+        "tank" => hydra::NodeKind::Tank(hydra::Tank {
+            min_level: min_m,
+            max_level: max_m,
+            initial_level: init_m,
+            diameter: 10.0,
+            min_volume: 0.0,
+            volume_curve: None,
+            mix_model: hydra::MixModel::Cstr,
+            mix_fraction: 1.0,
+            bulk_coeff: 0.0,
+            overflow: false,
+        }),
+        other => return Err(format!("unknown node kind '{}'", other)),
+    };
+    // For tanks: EPANET stores base.elevation = bottom + min_level (the minimum
+    // piezometric head).  For junctions / reservoirs: base.elevation = elevation.
+    let base_elev = if matches!(node_kind, hydra::NodeKind::Tank(_)) {
+        elev_m + min_m
+    } else {
+        elev_m
+    };
+    network.nodes.push(hydra::Node {
+        base: hydra::NodeBase {
+            id: id.clone(),
+            index,
+            elevation: base_elev,
+            initial_quality: 0.0,
+        },
+        kind: node_kind,
+        source: None,
+    });
+    network.coordinates.insert(id.clone(), (x, y));
+    Ok(())
 }
 
 /// Default attributes for a link created by `create_link`, in the engine's
@@ -1402,47 +1436,64 @@ pub fn create_link(
     to_id: String,
 ) -> Result<(), String> {
     mutate_structural(&app, &state, |network| {
-        let id = validate_inp_id(&id, "element")?;
-        // Link ids are unique among links only — a node may share the id
-        // (EPANET keeps node and link namespaces separate; the parser accepts
-        // it), so do not reject an id merely because a node holds it.
-        if network.links.iter().any(|l| l.base.id == id) {
-            return Err(format!("ID '{}' is already in use by another link", id));
-        }
-        let from_node = network
-            .nodes
-            .iter()
-            .find(|n| n.base.id == from_id)
-            .map(|n| n.base.index)
-            .ok_or_else(|| format!("node '{}' not found", from_id))?;
-        let to_node = network
-            .nodes
-            .iter()
-            .find(|n| n.base.id == to_id)
-            .map(|n| n.base.index)
-            .ok_or_else(|| format!("node '{}' not found", to_id))?;
-        if from_node == to_node {
-            return Err("from and to nodes must be different".into());
-        }
-        let index = network.links.len() + 1;
-        let link_kind = default_link_kind(&kind)?;
-        let initial_setting = match &link_kind {
-            hydra::LinkKind::Valve(_) => Some(0.0),
-            _ => None,
-        };
-        network.links.push(hydra::Link {
-            base: hydra::LinkBase {
-                id,
-                index,
-                from_node,
-                to_node,
-                initial_status: hydra::LinkStatus::Open,
-                initial_setting,
-            },
-            kind: link_kind,
-        });
-        Ok(())
+        create_link_in_network(network, &kind, &id, &from_id, &to_id)
     })
+}
+
+/// Add a link, without the command wrapper — see
+/// [`create_node_in_network`].
+pub(crate) fn create_link_in_network(
+    network: &mut hydra::Network,
+    kind: &str,
+    id: &str,
+    from_id: &str,
+    to_id: &str,
+) -> Result<(), String> {
+    let kind = kind.to_string();
+    let id = id.to_string();
+    let from_id = from_id.to_string();
+    let to_id = to_id.to_string();
+
+    let id = validate_inp_id(&id, "element")?;
+    // Link ids are unique among links only — a node may share the id
+    // (EPANET keeps node and link namespaces separate; the parser accepts
+    // it), so do not reject an id merely because a node holds it.
+    if network.links.iter().any(|l| l.base.id == id) {
+        return Err(format!("ID '{}' is already in use by another link", id));
+    }
+    let from_node = network
+        .nodes
+        .iter()
+        .find(|n| n.base.id == from_id)
+        .map(|n| n.base.index)
+        .ok_or_else(|| format!("node '{}' not found", from_id))?;
+    let to_node = network
+        .nodes
+        .iter()
+        .find(|n| n.base.id == to_id)
+        .map(|n| n.base.index)
+        .ok_or_else(|| format!("node '{}' not found", to_id))?;
+    if from_node == to_node {
+        return Err("from and to nodes must be different".into());
+    }
+    let index = network.links.len() + 1;
+    let link_kind = default_link_kind(&kind)?;
+    let initial_setting = match &link_kind {
+        hydra::LinkKind::Valve(_) => Some(0.0),
+        _ => None,
+    };
+    network.links.push(hydra::Link {
+        base: hydra::LinkBase {
+            id,
+            index,
+            from_node,
+            to_node,
+            initial_status: hydra::LinkStatus::Open,
+            initial_setting,
+        },
+        kind: link_kind,
+    });
+    Ok(())
 }
 
 /// Create a new pump-head curve with default two-point data.
