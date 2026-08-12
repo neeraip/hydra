@@ -122,6 +122,32 @@ impl Units {
     fn gw_coeff(&self, v: f64, head_power: f64) -> f64 {
         v * self.len.powf(head_power) / self.gw_flow()
     }
+    /// m/s per °C → the file's melt coefficient (depth per hour per
+    /// degree on the file's own temperature scale).
+    fn melt(&self, v: f64) -> f64 {
+        v / (self.conductivity * if self.us { 9.0 / 5.0 } else { 1.0 })
+    }
+    /// °C → the file's temperature scale. A temperature is a reading
+    /// rather than a quantity, so the inverse is affine.
+    fn temperature(&self, v: f64) -> f64 {
+        if self.us {
+            v * 9.0 / 5.0 + 32.0
+        } else {
+            v
+        }
+    }
+    /// m/s → the file's evaporation rate (depth per day).
+    fn evap(&self, v: f64) -> f64 {
+        v / ((if self.us { 0.0254 } else { 0.001 }) / 86_400.0)
+    }
+    /// m/s → the file's wind speed.
+    fn wind(&self, v: f64) -> f64 {
+        v / (if self.us { 0.447_04 } else { 1.0 / 3.6 })
+    }
+    /// m/s → the file's velocity unit.
+    fn vel(&self, v: f64) -> f64 {
+        self.len(v)
+    }
     /// The conductivity constant itself, for the two relations that
     /// divide by it as part of a compound conversion.
     fn conductivity_of(&self) -> f64 {
@@ -276,6 +302,9 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_hydrology(network, &u, &mut out);
     write_groundwater(network, &u, &mut out);
     write_lid(network, &u, &mut out);
+    write_snow_rdii(network, &u, &mut out);
+    write_climate(network, &u, &mut out);
+    write_inlets(network, &u, &mut out);
     write_quality(network, &mut out);
     write_inflows(network, &u, &mut out);
     write_transects(network, &u, &mut out);
@@ -373,14 +402,8 @@ fn write_options(network: &Network, u: &Units, out: &mut String) {
         put("REPORT_START_TIME", hms(rt));
     }
     if o.sweep_start != d.sweep_start || o.sweep_end != d.sweep_end {
-        put(
-            "SWEEP_START",
-            format!("{:02}/{:02}", o.sweep_start / 100, o.sweep_start % 100),
-        );
-        put(
-            "SWEEP_END",
-            format!("{:02}/{:02}", o.sweep_end / 100, o.sweep_end % 100),
-        );
+        put("SWEEP_START", month_day(o.sweep_start));
+        put("SWEEP_END", month_day(o.sweep_end));
     }
     if o.dry_days != d.dry_days {
         put("DRY_DAYS", num(o.dry_days));
@@ -439,6 +462,24 @@ fn write_options(network: &Network, u: &Units, out: &mut String) {
         put("TEMPDIR", id(dir));
     }
     rows.write(out);
+}
+
+/// A day of the year as the `MM/DD` the file states it in.
+///
+/// The sweeping window is stored as a day number, so writing it back
+/// needs the calendar import used to read it — a common year, with no
+/// leap day, because a sweeping season is a date in the year rather
+/// than a date in a particular year.
+fn month_day(day_of_year: u32) -> String {
+    const LENGTHS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut remaining = day_of_year.max(1);
+    for (i, len) in LENGTHS.iter().enumerate() {
+        if remaining <= *len {
+            return format!("{:02}/{:02}", i + 1, remaining);
+        }
+        remaining -= len;
+    }
+    "12/31".into()
 }
 
 fn yes_no(b: bool) -> String {
@@ -988,6 +1029,329 @@ fn outlet_rating(
 }
 
 // ── Curves, series and patterns ─────────────────────────────────────────
+
+/// `[INLETS]` and `[INLET_USAGE]`: the inlet designs and their
+/// placements on street channels.
+///
+/// A design is line-oriented — a combination inlet is one design
+/// carrying both a grate and a curb opening, so it writes two lines
+/// under one name.
+fn write_inlets(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::{GrateKind as G, InletPlacement as P, ThroatAngle as A};
+    if !network.inlets.is_empty() {
+        let _ = writeln!(out, "\n[INLETS]");
+        for d in &network.inlets {
+            let name = id(&d.id);
+            if let Some(g) = &d.grate {
+                let _ = writeln!(
+                    out,
+                    "{name} {} {} {} {} {} {}",
+                    if d.drop_grate { "DROP_GRATE" } else { "GRATE" },
+                    num(u.len(g.length)),
+                    num(u.len(g.width)),
+                    match g.grate {
+                        G::PBar50 => "P_BAR-50",
+                        G::PBar50x100 => "P_BAR-50X100",
+                        G::PBar30 => "P_BAR-30",
+                        G::CurvedVane => "CURVED_VANE",
+                        G::TiltBar45 => "TILT_BAR-45",
+                        G::TiltBar30 => "TILT_BAR-30",
+                        G::Reticuline => "RETICULINE",
+                        G::Generic => "GENERIC",
+                    },
+                    num(g.area_ratio),
+                    num(u.vel(g.splash_velocity))
+                );
+            }
+            if let Some(c) = &d.curb {
+                let _ = writeln!(
+                    out,
+                    "{name} {} {} {} {}",
+                    if d.drop_curb { "DROP_CURB" } else { "CURB" },
+                    num(u.len(c.length)),
+                    num(u.len(c.height)),
+                    match c.throat {
+                        A::Horizontal => "HORIZONTAL",
+                        A::Inclined => "INCLINED",
+                        A::Vertical => "VERTICAL",
+                    }
+                );
+            }
+            if let Some(sl) = &d.slotted {
+                let _ = writeln!(
+                    out,
+                    "{name} SLOTTED {} {}",
+                    num(u.len(sl.length)),
+                    num(u.len(sl.width))
+                );
+            }
+            if let Some(curve) = d.custom_curve {
+                let _ = writeln!(out, "{name} CUSTOM {}", id(&network.curves[curve].id));
+            }
+        }
+    }
+
+    let mut usage = Rows::new(
+        "[INLET_USAGE]",
+        &[
+            "Conduit",
+            "Inlet",
+            "Node",
+            "Number",
+            "%Clogged",
+            "MaxFlow",
+            "hDStore",
+            "wDStore",
+            "Placement",
+        ],
+    );
+    for p in &network.inlet_usage {
+        usage.push([
+            id(&network.links[p.link].id),
+            id(&network.inlets[p.design].id),
+            id(&network.vertices[p.capture_vertex].id),
+            p.count.to_string(),
+            num(p.pct_clogged),
+            num(u.flow(p.flow_limit)),
+            num(u.len(p.local_depression)),
+            num(u.len(p.local_width)),
+            match p.placement {
+                P::Automatic => "AUTOMATIC",
+                P::OnGrade => "ON_GRADE",
+                P::OnSag => "ON_SAG",
+            }
+            .to_string(),
+        ]);
+    }
+    usage.write(out);
+}
+
+/// The climate sections: `[TEMPERATURE]`, `[EVAPORATION]` and
+/// `[ADJUSTMENTS]`.
+///
+/// `[TEMPERATURE]` is a bag of directives rather than a table — the
+/// temperature source, wind, snowmelt constants and the two areal-
+/// depletion curves all live under one header — so each writes its own
+/// line and the section appears only if something is in it.
+fn write_climate(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::{
+        EvaporationSource as E, FileTempUnits, TemperatureSource as T, WindSource as W,
+    };
+    let c = &network.climate;
+
+    let mut lines: Vec<String> = Vec::new();
+    match &c.temperature {
+        Some(T::Series(ts)) => {
+            lines.push(format!("TIMESERIES {}", id(&network.timeseries[*ts].id)));
+        }
+        Some(T::File { name, start, units }) => {
+            let mut line = format!("FILE {}", id(name));
+            if let Some(d) = start {
+                let _ = write!(line, " {}", date(*d));
+            }
+            // The unit word is part of the declaration, not a default
+            // the model can reconstruct, so it is always written.
+            let _ = write!(
+                line,
+                " {}",
+                match units {
+                    FileTempUnits::TenthsCelsius => "C10",
+                    FileTempUnits::Celsius => "C",
+                    FileTempUnits::Fahrenheit => "F",
+                }
+            );
+            lines.push(line);
+        }
+        None => {}
+    }
+    match &c.wind {
+        W::File => lines.push("WINDSPEED FILE".into()),
+        W::Monthly(v) => {
+            let mut line = String::from("WINDSPEED MONTHLY");
+            for x in v {
+                let _ = write!(line, " {}", num(u.wind(*x)));
+            }
+            lines.push(line);
+        }
+    }
+    if let Some(m) = &c.snowmelt {
+        lines.push(format!(
+            "SNOWMELT {} {} {} {} {} {}",
+            num(u.temperature(m.snow_temp)),
+            num(m.ati_weight),
+            num(m.negative_melt_ratio),
+            num(u.len(m.elevation)),
+            num(m.latitude),
+            num(m.longitude_correction)
+        ));
+    }
+    for (curve, word) in [
+        (&c.adc_impervious, "IMPERVIOUS"),
+        (&c.adc_pervious, "PERVIOUS"),
+    ] {
+        if let Some(v) = curve {
+            let mut line = format!("ADC {word}");
+            for x in v {
+                let _ = write!(line, " {}", num(*x));
+            }
+            lines.push(line);
+        }
+    }
+    if !lines.is_empty() {
+        let _ = writeln!(out, "\n[TEMPERATURE]");
+        for l in &lines {
+            let _ = writeln!(out, "{l}");
+        }
+    }
+
+    let mut evap: Vec<String> = Vec::new();
+    match &c.evaporation {
+        E::Constant(v) => evap.push(format!("CONSTANT {}", num(u.evap(*v)))),
+        E::Monthly(v) => {
+            let mut line = String::from("MONTHLY");
+            for x in v {
+                let _ = write!(line, " {}", num(u.evap(*x)));
+            }
+            evap.push(line);
+        }
+        E::Series(ts) => evap.push(format!("TIMESERIES {}", id(&network.timeseries[*ts].id))),
+        E::Temperature => evap.push("TEMPERATURE".into()),
+        E::File { pan } => {
+            let mut line = String::from("FILE");
+            for x in pan {
+                let _ = write!(line, " {}", num(*x));
+            }
+            evap.push(line);
+        }
+    }
+    if let Some(p) = c.recovery_pattern {
+        evap.push(format!("RECOVERY {}", id(&network.patterns[p].id)));
+    }
+    if c.evaporate_dry_only {
+        evap.push("DRY_ONLY YES".into());
+    }
+    let _ = writeln!(out, "\n[EVAPORATION]");
+    for l in &evap {
+        let _ = writeln!(out, "{l}");
+    }
+
+    // Adjustments default to no adjustment, which for the multiplicative
+    // pair is one and for the additive pair is zero, so a section is
+    // written only where something differs from that.
+    let mut adjust: Vec<String> = Vec::new();
+    for (word, values, neutral) in [
+        ("TEMPERATURE", &c.adjust_temperature, 0.0),
+        ("EVAPORATION", &c.adjust_evaporation, 0.0),
+        ("RAINFALL", &c.adjust_rainfall, 1.0),
+        ("CONDUCTIVITY", &c.adjust_conductivity, 1.0),
+    ] {
+        if values.iter().all(|v| *v == neutral) {
+            continue;
+        }
+        let mut line = word.to_string();
+        for v in values.iter() {
+            let _ = write!(line, " {}", num(*v));
+        }
+        adjust.push(line);
+    }
+    if !adjust.is_empty() {
+        let _ = writeln!(out, "\n[ADJUSTMENTS]");
+        for l in &adjust {
+            let _ = writeln!(out, "{l}");
+        }
+    }
+}
+
+/// `[SNOWPACKS]`, `[HYDROGRAPHS]` and `[RDII]`.
+///
+/// Melt coefficients carry a depth per hour per degree, so they invert
+/// through the conductivity constant *and* a temperature scale; a base
+/// temperature is a reading on a scale rather than a quantity, so it
+/// inverts through the affine conversion rather than a factor.
+fn write_snow_rdii(network: &Network, u: &Units, out: &mut String) {
+    if !network.snowpacks.is_empty() {
+        let _ = writeln!(out, "\n[SNOWPACKS]");
+        for sp in &network.snowpacks {
+            let name = id(&sp.id);
+            // The plowable line's last column is the plowable fraction
+            // of the impervious area; the other two carry their own
+            // full-cover depth there instead.
+            for (word, surface, last) in [
+                ("PLOWABLE", &sp.plowable, Some(sp.plow_fraction)),
+                ("IMPERVIOUS", &sp.impervious, None),
+                ("PERVIOUS", &sp.pervious, None),
+            ] {
+                let Some(sf) = surface else { continue };
+                let tail = last.unwrap_or_else(|| u.depth(sf.full_cover_depth.unwrap_or(0.0)));
+                let _ = writeln!(
+                    out,
+                    "{name} {word} {} {} {} {} {} {} {}",
+                    num(u.melt(sf.dh_min)),
+                    num(u.melt(sf.dh_max)),
+                    num(u.temperature(sf.t_base)),
+                    num(sf.fw_frac),
+                    num(u.depth(sf.init_depth)),
+                    num(u.depth(sf.init_free_water)),
+                    num(tail)
+                );
+            }
+            if let Some(r) = &sp.removal {
+                let mut line = format!("{name} REMOVAL {}", num(u.depth(r.trigger_depth)));
+                for f in &r.fractions {
+                    let _ = write!(line, " {}", num(*f));
+                }
+                if let Some(p) = r.to_parcel {
+                    let _ = write!(line, " {}", id(&network.parcels[p].id));
+                }
+                let _ = writeln!(out, "{line}");
+            }
+        }
+    }
+
+    if !network.unit_hydrographs.is_empty() {
+        let _ = writeln!(out, "\n[HYDROGRAPHS]");
+        const MONTHS: [&str; 12] = [
+            "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+        ];
+        const CLASSES: [&str; 3] = ["SHORT", "MEDIUM", "LONG"];
+        for g in &network.unit_hydrographs {
+            let name = id(&g.id);
+            if let Some(gage) = g.gage {
+                let _ = writeln!(out, "{name} {}", id(&network.gages[gage].id));
+            }
+            for (m, classes) in g.months.iter().enumerate() {
+                for (k, response) in classes.iter().enumerate() {
+                    let Some(r) = response else { continue };
+                    // Field order is the predecessor's: the three
+                    // initial-abstraction columns are max, recovery,
+                    // initial — not the order the model names them in.
+                    let _ = writeln!(
+                        out,
+                        "{name} {} {} {} {} {} {} {} {}",
+                        MONTHS[m],
+                        CLASSES[k],
+                        num(r.r),
+                        num(r.t_peak / 3600.0),
+                        num(r.k),
+                        num(u.depth(r.ia_max)),
+                        num(u.depth(r.ia_recovery)),
+                        num(u.depth(r.ia_init))
+                    );
+                }
+            }
+        }
+    }
+
+    let mut rdii = Rows::new("[RDII]", &["Node", "UnitHydrograph", "SewerArea"]);
+    for r in &network.rdii {
+        rdii.push([
+            id(&network.vertices[r.vertex].id),
+            id(&network.unit_hydrographs[r.group].id),
+            num(u.land(r.area)),
+        ]);
+    }
+    rdii.write(out);
+}
 
 /// `[LID_CONTROLS]` and `[LID_USAGE]`: the control-measure designs and
 /// where they are deployed.
@@ -1946,20 +2310,25 @@ fn write_xsections(network: &Network, out: &mut String) {
         let Some(x) = &l.cross_section else { continue };
         // A referent-carrying shape names its referent in the first
         // geometry column, where import reads it.
-        let geom1 = match (&x.referent, x.shape) {
-            (Some(R::Transect(t)), _) => id(&network.transects[*t].id),
-            (Some(R::Street(s)), _) => id(&network.streets[*s].id),
-            (Some(R::Curve(c)), _) => id(&network.curves[*c].id),
+        // Where a referent goes is the shape's own question. A transect
+        // or a street replaces the first geometry column; a custom
+        // section keeps its full height there and names its curve in the
+        // second. Putting them all in the first wrote a curve name into
+        // a column the reader reads as a number.
+        let (geom1, geom2) = match (&x.referent, x.shape) {
+            (Some(R::Transect(t)), _) => (id(&network.transects[*t].id), String::new()),
+            (Some(R::Street(st)), _) => (id(&network.streets[*st].id), String::new()),
+            (Some(R::Curve(c)), _) => (num(x.geom_user[0]), id(&network.curves[*c].id)),
             (None, XsectShape::Irregular | XsectShape::Street | XsectShape::Custom) => {
-                String::new()
+                (String::new(), String::new())
             }
-            (None, _) => num(x.geom_user[0]),
+            (None, _) => (num(x.geom_user[0]), num(x.geom_user[1])),
         };
         rows.push([
             id(&l.id),
             crate::io::objects::xsect_word(x.shape).to_string(),
             geom1,
-            num(x.geom_user[1]),
+            geom2,
             num(x.geom_user[2]),
             num(x.geom_user[3]),
             x.barrels.to_string(),
