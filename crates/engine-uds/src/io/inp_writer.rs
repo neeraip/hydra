@@ -105,6 +105,32 @@ impl Units {
     fn land(&self, v: f64) -> f64 {
         v / self.land_area
     }
+    /// The groundwater lateral relation's flow-per-area factor: the
+    /// file states these coefficients as flow per area against heads in
+    /// the file's length unit, so the conversion is that factor over the
+    /// length raised to the relation's own exponent (§14.6).
+    fn gw_flow(&self) -> f64 {
+        if self.us {
+            0.028_316_846_592 / 4_046.856_422_4
+        } else {
+            1.0e-4
+        }
+    }
+    /// The inverse of that conversion for one coefficient, undone in the
+    /// order import applied it: import scaled then divided by the head
+    /// power, so this multiplies by the power then unscales.
+    fn gw_coeff(&self, v: f64, head_power: f64) -> f64 {
+        v * self.len.powf(head_power) / self.gw_flow()
+    }
+    /// The conductivity constant itself, for the two relations that
+    /// divide by it as part of a compound conversion.
+    fn conductivity_of(&self) -> f64 {
+        self.conductivity
+    }
+    /// The file's surface-depth unit raised to a relation's exponent.
+    fn head_power(&self, exponent: f64) -> f64 {
+        self.rain_depth.powf(exponent)
+    }
     /// m^½/s → the file's weir-coefficient unit.
     fn weir(&self, v: f64) -> f64 {
         v / self.weir_coeff
@@ -248,6 +274,8 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_vertices(network, &u, &mut out);
     write_links(network, &u, &mut out);
     write_hydrology(network, &u, &mut out);
+    write_groundwater(network, &u, &mut out);
+    write_lid(network, &u, &mut out);
     write_quality(network, &mut out);
     write_inflows(network, &u, &mut out);
     write_transects(network, &u, &mut out);
@@ -960,6 +988,283 @@ fn outlet_rating(
 }
 
 // ── Curves, series and patterns ─────────────────────────────────────────
+
+/// `[LID_CONTROLS]` and `[LID_USAGE]`: the control-measure designs and
+/// where they are deployed.
+///
+/// The designs are line-oriented — one line per layer, each naming the
+/// design again — rather than columnar, so they are written directly.
+/// Three of the layer conversions are not scalings and invert
+/// algebraically: a surface's void fraction is stated in the file as the
+/// *vegetation* fraction that fills it, and a pavement's and a storage
+/// layer's as a void *ratio* against solids rather than a fraction of
+/// the whole.
+fn write_lid(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::{LidKind as K, ParcelOutlet};
+    if !network.lid_controls.is_empty() {
+        let _ = writeln!(out, "\n[LID_CONTROLS]");
+        for c in &network.lid_controls {
+            let name = id(&c.id);
+            if let Some(kind) = c.kind {
+                let _ = writeln!(
+                    out,
+                    "{name} {}",
+                    match kind {
+                        K::BioRetention => "BC",
+                        K::RainGarden => "RG",
+                        K::GreenRoof => "GR",
+                        K::InfiltrationTrench => "IT",
+                        K::PermeablePavement => "PP",
+                        K::RainBarrel => "RB",
+                        K::RooftopDisconnection => "RD",
+                        K::VegetativeSwale => "VS",
+                    }
+                );
+            }
+            if let Some(l) = &c.surface {
+                let _ = writeln!(
+                    out,
+                    "{name} SURFACE {} {} {} {} {}",
+                    num(u.depth(l.thickness)),
+                    // Stated as the fraction vegetation occupies.
+                    num(1.0 - l.void_frac),
+                    num(l.roughness),
+                    num(l.slope * 100.0),
+                    num(l.side_slope)
+                );
+            }
+            if let Some(l) = &c.soil {
+                let _ = writeln!(
+                    out,
+                    "{name} SOIL {} {} {} {} {} {} {}",
+                    num(u.depth(l.thickness)),
+                    num(l.porosity),
+                    num(l.field_capacity),
+                    num(l.wilting_point),
+                    num(u.rate(l.k_sat)),
+                    num(l.k_slope),
+                    num(u.depth(l.suction))
+                );
+            }
+            if let Some(l) = &c.pavement {
+                let _ = writeln!(
+                    out,
+                    "{name} PAVEMENT {} {} {} {} {} {} {}",
+                    num(u.depth(l.thickness)),
+                    void_ratio(l.void_frac),
+                    num(l.imperv_frac),
+                    num(u.rate(l.k_sat)),
+                    num(l.clog_factor),
+                    num(l.regen_days),
+                    num(l.regen_degree)
+                );
+            }
+            if let Some(l) = &c.storage {
+                let _ = writeln!(
+                    out,
+                    "{name} STORAGE {} {} {} {} {}",
+                    num(u.depth(l.thickness)),
+                    void_ratio(l.void_frac),
+                    num(u.rate(l.k_sat)),
+                    num(l.clog_factor),
+                    if l.covered { "YES" } else { "NO" }
+                );
+            }
+            if let Some(l) = &c.drain {
+                let _ = writeln!(
+                    out,
+                    "{name} DRAIN {} {} {} {} {} {} {}",
+                    // Undone in the order import applied it: it scaled
+                    // by conductivity then divided by the head power.
+                    num(l.coeff * u.head_power(l.exponent) / u.conductivity_of()),
+                    num(l.exponent),
+                    num(u.depth(l.offset)),
+                    num(l.delay / 3600.0),
+                    num(u.depth(l.h_open)),
+                    num(u.depth(l.h_close)),
+                    l.curve.map_or(String::new(), |c| id(&network.curves[c].id))
+                );
+            }
+            if let Some(l) = &c.drain_mat {
+                let _ = writeln!(
+                    out,
+                    "{name} DRAINMAT {} {} {}",
+                    num(u.depth(l.thickness)),
+                    num(l.void_frac),
+                    num(l.roughness)
+                );
+            }
+            if !c.removals.is_empty() {
+                let mut line = format!("{name} REMOVALS");
+                for (ci, frac) in &c.removals {
+                    let _ = write!(
+                        line,
+                        " {} {}",
+                        id(&network.constituents[*ci].id),
+                        num(frac * 100.0)
+                    );
+                }
+                let _ = writeln!(out, "{line}");
+            }
+        }
+    }
+
+    let mut usage = Rows::new(
+        "[LID_USAGE]",
+        &[
+            "Subcatch",
+            "LIDProcess",
+            "Number",
+            "Area",
+            "Width",
+            "InitSat",
+            "FromImp",
+            "ToPerv",
+            "RptFile",
+            "DrainTo",
+            "FromPerv",
+        ],
+    );
+    for lu in &network.lid_usage {
+        usage.push([
+            id(&network.parcels[lu.parcel].id),
+            id(&network.lid_controls[lu.control].id),
+            lu.count.to_string(),
+            num(u.area(lu.area)),
+            num(u.len(lu.width)),
+            num(lu.init_saturation * 100.0),
+            num(lu.from_impervious * 100.0),
+            u8::from(lu.to_pervious).to_string(),
+            // Positional again: a drain target after an absent report
+            // file would shift into its column.
+            lu.report_file.clone().unwrap_or_else(|| "*".into()),
+            match lu.drain_to {
+                Some(ParcelOutlet::Vertex(v)) => id(&network.vertices[v].id),
+                Some(ParcelOutlet::Parcel(p)) => id(&network.parcels[p].id),
+                None => "*".into(),
+            },
+            num(lu.from_pervious * 100.0),
+        ]);
+    }
+    usage.write(out);
+}
+
+/// A void fraction stated as the file's void *ratio*: voids against
+/// solids rather than against the whole, so `f = r/(r+1)` inverts as
+/// `r = f/(1-f)`.
+fn void_ratio(void_frac: f64) -> String {
+    if void_frac >= 1.0 {
+        return "0".into();
+    }
+    stable_inverse(void_frac / (1.0 - void_frac), void_frac, |r| r / (r + 1.0))
+}
+
+/// The shortest decimal that re-imports to exactly `target`.
+///
+/// An algebraic inverse is not always a numerical one. A void ratio of
+/// 0.4 imports to a fraction whose inverse computes as
+/// 0.40000000000000013, which imports to a slightly different fraction
+/// again — so the model is not a fixed point of the round trip and the
+/// file is not idempotent, however exact the algebra.
+///
+/// Searching the decimal representations shortest-first fixes both at
+/// once: it lands on the value the author wrote, because a clean value
+/// is short and reproduces the target exactly, and what it returns is
+/// by construction a value that re-reads as the model already holds. It
+/// falls back to the computed inverse when nothing round-trips, so a
+/// figure with no exact spelling is still written as closely as it can
+/// be rather than not at all.
+fn stable_inverse(computed: f64, target: f64, forward: impl Fn(f64) -> f64) -> String {
+    for digits in 1..=17 {
+        let text = format!("{computed:.*}", digits);
+        if let Ok(candidate) = text.parse::<f64>() {
+            if forward(candidate) == target {
+                // Re-format through `num` so the result carries the same
+                // shortest-form spelling every other number does.
+                return num(candidate);
+            }
+        }
+    }
+    num(computed)
+}
+
+/// The subsurface sections: aquifers, the parcels connected to them,
+/// and any custom relations those connections carry.
+fn write_groundwater(network: &Network, u: &Units, out: &mut String) {
+    let mut aquifers = Rows::new(
+        "[AQUIFERS]",
+        &[
+            "Name", "Por", "WP", "FC", "Ksat", "Kslope", "Tslope", "ETu", "ETs", "Seep", "Ebot",
+            "Egw", "Umc", "ETupat",
+        ],
+    );
+    for a in &network.aquifers {
+        aquifers.push([
+            id(&a.id),
+            num(a.porosity),
+            num(a.wilting_point),
+            num(a.field_capacity),
+            num(u.rate(a.conductivity)),
+            num(a.conductivity_slope),
+            num(u.len(a.tension_slope)),
+            num(a.upper_evap_frac),
+            num(u.len(a.lower_evap_depth)),
+            num(u.rate(a.lower_loss_coeff)),
+            num(u.len(a.bottom_elev)),
+            num(u.len(a.water_table_elev)),
+            num(a.upper_moisture),
+            a.evap_pattern
+                .map_or(String::new(), |p| id(&network.patterns[p].id)),
+        ]);
+    }
+    aquifers.write(out);
+
+    let mut links = Rows::new(
+        "[GROUNDWATER]",
+        &[
+            "Subcatch", "Aquifer", "Node", "Esurf", "A1", "B1", "A2", "B2", "A3", "Dsw", "Egwt",
+            "Ebot", "Egw", "Umc",
+        ],
+    );
+    let mut custom = Rows::new("[GWF]", &["Subcatch", "Type", "Expression"]);
+    for p in &network.parcels {
+        let Some(g) = &p.groundwater else { continue };
+        // The four trailing overrides are positional, and an absent one
+        // means "take the aquifer's value" — which the predecessor
+        // spells with a star, not with a blank.
+        let over = |v: Option<f64>| v.map_or("*".into(), |x| num(u.len(x)));
+        links.push([
+            id(&p.id),
+            id(&network.aquifers[g.aquifer].id),
+            id(&network.vertices[g.vertex].id),
+            num(u.len(g.surface_elev)),
+            num(u.gw_coeff(g.a1, g.b1)),
+            num(g.b1),
+            num(u.gw_coeff(g.a2, g.b2)),
+            num(g.b2),
+            num(u.gw_coeff(g.a3, 2.0)),
+            num(u.len(g.fixed_surface_depth)),
+            over(g.threshold_elev),
+            over(g.bottom_elev),
+            over(g.water_table_elev),
+            // The moisture override is a fraction, not a length.
+            g.upper_moisture.map_or("*".into(), num),
+        ]);
+        // Expressions are written as authored (§14.6).
+        for (kind, expr) in [
+            ("LATERAL", &g.lateral_expression),
+            ("DEEP", &g.deep_expression),
+        ] {
+            if let Some(e) = expr {
+                custom
+                    .rows
+                    .push(vec![id(&p.id), kind.to_string(), e.clone()]);
+            }
+        }
+    }
+    links.write(out);
+    custom.write(out);
+}
 
 /// The administrative sections: control rules, the report selection,
 /// interface-file declarations, and routing event windows.
