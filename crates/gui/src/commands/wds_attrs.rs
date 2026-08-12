@@ -166,6 +166,184 @@ fn extract(
     })
 }
 
+/// The inverses of the two factors the read applies. Named here rather
+/// than inlined so a reader can see that there are exactly two, and that
+/// each is the reciprocal of the one above.
+const LPS_TO_M3S: f64 = 1.0 / M3S_TO_LPS;
+const MM_TO_M: f64 = 1.0 / M_TO_MM;
+
+/// Write one attribute, addressed by the schema key the read served.
+///
+/// The unit conventions are the read's, in reverse — a diameter arrives
+/// in millimetres, a demand in litres per second, a tank's elevation as
+/// its bottom. Getting one backwards writes a wrong value into the model
+/// rather than merely showing one, and a round-trip test cannot see it,
+/// so the tests below assert absolute values.
+///
+/// **The legacy patch path spells three of these differently**, because
+/// it grew before the schema was published: `initialLevel` for
+/// `initLevel`, `curve` for `headCurve`, and `powerKw` in kilowatts for
+/// `power` in watts. The schema keys are the published contract and this
+/// takes those; the editor still speaks its own until it moves over.
+pub(crate) fn set_attribute(
+    network: &mut hydra::Network,
+    element_id: &str,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let number = || -> Result<f64, String> {
+        value
+            .as_f64()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| format!("'{key}' takes a number"))
+    };
+    // An empty string clears an optional reference; a missing pattern is
+    // how a junction says it has no pattern, not an error to report.
+    let reference = || -> Option<String> {
+        let s = value.as_str().unwrap_or("").trim().to_string();
+        (!s.is_empty()).then_some(s)
+    };
+    let flag = || -> Result<bool, String> {
+        match value.as_str().unwrap_or("").to_ascii_lowercase().as_str() {
+            "yes" | "true" => Ok(true),
+            "no" | "false" => Ok(false),
+            other => Err(format!("'{key}' takes Yes or No, not '{other}'")),
+        }
+    };
+
+    if let Some(node) = network.nodes.iter_mut().find(|n| n.base.id == element_id) {
+        return match (&mut node.kind, key) {
+            (hydra::NodeKind::Junction(_), "elevation")
+            | (hydra::NodeKind::Reservoir(_), "head") => {
+                node.base.elevation = number()?;
+                Ok(())
+            }
+            (hydra::NodeKind::Junction(j), "baseDemand") => {
+                let m3s = number()? * LPS_TO_M3S;
+                // The read sums every category, so writing one total to a
+                // junction that has several would silently drop the rest.
+                // Refuse instead, naming the surface that can do it.
+                match j.demands.len() {
+                    0 => j.demands.push(hydra::DemandCategory {
+                        base_demand: m3s,
+                        pattern: None,
+                        name: None,
+                    }),
+                    1 => j.demands[0].base_demand = m3s,
+                    n => {
+                        return Err(format!(
+                            "'{element_id}' has {n} demand categories; \
+                             their total cannot be set as one number"
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            (hydra::NodeKind::Junction(j), "demandPattern") => {
+                let p = reference();
+                match j.demands.first_mut() {
+                    Some(first) => first.pattern = p,
+                    None => j.demands.push(hydra::DemandCategory {
+                        base_demand: 0.0,
+                        pattern: p,
+                        name: None,
+                    }),
+                }
+                Ok(())
+            }
+            (hydra::NodeKind::Reservoir(r), "headPattern") => {
+                r.head_pattern = reference();
+                Ok(())
+            }
+            (hydra::NodeKind::Tank(t), key) => {
+                let stored = node.base.elevation;
+                match key {
+                    // Bottom in, bottom-plus-minimum stored. Both of
+                    // these move the stored elevation, and forgetting
+                    // either moves the tank instead of resizing it.
+                    "elevation" => node.base.elevation = number()? + t.min_level,
+                    "minLevel" => {
+                        let bottom = stored - t.min_level;
+                        t.min_level = number()?;
+                        node.base.elevation = bottom + t.min_level;
+                    }
+                    "initLevel" => t.initial_level = number()?,
+                    "maxLevel" => t.max_level = number()?,
+                    "diameter" => t.diameter = number()? * MM_TO_M,
+                    "minVolume" => t.min_volume = number()?,
+                    "volumeCurve" => t.volume_curve = reference(),
+                    "overflow" => t.overflow = flag()?,
+                    other => return Err(unwritable(other)),
+                }
+                Ok(())
+            }
+            (_, other) => Err(unwritable(other)),
+        };
+    }
+
+    let link = network
+        .links
+        .iter_mut()
+        .find(|l| l.base.id == element_id)
+        .ok_or_else(|| format!("element '{element_id}' not found"))?;
+    match (&mut link.kind, key) {
+        (hydra::LinkKind::Pipe(p), key) => match key {
+            "length" => p.length = number()?,
+            "diameter" => p.diameter = number()? * MM_TO_M,
+            "roughness" => p.roughness = number()?,
+            "minorLoss" => p.minor_loss = number()?,
+            "checkValve" => p.check_valve = flag()?,
+            other => return Err(unwritable(other)),
+        },
+        (hydra::LinkKind::Pump(p), "headCurve") => {
+            p.head_curve = reference();
+            // A curve and a constant power are mutually exclusive; the
+            // one that was just set wins.
+            if p.head_curve.is_some() {
+                p.power = None;
+            }
+        }
+        (hydra::LinkKind::Pump(p), "power") => {
+            p.power = Some(number()?);
+            p.head_curve = None;
+        }
+        (hydra::LinkKind::Pump(p), "speedPattern") => p.speed_pattern = reference(),
+        (hydra::LinkKind::Pump(_), "speed") => link.base.initial_setting = Some(number()?),
+        (hydra::LinkKind::Valve(v), key) => match key {
+            "diameter" => v.diameter = number()? * MM_TO_M,
+            "minorLoss" => v.minor_loss = number()?,
+            "valveType" => {
+                v.valve_type = match value.as_str().unwrap_or("").to_ascii_uppercase().as_str() {
+                    "PRV" => hydra::ValveType::Prv,
+                    "PSV" => hydra::ValveType::Psv,
+                    "PBV" => hydra::ValveType::Pbv,
+                    "FCV" => hydra::ValveType::Fcv,
+                    "TCV" => hydra::ValveType::Tcv,
+                    "GPV" => hydra::ValveType::Gpv,
+                    "PCV" => hydra::ValveType::Pcv,
+                    other => return Err(format!("unknown valve type '{other}'")),
+                };
+            }
+            "setting" => {
+                let raw = number()?;
+                link.base.initial_setting =
+                    Some(if matches!(v.valve_type, hydra::ValveType::Fcv) {
+                        raw * LPS_TO_M3S
+                    } else {
+                        raw
+                    });
+            }
+            other => return Err(unwritable(other)),
+        },
+        (_, other) => return Err(unwritable(other)),
+    }
+    Ok(())
+}
+
+fn unwritable(key: &str) -> String {
+    format!("'{key}' cannot be edited here")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +451,168 @@ mod tests {
     #[test]
     fn an_unknown_id_declines_rather_than_inventing_rows() {
         assert!(element_attributes(&sample_network(), "NOPE").is_none());
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+    use crate::commands::test_fixtures::TEST_INP;
+
+    fn model() -> hydra::Network {
+        hydra::io::parse(TEST_INP.as_bytes()).expect("the fixture parses")
+    }
+
+    fn read(net: &hydra::Network, id: &str, key: &str) -> Option<f64> {
+        element_attributes(net, id)?
+            .into_iter()
+            .find(|r| r.key == key)?
+            .number
+    }
+
+    fn set(net: &mut hydra::Network, id: &str, key: &str, v: serde_json::Value) {
+        set_attribute(net, id, key, &v).unwrap_or_else(|e| panic!("{id}.{key}: {e}"));
+    }
+
+    /// The write applies the read's factors in reverse, and a round trip
+    /// cannot tell whether it applied them at all — the error cancels.
+    /// So this reaches past the contract and asserts what the *model*
+    /// now holds.
+    #[test]
+    fn a_diameter_arrives_in_millimetres_and_is_stored_in_metres() {
+        let mut net = model();
+        set(&mut net, "P1", "diameter", serde_json::json!(500.0));
+        let stored = net
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                hydra::LinkKind::Pipe(p) if l.base.id == "P1" => Some(p.diameter),
+                _ => None,
+            })
+            .expect("P1");
+        assert!(
+            (stored - 0.5).abs() < 1e-12,
+            "500 mm stored as {stored} m, expected 0.5"
+        );
+        assert!((read(&net, "P1", "diameter").expect("a number") - 500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_demand_arrives_in_litres_per_second_and_is_stored_in_cubic_metres() {
+        let mut net = model();
+        set(&mut net, "J1", "baseDemand", serde_json::json!(20.0));
+        let stored = net
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                hydra::NodeKind::Junction(j) if n.base.id == "J1" => {
+                    Some(j.demands.iter().map(|d| d.base_demand).sum::<f64>())
+                }
+                _ => None,
+            })
+            .expect("J1");
+        assert!(
+            (stored - 0.02).abs() < 1e-12,
+            "20 L/s stored as {stored} m³/s, expected 0.02"
+        );
+    }
+
+    /// A tank's bottom and its minimum level both move the stored
+    /// elevation, and forgetting either moves the tank instead of
+    /// resizing it.
+    #[test]
+    fn a_tanks_bottom_and_minimum_level_keep_their_relationship() {
+        let mut net = model();
+        set(&mut net, "T1", "elevation", serde_json::json!(60.0));
+        assert!((read(&net, "T1", "elevation").expect("a number") - 60.0).abs() < 1e-9);
+
+        let min_before = read(&net, "T1", "minLevel").expect("a number");
+        set(
+            &mut net,
+            "T1",
+            "minLevel",
+            serde_json::json!(min_before + 3.0),
+        );
+        // The bottom is where it was put: raising the minimum level
+        // deepens the tank rather than lifting it.
+        assert!(
+            (read(&net, "T1", "elevation").expect("a number") - 60.0).abs() < 1e-9,
+            "changing the minimum level moved the bottom"
+        );
+        let stored = net
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "T1")
+            .map(|n| n.base.elevation)
+            .expect("T1");
+        assert!((stored - (60.0 + min_before + 3.0)).abs() < 1e-9);
+    }
+
+    /// Every key the read serves as a number must be writable by the
+    /// same key, or a surface that read a row cannot write it back.
+    #[test]
+    fn every_numeric_row_can_be_written_by_the_key_it_was_read_by() {
+        let mut checked = 0;
+        for id in ["J1", "R1", "T1", "P1"] {
+            let rows = element_attributes(&model(), id).expect("attributes");
+            for r in rows
+                .into_iter()
+                .filter(|r| r.number.is_some() && r.editable)
+            {
+                let mut net = model();
+                let before = r.number.expect("a number");
+                let value = if before.abs() < 1e-9 {
+                    1.0
+                } else {
+                    before * 1.5
+                };
+                set_attribute(&mut net, id, &r.key, &serde_json::json!(value))
+                    .unwrap_or_else(|e| panic!("{id}.{}: {e}", r.key));
+                let after = read(&net, id, &r.key).expect("a number");
+                assert!(
+                    (after - value).abs() < 1e-6,
+                    "{id}.{} set {value}, read back {after}",
+                    r.key
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 8, "only {checked} attributes were exercised");
+    }
+
+    #[test]
+    fn a_reference_is_cleared_by_an_empty_string() {
+        let mut net = model();
+        set(&mut net, "J1", "demandPattern", serde_json::json!("P7"));
+        assert_eq!(
+            element_attributes(&net, "J1")
+                .expect("rows")
+                .into_iter()
+                .find(|r| r.key == "demandPattern")
+                .and_then(|r| r.text),
+            Some("P7".to_string())
+        );
+        set(&mut net, "J1", "demandPattern", serde_json::json!(""));
+        // Cleared, so the row is gone rather than blank — an element
+        // with no value for a key produces none (§4.5.1).
+        assert!(element_attributes(&net, "J1")
+            .expect("rows")
+            .iter()
+            .all(|r| r.key != "demandPattern"));
+    }
+
+    #[test]
+    fn a_key_this_kind_does_not_carry_is_refused() {
+        let mut net = model();
+        let err = set_attribute(&mut net, "J1", "diameter", &serde_json::json!(100.0))
+            .expect_err("a junction has no diameter");
+        assert!(err.contains("diameter"), "unhelpful: {err}");
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_shape_is_refused() {
+        let mut net = model();
+        assert!(set_attribute(&mut net, "P1", "length", &serde_json::json!("wide")).is_err());
+        assert!(set_attribute(&mut net, "P1", "checkValve", &serde_json::json!(3)).is_err());
     }
 }

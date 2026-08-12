@@ -16,8 +16,9 @@ import { useElementAttributeWrite } from "./useAttributeWrite";
  * editing surfaces reach it and neither can mount its own provider here.
  */
 
-const setElementAttribute = vi.fn((_id: string, _key: string, _value: number) =>
-  Promise.resolve(),
+const setElementAttribute = vi.fn(
+  (_project: string, _id: string, _key: string, _value: number | string) =>
+    Promise.resolve(),
 );
 const saveProjectOnDisk = vi.fn((_id: string, _scenarioId?: string | null) =>
   Promise.resolve(true),
@@ -26,8 +27,12 @@ const markEdited = vi.fn();
 const showToast = vi.fn();
 
 vi.mock("./network", () => ({
-  setElementAttribute: (id: string, key: string, value: number) =>
-    setElementAttribute(id, key, value),
+  setElementAttribute: (
+    project: string,
+    id: string,
+    key: string,
+    value: number | string,
+  ) => setElementAttribute(project, id, key, value),
 }));
 vi.mock("./projects", () => ({
   saveProjectOnDisk: (id: string, scenarioId?: string | null) =>
@@ -71,7 +76,14 @@ describe("useElementAttributeWrite", () => {
     await act(async () => {
       await write("J1", "invert", 12.5);
     });
-    expect(setElementAttribute).toHaveBeenCalledWith("J1", "invert", 12.5);
+    // The project travels with the write: the command needs it to know
+    // which engine's model it is addressing.
+    expect(setElementAttribute).toHaveBeenCalledWith(
+      "p1",
+      "J1",
+      "invert",
+      12.5,
+    );
     expect(saveProjectOnDisk).toHaveBeenCalledWith("p1", "s1");
     expect(markEdited).toHaveBeenCalledWith("p1", "s1");
   });

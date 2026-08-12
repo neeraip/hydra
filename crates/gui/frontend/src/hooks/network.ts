@@ -1329,13 +1329,31 @@ export function parseElementAttribute(
   return (entered - quantity.siToUsOffset) / quantity.siToUsScale;
 }
 
-/** Write one attribute back. Takes the value in the unit the read serves. */
+/**
+ * Write one attribute back, whichever engine holds the model.
+ *
+ * Addressed by the schema key the read served, and taking the value in
+ * the unit that read served it in — the attribute's declared quantity,
+ * which is not always SI.
+ *
+ * `value` is not always a number: water distribution edits a demand
+ * pattern and a valve type in its tables, so the contract cannot
+ * restrict editing to numbers. An engine whose write takes only numbers
+ * refuses anything else, which is why its schema marks only numbers
+ * editable.
+ */
 export async function setElementAttribute(
+  projectId: string,
   elementId: string,
   key: string,
-  value: number,
+  value: number | string,
 ): Promise<void> {
-  await invoke<void>("set_uds_element_attribute", { elementId, key, value });
+  await invoke<void>("set_element_attribute", {
+    projectId,
+    elementId,
+    key,
+    value,
+  });
 }
 
 /**

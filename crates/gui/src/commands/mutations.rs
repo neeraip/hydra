@@ -552,6 +552,24 @@ fn rename_uds_element(
 /// `null` on the frontend, triggering a full snapshot refetch). The state
 /// lock is held across the emit (see `NETWORK_CHANGED_EVENT`) so event order
 /// always matches mutation commit order.
+/// Command wrapper for a water-distribution attribute write.
+///
+/// The same shape `mutate_uds` has, so the dispatching command reads as
+/// one call per engine rather than one call and one open-coded block.
+/// Structural rather than a patch: the caller's change is committed to
+/// the model and announced, which is what the editing contract's
+/// §4.5.5 means by an edit existing when the operation returns.
+pub(crate) fn mutate_wds<F>(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, NetworkState>,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::Network) -> Result<(), String>,
+{
+    mutate_structural(app, state, f)
+}
+
 fn mutate_structural<F>(app: &tauri::AppHandle, state: &NetworkState, f: F) -> Result<(), String>
 where
     F: FnOnce(&mut hydra::Network) -> Result<(), String>,

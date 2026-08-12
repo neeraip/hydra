@@ -25,6 +25,10 @@ import { saveProjectOnDisk } from "./projects";
  * Failures are toasted and rethrown: the caller's field restores the
  * value the model still holds, so the toast says what happened and the
  * field says what is true.
+ *
+ * With no active project there is nothing to write to, so the write is
+ * skipped rather than sent — the command needs the project to know
+ * which engine's model it is addressing.
  */
 export function useElementAttributeWrite(): (
   elementId: string,
@@ -36,8 +40,9 @@ export function useElementAttributeWrite(): (
 
   return useCallback(
     async (elementId, key, value) => {
+      if (!activeProjectId) return;
       try {
-        await setElementAttribute(elementId, key, value);
+        await setElementAttribute(activeProjectId, elementId, key, value);
       } catch (err) {
         showToast(
           typeof err === "string"
@@ -47,10 +52,8 @@ export function useElementAttributeWrite(): (
         );
         throw err;
       }
-      if (activeProjectId) {
-        await saveProjectOnDisk(activeProjectId, activeScenarioId);
-        markEdited(activeProjectId, activeScenarioId);
-      }
+      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      markEdited(activeProjectId, activeScenarioId);
     },
     [activeProjectId, activeScenarioId, markEdited, showToast],
   );

@@ -205,7 +205,7 @@ fn link_values(
 
 /// Properties rows for one element: the §4 schema's rows, in schema order,
 /// with values the model actually carries.
-pub fn element_attributes(
+pub(crate) fn element_attributes(
     net: &Network,
     element_id: &str,
 ) -> Option<Vec<super::element_attrs::ElementAttributeDto>> {
@@ -1361,23 +1361,6 @@ GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE
 
 // ── Writing an attribute back ───────────────────────────────────────────
 
-/// Set one attribute on one element of the loaded drainage model.
-///
-/// Takes the value in the descriptor's base unit, the same one
-/// [`element_attributes`] serves it in.
-#[tauri::command(async)]
-pub fn set_uds_element_attribute(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    element_id: String,
-    key: String,
-    value: f64,
-) -> Result<(), String> {
-    super::mutations::mutate_uds(&app, &state, |network| {
-        set_element_attribute(network, &element_id, &key, value)
-    })
-}
-
 /// Set one engine-described attribute on one element (§4.4).
 ///
 /// Keyed by the same schema key the read path serves, and taking a value
@@ -1397,7 +1380,7 @@ pub fn set_uds_element_attribute(
 /// setting a number; a shape carries four geometry values behind one
 /// label. Those refuse by name rather than being silently ignored, so a
 /// caller learns which of the two it asked for.
-pub fn set_element_attribute(
+pub(crate) fn set_attribute(
     net: &mut Network,
     element_id: &str,
     key: &str,
@@ -1615,7 +1598,7 @@ RS1  0:00  0.4
                     .unwrap_or_else(|| panic!("{kind}.{key} has no row"));
                 assert!(before.editable, "{kind}.{key} reads as not editable");
                 let value = before.number.expect("a number") + 1.5;
-                set_element_attribute(&mut net, id, key, value)
+                set_attribute(&mut net, id, key, value)
                     .unwrap_or_else(|e| panic!("{kind}.{key}: {e}"));
                 let got = read(&net, id, &before.label);
                 assert!(
@@ -1649,7 +1632,7 @@ RS1  0:00  0.4
         // The edit has to reach the model text and come back, not just
         // sit in memory.
         let mut net = model();
-        set_element_attribute(&mut net, "S1", "imperviousness", 62.0).expect("set");
+        set_attribute(&mut net, "S1", "imperviousness", 62.0).expect("set");
         let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
         let (again, diags) = hydra::uds::io::objects::parse_network(&text);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
@@ -1663,16 +1646,16 @@ RS1  0:00  0.4
         // than being quietly ignored, so a caller learns which of the two
         // it asked for.
         let mut net = model();
-        let err = set_element_attribute(&mut net, "S1", "outlet", 1.0).expect_err("refused");
+        let err = set_attribute(&mut net, "S1", "outlet", 1.0).expect_err("refused");
         assert!(err.contains("outlet"), "{err}");
-        let err = set_element_attribute(&mut net, "C1", "shape", 1.0).expect_err("refused");
+        let err = set_attribute(&mut net, "C1", "shape", 1.0).expect_err("refused");
         assert!(err.contains("shape"), "{err}");
     }
 
     #[test]
     fn an_unknown_element_is_not_silently_ignored() {
         let mut net = model();
-        let err = set_element_attribute(&mut net, "NOPE", "invert", 1.0).expect_err("refused");
+        let err = set_attribute(&mut net, "NOPE", "invert", 1.0).expect_err("refused");
         assert!(err.contains("NOPE"), "{err}");
     }
 }

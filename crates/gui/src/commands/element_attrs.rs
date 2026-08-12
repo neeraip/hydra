@@ -128,3 +128,46 @@ pub fn get_element_details(
         _ => Ok(None),
     }
 }
+
+#[tauri::command(async)]
+/// Set one attribute on one element, whichever engine holds the model.
+///
+/// Addressed by the schema key the read served, and taking the value in
+/// the unit that read served it in — which is the attribute's declared
+/// quantity, not always SI: a drainage area is stated in hectares, a
+/// water-distribution diameter in millimetres. The application converts
+/// for display and converts back, so no engine learns the user's
+/// preference.
+///
+/// The value is a JSON value rather than a number because an attribute
+/// is not always one. Water distribution edits a demand pattern and a
+/// valve type in its tables today, so the contract cannot restrict
+/// editing to numbers; drainage's own write takes only numbers, and
+/// refuses anything else, which is why its schema marks only numbers
+/// editable.
+pub fn set_element_attribute(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    element_id: String,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    validate_target_ids(&project_id, None)?;
+    let app_data = app_data_dir(&app)?;
+    match project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let number = value
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| format!("'{key}' takes a number"))?;
+            super::mutations::mutate_uds(&app, &state, |network| {
+                super::uds_attrs::set_attribute(network, &element_id, &key, number)
+            })
+        }
+        "wds" => super::mutations::mutate_wds(&app, &state, |network| {
+            super::wds_attrs::set_attribute(network, &element_id, &key, &value)
+        }),
+        other => Err(format!("no editing surface for engine '{other}'")),
+    }
+}
