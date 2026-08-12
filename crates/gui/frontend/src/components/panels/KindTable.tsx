@@ -36,6 +36,7 @@ import { EditableNumber } from "../ui/EditableNumber";
 import {
   EDITOR_TD,
   editorRowHeight,
+  editorRowHover,
   editorRowStyle,
   SortTh,
   useVirtualRows,
@@ -175,6 +176,17 @@ export function KindTable({
     return () => cancelAnimationFrame(raf);
   }, [revealToken]);
 
+  // A column of numbers is read down its digits, so it is right-aligned
+  // — the same rule the water-distribution tables apply, decided here
+  // from the values rather than from a column name this file cannot
+  // interpret. A quantity is not the test: a roughness is a number with
+  // no unit, and a boundary condition is a word.
+  const numeric = useMemo(
+    () =>
+      elements.columns.map((c) => c.values.some((v) => typeof v === "number")),
+    [elements.columns],
+  );
+
   const columnCount = elements.columns.length + 1;
 
   if (elements.ids.length === 0) {
@@ -268,9 +280,10 @@ export function KindTable({
                   onSort={toggleSort}
                   markUnsorted
                 />
-                {elements.columns.map((c) => (
+                {elements.columns.map((c, ci) => (
                   <SortTh
                     key={c.key}
+                    align={numeric[ci] ? "right" : "left"}
                     field={c.key}
                     label={
                       c.quantity
@@ -296,22 +309,16 @@ export function KindTable({
                     key={id}
                     data-selected={isSelected ? "true" : undefined}
                     onClick={() => onSelect?.(id)}
-                    onMouseEnter={(e) => {
-                      if (!isSelected)
-                        e.currentTarget.style.background =
-                          "var(--bg-card-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected) e.currentTarget.style.background = "";
-                    }}
+                    {...editorRowHover}
                     style={editorRowStyle({
                       selected: isSelected,
                       clickable: !!onSelect,
                     })}
                   >
                     <td style={{ ...EDITOR_TD, fontWeight: 500 }}>{id}</td>
-                    {elements.columns.map((c) => {
+                    {elements.columns.map((c, ci) => {
                       const v = c.values[i];
+                      const align = numeric[ci] ? "right" : "left";
                       const editable = onEdit
                         ? editableNumberOf(c.editable, v)
                         : null;
@@ -328,14 +335,17 @@ export function KindTable({
                               // reader needs to place the field.
                               label={`${id} ${c.label}`}
                               chrome="cell"
-                              align="left"
+                              align={align}
                               onCommit={(next) => onEdit?.(id, c.key, next)}
                             />
                           </td>
                         );
                       }
                       return (
-                        <td key={c.key} style={EDITOR_TD}>
+                        <td
+                          key={c.key}
+                          style={{ ...EDITOR_TD, textAlign: align }}
+                        >
                           {v == null
                             ? "—"
                             : typeof v === "number"

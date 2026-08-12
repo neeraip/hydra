@@ -371,6 +371,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // for read-only engines the tools hide rather than refuse per gesture.
   const {
     editing,
+    undoableEdits,
     animatedVariables,
     CreateNodeModal: EngineCreateNode,
     CreateLinkModal: EngineCreateLink,
@@ -2127,8 +2128,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       }
       // Undo capture: previous raw (source-CRS) coordinates, read BEFORE the
       // patch — same coordinate space as the converted values patched below.
-      const prev = rawNetworkRef.current.nodes.find((n) => n.id === id);
+      const prev = undoableEdits
+        ? rawNetworkRef.current.nodes.find((n) => n.id === id)
+        : undefined;
       await patchNodePosition(id, x, y);
+      if (!undoableEdits) {
+        // Nothing here can put this move back — see `undoableEdits`. The
+        // history is cleared rather than left holding entries that name
+        // elements this engine's commands cannot address.
+        clearStacks(stackKey(project.id, activeScenarioId ?? null));
+      }
       if (prev) {
         // Position inverses travel as x/y field patches (same coordinate
         // store as patch_node_position) — see undoStack's RecreateSpec doc.
@@ -2153,7 +2162,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // No bumpNetwork(): the backend emits `network-changed`, which already
       // bumps the version — a manual bump doubled the full-snapshot refetch.
     },
-    [project, activeScenarioId, markEdited, sourceCrs, showToast],
+    [
+      project,
+      activeScenarioId,
+      markEdited,
+      sourceCrs,
+      showToast,
+      undoableEdits,
+    ],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -2164,7 +2180,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // Undo capture: the element plus any links that cascade-delete with a
     // node, from the raw snapshot BEFORE the delete.
     const { nodes: rawNodes, links: rawLinks } = rawNetworkRef.current;
-    const recreates = recreateSpecsForDelete(kind, id, rawNodes, rawLinks);
+    // Only for an engine the stack can replay. The specs it builds are
+    // water-distribution create commands, and it recognises a drainage
+    // junction and a conduit by name — so without this it captured
+    // entries that looked undoable and refused when applied.
+    const recreates = undoableEdits
+      ? recreateSpecsForDelete(kind, id, rawNodes, rawLinks)
+      : null;
     let removed: Removed;
     try {
       removed = await deleteElement(kind, id);
@@ -2201,6 +2223,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     markEdited,
     clearSelection,
     showToast,
+    undoableEdits,
   ]);
 
   const handleRenameElement = useCallback(

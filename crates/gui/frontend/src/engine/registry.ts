@@ -160,6 +160,21 @@ export interface EngineComponents {
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
   /**
+   * Whether this GUI's undo stack can replay this engine's edits.
+   *
+   * The stack stores inverses as *water-distribution commands* — a
+   * position patch, a node recreate, a link recreate — because that is
+   * the only engine it was built for. Replaying one against another
+   * engine's model fails: the command refuses, the entry is dropped,
+   * and the user is told their undo did not work.
+   *
+   * So an engine that cannot be replayed captures nothing, and its
+   * mutations clear the history instead. A stack that visibly holds
+   * "Deleted J2" and then refuses to undo it is worse than one that
+   * plainly holds nothing.
+   */
+  undoableEdits: boolean;
+  /**
    * Whether a project for this engine can begin with nothing imported.
    *
    * Not `editing.create`, though it was derived from it and briefly
@@ -255,6 +270,7 @@ const WDS: EngineComponents = {
   CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
+  undoableEdits: true,
   hasStarterModel: true,
   editing: {
     geometry: true,
@@ -292,6 +308,10 @@ const UDS: EngineComponents = {
   // cannot change this" with "you cannot find this".
   editorFocusesElements: true,
   settingsEditable: false,
+  // Drainage edits are written straight through; nothing here can put
+  // one back. The stack is cleared on every drainage mutation rather
+  // than filled with entries that would refuse.
+  undoableEdits: false,
   hasStarterModel: false,
   // Everything but the title. A drainage node's coordinate is a line in
   // a preserved display section and its name appears in the control-rule

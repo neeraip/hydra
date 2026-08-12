@@ -69,3 +69,36 @@ describe("hasStarterModel", () => {
     expect(engineComponents("uds").hasStarterModel).toBe(false);
   });
 });
+
+describe("undoableEdits", () => {
+  /**
+   * The undo stack stores its inverses as water-distribution commands —
+   * a position patch, a node recreate, a link recreate. Replaying one
+   * against another engine's model fails.
+   *
+   * It was capturing them for drainage anyway. `recreateSpecsForDelete`
+   * recognises a node by a hardcoded set of kind names that includes
+   * "junction", and finds a conduit in the links array like any other
+   * link — so deleting a drainage junction or conduit pushed an entry
+   * that read as undoable and refused when applied. Moving a drainage
+   * node did the same. Both said "Deleted J2" in the history and then
+   * could not do it.
+   */
+  it("is false for an engine whose edits the stack cannot replay", () => {
+    expect(engineComponents("uds").undoableEdits).toBe(false);
+  });
+
+  it("is not implied by being able to edit at all", () => {
+    // Drainage edits its model completely — geometry, names, values,
+    // creation, removal — and none of it is undoable. The two questions
+    // were never the same one.
+    const uds = engineComponents("uds");
+    expect(uds.editing.geometry).toBe(true);
+    expect(uds.editing.delete).toBe(true);
+    expect(uds.undoableEdits).toBe(false);
+  });
+
+  it("is true where the stack was built", () => {
+    expect(engineComponents("wds").undoableEdits).toBe(true);
+  });
+});

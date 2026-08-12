@@ -109,6 +109,11 @@ export function EditableNumber({
       onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
         setDraft(e.target.value)
       }
+      // A click into a cell is a click into that cell, not onto the row
+      // beneath it — the row's own handler selects, and selecting is a
+      // different intent from typing. The water-distribution cells do
+      // the same.
+      onClick={(e) => e.stopPropagation()}
       onFocus={() => setFocused(true)}
       onBlur={commit}
       onKeyDown={(e) => {
