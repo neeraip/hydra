@@ -191,6 +191,7 @@ C1  CIRCULAR  1.0  0  0  0
         use super::super::network_dto::NetworkStateInner;
         let (network, _) = hydra::uds::io::objects::parse_network(FILE_GAGE_INP);
         let mut inner = NetworkStateInner::LoadedUds {
+            dirty: false,
             raw_text: FILE_GAGE_INP.to_string(),
             network: std::sync::Arc::new(network),
             aux_files: Vec::new(),

@@ -14,7 +14,7 @@ use crate::io::options::{AnalysisOptions, Date};
 /// Objects whose full records parse in later increments (curves, series,
 /// parcels, transects, streets) are present as ordered identifier tables so
 /// references to them are already index-resolved.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Network {
     /// The analysis options (§14.4).
     pub options: AnalysisOptions,

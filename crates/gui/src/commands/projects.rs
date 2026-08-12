@@ -2019,6 +2019,7 @@ fn load_model_bytes(
             let gathered: Vec<String> = aux_files.iter().map(|(n, _)| n.clone()).collect();
             imported.sidecars = super::aux_files::sidecar_status(&network, &gathered);
             NetworkStateInner::LoadedUds {
+                dirty: false,
                 raw_text,
                 network: std::sync::Arc::new(*network),
                 aux_files,
@@ -2246,11 +2247,14 @@ pub fn save_project(
             )?,
             NetworkStateInner::Empty => return Ok(false),
         }
-        // Serialise pending in-memory edits (dirty flag) exactly once, here at
-        // the save point, instead of on every mutation. (A uds model is
-        // read-only, so its text is always current.)
-        let raw = match guard.current_model_bytes() {
-            Some(bytes) => bytes,
+        // Serialise pending in-memory edits (dirty flag) exactly once, here
+        // at the save point, instead of on every mutation. A drainage model
+        // can refuse to serialise (§14.13.6), and that refusal is reported
+        // rather than read as "nothing to save" — a save that quietly did
+        // nothing is the worst of the three outcomes.
+        let raw = match guard.current_model_result() {
+            Some(Ok(bytes)) => bytes,
+            Some(Err(e)) => return Err(e),
             None => return Ok(false),
         };
         match &*guard {
@@ -2327,6 +2331,7 @@ pub fn load_project_network(
         super::sketch::refresh_uds(&app_data, &project_id, &view);
         let encoded = super::uds_view::encode_uds_snapshot(&view);
         *state.0.lock() = NetworkStateInner::LoadedUds {
+            dirty: false,
             raw_text: text,
             network: std::sync::Arc::new(network),
             // Project-owned: aux files live on disk in base/aux/.
@@ -3046,6 +3051,7 @@ mod tests {
         let (network, diags) = hydra::uds::io::objects::parse_network(model);
         assert!(!diags.iter().any(|d| d.kind.is_error()));
         let mut guard = NetworkStateInner::LoadedUds {
+            dirty: false,
             raw_text: model.to_string(),
             network: std::sync::Arc::new(network),
             aux_files: Vec::new(),

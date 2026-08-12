@@ -341,14 +341,24 @@ pub enum NetworkStateInner {
         /// `(project_id, scenario_id)` target without re-reading from disk.
         owner_scenario_id: Option<String>,
     },
-    /// A loaded urban-drainage model: viewable and runnable, never editable
-    /// (mutating commands refuse this variant), so it is never dirty and its
-    /// text is always current. The viewer DTO/snapshot arrives with the
-    /// descriptor-driven snapshot layout; until then the canvas shows an
-    /// empty network for these projects.
+    /// A loaded urban-drainage model.
+    ///
+    /// Held apart from [`Self::Loaded`] rather than generalised because
+    /// the two engines' networks are different types with different
+    /// mutation surfaces; what they share — dirtiness, ownership, the
+    /// "give me the current bytes" question — is shared through this
+    /// enum's methods rather than by pretending the models are alike.
     LoadedUds {
-        /// The model text as imported — served back for save/create.
+        /// The model text last serialised from `network`.
+        ///
+        /// May be stale when `dirty` is `true`, exactly as `Loaded`'s
+        /// bytes may be: mutating commands flag the network instead of
+        /// re-serialising a whole model on every edit. Always read it
+        /// through [`NetworkStateInner::current_model_bytes`].
         raw_text: String,
+        /// `true` when `network` has been mutated since `raw_text` was
+        /// serialised from it.
+        dirty: bool,
         /// Parsed uds network, for validation findings and future viewing.
         network: std::sync::Arc<hydra::uds::model::Network>,
         /// Auxiliary records gathered for a not-yet-created project —
@@ -386,27 +396,59 @@ impl NetworkStateInner {
                 }
                 Some(raw_bytes)
             }
+            // Drainage models serialise through their own writer and a
+            // different text type, so they answer `uds_current_text`
+            // rather than this.
             NetworkStateInner::LoadedUds { .. } => None,
             NetworkStateInner::Empty => None,
         }
     }
 
-    /// The uds model text when a uds network is loaded — the read-only
-    /// counterpart of [`Self::up_to_date_raw_bytes`].
-    pub(crate) fn uds_raw_text(&self) -> Option<&str> {
-        match self {
-            NetworkStateInner::LoadedUds { raw_text, .. } => Some(raw_text),
-            _ => None,
+    /// The drainage model text, re-serialised first when edits are
+    /// pending — the uds counterpart of [`Self::up_to_date_raw_bytes`].
+    ///
+    /// Returns the refusal from the writer rather than swallowing it: a
+    /// model can hold state the format has no spelling for (§14.13.6),
+    /// and a save that silently wrote a file meaning something else
+    /// would be the failure that refusal exists to prevent.
+    pub(crate) fn uds_current_text(&mut self) -> Option<Result<&str, String>> {
+        let NetworkStateInner::LoadedUds {
+            raw_text,
+            dirty,
+            network,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        if *dirty {
+            match hydra::uds::io::inp_writer::write_inp(network) {
+                Ok(text) => {
+                    *raw_text = text;
+                    *dirty = false;
+                }
+                Err(e) => return Some(Err(format!("This model cannot be written: {e}"))),
+            }
         }
+        Some(Ok(raw_text))
     }
 
     /// Current model bytes for save/create, whichever engine is loaded:
     /// wds re-serialises when dirty, uds text is always current.
     pub(crate) fn current_model_bytes(&mut self) -> Option<Vec<u8>> {
-        if let Some(text) = self.uds_raw_text() {
-            return Some(text.as_bytes().to_vec());
+        self.current_model_result().and_then(Result::ok)
+    }
+
+    /// The same, keeping a drainage writer refusal instead of reading it
+    /// as "no model loaded". Callers that can report a failure should
+    /// use this; `current_model_bytes` is for those that cannot.
+    pub(crate) fn current_model_result(&mut self) -> Option<Result<Vec<u8>, String>> {
+        if matches!(self, NetworkStateInner::LoadedUds { .. }) {
+            return self
+                .uds_current_text()
+                .map(|r| r.map(|t| t.as_bytes().to_vec()));
         }
-        self.up_to_date_raw_bytes().cloned()
+        self.up_to_date_raw_bytes().cloned().map(Ok)
     }
 }
 
@@ -1506,6 +1548,85 @@ mod tests {
     use crate::commands::binary_codec::encode_network_snapshot;
     use crate::commands::mutations::apply_patch_to_network;
     use crate::commands::test_fixtures::{loaded_state, TEST_INP};
+
+    /// The drainage counterpart of the wds dirty-flag contract: a clean
+    /// model serves its text untouched, a dirty one re-serialises through
+    /// the engine's writer, and the flag clears so a second read does not
+    /// serialise again.
+    ///
+    /// Worth its own test rather than trusting the symmetry, because the
+    /// two variants serialise through different writers into different
+    /// types — and because a drainage model was, until this landed,
+    /// documented as never dirty.
+    #[test]
+    fn a_drainage_model_reserialises_only_when_dirty() {
+        const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+J1  10  3  0  0  0
+
+[OUTFALLS]
+O1  9  FREE  NO
+";
+        let (network, diags) = hydra::uds::io::objects::parse_network(INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        let mut state = NetworkStateInner::LoadedUds {
+            raw_text: INP.to_string(),
+            dirty: false,
+            network: std::sync::Arc::new(network),
+            aux_files: Vec::new(),
+            owner_project_id: None,
+            owner_scenario_id: None,
+        };
+
+        // Clean: served as imported, not as the writer would render it.
+        assert_eq!(state.uds_current_text().unwrap().unwrap(), INP);
+
+        // Dirty: re-serialised, and the edit is in what comes back.
+        let NetworkStateInner::LoadedUds { dirty, network, .. } = &mut state else {
+            unreachable!()
+        };
+        std::sync::Arc::make_mut(network).vertices[0].id = "RENAMED".into();
+        *dirty = true;
+        let text = state.uds_current_text().unwrap().unwrap().to_string();
+        assert!(text.contains("RENAMED"), "{text}");
+
+        // And the flag cleared, so the next read is the cached text.
+        let NetworkStateInner::LoadedUds { dirty, .. } = &state else {
+            unreachable!()
+        };
+        assert!(!*dirty, "the dirty flag survived serialisation");
+    }
+
+    /// A drainage model holding state the format cannot spell refuses at
+    /// the save point rather than reading as "nothing loaded" — the
+    /// distinction `current_model_result` exists to keep.
+    #[test]
+    fn an_unwritable_drainage_model_reports_rather_than_saving_nothing() {
+        let (network, _) = hydra::uds::io::objects::parse_network(
+            "[OPTIONS]\nFLOW_UNITS CMS\n\n[JUNCTIONS]\nJ1 10 3 0 0 0\n",
+        );
+        let mut network = network;
+        network.vertices[0].invert = f64::NAN;
+        let mut state = NetworkStateInner::LoadedUds {
+            raw_text: String::new(),
+            dirty: true,
+            network: std::sync::Arc::new(network),
+            aux_files: Vec::new(),
+            owner_project_id: None,
+            owner_scenario_id: None,
+        };
+        let err = state
+            .current_model_result()
+            .expect("a model is loaded")
+            .expect_err("an unwritable model must not report success");
+        assert!(err.contains("cannot be written"), "{err}");
+        // The lossy accessor still answers None, which is why the callers
+        // that can report a failure use the other one.
+        assert!(state.current_model_bytes().is_none());
+    }
 
     // ── dirty flag / delta patching ───────────────────────────────────────
     #[test]
