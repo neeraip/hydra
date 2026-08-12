@@ -1,25 +1,33 @@
 /**
- * The urban-drainage Editor view.
+ * The Editor view, for whichever engine holds the model.
  *
- * Same page as the water-distribution editor — the shared `EditorShell`
- * rail, one entry per element kind with its badge and count, one table at
- * a time — with drainage's own kinds and columns inside it. Nothing here
- * names a kind: the rail is built from the engine's own §4.2 catalog, so
- * this file would render an engine it has never heard of.
+ * The `EditorShell` rail with one entry per element kind, and one table
+ * at a time inside it. Nothing here names a kind, a class or an engine:
+ * the rail is built from the engine's §4.2 catalog, the columns from its
+ * §4.4 schemas, and every edit goes through the §4.5 operations — so
+ * this file renders an engine it has never heard of.
  *
- * A per-kind table rather than shared Nodes/Links tables, because a shared
- * table can only show columns its kinds have in common, which for drainage
- * is close to nothing — a junction's invert means nothing to an outfall,
- * whose boundary condition means nothing to a storage unit.
+ * It was the drainage editor, and it is here because that turned out to
+ * be a fact about which engine's editor was written second rather than
+ * about drainage. The water-distribution editor it replaces had six
+ * hand-written tables and its own staged-save model; the difference
+ * reached the screen, which is what the editing contract exists to
+ * prevent.
+ *
+ * A per-kind table rather than shared Nodes/Links tables, because a
+ * shared table can only show columns its kinds have in common, which for
+ * drainage is close to nothing — a junction's invert means nothing to an
+ * outfall, whose boundary condition means nothing to a storage unit.
  */
 
 import { PencilSquareIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useActiveProject, useAppState } from "../../AppContext";
-import { useCanvasSelection } from "../../canvas/selection-context";
-import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
-import { RenameElementModal } from "../../components/modals/RenameElementModal";
-import { KindTable } from "../../components/panels/KindTable";
+import { useActiveProject, useAppState } from "../../../AppContext";
+import { useCanvasSelection } from "../../../canvas/selection-context";
+import { DeleteConfirmModal } from "../../../components/modals/DeleteConfirmModal";
+import { RenameElementModal } from "../../../components/modals/RenameElementModal";
+import { KindTable } from "../../../components/panels/KindTable";
+import { engineComponents } from "../../../engine/registry";
 import {
   deleteElement,
   patchNodePosition,
@@ -28,20 +36,19 @@ import {
   useKindCounts,
   useKindElements,
   useReferenceIds,
-} from "../../hooks";
-import { useElementAttributeWrite } from "../../hooks/useAttributeWrite";
-import { useElementRename } from "../../hooks/useElementRename";
-import { deletionSummary } from "../../pages/project/CanvasView/deletionSummary";
+} from "../../../hooks";
+import { useElementAttributeWrite } from "../../../hooks/useAttributeWrite";
+import { useElementRename } from "../../../hooks/useElementRename";
+import { deletionSummary } from "../CanvasView/deletionSummary";
 import {
   type EditorSection,
   EditorShell,
   EditorStatusBar,
-} from "../../pages/project/EditorShell";
-import { engineComponents } from "../registry";
+} from "../EditorShell";
 import { CollectionDetail } from "./CollectionDetail";
 import { railGroupBreak } from "./railGroups";
 
-export function UdsElementsView() {
+export function ElementsView() {
   const { project } = useActiveProject();
   const { activeScenarioId, editorFocus, showToast, setProjectView } =
     useAppState();
@@ -268,18 +275,20 @@ export function UdsElementsView() {
       onSelectSection={setActiveKind}
       footer={
         <EditorStatusBar>
-          {/* This bar is where the Editor reports the state of editing —
-              water distribution says "3 unsaved changes" here, because it
-              stages its edits. Drainage does not stage: a committed cell
-              is written and saved before the field gives focus back, so
-              there is never a count to report. That difference is the
-              whole message, and it belongs here rather than beside every
-              table.
+          {/* Where the Editor reports the state of editing. There is
+              one state now: a committed cell is written and saved before
+              the field gives focus back, so there is never a count of
+              unsaved changes to report and never a Save to press.
 
-              It reads as a state rather than a caption: WDS's version
-              earns peripheral attention by warming to amber when work is
-              staged, and this one never changes, so it leans on the icon
-              and a secondary weight instead of tertiary body text. */}
+              The water-distribution editor used to say "3 unsaved
+              changes" here and warm to amber while work was staged. That
+              is gone with the staging, and the replacement for it is
+              undo rather than discard — which is a promise the editing
+              contract makes (§4.5.5) rather than a preference.
+
+              It reads as a state rather than a caption, so it leans on
+              the icon and a secondary weight rather than tertiary body
+              text. */}
           <span
             style={{
               display: "inline-flex",
@@ -295,23 +304,14 @@ export function UdsElementsView() {
             />
             Saved as you edit
           </span>
-          {/* Five versions of this line have described what drainage
-              editing could not do yet, and all five went stale the week
-              after they were written: "edited outside Hydra", "editing
-              isn't built yet", "these tables don't edit yet", "adding
-              and removing", "adding". Each was true when written and
-              each outlived its truth, because a sentence about what is
-              missing has to be revisited every time something lands —
-              and it never was, until someone read it and believed it.
-
-              So this one describes where an operation lives instead,
-              which does not expire: values are edited in these tables,
-              and the set of elements is changed on the map, where an
-              element is placed by pointing at somewhere to put it. That
-              is a fact about the shape of the interface rather than
-              about how far it has got. */}
+          {/* Six versions of this line described what the drainage
+              editor could not do yet, and every one went stale the week
+              after it was written. So this one describes where an
+              operation lives, which does not expire: a link is drawn
+              between two elements, which is a gesture the map has and a
+              table does not. */}
           <span style={{ color: "var(--text-tertiary)" }}>
-            Add and remove elements on the map.
+            Draw links on the map.
           </span>
         </EditorStatusBar>
       }

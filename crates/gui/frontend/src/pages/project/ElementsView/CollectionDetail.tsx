@@ -14,8 +14,8 @@ import {
   type CollectionDetail as Detail,
   formatGenericValue,
   genericUnitLabel,
-} from "../../hooks";
-import { useUnitSystem } from "../../units";
+} from "../../../hooks";
+import { useUnitSystem } from "../../../units";
 
 export function CollectionDetail({
   detail,

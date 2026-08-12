@@ -18,11 +18,11 @@ import {
   WdsCriteriaControl,
 } from "../components/panels/CriteriaControl";
 import type { GenericQuantity, Link, Node } from "../hooks";
+import { ElementsView } from "../pages/project/ElementsView";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsCreateLinkModal } from "./uds/CreateLinkModal";
 import { UdsCreateNodeModal } from "./uds/CreateNodeModal";
-import { UdsElementsView } from "./uds/ElementsView";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
 import { UdsOverviewComposition } from "./uds/OverviewComposition";
@@ -127,7 +127,9 @@ export interface EngineComponents {
   /** Body of the settings modal. Absent = the shared wds editor owns it
    * (until it, too, moves behind this interface). */
   SettingsView?: ComponentType<SettingsViewProps>;
-  /** Body of the Editor project view. Absent = the wds element editor. */
+  /** Body of the Editor project view. Every engine uses the shared one;
+   * the field stays so an engine whose model is not a network of typed
+   * elements can supply its own. */
   EditorView?: ComponentType;
   /** Body of the Results project view. Absent = the wds analysis panels. */
   AnalysisView?: ComponentType;
@@ -270,6 +272,11 @@ export interface EngineComponents {
 const WDS: EngineComponents = {
   RunSettingsSummary: WdsRunSettingsSummary,
   CriteriaControl: WdsCriteriaControl,
+  // The same editor drainage uses. It was drainage's, and the six
+  // hand-written tables it replaces here are why the two engines' models
+  // could be edited so differently — a staged save on one side and a
+  // write-through on the other, for no reason a user could name.
+  EditorView: ElementsView,
   editorFocusesElements: true,
   settingsEditable: true,
   undoableRemoval: true,
@@ -294,7 +301,7 @@ const WDS: EngineComponents = {
 const UDS: EngineComponents = {
   RunSettingsSummary: UdsRunSettingsSummary,
   SettingsView: UdsSettingsView,
-  EditorView: UdsElementsView,
+  EditorView: ElementsView,
   AnalysisView: UdsAnalysisView,
   CriteriaControl: CatalogCriteriaControl,
   OverviewComposition: UdsOverviewComposition,

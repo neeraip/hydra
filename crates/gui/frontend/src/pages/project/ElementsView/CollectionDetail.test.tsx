@@ -3,7 +3,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { CollectionDetail as Detail } from "../../hooks";
+import type { CollectionDetail as Detail } from "../../../hooks";
 import { CollectionDetail } from "./CollectionDetail";
 
 const empty: Detail = { columns: [], quantities: [], rows: [], lines: [] };
