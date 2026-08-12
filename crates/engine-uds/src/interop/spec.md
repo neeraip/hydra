@@ -512,6 +512,14 @@ Three properties define correctness, in ascending strength:
    was written, so a second import finds nothing left to rewrite; a warning
    on re-import means export wrote something import did not mean.
 
+These are properties of the writer, so they are established against
+models rather than argued: a fixture exercising one feature at a time
+proves each in isolation, and a body of real models proves that nothing
+was assumed about a column whose meaning differs from its neighbours'.
+Both are needed, and neither substitutes for the other — a fixture
+contains only what its author thought to include, while a real model
+exercises a hundred sections and localises nothing.
+
 The third is the sharpest test of the first. A depth already at its crown
 cannot be raised again, a floored slope cannot be floored further — so any
 mutation warning on re-import localises the defect to the section that

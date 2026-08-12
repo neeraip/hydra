@@ -319,33 +319,102 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     out.trim_start_matches('\n')
         .to_string()
         .clone_into(&mut out);
+    check_finite(&out)?;
     Ok(out)
 }
 
 /// Refuse the states §14.13.6 names before writing anything, so a
 /// refusal never leaves a half-written file behind.
 fn check_writable(network: &Network) -> Result<(), ExportRefusal> {
-    let bad_id = |s: &str| s.contains('\n') || s.contains('\r');
-    for v in &network.vertices {
-        if bad_id(&v.id) {
-            return Err(ExportRefusal {
-                element: v.id.replace(['\n', '\r'], "⏎"),
-                reason: "identifier contains a line break, which no quoting survives".into(),
-            });
-        }
-        if !v.invert.is_finite() {
-            return Err(ExportRefusal {
-                element: v.id.clone(),
-                reason: "invert elevation is not a finite number".into(),
-            });
+    // Every collection whose members are named in the file. A line break
+    // is the one thing §14.2's quoting cannot carry, so an identifier
+    // holding one has no spelling at all.
+    let named: [(&str, Vec<&str>); 12] = [
+        (
+            "node",
+            network.vertices.iter().map(|v| v.id.as_str()).collect(),
+        ),
+        (
+            "link",
+            network.links.iter().map(|l| l.id.as_str()).collect(),
+        ),
+        (
+            "subcatchment",
+            network.parcels.iter().map(|p| p.id.as_str()).collect(),
+        ),
+        (
+            "curve",
+            network.curves.iter().map(|c| c.id.as_str()).collect(),
+        ),
+        (
+            "time series",
+            network.timeseries.iter().map(|t| t.id.as_str()).collect(),
+        ),
+        (
+            "pattern",
+            network.patterns.iter().map(|p| p.id.as_str()).collect(),
+        ),
+        (
+            "rain gage",
+            network.gages.iter().map(|g| g.id.as_str()).collect(),
+        ),
+        (
+            "pollutant",
+            network.constituents.iter().map(|c| c.id.as_str()).collect(),
+        ),
+        (
+            "land use",
+            network.land_uses.iter().map(|l| l.id.as_str()).collect(),
+        ),
+        (
+            "transect",
+            network.transects.iter().map(|t| t.id.as_str()).collect(),
+        ),
+        (
+            "street",
+            network.streets.iter().map(|s| s.id.as_str()).collect(),
+        ),
+        (
+            "aquifer",
+            network.aquifers.iter().map(|a| a.id.as_str()).collect(),
+        ),
+    ];
+    for (kind, ids) in &named {
+        for id in ids {
+            if id.contains('\n') || id.contains('\r') {
+                return Err(ExportRefusal {
+                    element: format!("{kind} {}", id.replace(['\n', '\r'], "⏎")),
+                    reason: "identifier contains a line break, which no quoting survives".into(),
+                });
+            }
         }
     }
-    for l in &network.links {
-        if bad_id(&l.id) {
-            return Err(ExportRefusal {
-                element: l.id.replace(['\n', '\r'], "⏎"),
-                reason: "identifier contains a line break, which no quoting survives".into(),
-            });
+    Ok(())
+}
+
+/// Refuse a finished export carrying a value that has no numeric
+/// spelling (§14.13.6).
+///
+/// Checked on the output rather than on the model because [`num`] is the
+/// only thing that writes a number, and it writes a non-finite one as
+/// `NaN` or `inf` — spellings §14.2 refuses on the way back in. Scanning
+/// what was produced is therefore complete, where a field-by-field
+/// sweep of the model would be a list someone has to remember to extend.
+/// The cost is that the refusal names a line rather than an element,
+/// which it says plainly rather than guessing.
+fn check_finite(text: &str) -> Result<(), ExportRefusal> {
+    for (i, line) in text.lines().enumerate() {
+        for token in line.split_whitespace() {
+            let t = token.trim_start_matches('-');
+            if t == "NaN" || t == "inf" {
+                return Err(ExportRefusal {
+                    element: format!("line {} of the export", i + 1),
+                    reason: format!(
+                        "a value has no numeric spelling ({token}); the line reads: {}",
+                        line.trim()
+                    ),
+                });
+            }
         }
     }
     Ok(())
@@ -2799,6 +2868,75 @@ QIN  4:00  0.1
         // so no value survives one cycle and drifts on the next.
         let again = write_inp(&b).expect("second export");
         assert_eq!(text, again, "second export differs");
+    }
+
+    /// §14.13.6 refuses rather than writing state the grammar has no
+    /// form for. Both refusals are asserted because a file that imports
+    /// cleanly and means something else is the outcome the refusal
+    /// exists to prevent — and an untested refusal is a claim, not a
+    /// guarantee.
+    #[test]
+    fn a_value_with_no_numeric_spelling_is_refused() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+J1  10  3  0  0  0
+
+[OUTFALLS]
+O1  9  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  100  0.01  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0  1
+";
+        let (mut net, _) = crate::io::objects::parse_network(inp);
+        // Reachable only programmatically: §14.2 refuses `nan` on the way
+        // in, so a model can hold one only if a caller put it there.
+        net.vertices[0].invert = f64::NAN;
+        let err = write_inp(&net).expect_err("a NaN invert must not be written");
+        assert!(
+            err.reason.contains("no numeric spelling"),
+            "unexpected reason: {err}"
+        );
+
+        net.vertices[0].invert = f64::INFINITY;
+        assert!(
+            write_inp(&net).is_err(),
+            "an infinite invert must not be written either"
+        );
+
+        // And the same model with the value repaired writes fine, so the
+        // refusal is about the value rather than about the model.
+        net.vertices[0].invert = 10.0;
+        assert!(write_inp(&net).is_ok());
+    }
+
+    #[test]
+    fn an_identifier_holding_a_line_break_is_refused() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+J1  10  3  0  0  0
+
+[OUTFALLS]
+O1  9  FREE  NO
+";
+        let (mut net, _) = crate::io::objects::parse_network(inp);
+        net.vertices[0].id = "J\n1".into();
+        let err = write_inp(&net).expect_err("a line break in an identifier must not be written");
+        assert!(
+            err.reason.contains("line break"),
+            "unexpected reason: {err}"
+        );
+        // The element is named with the break made visible, since an
+        // error message carrying a raw newline is a message in two parts.
+        assert!(err.element.contains('⏎'), "unexpected element: {err}");
     }
 
     /// The one shape whose parameters survive: a pyramid's are unique up

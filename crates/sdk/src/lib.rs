@@ -223,6 +223,12 @@ pub use hydra_engine_wds::descriptors;
 /// contents are supplied in memory; the engine's one filesystem surface is
 /// the path-based `.out` streaming reader (`uds::io::out_reader`), the
 /// same carve-out the water-distribution engine has.
+///
+/// A model can also be written back out: `uds::io::inp_writer::write_inp`
+/// serialises a network as SWMM input text, so an integrator can build or
+/// modify a drainage model and hand it to another tool. It writes the
+/// model as it stands *after* import's validation and repairs, which is
+/// not a copy of the file it came from — see the engine's §14.13.
 pub use hydra_engine_uds as uds;
 
 /// Report blocks the water-distribution engine can produce, per the
