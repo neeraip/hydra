@@ -306,6 +306,11 @@ export function KindTable({
                             : typeof v === "number"
                               ? formatElementAttribute(
                                   {
+                                    // Formatting only — this row is a
+                                    // table cell, not an addressable
+                                    // attribute.
+                                    key: "",
+                                    editable: false,
                                     label: c.label,
                                     number: v,
                                     quantity: c.quantity,

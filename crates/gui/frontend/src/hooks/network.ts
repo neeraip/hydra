@@ -1159,6 +1159,12 @@ export interface ElementAttributeQuantity {
 /** One Properties row of the engine-generic element inspector: an
  * engine-authored label with either a numeric SI value or a display text. */
 export interface ElementAttribute {
+  /** The engine's schema key — what a write is addressed by. */
+  key: string;
+  /** Whether this row can be written. Decided by the backend from the
+   * same table its setter consults, so an input is never offered for a
+   * key that would refuse it. */
+  editable: boolean;
   label: string;
   number?: number;
   text?: string;
@@ -1182,6 +1188,37 @@ export function formatElementAttribute(
   const decimals = sys === "us" ? q.usDecimals : q.siDecimals;
   const unit = sys === "us" ? q.usLabel : q.siLabel;
   return `${value.toFixed(decimals)} ${unit}`;
+}
+
+/**
+ * The number a display string stands for, in the unit the backend
+ * serves and takes — the inverse of {@link formatElementAttribute}'s
+ * conversion.
+ *
+ * Kept beside the formatter because the two have to agree: a scale
+ * applied on the way out and not on the way in stores a value a hundred
+ * or ten thousand times out, which is exactly the mistake the backend
+ * made first. Returns `null` for anything that is not a number, so a
+ * half-typed value leaves the model alone.
+ */
+export function parseElementAttribute(
+  text: string,
+  quantity: ElementAttributeQuantity | undefined,
+  sys: "si" | "us",
+): number | null {
+  const entered = Number(text.trim());
+  if (text.trim() === "" || !Number.isFinite(entered)) return null;
+  if (!quantity || sys === "si") return entered;
+  return (entered - quantity.siToUsOffset) / quantity.siToUsScale;
+}
+
+/** Write one attribute back. Takes the value in the unit the read serves. */
+export async function setElementAttribute(
+  elementId: string,
+  key: string,
+  value: number,
+): Promise<void> {
+  await invoke<void>("set_uds_element_attribute", { elementId, key, value });
 }
 
 /**

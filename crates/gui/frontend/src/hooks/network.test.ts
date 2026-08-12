@@ -37,9 +37,11 @@ import { normalizeNodes } from "./NetworkDataContext";
 import {
   decodeNetworkSnapshot,
   fetchNetworkSnapshot,
+  formatElementAttribute,
   GENERIC_SNAPSHOT_VERSION,
   isStructuralNetworkChange,
   loadProjectNetwork,
+  parseElementAttribute,
   SNAPSHOT_VERSION,
 } from "./network";
 
@@ -560,5 +562,64 @@ describe("isStructuralNetworkChange", () => {
         elements: [{ node: { id: "J1" } as never }],
       }),
     ).toBe(false);
+  });
+});
+
+describe("parseElementAttribute", () => {
+  const depth = {
+    key: "depth",
+    siLabel: "m",
+    usLabel: "ft",
+    siToUsScale: 3.28084,
+    siToUsOffset: 0,
+    siDecimals: 2,
+    usDecimals: 2,
+  };
+  const temperature = { ...depth, siToUsScale: 1.8, siToUsOffset: 32 };
+
+  // The pair has to invert: a scale applied on the way out and not on
+  // the way in stores a value hundreds of times out, which is exactly
+  // the mistake the backend made first on these same quantities.
+  //
+  // To the display's own precision, not beyond it. The formatter rounds
+  // to the quantity's declared decimals, so a value carried out to a
+  // string and back is only as exact as what the user was shown — 1 m
+  // displays as 3.28 ft and returns 0.99974 m. That is a property of
+  // showing a rounded number, not a fault in the pair, and it is safe
+  // because an untouched field never writes: the row commits only when
+  // the draft differs from what it displayed.
+  it("inverts what the formatter applies, to the shown precision", () => {
+    for (const q of [depth, temperature]) {
+      for (const value of [0, 1, 12.5, -3.25]) {
+        const shown = formatElementAttribute(
+          { key: "k", editable: true, label: "L", number: value, quantity: q },
+          "us",
+        );
+        const back = parseElementAttribute(shown.split(" ")[0], q, "us");
+        // One display step in the base unit: the most a value rounded to
+        // `usDecimals` can move when converted back.
+        const step = 10 ** -q.usDecimals / q.siToUsScale;
+        expect(Math.abs((back ?? Number.NaN) - value)).toBeLessThanOrEqual(
+          step,
+        );
+      }
+    }
+  });
+
+  it("takes an exactly typed value exactly", () => {
+    // What the user types is not rounded — only what they are shown is.
+    expect(parseElementAttribute("3.28084", depth, "us")).toBeCloseTo(1, 9);
+  });
+
+  it("leaves a value alone when the display system is the base one", () => {
+    expect(parseElementAttribute("12.5", depth, "si")).toBe(12.5);
+  });
+
+  it("treats an unparseable draft as no value rather than as zero", () => {
+    // A half-typed entry — "-", "1e", "" — must not reach the model. Zero
+    // would be a plausible-looking edit the user never made.
+    for (const draft of ["", "  ", "-", "abc", "1e"]) {
+      expect(parseElementAttribute(draft, depth, "si")).toBeNull();
+    }
   });
 });

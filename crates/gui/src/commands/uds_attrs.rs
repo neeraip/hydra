@@ -30,6 +30,13 @@ use super::results::uds_network_for_target;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ElementAttributeDto {
+    /// The engine's schema key — what [`set_element_attribute`] is keyed
+    /// by, so a caller that read a row can write it back.
+    pub key: String,
+    /// Whether this row can be written. Read from the same table the
+    /// setter consults, so an editable row and a settable key cannot
+    /// disagree.
+    pub editable: bool,
     pub label: String,
     /// Numeric value in SI units; interpret via `quantity`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,12 +243,18 @@ pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<Element
             });
             Some(match value {
                 AttrValue::Number(n) => ElementAttributeDto {
+                    key: attr.key.clone(),
+                    editable: is_writable(kind, &attr.key),
                     label: attr.label,
                     number: Some(n),
                     text: None,
                     quantity,
                 },
                 AttrValue::Text(t) => ElementAttributeDto {
+                    key: attr.key.clone(),
+                    // A text row states a referent or a choice; setting
+                    // one is a different operation from setting a number.
+                    editable: false,
                     label: attr.label,
                     number: None,
                     text: Some(t),
@@ -1429,6 +1442,36 @@ pub fn set_element_attribute(
     Err(format!("element '{element_id}' not found"))
 }
 
+/// The attribute keys this path can set, per element kind.
+///
+/// One table rather than a condition in two places: the inspector marks
+/// a row editable from it and the setter refuses from it, so a row that
+/// offers an edit and a key that accepts one are the same fact. The test
+/// below drives itself from this table, so a key added here without a
+/// matching arm fails rather than silently offering an input that
+/// refuses.
+pub(crate) const WRITABLE: &[(&str, &[&str])] = &[
+    ("junction", &["invert", "maxDepth", "initDepth"]),
+    ("outfall", &["invert"]),
+    ("divider", &["invert", "maxDepth", "initDepth"]),
+    ("storage", &["invert", "maxDepth"]),
+    ("conduit", &["length", "roughness"]),
+    ("orifice", &["dischargeCoeff"]),
+    ("weir", &["dischargeCoeff"]),
+    (
+        "subcatchment",
+        &["area", "width", "slope", "imperviousness"],
+    ),
+];
+
+/// Whether `key` is settable on `kind`.
+pub(crate) fn is_writable(kind: &str, key: &str) -> bool {
+    WRITABLE
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .is_some_and(|(_, keys)| keys.contains(&key))
+}
+
 fn unwritable(key: &str) -> String {
     format!("'{key}' cannot be edited here")
 }
@@ -1551,27 +1594,63 @@ RS1  0:00  0.4
     /// a conversion applied on one side and not the other — which is
     /// exactly what went wrong first: an area is served in hectares and a
     /// slope as a percentage, not in the SI the module's summary implies.
+    ///
+    /// Driven from `WRITABLE` rather than from a list written here, so a
+    /// key added to the table without a matching arm in the setter fails
+    /// instead of quietly offering the inspector an input that refuses.
     #[test]
     fn every_writable_attribute_reads_back_as_it_was_set() {
-        for (id, key, label, value) in [
-            ("J1", "invert", "Invert elevation", 12.5),
-            ("J1", "maxDepth", "Maximum depth", 4.25),
-            ("J1", "initDepth", "Initial depth", 0.75),
-            ("C1", "length", "Length", 250.0),
-            ("C1", "roughness", "Roughness", 0.017),
-            ("S1", "area", "Area", 7.5),
-            ("S1", "width", "Width", 320.0),
-            ("S1", "slope", "Slope", 2.5),
-            ("S1", "imperviousness", "Imperviousness", 62.0),
-        ] {
-            let mut net = model();
-            set_element_attribute(&mut net, id, key, value)
-                .unwrap_or_else(|e| panic!("{id}.{key}: {e}"));
-            let got = read(&net, id, label);
-            assert!(
-                (got - value).abs() < 1e-9,
-                "{id}.{key} set {value}, read back {got}"
-            );
+        // One element of each kind the table covers, and a value that is
+        // not the fixture's so a no-op would fail.
+        let sample = |kind: &str| -> Option<&'static str> {
+            match kind {
+                "junction" => Some("J1"),
+                "outfall" => Some("O1"),
+                "conduit" => Some("C1"),
+                "subcatchment" => Some("S1"),
+                // Kinds the fixture has none of; covered by the
+                // round-trip test for the kinds it does have.
+                _ => None,
+            }
+        };
+        let mut checked = 0;
+        for (kind, keys) in WRITABLE {
+            let Some(id) = sample(kind) else { continue };
+            for key in *keys {
+                let mut net = model();
+                let before = element_attributes(&net, id)
+                    .expect("attributes")
+                    .into_iter()
+                    .find(|r| r.key == *key)
+                    .unwrap_or_else(|| panic!("{kind}.{key} has no row"));
+                assert!(before.editable, "{kind}.{key} reads as not editable");
+                let value = before.number.expect("a number") + 1.5;
+                set_element_attribute(&mut net, id, key, value)
+                    .unwrap_or_else(|e| panic!("{kind}.{key}: {e}"));
+                let got = read(&net, id, &before.label);
+                assert!(
+                    (got - value).abs() < 1e-9,
+                    "{kind}.{key} set {value}, read back {got}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 9, "only {checked} attributes were exercised");
+    }
+
+    /// A row the setter refuses must not be offered as editable, or the
+    /// inspector renders an input whose every use fails.
+    #[test]
+    fn a_row_that_cannot_be_set_does_not_read_as_editable() {
+        let net = model();
+        for (id, key) in [("S1", "outlet"), ("S1", "raingage"), ("C1", "shape")] {
+            let row = element_attributes(&net, id)
+                .expect("attributes")
+                .into_iter()
+                .find(|r| r.key == key);
+            if let Some(row) = row {
+                assert!(!row.editable, "{id}.{key} offers an edit it cannot take");
+            }
         }
     }
 

@@ -4,7 +4,7 @@
 // with engine-authored content: attribute rows come from the §4 schema via
 // `get_element_details`, result values from the §6 catalog payload.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { useCurrentPeriod } from "../../canvas/period-context";
 import {
@@ -30,6 +30,8 @@ import {
   genericUnitLabel,
   getElementDetails,
   getElementSeries,
+  parseElementAttribute,
+  setElementAttribute,
   useElementAttributes,
   useNetworkData,
 } from "../../hooks";
@@ -59,7 +61,12 @@ const detailCache = new Map<string, ElementAttribute[]>();
 export function useElementDetails(
   elementId: string,
   kind?: string,
-): { rows: ElementAttribute[] | null; schema: ElementAttributeInfo[] } {
+): {
+  rows: ElementAttribute[] | null;
+  schema: ElementAttributeInfo[];
+  elementId: string;
+  onEdited: () => void;
+} {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
   const schema = useElementAttributes(project?.engine, kind);
@@ -67,6 +74,17 @@ export function useElementDetails(
   const [rows, setRows] = useState<ElementAttribute[] | null>(
     () => detailCache.get(key) ?? null,
   );
+  // After a write, fetch what the model now holds and replace the cached
+  // answer. Refetching directly rather than through a counter that only
+  // exists to re-run the effect: the cache is there so re-selecting an
+  // element is instant, not so an edit is invisible.
+  const onEdited = useCallback(() => {
+    if (!project?.id) return;
+    getElementDetails(project.id, activeScenarioId, elementId).then((r) => {
+      if (r) detailCache.set(key, r);
+      setRows(r);
+    });
+  }, [project?.id, activeScenarioId, elementId, key]);
   useEffect(() => {
     if (!project?.id) return;
     const cached = detailCache.get(key);
@@ -84,17 +102,24 @@ export function useElementDetails(
       cancelled = true;
     };
   }, [project?.id, activeScenarioId, elementId, key]);
-  return { rows, schema };
+  return { rows, schema, elementId, onEdited };
 }
 
 /** Properties section: §4 schema rows in the wds table presentation. */
 export function PropertiesSection({
   rows,
   schema = [],
+  elementId,
+  onEdited,
 }: {
   rows: ElementAttribute[] | null;
   /** The kind's declared properties, drawn while the values load. */
   schema?: ElementAttributeInfo[];
+  /** The element these rows belong to. Absent = the section reads only,
+   * which is what a caller with no element to address should get. */
+  elementId?: string;
+  /** Called after a successful write, so the caller can refetch. */
+  onEdited?: () => void;
 }) {
   const sys = useUnitSystem();
   // Nothing known yet, but this kind has been seen before: hold the height
@@ -129,16 +154,146 @@ export function PropertiesSection({
         style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}
       >
         <tbody>
-          {rows.map((r) => (
-            <PropRow
-              key={r.label}
-              label={r.label}
-              value={formatElementAttribute(r, sys)}
-            />
-          ))}
+          {rows.map((r) =>
+            r.editable && elementId ? (
+              <EditablePropRow
+                key={r.key}
+                attr={r}
+                sys={sys}
+                elementId={elementId}
+                onEdited={onEdited}
+              />
+            ) : (
+              <PropRow
+                key={r.key}
+                label={r.label}
+                value={formatElementAttribute(r, sys)}
+              />
+            ),
+          )}
         </tbody>
       </table>
     </>
+  );
+}
+
+/**
+ * A Properties row the user can change.
+ *
+ * The input holds the number alone, without its unit: a field that
+ * displays "12.50 m" and expects "12.5" back is a field that punishes
+ * reading it. The unit stays beside it, where it labels rather than
+ * participates.
+ *
+ * A write is committed on blur or Enter and abandoned on Escape, so
+ * typing through an intermediate value — "1" on the way to "12" — never
+ * reaches the model.
+ */
+function EditablePropRow({
+  attr,
+  sys,
+  elementId,
+  onEdited,
+}: {
+  attr: ElementAttribute;
+  sys: "si" | "us";
+  elementId: string;
+  onEdited?: () => void;
+}) {
+  const { showToast } = useAppState();
+  const q = attr.quantity;
+  const shown =
+    attr.number == null
+      ? ""
+      : sys === "us" && q
+        ? String(
+            Number(
+              (attr.number * q.siToUsScale + q.siToUsOffset).toFixed(
+                q.usDecimals,
+              ),
+            ),
+          )
+        : String(Number(attr.number.toFixed(q ? q.siDecimals : 4)));
+  const [draft, setDraft] = useState(shown);
+  const [saving, setSaving] = useState(false);
+  // The row redraws from a refetch after every write; the draft follows
+  // the value it is editing rather than stranding the user on a stale one.
+  useEffect(() => setDraft(shown), [shown]);
+
+  const commit = () => {
+    if (draft === shown || saving) return;
+    const value = parseElementAttribute(draft, q, sys);
+    if (value == null) {
+      setDraft(shown);
+      return;
+    }
+    setSaving(true);
+    setElementAttribute(elementId, attr.key, value)
+      .then(() => onEdited?.())
+      .catch((e) => {
+        setDraft(shown);
+        showToast(String(e), "error");
+      })
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <tr>
+      {/* Matches `PropRow`'s cells: an editable row must sit in the same
+          grid as the ones beside it, or the table reads as two tables. */}
+      <td
+        style={{
+          fontSize: "var(--text-md)",
+          color: "var(--text-tertiary)",
+          padding: "4px 0",
+          width: "45%",
+        }}
+      >
+        {attr.label}
+      </td>
+      <td
+        style={{
+          fontSize: "var(--text-md)",
+          padding: "4px 0",
+          fontFamily: "var(--font-mono)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <input
+          value={draft}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setDraft(e.target.value)
+          }
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              setDraft(shown);
+              e.currentTarget.blur();
+            }
+          }}
+          disabled={saving}
+          aria-label={attr.label}
+          style={{
+            width: 72,
+            textAlign: "right",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            color: "inherit",
+            font: "inherit",
+            padding: "1px 4px",
+          }}
+        />
+        {q && (
+          <span style={{ color: "var(--text-tertiary)" }}>
+            {sys === "us" ? q.usLabel : q.siLabel}
+          </span>
+        )}
+      </td>
+    </tr>
   );
 }
 
