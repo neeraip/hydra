@@ -22,41 +22,19 @@ import type React from "react";
  */
 export type DialogIntent = "primary" | "secondary" | "danger";
 
-const INTENT: Record<DialogIntent, React.CSSProperties> = {
-  primary: {
-    background: "var(--accent)",
-    border: "1px solid var(--accent)",
-    color: "var(--accent-fg)",
-    fontWeight: 600,
-  },
-  secondary: {
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    fontWeight: 500,
-  },
-  danger: {
-    background: "var(--color-danger, #ef4444)",
-    border: "1px solid var(--color-danger, #ef4444)",
-    color: "#fff",
-    fontWeight: 600,
-  },
-};
-
-/** Disabled is drawn once, here: a dimmed version of whatever it is,
- * rather than each dialog inventing a grey. */
-const DISABLED: React.CSSProperties = {
-  background: "var(--bg-card)",
-  border: "1px solid var(--border)",
-  color: "var(--text-disabled)",
-  cursor: "not-allowed",
-  opacity: 0.6,
+/** One class per intent. The shared `.dlg-btn` carries the shape; these
+ * carry the colour and, with it, the hover and disabled states — which
+ * is why they are classes: neither can be written inline. */
+const INTENT_CLASS: Record<DialogIntent, string> = {
+  primary: "dlg-btn-primary",
+  secondary: "dlg-btn-secondary",
+  danger: "dlg-btn-danger",
 };
 
 export function DialogButton({
   intent = "secondary",
   disabled,
-  style,
+  className,
   children,
   // Forwarded, because a confirmation dialog focuses its Cancel on
   // open: a stray Enter must never commit a destructive action.
@@ -71,15 +49,7 @@ export function DialogButton({
       type="button"
       ref={ref}
       disabled={disabled}
-      style={{
-        borderRadius: 6,
-        padding: "6px 14px",
-        fontSize: "var(--text-md)",
-        fontFamily: "var(--font-ui)",
-        cursor: "pointer",
-        ...(disabled ? DISABLED : INTENT[intent]),
-        ...style,
-      }}
+      className={`dlg-btn ${INTENT_CLASS[intent]}${className ? ` ${className}` : ""}`}
       {...props}
     >
       {children}

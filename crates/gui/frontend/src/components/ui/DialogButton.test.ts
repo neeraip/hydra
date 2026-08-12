@@ -85,4 +85,24 @@ describe("dialog action buttons", () => {
     );
     expect(stale).toEqual([]);
   });
+
+  it("keeps its states in the stylesheet, where they can exist", () => {
+    // Hover and keyboard focus cannot be written as inline styles, which
+    // is why the dialogs that drew their own had hover in two of seven
+    // and focus in none. A regression here would be silent: the button
+    // still renders, and only stops responding.
+    const css = readFileSync(join(__dirname, "..", "..", "app.css"), "utf8");
+    for (const rule of [
+      ".dlg-btn:focus-visible",
+      ".dlg-btn-secondary:hover",
+      ".dlg-btn:disabled",
+    ]) {
+      expect(css).toContain(rule);
+    }
+    // The two filled intents lift together, so they cannot drift apart
+    // the way the hand-drawn ones did.
+    expect(css).toMatch(
+      /\.dlg-btn-primary:hover:not\(:disabled\),\s*\n?\s*\.dlg-btn-danger:hover:not\(:disabled\)/,
+    );
+  });
 });

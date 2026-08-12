@@ -1670,3 +1670,70 @@ tr:hover .ne-row-actions,
 .ne-row-actions.is-visible {
   opacity: 1;
 }
+
+/* ── Dialog action buttons ──────────────────────────────────────────────────
+   The row a modal ends with. Written as classes rather than inline styles
+   because the states that matter here cannot be inline: :hover, and
+   :focus-visible for the reader who never touches the mouse. The dialogs
+   that drew their own had hover in two of seven and focus in none. */
+
+.dlg-btn {
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: var(--text-md);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+.dlg-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.dlg-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.dlg-btn-secondary:hover:not(:disabled) {
+  background: var(--nav-hover);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+/* The engine's accent where one is set, exactly as `.btn-run` does — a
+   dialog about one engine's model is tinted for it, and the fallback is
+   the app's own accent everywhere else. This is why the simulation
+   settings Save needs no override of its own. */
+.dlg-btn-primary {
+  background: var(--engine-accent, var(--accent));
+  border: 1px solid var(--engine-accent, var(--accent));
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+.dlg-btn-danger {
+  background: var(--color-danger, #ef4444);
+  border: 1px solid var(--color-danger, #ef4444);
+  color: #fff;
+  font-weight: 600;
+}
+/* Both filled intents lift the same way, so the two never drift apart the
+   way the hand-drawn ones did — one brightened, the next hard-coded a
+   second hex. */
+.dlg-btn-primary:hover:not(:disabled),
+.dlg-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.dlg-btn:disabled {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: 0.6;
+  filter: none;
+}

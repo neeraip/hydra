@@ -322,17 +322,6 @@ export function SimSettingsModal() {
               disabled={saving || !dirty}
               aria-label="Save simulation settings"
               data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
-              // The engine's own accent rather than the app's: this
-              // dialog is about one engine's settings and is tinted for
-              // it throughout.
-              style={
-                !saving && dirty
-                  ? {
-                      background: "var(--engine-accent, var(--accent))",
-                      borderColor: "var(--engine-accent, var(--accent))",
-                    }
-                  : undefined
-              }
             >
               {saving ? "Saving…" : "Save"}
             </DialogButton>
