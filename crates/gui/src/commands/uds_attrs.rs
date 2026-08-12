@@ -249,6 +249,15 @@ pub struct KindElementsDto {
     /// Element ids, in model order — the row order every column follows.
     pub ids: Vec<String>,
     pub columns: Vec<KindColumnDto>,
+    /// Each element's position in the model's own coordinate system, or
+    /// `None` for one the model places nowhere (hydra-common §4.5.2).
+    ///
+    /// Parallel to `ids`, and empty for a non-spatial kind — a curve is
+    /// not anywhere. Not a column, because position is not an attribute:
+    /// it is implied by the element's class, which is what stops an
+    /// engine from publishing an element an application must draw and
+    /// cannot move.
+    pub positions: Vec<Option<[f64; 2]>>,
 }
 
 /// The elements of one kind with their declared properties.
@@ -310,6 +319,7 @@ pub fn get_kind_elements(
     let empty = KindElementsDto {
         ids: Vec::new(),
         columns: Vec::new(),
+        positions: Vec::new(),
     };
     if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
         return Ok(empty);
@@ -876,7 +886,34 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
             }
         })
         .collect();
-    KindElementsDto { ids, columns }
+    // Only the classes that are somewhere. A drainage link's position
+    // is its two ends, which the table shows as its from/to columns
+    // rather than as a coordinate.
+    let spatial = hydra::uds::descriptors::ELEMENT_KINDS
+        .iter()
+        .find(|k| k.id == kind)
+        .is_some_and(|k| {
+            matches!(
+                k.class,
+                hydra::common::ElementClass::Point | hydra::common::ElementClass::Region
+            )
+        });
+    let positions = if spatial {
+        let placed: HashMap<&str, (f64, f64)> =
+            super::uds_view::parse_xy_lines(net, "[COORDINATES]")
+                .map(|(id, x, y)| (id, (x, y)))
+                .collect();
+        ids.iter()
+            .map(|id| placed.get(id.as_str()).map(|&(x, y)| [x, y]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    KindElementsDto {
+        ids,
+        columns,
+        positions,
+    }
 }
 
 /// One inlet coupling: a street conduit capturing flow into a sewer
@@ -1098,6 +1135,34 @@ mod tests {
             .find(|c| c.key == "points")
             .expect("points column");
         assert_eq!(points.values[0], serde_json::Value::Null);
+    }
+
+    /// Position travels with the table, not as a column.
+    ///
+    /// It is implied by the element's class (hydra-common §4.5.2), which
+    /// is what lets a generic table show an X and a Y for a drainage
+    /// junction — whose position is a line in a section the engine
+    /// preserves verbatim and never models, and which therefore appears
+    /// in no attribute schema anywhere.
+    #[test]
+    fn a_spatial_kind_carries_its_positions() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4\nJ2 90 4\n\
+                     [OUTFALLS]\nO1 80 FREE NO\n\
+                     [CONDUITS]\nC1 J1 J2 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [COORDINATES]\nJ1 10 20\nO1 30 40\n";
+        let (net, _) = hydra::uds::io::objects::parse_network(model);
+
+        let junctions = kind_elements(&net, "junction");
+        assert_eq!(junctions.ids, vec!["J1", "J2"]);
+        assert_eq!(junctions.positions, vec![Some([10.0, 20.0]), None]);
+
+        // A link is somewhere only in the sense that its ends are, and
+        // the table shows those as columns. No coordinate.
+        assert!(kind_elements(&net, "conduit").positions.is_empty());
+        // Neither is a curve, which is not anywhere at all.
+        assert!(kind_elements(&net, "curve").positions.is_empty());
     }
 
     #[test]

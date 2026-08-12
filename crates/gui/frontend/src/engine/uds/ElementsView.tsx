@@ -19,6 +19,7 @@ import { useActiveProject, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { KindTable } from "../../components/panels/KindTable";
 import {
+  patchNodePosition,
   useCollectionDetail,
   useElementKinds,
   useKindCounts,
@@ -35,7 +36,7 @@ import { railGroupBreak } from "./railGroups";
 
 export function UdsElementsView() {
   const { project } = useActiveProject();
-  const { activeScenarioId, editorFocus } = useAppState();
+  const { activeScenarioId, editorFocus, showToast } = useAppState();
   const {
     selectNode,
     selectLink,
@@ -100,6 +101,20 @@ export function UdsElementsView() {
     (id: string, key: string, value: number) =>
       write(id, key, value).then(refetch),
     [write, refetch],
+  );
+
+  // A move is its own operation, not an attribute write: a drainage
+  // element's position is a line in a section the engine preserves
+  // verbatim, and it appears in no attribute schema.
+  const onMove = useCallback(
+    (id: string, x: number, y: number) =>
+      patchNodePosition(id, x, y)
+        .then(refetch)
+        .catch((e) => {
+          showToast(String(e), "error");
+          throw e;
+        }),
+    [refetch, showToast],
   );
 
   // A container's row reports only its size, so selecting one opens what
@@ -240,6 +255,7 @@ export function UdsElementsView() {
             activeId={selectedId}
             onSelect={select}
             onEdit={onEdit}
+            onMove={onMove}
             revealToken={revealToken || undefined}
           />
           {containerId && (

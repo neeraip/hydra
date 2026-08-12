@@ -61,6 +61,7 @@ export function KindTable({
   activeId,
   onSelect,
   onEdit,
+  onMove,
   revealToken,
 }: {
   /** §4.4 property columns for this kind. */
@@ -76,6 +77,16 @@ export function KindTable({
    * prop says whether anything is listening.
    */
   onEdit?: (id: string, key: string, value: number) => Promise<void> | void;
+  /**
+   * Move one element, in the model's own coordinate system.
+   *
+   * Separate from `onEdit` because a position is not an attribute
+   * (hydra-common §4.5.2): it is implied by the element's class, has no
+   * schema key to be addressed by, and is written by its own operation.
+   * Absent, or a kind that is not anywhere, and the columns do not
+   * appear.
+   */
+  onMove?: (id: string, x: number, y: number) => Promise<void> | void;
   /**
    * Bumped by the caller to mean "bring `activeId` into view now".
    *
@@ -127,8 +138,10 @@ export function KindTable({
       .filter((i) => matches == null || matches.has(i));
     if (!sortCol) return idx;
     const propCol = elements.columns.find((c) => c.key === sortCol);
+    const axis = sortCol === "x" ? 0 : sortCol === "y" ? 1 : null;
     const get = (i: number): number | string | null => {
       if (propCol) return propCol.values[i] ?? null;
+      if (axis != null) return elements.positions[i]?.[axis] ?? null;
       return elements.ids[i];
     };
     return idx.sort((a, b) => {
@@ -187,7 +200,12 @@ export function KindTable({
     [elements.columns],
   );
 
-  const columnCount = elements.columns.length + 1;
+  // The model's own coordinate system, whatever that is: these numbers
+  // are never converted on the way in, so they are never converted on
+  // the way out, and they carry no quantity for the same reason. A
+  // model may be a map or a drawing and this table cannot tell.
+  const placed = elements.positions.length === elements.ids.length;
+  const columnCount = elements.columns.length + 1 + (placed ? 2 : 0);
 
   if (elements.ids.length === 0) {
     return (
@@ -280,6 +298,19 @@ export function KindTable({
                   onSort={toggleSort}
                   markUnsorted
                 />
+                {placed &&
+                  (["x", "y"] as const).map((axis) => (
+                    <SortTh
+                      key={axis}
+                      field={axis}
+                      label={axis.toUpperCase()}
+                      sortField={sortCol}
+                      sortAsc={sortDir === "asc"}
+                      onSort={toggleSort}
+                      align="right"
+                      markUnsorted
+                    />
+                  ))}
                 {elements.columns.map((c, ci) => (
                   <SortTh
                     key={c.key}
@@ -316,6 +347,42 @@ export function KindTable({
                     })}
                   >
                     <td style={{ ...EDITOR_TD, fontWeight: 500 }}>{id}</td>
+                    {placed &&
+                      (["x", "y"] as const).map((axis, ai) => {
+                        const at = elements.positions[i];
+                        // An element the model places nowhere shows a
+                        // dash rather than a zero: nowhere is not the
+                        // origin, and a table that said 0 would invite
+                        // someone to believe it.
+                        if (!at || !onMove) {
+                          return (
+                            <td
+                              key={axis}
+                              style={{ ...EDITOR_TD, textAlign: "right" }}
+                            >
+                              {at ? at[ai] : "—"}
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={axis} style={{ ...EDITOR_TD, padding: 0 }}>
+                            <EditableNumber
+                              value={at[ai]}
+                              sys={sys}
+                              label={`${id} ${axis.toUpperCase()}`}
+                              chrome="cell"
+                              align="right"
+                              onCommit={(next) =>
+                                onMove(
+                                  id,
+                                  ai === 0 ? next : at[0],
+                                  ai === 1 ? next : at[1],
+                                )
+                              }
+                            />
+                          </td>
+                        );
+                      })}
                     {elements.columns.map((c, ci) => {
                       const v = c.values[i];
                       const align = numeric[ci] ? "right" : "left";

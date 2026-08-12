@@ -106,7 +106,7 @@ pub(crate) fn model_coordinates(net: &Network) -> impl Iterator<Item = (f64, f64
     parse_xy_lines(net, "[COORDINATES]").map(|(_, x, y)| (x, y))
 }
 
-fn parse_xy_lines<'a>(
+pub(crate) fn parse_xy_lines<'a>(
     net: &'a Network,
     header: &'a str,
 ) -> impl Iterator<Item = (&'a str, f64, f64)> + 'a {

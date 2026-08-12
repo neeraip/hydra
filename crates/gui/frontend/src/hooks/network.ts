@@ -1476,9 +1476,25 @@ export interface KindElements {
   /** Element ids in model order — the row order every column follows. */
   ids: string[];
   columns: KindColumn[];
+  /**
+   * Each element's position in the model's own coordinate system, or
+   * `null` for one the model places nowhere. Parallel to `ids`, and
+   * empty for a kind that is not anywhere.
+   *
+   * Not a column, because position is not an attribute: it is implied
+   * by the element's class (hydra-common §4.5.2), which is what lets a
+   * table show an X and a Y for a drainage junction — whose position is
+   * a line in a section the engine preserves verbatim and which appears
+   * in no attribute schema.
+   */
+  positions: Array<[number, number] | null>;
 }
 
-const EMPTY_KIND_ELEMENTS: KindElements = { ids: [], columns: [] };
+const EMPTY_KIND_ELEMENTS: KindElements = {
+  ids: [],
+  columns: [],
+  positions: [],
+};
 
 export async function getKindElements(
   projectId: string,

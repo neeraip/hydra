@@ -15,12 +15,18 @@ function sortButton(th: Element): HTMLButtonElement {
 
 const junctions: KindElements = {
   ids: ["J1", "J2"],
-  columns: [{ key: "invert", label: "Invert", values: [12, 4] }],
+  columns: [
+    { key: "invert", label: "Invert", editable: false, values: [12, 4] },
+  ],
+  positions: [],
 } as KindElements;
 
 const conduits: KindElements = {
   ids: ["C1", "C2"],
-  columns: [{ key: "length", label: "Length", values: [30, 10] }],
+  columns: [
+    { key: "length", label: "Length", editable: false, values: [30, 10] },
+  ],
+  positions: [],
 } as KindElements;
 
 describe("KindTable", () => {
@@ -93,7 +99,11 @@ describe("KindTable", () => {
   });
 
   it("says so when a kind has no elements", () => {
-    render(<KindTable elements={{ ids: [], columns: [] } as KindElements} />);
+    render(
+      <KindTable
+        elements={{ ids: [], columns: [], positions: [] } as KindElements}
+      />,
+    );
     expect(screen.getByText("No elements of this kind.")).toBeDefined();
   });
 
@@ -221,6 +231,7 @@ describe("KindTable editing", () => {
         values: ["CIRCULAR", null],
       },
     ],
+    positions: [],
   } as KindElements;
 
   it("offers an input only where the column says it may be written", () => {
@@ -287,6 +298,7 @@ describe("KindTable editing", () => {
           values: [null],
         },
       ],
+      positions: [],
     } as KindElements;
     render(<KindTable elements={sparse} onEdit={() => {}} />);
     expect(screen.queryByLabelText("J1 Initial depth")).toBeNull();
@@ -312,6 +324,7 @@ describe("KindTable virtualisation", () => {
         values: Array.from({ length: 5000 }, (_, i) => i),
       },
     ],
+    positions: [],
   } as KindElements;
 
   it("mounts a windowful of rows, not the whole model", () => {
@@ -353,5 +366,76 @@ describe("KindTable virtualisation", () => {
     // be scrolled into view by asking it to. On the next frame, so that
     // the rows the token cleared the search for have been laid out.
     await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(100_000));
+  });
+});
+
+/**
+ * The columns that answer the question this whole contract was written
+ * for: a drainage junction's position is a line in a section the engine
+ * preserves verbatim and models not at all, so it appears in no
+ * attribute schema — and a table that could only show attributes could
+ * not show where anything was. The water-distribution tables have had X
+ * and Y columns all along, because that engine happens to store them as
+ * fields.
+ */
+describe("KindTable positions", () => {
+  const placed: KindElements = {
+    ids: ["J1", "J2"],
+    columns: [
+      { key: "invert", label: "Invert", editable: false, values: [12, 4] },
+    ],
+    positions: [[10, 20], null],
+  } as KindElements;
+
+  it("shows a column per axis when the kind is somewhere", () => {
+    const { container } = render(<KindTable elements={placed} />);
+    const headers = [...container.querySelectorAll("th")].map((h) =>
+      (h.textContent ?? "").trim(),
+    );
+    expect(headers[1]).toContain("X");
+    expect(headers[2]).toContain("Y");
+  });
+
+  it("shows no such columns for a kind that is nowhere", () => {
+    const { container } = render(<KindTable elements={junctions} />);
+    const headers = [...container.querySelectorAll("th")].map((h) =>
+      (h.textContent ?? "").trim(),
+    );
+    expect(headers.some((h) => h.startsWith("X"))).toBe(false);
+  });
+
+  it("says nowhere rather than zero", () => {
+    // The origin is a place. An element the model places nowhere has to
+    // read as unplaced, or someone will believe the 0.
+    render(<KindTable elements={placed} onMove={() => {}} />);
+    expect(screen.queryByLabelText("J2 X")).toBeNull();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("moves an element by the axis that changed, keeping the other", () => {
+    const onMove = vi.fn();
+    render(<KindTable elements={placed} onMove={onMove} />);
+    const y = screen.getByLabelText("J1 Y");
+    fireEvent.change(y, { target: { value: "99" } });
+    fireEvent.blur(y);
+    // A move is one operation taking both coordinates, so editing Y has
+    // to carry X along unchanged rather than sending a partial position.
+    expect(onMove).toHaveBeenCalledWith("J1", 10, 99);
+  });
+
+  it("reads only when nothing is listening for a move", () => {
+    render(<KindTable elements={placed} />);
+    expect(screen.queryByLabelText("J1 X")).toBeNull();
+    expect(screen.getByText("10")).toBeDefined();
+  });
+
+  it("sorts by a position column", () => {
+    const { container } = render(<KindTable elements={placed} />);
+    const [, xHeader] = [...container.querySelectorAll("th")];
+    if (!xHeader) throw new Error("no X header");
+    fireEvent.click(sortButton(xHeader));
+    // The unplaced element sorts as absent, not as the origin.
+    const first = container.querySelector("tbody tr td");
+    expect(first?.textContent).toBe("J2");
   });
 });
