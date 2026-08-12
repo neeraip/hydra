@@ -216,10 +216,12 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
   const [locating, setLocating] = useState(false);
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
-  // Engines whose model this GUI cannot edit have no starter-network path —
-  // a project can only begin from an imported model.
+  // Whether this engine has a smallest-valid model to open a blank
+  // project onto. Not whether it can create elements: it was that for
+  // one commit, and the moment drainage learned to create, the wizard
+  // started offering a blank drainage project that the backend refuses.
   const importRequired =
-    engine != null && !engineComponents(engine.key).editing.create;
+    engine != null && !engineComponents(engine.key).hasStarterModel;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

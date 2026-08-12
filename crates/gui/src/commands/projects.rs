@@ -99,16 +99,27 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
-/// Engines whose projects this GUI can create, edit, and run.
+/// Engines this GUI can open a project for at all.
 ///
-/// The registry says what this *build of Hydra* can simulate; these lists
-/// say what this *GUI* can do with each engine, in two tiers. An engine can
-/// be **openable** (projects can be created from an imported model, viewed,
-/// and run through the queue) before it is **editable** (tables, inspector
-/// writes, element creation). The tiers differ while an engine's viewer
-/// ships ahead of its editor.
+/// The registry says what this *build of Hydra* can simulate; this says
+/// what this *GUI* can do with each engine. An engine is openable when
+/// its projects can be created from an imported model, viewed, and run
+/// through the queue.
 pub(crate) const GUI_OPENABLE_ENGINES: &[&str] = &["wds", "uds"];
-const GUI_EDITABLE_ENGINES: &[&str] = &["wds"];
+
+/// Engines this GUI has a starter model for — the ones whose projects
+/// can begin with nothing imported.
+///
+/// This was `GUI_EDITABLE_ENGINES`, and read as "can this GUI edit the
+/// model": true for water distribution and false for drainage, which
+/// was the same answer to both questions while drainage was read-only.
+/// It stopped being: drainage models are edited now, and there is still
+/// no drainage model to start a project *from*. Two questions, and the
+/// one this list answers is the second.
+///
+/// Adding an engine here means writing a smallest-valid model for it —
+/// see [`STARTER_INP`] for what that has to satisfy.
+const GUI_STARTER_MODEL_ENGINES: &[&str] = &["wds"];
 
 /// Resolve an engine key, refusing anything this GUI cannot open at all
 /// (hydra-common spec §2.3).
@@ -149,11 +160,13 @@ pub(crate) fn project_engine_key(app_data: &std::path::Path, project_id: &str) -
         .unwrap_or_else(|_| "wds".to_string())
 }
 
-/// Whether this GUI can edit the given engine's models. Openable-but-not-
-/// editable engines get read-only projects: viewable and runnable, with
-/// every mutating command refusing.
-pub(crate) fn engine_is_gui_editable(key: &str) -> bool {
-    GUI_EDITABLE_ENGINES.contains(&key)
+/// Whether a project for this engine can begin with nothing imported.
+///
+/// Mirrored on the frontend as the engine registry's `hasStarterModel`,
+/// which decides whether the wizard makes the source model optional.
+/// Neither side can see the other, so both carry a test.
+pub(crate) fn engine_has_starter_model(key: &str) -> bool {
+    GUI_STARTER_MODEL_ENGINES.contains(&key)
 }
 
 /// The model a project starts from when the user imports nothing.
@@ -276,13 +289,15 @@ pub fn create_project(
     // key that this GUI cannot open must be refused here rather than
     // producing a project that opens into a permanent unsupported state.
     let descriptor = require_gui_openable_engine(&engine)?;
-    // A read-only engine has no editor to grow a model in, so a blank
-    // start would create a project that can never hold anything: its
-    // projects begin from an imported model or not at all.
-    if !engine_is_gui_editable(descriptor.key) && !import_loaded_network {
+    // An engine with no starter model has nothing to open a blank
+    // project onto: Hydra cannot represent a network with no elements
+    // at all, so "start from scratch" needs a smallest-valid model to
+    // start *from*. Its projects begin from an imported model or not at
+    // all — which is not a statement about editing, and used to be
+    // phrased as one.
+    if !engine_has_starter_model(descriptor.key) && !import_loaded_network {
         return Err(format!(
-            "{} projects start from an imported model — editing is not \
-             available in the GUI yet",
+            "{} projects start from an imported model",
             descriptor.label
         ));
     }
@@ -3071,8 +3086,14 @@ mod tests {
         assert_eq!(require_gui_openable_engine("wds").unwrap().key, "wds");
         // uds opens read-only: creatable from an import, viewable, runnable.
         assert_eq!(require_gui_openable_engine("uds").unwrap().key, "uds");
-        assert!(engine_is_gui_editable("wds"));
-        assert!(!engine_is_gui_editable("uds"));
+        // Two questions that used to be one flag. Drainage models are
+        // edited in the GUI, and a drainage project still has to begin
+        // from an imported model, because there is no smallest-valid
+        // drainage model to start one from. The frontend mirrors this
+        // as `hasStarterModel`, and asserts it there too — neither side
+        // can see the other, so a drift shows only if both are pinned.
+        assert!(engine_has_starter_model("wds"));
+        assert!(!engine_has_starter_model("uds"));
 
         // Registered but not openable — planned engines. The wizard disables
         // these cards; this is the backstop for a caller that ignores the

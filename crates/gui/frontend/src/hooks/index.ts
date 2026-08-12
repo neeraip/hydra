@@ -54,7 +54,6 @@ export {
   type ImportFormat,
   importExtensionLabel,
   isEngineAvailable,
-  isEngineGuiEditable,
   isEngineGuiOpenable,
   useElementAttributes,
   useElementKinds,

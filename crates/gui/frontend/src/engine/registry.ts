@@ -160,6 +160,22 @@ export interface EngineComponents {
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
   /**
+   * Whether a project for this engine can begin with nothing imported.
+   *
+   * Not `editing.create`, though it was derived from it and briefly
+   * wrong because of that. Creating elements and having something to
+   * create them *into* are different: Hydra cannot represent a network
+   * with no elements at all, so a blank project needs a smallest-valid
+   * starter model, and only water distribution has one. Drainage edits
+   * its model and still starts from an import.
+   *
+   * Mirrors the backend's `engine_has_starter_model`, which refuses the
+   * creation. Neither side can see the other, so both carry a test —
+   * without this the wizard offers a path the backend rejects, which is
+   * what it did for one commit.
+   */
+  hasStarterModel: boolean;
+  /**
    * What this GUI can do to the engine's model.
    *
    * One capability per operation, because they are separate questions
@@ -239,6 +255,7 @@ const WDS: EngineComponents = {
   CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
+  hasStarterModel: true,
   editing: {
     geometry: true,
     rename: true,
@@ -275,11 +292,15 @@ const UDS: EngineComponents = {
   // cannot change this" with "you cannot find this".
   editorFocusesElements: true,
   settingsEditable: false,
-  // Positions and names are editable: a drainage node's coordinate is a
-  // line in a preserved display section and its name appears in the
-  // control-rule text, and the backend maintains both. Structure is not
-  // — creating an element needs a default for every field its kind
-  // carries, and nothing supplies those yet.
+  hasStarterModel: false,
+  // Everything but the title. A drainage node's coordinate is a line in
+  // a preserved display section and its name appears in the control-rule
+  // text; the backend maintains both, finds every reference before it
+  // removes anything, and refuses the element kinds whose fields cannot
+  // be defaulted rather than inventing them.
+  //
+  // The title is a `[TITLE]` block of free text the importer keeps
+  // verbatim, and nothing writes it back yet.
   editing: {
     geometry: true,
     rename: true,

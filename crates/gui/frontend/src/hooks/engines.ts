@@ -81,17 +81,20 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
   },
 ];
 
-/** What this GUI can do with each engine, in two tiers. Openable: projects
- * can be created from an imported model, viewed, and run through the queue.
- * Editable: tables, inspector writes, element creation. The tiers differ
- * while an engine's viewer ships ahead of its editor; the registry status
- * says only what this build of Hydra can simulate at all. Mirrors the Rust
- * lists in `commands/projects.rs`. */
+/** Engines this GUI can open a project for at all: created from an
+ * imported model, viewed, and run through the queue. The registry status
+ * says only what this build of Hydra can simulate. Mirrors
+ * `GUI_OPENABLE_ENGINES` in `commands/projects.rs`.
+ *
+ * There was a second set here, `GUI_EDITABLE_ENGINES`, listing what this
+ * GUI could edit — a third copy of a fact the engine registry's
+ * `editing` capabilities already carry, and one nothing in the app read.
+ * It went on saying drainage was read-only for as long as it existed,
+ * which is what an unread copy does. */
 export const GUI_OPENABLE_ENGINES: ReadonlySet<string> = new Set([
   "wds",
   "uds",
 ]);
-export const GUI_EDITABLE_ENGINES: ReadonlySet<string> = new Set(["wds"]);
 
 /** Whether this build of Hydra can simulate `engine`'s models at all
  * (registry status — not the same as being usable in this GUI). */
@@ -99,15 +102,11 @@ export function isEngineAvailable(engine: EngineInfo): boolean {
   return engine.status === "available";
 }
 
-/** Whether `engine` can back a new project in this GUI (possibly read-only:
- * import, view, run — see `isEngineGuiEditable` for editing). */
+/** Whether `engine` can back a new project in this GUI. What can then be
+ * done to that project is the engine registry's `editing` capabilities,
+ * per operation. */
 export function isEngineGuiOpenable(engine: EngineInfo): boolean {
   return isEngineAvailable(engine) && GUI_OPENABLE_ENGINES.has(engine.key);
-}
-
-/** Whether `engine`'s projects can be edited in this GUI. */
-export function isEngineGuiEditable(engine: EngineInfo): boolean {
-  return isEngineAvailable(engine) && GUI_EDITABLE_ENGINES.has(engine.key);
 }
 
 /** The engine's accepted extensions as human-facing text, e.g. ".inp" or

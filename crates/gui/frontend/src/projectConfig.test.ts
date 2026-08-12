@@ -3,7 +3,7 @@ import {
   engineByKey,
   FALLBACK_ENGINES,
   importExtensionLabel,
-  isEngineGuiEditable,
+  isEngineGuiOpenable,
 } from "./hooks/engines";
 import type { ProjectView } from "./projectConfig";
 import { ACCENT, PROJECT_VIEWS } from "./projectConfig";
@@ -32,23 +32,25 @@ describe("engine registry fallback", () => {
     expect(engineByKey(FALLBACK_ENGINES, "")).toBeNull();
   });
 
-  it("registers the non-editable engines so the wizard can present them", () => {
-    // Non-editable ≠ unknown (hydra-common spec §2.3): planned and CLI-only
-    // engines resolve, and carry full identity, but must never back a
-    // project in this GUI.
-    for (const key of ["uds", "och"]) {
-      const engine = engineByKey(FALLBACK_ENGINES, key);
-      if (engine === null) throw new Error(`${key} must be registered`);
-      expect(engine.pill).toHaveLength(2);
-      expect(isEngineGuiEditable(engine)).toBe(false);
-    }
+  it("registers an engine this GUI cannot open, so the wizard can present it", () => {
+    // Unopenable ≠ unknown (hydra-common spec §2.3): a planned engine
+    // resolves and carries full identity, so its card can be drawn and
+    // disabled, but it must never back a project here.
+    const engine = engineByKey(FALLBACK_ENGINES, "och");
+    if (engine === null) throw new Error("och must be registered");
+    expect(engine.pill).toHaveLength(2);
+    expect(isEngineGuiOpenable(engine)).toBe(false);
   });
 
-  it("only wds can back a project in this GUI", () => {
-    const editable = FALLBACK_ENGINES.filter(isEngineGuiEditable).map(
+  it("opens a project for every implemented engine", () => {
+    // This asserted "only wds can back a project", which was true while
+    // drainage was a viewer and stayed on the page after it stopped
+    // being. What it is really guarding is that a *planned* engine
+    // cannot — so it names that, and lets the implemented list grow.
+    const openable = FALLBACK_ENGINES.filter(isEngineGuiOpenable).map(
       (e) => e.key,
     );
-    expect(editable).toEqual(["wds"]);
+    expect(openable).toEqual(["wds", "uds"]);
   });
 
   it("mirrors the backend registry order", () => {

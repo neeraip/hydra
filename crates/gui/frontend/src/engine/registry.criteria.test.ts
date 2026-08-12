@@ -47,3 +47,25 @@ describe("editorFocusesElements", () => {
     }
   });
 });
+
+describe("hasStarterModel", () => {
+  /**
+   * The frontend half of a two-sided invariant: the backend's
+   * `engine_has_starter_model` refuses to create a project for an
+   * engine with nothing to start from, and this is what decides whether
+   * the wizard offers that path at all. Neither side can see the other,
+   * so a drift only shows if both are pinned — and for one commit they
+   * did drift, when this was derived from `editing.create` and drainage
+   * learned to create.
+   */
+  it("is not the same question as whether elements can be created", () => {
+    const uds = engineComponents("uds");
+    expect(uds.editing.create).toBe(true);
+    expect(uds.hasStarterModel).toBe(false);
+  });
+
+  it("is true only where a starter model exists", () => {
+    expect(engineComponents("wds").hasStarterModel).toBe(true);
+    expect(engineComponents("uds").hasStarterModel).toBe(false);
+  });
+});
