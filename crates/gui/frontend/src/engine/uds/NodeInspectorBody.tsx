@@ -2,6 +2,10 @@ import { useMemo } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { useHoverActions } from "../../canvas/hover-context";
 import { ConnectedLink } from "../../components/panels/ElementInspector/ConnectedElements";
+import {
+  PropertiesSection,
+  useElementDetails,
+} from "../../components/panels/ElementInspector/PropertiesSection";
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import {
   useInletCouplings,
@@ -11,12 +15,7 @@ import {
 } from "../../hooks";
 import type { NodeInspectorBodyProps } from "../registry";
 import { capturedFrom } from "./couplings";
-import {
-  GenericResultsCards,
-  GenericTimeSeriesCard,
-  PropertiesSection,
-  useElementDetails,
-} from "./inspector-shared";
+import { GenericResultsCards, GenericTimeSeriesCard } from "./inspector-shared";
 
 /**
  * Urban-drainage node inspector body, mirroring the wds body's structure:

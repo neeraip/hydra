@@ -1,12 +1,11 @@
 import { useHoverActions } from "../../canvas/hover-context";
-import { SectionLabel } from "../../components/ui/SectionLabel";
-import type { RegionInspectorBodyProps } from "../registry";
 import {
-  GenericResultsCards,
-  GenericTimeSeriesCard,
   PropertiesSection,
   useElementDetails,
-} from "./inspector-shared";
+} from "../../components/panels/ElementInspector/PropertiesSection";
+import { SectionLabel } from "../../components/ui/SectionLabel";
+import type { RegionInspectorBodyProps } from "../registry";
+import { GenericResultsCards, GenericTimeSeriesCard } from "./inspector-shared";
 
 /**
  * Urban-drainage subcatchment inspector body, following the same section

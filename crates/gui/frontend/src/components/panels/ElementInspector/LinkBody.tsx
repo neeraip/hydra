@@ -1,35 +1,13 @@
 import type { LinkVariable } from "../../../canvas/types";
 import type { Link, ResultRanges } from "../../../hooks";
 import { useNodes } from "../../../hooks";
-import {
-  formatQty,
-  formatQtyPrecise,
-  unitLabel,
-  useUnitSystem,
-} from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedNodeChip } from "./ConnectedElements";
-import { PropRow } from "./primitives";
+import { PropertiesSection, useElementDetails } from "./PropertiesSection";
 import { LinkResultsCard } from "./ResultsCards";
 import { TimeSeriesCard } from "./TimeSeriesCard";
 
 // ── Link inspector body ────────────────────────────────────────────────────────
-
-/** Whether any Properties row below would render — mirrors each row's own
- * guard so the section header cannot appear over an empty table. */
-function hasProperties(link: Link): boolean {
-  return (
-    (link.length != null && link.length > 0) ||
-    (link.diameter != null && link.diameter > 0) ||
-    (link.roughness != null && link.roughness > 0) ||
-    !!link.pumpCurve ||
-    (link.pumpPowerKw != null && link.pumpPowerKw > 0) ||
-    (link.pumpSpeed != null && link.pumpSpeed > 0) ||
-    !!link.valveType ||
-    link.valveSetting != null ||
-    !!link.valveCurve
-  );
-}
 
 export function LinkBody({
   link,
@@ -48,8 +26,8 @@ export function LinkBody({
   isTransitioning?: boolean;
   onLocateNode: (id: string) => void;
 }) {
-  const sys = useUnitSystem();
   const allNodes = useNodes();
+  const details = useElementDetails(link.id, link.type);
 
   return (
     <div
@@ -61,80 +39,13 @@ export function LinkBody({
         transition: "opacity 220ms ease",
       }}
     >
-      {/* Static properties — the section header renders only when at least
-          one row will (an attribute-less engine link showed a bare
-          "Properties" heading over an empty table). */}
-      {hasProperties(link) && (
-        <>
-          <SectionLabel>Properties</SectionLabel>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              marginBottom: 14,
-            }}
-          >
-            <tbody>
-              {link.length != null && link.length > 0 && (
-                <PropRow
-                  label="Length"
-                  value={formatQty(link.length, "length", sys, 1)}
-                />
-              )}
-              {link.diameter != null && link.diameter > 0 && (
-                <PropRow
-                  label={`Diameter (${unitLabel("diameter", sys)})`}
-                  value={formatQtyPrecise(link.diameter, "diameter", sys)}
-                />
-              )}
-              {link.roughness != null && link.roughness > 0 && (
-                <PropRow label="Roughness" value={String(link.roughness)} />
-              )}
-              {link.pumpCurve && (
-                <PropRow label="Pump curve" value={link.pumpCurve} />
-              )}
-              {link.pumpPowerKw != null && link.pumpPowerKw > 0 && (
-                <PropRow label="Power" value={`${link.pumpPowerKw} kW`} />
-              )}
-              {link.pumpSpeed != null && link.pumpSpeed > 0 && (
-                <PropRow label="Speed" value={`${link.pumpSpeed}`} />
-              )}
-              {link.valveType && (
-                <PropRow label="Valve type" value={link.valveType} />
-              )}
-              {link.valveSetting != null && (
-                <PropRow
-                  label="Setting"
-                  value={
-                    link.valveType === "PRV" ||
-                    link.valveType === "PSV" ||
-                    link.valveType === "PBV"
-                      ? formatQty(
-                          link.valveSetting,
-                          "pressure",
-                          sys,
-                          sys === "si" ? 2 : undefined,
-                        )
-                      : link.valveType === "FCV"
-                        ? formatQty(
-                            link.valveSetting,
-                            "flow",
-                            sys,
-                            sys === "si" ? 3 : undefined,
-                          )
-                        : link.valveType === "TCV"
-                          ? `K = ${link.valveSetting.toFixed(3)}`
-                          : String(link.valveSetting)
-                  }
-                />
-              )}
-              {link.valveCurve && (
-                <PropRow label="Curve" value={link.valveCurve} />
-              )}
-            </tbody>
-          </table>
-        </>
-      )}
+      {/* Every property the engine declares, editable where it says so
+          — the same rows and the same decision the Editor's table
+          applies. This body used to write them out itself, with a
+          `hasProperties` guard mirroring each row's own condition, a
+          hardcoded unit per row, and a nested ternary deciding what a
+          valve's setting means. All of it is in the schema. */}
+      <PropertiesSection {...details} />
 
       {/* From / To nodes */}
       <SectionLabel>Connected nodes</SectionLabel>

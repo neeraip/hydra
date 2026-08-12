@@ -24,6 +24,26 @@ describe("cellEditor", () => {
     });
   });
 
+  it("offers zero, which is a value and not an absence", () => {
+    // An invert at datum, a minor loss of none. A falsy check here made
+    // every such cell read-only.
+    expect(cellEditor(column(NUMBER), 0, true)).toEqual({
+      kind: "number",
+      value: 0,
+    });
+  });
+
+  it("offers a field for text, which used to be refused outright", () => {
+    // The rule this replaced said text is never editable — true while
+    // the only writable values were numbers, and wrong the day a tag
+    // and an outlet became text that is. It lived beside the inspector,
+    // so the same attribute took an input in a table and read as fixed
+    // in the panel.
+    expect(
+      cellEditor(column({ type: "text", default: null }), "Zone A", true),
+    ).toEqual({ kind: "text", value: "Zone A" });
+  });
+
   it("offers the declared list for a choice, not a box to type in", () => {
     // The reason the column carries its shape at all: a valve type
     // typed by hand is a valve type that can be misspelled.

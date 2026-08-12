@@ -1699,6 +1699,12 @@ pub(crate) fn set_attribute(
     if key == "outlet" {
         return set_parcel_outlet(net, element_id, value.as_str().unwrap_or("").trim());
     }
+    // The third: which link a divider's diverted flow leaves by. Stored
+    // as an index like an outlet, and cleared by an empty name — a
+    // divider with no diverted link is what the file writes as `*`.
+    if key == "divertedLink" {
+        return set_diverted_link(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     let value = value
         .as_f64()
         .ok_or_else(|| format!("'{key}' takes a number"))?;
@@ -1838,6 +1844,34 @@ fn set_parcel_outlet(net: &mut Network, id: &str, outlet: &str) -> Result<(), St
         ));
     };
     net.parcels[parcel].outlet = target;
+    Ok(())
+}
+
+/// Name the link a divider's diverted flow leaves by.
+///
+/// Empty clears it, which the file writes as `*` and the engine reads as
+/// "none named" — a divider that diverts nowhere is legal input, so
+/// refusing to express it would make one kind of model uneditable.
+fn set_diverted_link(net: &mut Network, id: &str, link: &str) -> Result<(), String> {
+    let diverted = if link.is_empty() {
+        None
+    } else {
+        Some(
+            net.links
+                .iter()
+                .position(|l| l.id.eq_ignore_ascii_case(link))
+                .ok_or_else(|| format!("'{link}' is not a link in this model"))?,
+        )
+    };
+    let vertex = net
+        .vertices
+        .iter_mut()
+        .find(|v| v.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let hydra::uds::model::VertexKind::Divider { diverted_link, .. } = &mut vertex.kind else {
+        return Err(format!("'{id}' is not a divider"));
+    };
+    *diverted_link = diverted;
     Ok(())
 }
 
@@ -2031,6 +2065,51 @@ RS1  0:00  0.4
         let err = set_attribute(&mut two, "S1", "outlet", &serde_json::json!("NOPE"))
             .expect_err("unknown");
         assert!(err.contains("NOPE"), "{err}");
+    }
+
+    /// The last of the three referents that could not be edited. Its
+    /// target is a link of any kind — the other half of what one kind id
+    /// could not say — and unlike the outlet it may legally be nothing,
+    /// which the file writes as `*`.
+    #[test]
+    fn a_divider_can_be_told_which_link_its_flow_leaves_by() {
+        let (mut net, diags) = hydra::uds::io::objects::parse_network(
+            "[OPTIONS]\nFLOW_UNITS CMS\n\
+             [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+             [DIVIDERS]\nD1 9 * OVERFLOW\n\
+             [OUTFALLS]\nO1 8 FREE NO\n\
+             [CONDUITS]\nC1 D1 O1 100 0.013 0 0\nC2 J1 D1 100 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\nC2 CIRCULAR 1 0 0 0\n",
+        );
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+
+        set_attribute(&mut net, "D1", "divertedLink", &serde_json::json!("C1")).expect("set");
+        let read = |net: &Network| {
+            element_attributes(net, "D1")
+                .expect("rows")
+                .into_iter()
+                .find(|r| r.key == "divertedLink")
+                .and_then(|r| r.text)
+        };
+        assert_eq!(read(&net), Some("C1".to_string()));
+
+        // Cleared back to none, which is what the fixture started as and
+        // what `*` means — a divider diverting nowhere is legal input.
+        set_attribute(&mut net, "D1", "divertedLink", &serde_json::json!("")).expect("clear");
+        assert!(matches!(
+            net.vertices.iter().find(|v| v.id == "D1").map(|v| &v.kind),
+            Some(hydra::uds::model::VertexKind::Divider {
+                diverted_link: None,
+                ..
+            })
+        ));
+
+        assert!(set_attribute(&mut net, "D1", "divertedLink", &serde_json::json!("NOPE")).is_err());
+        // And a kind that is not a divider says so rather than silently
+        // doing nothing.
+        let err = set_attribute(&mut net, "J1", "divertedLink", &serde_json::json!("C1"))
+            .expect_err("not a divider");
+        assert!(err.contains("divider"), "{err}");
     }
 
     /// The catalog has to name every kind an outlet may be, because a

@@ -416,7 +416,7 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             // where a junction's showed three.
             rw("maxDepth", "Maximum depth", num(), Some("depth")),
             rw("initDepth", "Initial depth", num(), Some("depth")),
-            attr("divertedLink", "Diverted link", text(), None),
+            rw("divertedLink", "Diverted link", text(), None),
         ],
         "storage" => vec![
             rw("invert", "Invert elevation", num(), Some("elevation")),

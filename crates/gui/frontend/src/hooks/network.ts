@@ -1228,6 +1228,13 @@ export interface ElementAttribute {
   number?: number;
   text?: string;
   quantity?: ElementAttributeQuantity;
+  /** The value's shape and bounds — the same field the per-kind column
+   * carries, so one renderer serves a row and a cell. Without it a
+   * surface can offer a field and a field only. */
+  kind: OptionKind;
+  /** The kinds whose elements this attribute may name (hydra-common
+   * §4.5.1.1). Absent or empty for ordinary text. */
+  references?: string[];
 }
 
 /** Display string for an attribute row in the given unit system. */
@@ -1247,31 +1254,6 @@ export function formatElementAttribute(
   const decimals = sys === "us" ? q.usDecimals : q.siDecimals;
   const unit = sys === "us" ? q.usLabel : q.siLabel;
   return `${value.toFixed(decimals)} ${unit}`;
-}
-
-/**
- * The number to offer for editing at one place a value is shown, or
- * `null` to show it read-only.
- *
- * Two different questions have to both say yes, and they are answered by
- * different things. `editable` is about the *key*: the backend decides
- * from the same table its setter consults whether that attribute can be
- * written at all. The value is about this *element*: a null cell means
- * the element does not carry the attribute, and a field offered there
- * would invite creating a value the model never had — the table serves a
- * column for every attribute the kind declares, including ones a given
- * element has none of.
- *
- * A text value is never editable here whatever the flag says. It states
- * a referent or a choice, and setting one of those is a different
- * operation from typing a number over it.
- */
-export function editableNumberOf(
-  editable: boolean,
-  value: number | string | null | undefined,
-): number | null {
-  if (!editable) return null;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /**
@@ -1491,8 +1473,8 @@ export interface KindColumn {
   /** Whether this column's cells can be written. Decided by the backend
    * from the same table its setter consults — the per-column twin of
    * `ElementAttribute.editable`, true for the same attributes. It says
-   * the key is writable, not that any given cell is: see
-   * {@link editableNumberOf}. */
+   * the key is writable, not that any given cell is: an element with
+   * no value for it has nothing to change. */
   editable: boolean;
   /** The value's shape and bounds. What lets one table render a select
    * for a valve type, a yes/no for a check valve and a number for a

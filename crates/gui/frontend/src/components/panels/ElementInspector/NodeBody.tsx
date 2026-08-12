@@ -1,15 +1,10 @@
 import type { NodeVariable } from "../../../canvas/types";
 import type { Node, ResultRanges } from "../../../hooks";
 import { useLinksConnectedTo } from "../../../hooks";
-import {
-  formatQty,
-  formatQtyPrecise,
-  unitLabel,
-  useUnitSystem,
-} from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedLink } from "./ConnectedElements";
 import { PatternPreview } from "./PatternPreview";
+import { PropertiesSection, useElementDetails } from "./PropertiesSection";
 import { PropRow } from "./primitives";
 import { NodeResultsCard } from "./ResultsCards";
 import { TimeSeriesCard } from "./TimeSeriesCard";
@@ -35,9 +30,9 @@ export function NodeBody({
   onOpenPattern?: (id: string) => void;
   onLocateLink: (id: string) => void;
 }) {
-  const sys = useUnitSystem();
   const connectedLinks = useLinksConnectedTo(node.id);
   const headPattern = node.headPattern;
+  const details = useElementDetails(node.id, node.type);
 
   return (
     <div
@@ -49,87 +44,32 @@ export function NodeBody({
         transition: "opacity 220ms ease",
       }}
     >
-      {/* Static properties */}
-      <SectionLabel>Properties</SectionLabel>
-      <table
-        style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}
-      >
-        <tbody>
-          {node.elevation != null && (
-            <PropRow
-              label={`Elevation (${unitLabel("elevation", sys)})`}
-              value={formatQtyPrecise(node.elevation, "elevation", sys)}
-            />
-          )}
-          {node.baseDemand != null && node.baseDemand !== 0 && (
-            <PropRow
-              label="Base demand"
-              value={formatQty(
-                node.baseDemand,
-                "demand",
-                sys,
-                sys === "si" ? 4 : undefined,
-              )}
-            />
-          )}
-          <PropRow
-            label="X / Y"
-            value={`${node.x.toFixed(2)}, ${node.y.toFixed(2)}`}
-          />
-          {/* Tank fields */}
-          {node.tankMinLevel != null && (
-            <PropRow
-              label={`Min level (${unitLabel("length", sys)})`}
-              value={formatQtyPrecise(node.tankMinLevel, "length", sys)}
-            />
-          )}
-          {node.tankMaxLevel != null && (
-            <PropRow
-              label={`Max level (${unitLabel("length", sys)})`}
-              value={formatQtyPrecise(node.tankMaxLevel, "length", sys)}
-            />
-          )}
-          {node.tankInitialLevel != null && (
-            <PropRow
-              label={`Initial level (${unitLabel("length", sys)})`}
-              value={formatQtyPrecise(node.tankInitialLevel, "length", sys)}
-            />
-          )}
-          {node.tankDiameter != null && node.tankDiameter > 0 && (
-            <PropRow
-              label={`Tank diameter (${unitLabel("length", sys)})`}
-              value={formatQtyPrecise(node.tankDiameter, "length", sys)}
-            />
-          )}
-          {node.tankVolumeCurve && (
-            <PropRow label="Volume curve" value={node.tankVolumeCurve} />
-          )}
-          {/* Reservoir fields */}
-          {headPattern && (
-            <tr>
-              <td
-                style={{
-                  fontSize: "var(--text-md)",
-                  color: "var(--text-tertiary)",
-                  padding: "4px 0",
-                  width: "45%",
-                }}
-              >
-                Head pattern
-              </td>
-              <td style={{ padding: "4px 0" }}>
+      {/* Every property the engine declares, editable where it says so
+          — the same rows and the same decision the Editor's table
+          applies. This body used to write them out itself: hardcoded
+          labels, hardcoded units, and read-only, so a junction offered
+          every property in the table and none of them here. */}
+      <PropertiesSection {...details}>
+        {/* The body's own rows, which the schema does not describe: a
+            position, and the shape of a referenced pattern. */}
+        <PropRow
+          label="X / Y"
+          value={`${node.x.toFixed(2)}, ${node.y.toFixed(2)}`}
+        />
+        {headPattern && (
+          <tr>
+            {/* Spans both columns: the profile needs the full width, and
+                it belongs under the pattern's own row rather than as
+                another card competing with the results chart below. */}
+            <td colSpan={2} style={{ padding: "2px 0 6px" }}>
+              <PatternPreview patternId={headPattern} stroke={accent} />
+              {onOpenPattern && (
                 <button
                   type="button"
-                  onClick={() => onOpenPattern?.(headPattern)}
-                  data-tooltip={
-                    onOpenPattern
-                      ? `Open pattern ${headPattern} in editor`
-                      : undefined
-                  }
+                  onClick={() => onOpenPattern(headPattern)}
+                  data-tooltip={`Open pattern ${headPattern} in editor`}
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
+                    marginTop: 4,
                     padding: "2px 7px",
                     border: `1px solid ${accent}55`,
                     borderRadius: 4,
@@ -137,27 +77,17 @@ export function NodeBody({
                     color: accent,
                     fontSize: "var(--text-sm)",
                     fontFamily: "var(--font-mono)",
-                    cursor: onOpenPattern ? "pointer" : "default",
+                    cursor: "pointer",
                     fontWeight: 500,
                   }}
                 >
-                  {headPattern}
+                  Open {headPattern}
                 </button>
-              </td>
-            </tr>
-          )}
-          {/* Spans both columns: the profile needs the full width, and it
-              belongs with the reference above it rather than as another card
-              competing with the results chart further down. */}
-          {headPattern && (
-            <tr>
-              <td colSpan={2} style={{ padding: "2px 0 6px" }}>
-                <PatternPreview patternId={headPattern} stroke={accent} />
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+              )}
+            </td>
+          </tr>
+        )}
+      </PropertiesSection>
 
       {/* Connected links */}
       {connectedLinks.length > 0 && (

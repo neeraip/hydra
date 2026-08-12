@@ -46,6 +46,18 @@ pub struct ElementAttributeDto {
     /// The §5 quantity descriptor for `number`, absent for unitless values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantity: Option<QuantityDescriptor>,
+    /// The value's shape and bounds (§3.2.1 vocabulary, reused by §4.4).
+    ///
+    /// The same field the per-kind column carries, and here for the same
+    /// reason: a surface that knows only "number or text" can offer a
+    /// field and a field only. Without it the inspector could not offer
+    /// a choice, a yes/no, or a reference with the model's own ids —
+    /// which is exactly how it fell behind the tables.
+    pub kind: hydra::common::OptionKind,
+    /// The kinds whose elements this attribute may name (§4.5.1.1),
+    /// empty for a value that is not a reference.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
 }
 
 /// Build an element's rows from its kind's schema and its own values.
@@ -76,6 +88,8 @@ pub(crate) fn rows_from_schema(
                     number: Some(n),
                     text: None,
                     quantity: attr.quantity.as_deref().and_then(&quantity),
+                    kind: attr.kind,
+                    references: attr.references,
                 },
                 AttrValue::Text(t) => ElementAttributeDto {
                     editable: attr.editable,
@@ -86,6 +100,8 @@ pub(crate) fn rows_from_schema(
                     // A quantity describes a number. A row that is text
                     // carries none even where the schema names one.
                     quantity: None,
+                    kind: attr.kind,
+                    references: attr.references,
                 },
             })
         })

@@ -37,7 +37,6 @@ import { normalizeNodes } from "./NetworkDataContext";
 import {
   decodeNetworkSnapshot,
   deleteElement,
-  editableNumberOf,
   editableNumberText,
   fetchNetworkSnapshot,
   formatElementAttribute,
@@ -595,7 +594,14 @@ describe("parseElementAttribute", () => {
     for (const q of [depth, temperature]) {
       for (const value of [0, 1, 12.5, -3.25]) {
         const shown = formatElementAttribute(
-          { key: "k", editable: true, label: "L", number: value, quantity: q },
+          {
+            key: "k",
+            editable: true,
+            label: "L",
+            number: value,
+            quantity: q,
+            kind: { type: "number", default: null, min: null, max: null },
+          },
           "us",
         );
         const back = parseElementAttribute(shown.split(" ")[0], q, "us");
@@ -686,37 +692,5 @@ describe("deleteElement", () => {
       links: ["C1"],
       attachments: ["1 inflow"],
     });
-  });
-});
-
-describe("editableNumberOf", () => {
-  it("refuses a key the backend will not write", () => {
-    expect(editableNumberOf(false, 12)).toBeNull();
-  });
-
-  it("refuses a value this element does not have", () => {
-    // The flag is about the attribute, the value about the element. A
-    // table serves a column for every attribute the kind declares, so
-    // both questions are live at once.
-    expect(editableNumberOf(true, null)).toBeNull();
-    expect(editableNumberOf(true, undefined)).toBeNull();
-  });
-
-  it("refuses text whatever the flag says", () => {
-    // A referent or a choice — "CIRCULAR", a curve's name. Setting one
-    // is a different operation from typing a number over it.
-    expect(editableNumberOf(true, "CIRCULAR")).toBeNull();
-  });
-
-  it("refuses a value that is not a real number", () => {
-    expect(editableNumberOf(true, Number.NaN)).toBeNull();
-    expect(editableNumberOf(true, Number.POSITIVE_INFINITY)).toBeNull();
-  });
-
-  it("offers a real number on a writable key, including zero", () => {
-    // Zero is a value, not an absence — an invert at datum is the
-    // obvious case, and a falsy check would have made it read-only.
-    expect(editableNumberOf(true, 0)).toBe(0);
-    expect(editableNumberOf(true, -3.25)).toBe(-3.25);
   });
 });

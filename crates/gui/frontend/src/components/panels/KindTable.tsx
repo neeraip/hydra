@@ -37,7 +37,7 @@ import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { readTextScale } from "../../textScale";
 import { useUnitSystem } from "../../units";
-import { EditableNumber } from "../ui/EditableNumber";
+import { AttributeField } from "./attributeField";
 import { cellEditor } from "./cellEditor";
 import {
   ActionIcon,
@@ -549,8 +549,8 @@ export function KindTable({
                         }
                         return (
                           <td key={axis} style={{ ...EDITOR_TD, padding: 0 }}>
-                            <EditableNumber
-                              value={at[ai]}
+                            <AttributeField
+                              editor={{ kind: "number", value: at[ai] }}
                               sys={sys}
                               label={`${id} ${axis.toUpperCase()}`}
                               chrome="cell"
@@ -558,8 +558,8 @@ export function KindTable({
                               onCommit={(next) =>
                                 onMove(
                                   id,
-                                  ai === 0 ? next : at[0],
-                                  ai === 1 ? next : at[1],
+                                  ai === 0 ? Number(next) : at[0],
+                                  ai === 1 ? Number(next) : at[1],
                                 )
                               }
                             />
@@ -585,9 +585,11 @@ export function KindTable({
                         }
                         return (
                           <td key={field} style={{ ...EDITOR_TD, padding: 0 }}>
-                            <CellText
+                            <AttributeField
+                              editor={{ kind: "text", value: ends[ei] }}
                               label={`${id} ${label}`}
-                              value={ends[ei]}
+                              sys={sys}
+                              chrome="cell"
                               listId={
                                 lists.some((l) => l.key === END_LIST)
                                   ? `${listPrefix}-${END_LIST}`
@@ -596,8 +598,8 @@ export function KindTable({
                               onCommit={(next) =>
                                 onReconnect(
                                   id,
-                                  ei === 0 ? next : ends[0],
-                                  ei === 1 ? next : ends[1],
+                                  ei === 0 ? String(next) : ends[0],
+                                  ei === 1 ? String(next) : ends[1],
                                 )
                               }
                             />
@@ -612,11 +614,11 @@ export function KindTable({
                       // is a choice of seven and a check valve is a
                       // yes/no, and neither is a box to type in.
                       const editor = cellEditor(c, v, !!onEdit);
-                      if (editor.kind === "number") {
+                      if (editor.kind !== "none") {
                         return (
                           <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
-                            <EditableNumber
-                              value={editor.value}
+                            <AttributeField
+                              editor={editor}
                               quantity={c.quantity}
                               sys={sys}
                               // The column heading already carries the
@@ -626,33 +628,6 @@ export function KindTable({
                               label={`${id} ${c.label}`}
                               chrome="cell"
                               align={align}
-                              onCommit={(next) =>
-                                onEdit?.(id, c.key, next, editor.value)
-                              }
-                            />
-                          </td>
-                        );
-                      }
-                      if (editor.kind === "choice") {
-                        return (
-                          <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
-                            <CellSelect
-                              label={`${id} ${c.label}`}
-                              value={editor.value}
-                              items={editor.items}
-                              onCommit={(next) =>
-                                onEdit?.(id, c.key, next, editor.value)
-                              }
-                            />
-                          </td>
-                        );
-                      }
-                      if (editor.kind === "text") {
-                        return (
-                          <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
-                            <CellText
-                              label={`${id} ${c.label}`}
-                              value={editor.value}
                               listId={
                                 lists.some((l) => l.key === c.key)
                                   ? `${listPrefix}-${c.key}`
@@ -683,6 +658,7 @@ export function KindTable({
                                     label: c.label,
                                     number: v,
                                     quantity: c.quantity,
+                                    kind: c.kind,
                                   },
                                   sys,
                                 )
@@ -735,93 +711,3 @@ export function KindTable({
 
 /** Shared chrome for the two cell editors that are not numbers: no
  * border at rest, a focus ring while in use, the cell's own padding. */
-const CELL_INPUT: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  boxSizing: "border-box",
-  padding: "7px 10px",
-  background: "transparent",
-  border: "none",
-  outline: "none",
-  borderRadius: 0,
-  color: "var(--text-primary)",
-  fontFamily: "var(--font-mono)",
-  fontSize: "var(--text-md)",
-};
-
-/** A cell whose value is one of a declared list. */
-function CellSelect({
-  label,
-  value,
-  items,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  items: Array<{ value: string; label: string }>;
-  onCommit: (value: string) => void;
-}) {
-  return (
-    <select
-      aria-label={label}
-      value={value}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        if (e.target.value !== value) onCommit(e.target.value);
-      }}
-      style={{ ...CELL_INPUT, cursor: "pointer" }}
-    >
-      {/* A value the engine holds that the list does not offer still has
-          to be shown, or the select would silently claim the element is
-          something it is not. */}
-      {!items.some((i) => i.value === value) && (
-        <option value={value}>{value}</option>
-      )}
-      {items.map((i) => (
-        <option key={i.value} value={i.value}>
-          {i.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-/** A cell whose value is free text — a reference to another element,
- * most often. Committed on blur or Enter, abandoned on Escape, and
- * silent when unchanged, exactly as the numeric field is. */
-function CellText({
-  label,
-  value,
-  listId,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  /** The shared datalist of ids this cell may name, when it is a
-   * reference and the list is small enough to be worth offering. */
-  listId?: string;
-  onCommit: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  return (
-    <input
-      aria-label={label}
-      list={listId}
-      value={draft}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        if (draft !== value) onCommit(draft);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") {
-          setDraft(value);
-          e.currentTarget.blur();
-        }
-      }}
-      style={CELL_INPUT}
-    />
-  );
-}

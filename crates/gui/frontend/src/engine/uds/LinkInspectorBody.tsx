@@ -1,16 +1,15 @@
 import { useMemo } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { ConnectedNodeChip } from "../../components/panels/ElementInspector/ConnectedElements";
+import {
+  PropertiesSection,
+  useElementDetails,
+} from "../../components/panels/ElementInspector/PropertiesSection";
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import { ACCENT, useInletCouplings, useNodes } from "../../hooks";
 import type { LinkInspectorBodyProps } from "../registry";
 import { capturedInto } from "./couplings";
-import {
-  GenericResultsCards,
-  GenericTimeSeriesCard,
-  PropertiesSection,
-  useElementDetails,
-} from "./inspector-shared";
+import { GenericResultsCards, GenericTimeSeriesCard } from "./inspector-shared";
 
 /**
  * Urban-drainage link inspector body, mirroring the wds body's structure:
