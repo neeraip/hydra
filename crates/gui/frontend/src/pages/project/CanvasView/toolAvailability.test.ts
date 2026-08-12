@@ -35,9 +35,19 @@ describe("toolAvailableIn", () => {
 });
 
 describe("toolAllowedBy", () => {
-  const both = { geometry: true, structure: true, title: true };
-  const moveOnly = { geometry: true, structure: false, title: false };
-  const neither = { geometry: false, structure: false, title: false };
+  const both = { geometry: true, rename: true, structure: true, title: true };
+  const moveOnly = {
+    geometry: true,
+    rename: true,
+    structure: false,
+    title: false,
+  };
+  const neither = {
+    geometry: false,
+    rename: false,
+    structure: false,
+    title: false,
+  };
 
   it("offers every tool to an engine that can do everything", () => {
     for (const tool of ALL) {

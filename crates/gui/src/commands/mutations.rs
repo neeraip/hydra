@@ -443,6 +443,89 @@ where
     }
 }
 
+/// Apply a mutation to a loaded drainage network, marking it dirty.
+///
+/// Separate from [`apply_structural_mutation`] rather than folded into
+/// it: the two engines' networks are different types, and the drainage
+/// canvas reads a snapshot instead of the wds DTO, so there is no DTO to
+/// rebuild here.
+fn apply_uds_mutation<F>(inner: &mut NetworkStateInner, f: F) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::uds::model::Network) -> Result<(), String>,
+{
+    match inner {
+        NetworkStateInner::LoadedUds { dirty, network, .. } => {
+            f(std::sync::Arc::make_mut(network))?;
+            *dirty = true;
+            Ok(())
+        }
+        NetworkStateInner::Loaded { .. } => Err("this command is for drainage models".into()),
+        NetworkStateInner::Empty => Err("no network loaded".into()),
+    }
+}
+
+/// Rename a drainage element, following the name everywhere it is used.
+///
+/// A drainage model refers to an element by name in two places the model
+/// itself does not resolve: the preserved display sections, and the
+/// retained control-rule text. Its `[REPORT]` selections need nothing —
+/// they hold indices, not names — which is worth stating because the
+/// water-distribution engine's hold names and do.
+fn rename_uds_element(
+    net: &mut hydra::uds::model::Network,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    if new_id == old_id {
+        return Ok(());
+    }
+    // Vertices, links and parcels share one namespace here: the reader
+    // registers them in one table, so a duplicate across kinds is a
+    // duplicate.
+    let taken = net
+        .vertices
+        .iter()
+        .any(|v| v.id.eq_ignore_ascii_case(new_id))
+        || net.links.iter().any(|l| l.id.eq_ignore_ascii_case(new_id))
+        || net
+            .parcels
+            .iter()
+            .any(|p| p.id.eq_ignore_ascii_case(new_id));
+    if taken {
+        return Err(format!("ID '{new_id}' is already in use"));
+    }
+    let found = if let Some(v) = net
+        .vertices
+        .iter_mut()
+        .find(|v| v.id.eq_ignore_ascii_case(old_id))
+    {
+        v.id = new_id.to_string();
+        true
+    } else if let Some(l) = net
+        .links
+        .iter_mut()
+        .find(|l| l.id.eq_ignore_ascii_case(old_id))
+    {
+        l.id = new_id.to_string();
+        true
+    } else if let Some(p) = net
+        .parcels
+        .iter_mut()
+        .find(|p| p.id.eq_ignore_ascii_case(old_id))
+    {
+        p.id = new_id.to_string();
+        true
+    } else {
+        false
+    };
+    if !found {
+        return Err(format!("element '{old_id}' not found"));
+    }
+    super::uds_view::rename_in_display(net, old_id, new_id);
+    super::uds_view::rename_in_controls(net, old_id, new_id);
+    Ok(())
+}
+
 /// Command wrapper for structural mutations (create/delete/pattern/curve/
 /// control/rule commands): applies [`apply_structural_mutation`] and, on
 /// success, emits the structural `network-changed` event (payload-less →
@@ -1013,6 +1096,18 @@ pub fn rename_element(
     new_id: String,
 ) -> Result<(), String> {
     let new_id = validate_inp_id(&new_id, "element")?;
+    // Drainage renames route to their own path: a different network type,
+    // and different places the old name is written down.
+    {
+        let mut guard = state.0.lock();
+        if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
+            apply_uds_mutation(&mut guard, |network| {
+                rename_uds_element(network, &old_id, &new_id)
+            })?;
+            emit_or_warn(&app, NETWORK_CHANGED_EVENT, ());
+            return Ok(());
+        }
+    }
     mutate_structural(&app, &state, |network| {
         rename_element_in_network(network, &kind, &old_id, &new_id)
     })

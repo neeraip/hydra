@@ -138,9 +138,13 @@ export interface EngineComponents {
   editing: {
     /** Positions can be changed: the edit tool, dragging on the canvas. */
     geometry: boolean;
-    /** Elements can be created, deleted and renamed: the add tools,
-     * create modals, and the editor's row actions. A project can only
-     * begin from an imported model without this. */
+    /** An element's identifier can be changed. Its own capability
+     * because renaming maintains references, where creating supplies
+     * defaults — an engine can do the first without the second. */
+    rename: boolean;
+    /** Elements can be created and deleted: the add tools, create
+     * modals, and the editor's row actions. A project can only begin
+     * from an imported model without this. */
     structure: boolean;
     /** The model's title can be rewritten. Its own capability because
      * it is its own mutation — a model whose elements are fixed can
@@ -189,7 +193,7 @@ const WDS: EngineComponents = {
   CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
-  editing: { geometry: true, structure: true, title: true },
+  editing: { geometry: true, rename: true, structure: true, title: true },
   animatedVariables: {
     // Demand is a rate and would ring honestly, but it is nonzero at
     // nearly every junction — unlike drainage flooding, whose sparsity is
@@ -217,11 +221,12 @@ const UDS: EngineComponents = {
   // cannot change this" with "you cannot find this".
   editorFocusesElements: true,
   settingsEditable: false,
-  // Positions are editable: a drainage node's coordinate is a line in a
-  // preserved display section, and the backend maintains it. Structure
-  // is not — creating an element needs a default for every field its
-  // kind carries, and nothing supplies those yet.
-  editing: { geometry: true, structure: false, title: false },
+  // Positions and names are editable: a drainage node's coordinate is a
+  // line in a preserved display section and its name appears in the
+  // control-rule text, and the backend maintains both. Structure is not
+  // — creating an element needs a default for every field its kind
+  // carries, and nothing supplies those yet.
+  editing: { geometry: true, rename: true, structure: false, title: false },
   // Conduit flow and velocity are rates the pulse can carry directly.
   // Depth and capacity are states rather than rates — a full pipe is not a
   // fast one — and animating them would have the motion assert something

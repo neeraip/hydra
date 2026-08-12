@@ -2632,7 +2632,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     : undefined
                 }
                 onRename={
-                  editing.structure
+                  editing.rename
                     ? (newId) =>
                         handleRenameElement(
                           stableSelectedNode.type,
@@ -2702,7 +2702,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     : undefined
                 }
                 onRename={
-                  editing.structure
+                  editing.rename
                     ? (newId) =>
                         handleRenameElement(
                           stableSelectedLink.type,

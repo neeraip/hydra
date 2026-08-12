@@ -710,6 +710,65 @@ pub(crate) fn set_display_point(net: &mut Network, header: &str, id: &str, x: f6
     }
 }
 
+/// Rename every display line naming `old`, in every section.
+///
+/// All of them, not coordinates alone: a link's intermediate vertices
+/// and a subcatchment's polygon are keyed the same way, so a rename that
+/// fixed only the point would strand the rest of the geometry.
+pub(crate) fn rename_in_display(net: &mut Network, old: &str, new: &str) {
+    for section in &mut net.display {
+        for line in &mut section.lines {
+            if line_names(line, old) {
+                let rest = line
+                    .split_whitespace()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                *line = if rest.is_empty() {
+                    new.to_string()
+                } else {
+                    format!("{new} {rest}")
+                };
+            }
+        }
+    }
+}
+
+/// Rename `old` where control-rule text names it as an object.
+///
+/// Rules are retained as their author's text (§9.1 compiles them later),
+/// so an element's name appears in them as a bare token — and a
+/// rename that ignored them would leave a rule pointing at an element
+/// that no longer exists.
+///
+/// Only the token *after* an object keyword is replaced. Substituting
+/// every token equal to the old id would be shorter and wrong: drainage
+/// identifiers are routinely numeric, so a node named `5` would rewrite
+/// the `5` in `DEPTH > 5` and silently change what the rule tests.
+pub(crate) fn rename_in_controls(net: &mut Network, old: &str, new: &str) {
+    /// The keywords a rule names an object after (§9.1).
+    const OBJECTS: [&str; 8] = [
+        "GAGE", "NODE", "LINK", "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET",
+    ];
+    let rewrite = |line: &mut String| {
+        let mut tokens: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+        for i in 1..tokens.len() {
+            let names_object = OBJECTS
+                .iter()
+                .any(|k| tokens[i - 1].eq_ignore_ascii_case(k));
+            if names_object && tokens[i].eq_ignore_ascii_case(old) {
+                tokens[i] = new.to_string();
+            }
+        }
+        *line = tokens.join(" ");
+    };
+    for rule in &mut net.controls.rules {
+        for line in &mut rule.lines {
+            rewrite(line);
+        }
+    }
+}
+
 /// Whether a display line's first token is `id`.
 ///
 /// Compared case-insensitively because §14.2 matches identifiers that way:
@@ -840,5 +899,90 @@ S1  0  0
             "{:?}",
             coords(&again)
         );
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    fn model(controls: &str) -> Network {
+        let inp = format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+5   10  3  0  0  0
+J2  9   3  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  5  J2  100  0.01  0  0  0  0
+C2  J2  O1  100  0.01  0  0  0  0
+
+[COORDINATES]
+5   100  200
+J2  300  400
+O1  500  600
+
+{controls}"
+        );
+        let (net, diags) = hydra::uds::io::objects::parse_network(&inp);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    fn rule_lines(net: &Network) -> Vec<String> {
+        net.controls
+            .rules
+            .iter()
+            .flat_map(|r| r.lines.iter().cloned())
+            .collect()
+    }
+
+    #[test]
+    fn a_rename_follows_the_element_into_a_control_rule() {
+        let net =
+            &mut model("[CONTROLS]\nRULE R1\nIF NODE J2 DEPTH > 2\nTHEN LINK C2 SETTING = 0\n");
+        rename_in_controls(net, "J2", "OUTLET_NODE");
+        let lines = rule_lines(net);
+        assert!(
+            lines.iter().any(|l| l.contains("NODE OUTLET_NODE")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_numeric_name_is_not_confused_with_a_threshold() {
+        // The reason only the token after an object keyword is replaced.
+        // Drainage identifiers are routinely numeric, and this model has a
+        // node named `5` alongside a rule testing `> 5`. Substituting
+        // every matching token would rewrite the threshold and silently
+        // change what the rule asks.
+        let net =
+            &mut model("[CONTROLS]\nRULE R1\nIF NODE 5 DEPTH > 5\nTHEN LINK C1 SETTING = 0\n");
+        rename_in_controls(net, "5", "INLET");
+        let lines = rule_lines(net);
+        let premise = lines
+            .iter()
+            .find(|l| l.to_uppercase().starts_with("IF"))
+            .expect("premise");
+        assert!(premise.contains("NODE INLET"), "{premise}");
+        assert!(
+            premise.contains("> 5"),
+            "the threshold was rewritten: {premise}"
+        );
+    }
+
+    #[test]
+    fn a_rename_leaves_rules_that_never_named_the_element() {
+        let net =
+            &mut model("[CONTROLS]\nRULE R1\nIF NODE J2 DEPTH > 2\nTHEN LINK C2 SETTING = 0\n");
+        let before = rule_lines(net);
+        rename_in_controls(net, "O1", "SEA");
+        assert_eq!(rule_lines(net), before);
     }
 }
