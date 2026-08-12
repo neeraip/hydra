@@ -36,6 +36,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { normalizeNodes } from "./NetworkDataContext";
 import {
   decodeNetworkSnapshot,
+  deleteElement,
+  editableNumberOf,
+  editableNumberText,
   fetchNetworkSnapshot,
   formatElementAttribute,
   GENERIC_SNAPSHOT_VERSION,
@@ -621,5 +624,99 @@ describe("parseElementAttribute", () => {
     for (const draft of ["", "  ", "-", "abc", "1e"]) {
       expect(parseElementAttribute(draft, depth, "si")).toBeNull();
     }
+  });
+
+  // What a field displays and what it reads back are one pair, and they
+  // are only stable while they agree.
+  it("round-trips its own editing text", () => {
+    for (const q of [depth, temperature]) {
+      for (const sys of ["si", "us"] as const) {
+        for (const value of [0, 1, 12.5, -3.25]) {
+          const text = editableNumberText(value, q, sys);
+          // The editing text carries no unit — that is the difference
+          // from the formatter's string, and the reason it can be fed
+          // straight back in without being split.
+          expect(text).not.toMatch(/[a-z°]/i);
+          const back = parseElementAttribute(text, q, sys);
+          const decimals = sys === "us" ? q.usDecimals : q.siDecimals;
+          const scale = sys === "us" ? q.siToUsScale : 1;
+          expect(Math.abs((back ?? Number.NaN) - value)).toBeLessThanOrEqual(
+            10 ** -decimals / scale,
+          );
+        }
+      }
+    }
+  });
+
+  it("drops the padding the formatter adds", () => {
+    // "12.50" is right for a column of numbers and wrong for a field
+    // someone is about to type in.
+    expect(editableNumberText(12.5, depth, "si")).toBe("12.5");
+    expect(editableNumberText(12, depth, "si")).toBe("12");
+  });
+});
+
+describe("deleteElement", () => {
+  /**
+   * A delete can be refused — an element a control still names, a
+   * drainage vertex a catchment still drains to — and the caller has to
+   * hear about it. This used the silent IPC variant, which resolves
+   * `null` on a backend error: the refusal looked exactly like a
+   * success, so the "could not delete" toast never fired, an undo entry
+   * was pushed for a delete that had not happened, and the model was
+   * saved.
+   */
+  it("rejects when the backend refuses, rather than resolving", async () => {
+    stubTauriShell();
+    mockInvoke.mockRejectedValueOnce("'J1' is still attached to rule R1");
+    await expect(deleteElement("junction", "J1")).rejects.toBe(
+      "'J1' is still attached to rule R1",
+    );
+  });
+
+  it("answers with what went besides the element", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce({
+      id: "J2",
+      links: ["C1"],
+      attachments: ["1 inflow"],
+    });
+    await expect(deleteElement("junction", "J2")).resolves.toEqual({
+      id: "J2",
+      links: ["C1"],
+      attachments: ["1 inflow"],
+    });
+  });
+});
+
+describe("editableNumberOf", () => {
+  it("refuses a key the backend will not write", () => {
+    expect(editableNumberOf(false, 12)).toBeNull();
+  });
+
+  it("refuses a value this element does not have", () => {
+    // The flag is about the attribute, the value about the element. A
+    // table serves a column for every attribute the kind declares, so
+    // both questions are live at once.
+    expect(editableNumberOf(true, null)).toBeNull();
+    expect(editableNumberOf(true, undefined)).toBeNull();
+  });
+
+  it("refuses text whatever the flag says", () => {
+    // A referent or a choice — "CIRCULAR", a curve's name. Setting one
+    // is a different operation from typing a number over it.
+    expect(editableNumberOf(true, "CIRCULAR")).toBeNull();
+  });
+
+  it("refuses a value that is not a real number", () => {
+    expect(editableNumberOf(true, Number.NaN)).toBeNull();
+    expect(editableNumberOf(true, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it("offers a real number on a writable key, including zero", () => {
+    // Zero is a value, not an absence — an invert at datum is the
+    // obvious case, and a falsy check would have made it read-only.
+    expect(editableNumberOf(true, 0)).toBe(0);
+    expect(editableNumberOf(true, -3.25)).toBe(-3.25);
   });
 });

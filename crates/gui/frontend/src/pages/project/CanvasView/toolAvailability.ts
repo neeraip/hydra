@@ -49,7 +49,7 @@ export function toolAllowedBy(
       return editing.geometry;
     case "add-node":
     case "add-link":
-      return editing.structure;
+      return editing.create;
     default:
       return true;
   }

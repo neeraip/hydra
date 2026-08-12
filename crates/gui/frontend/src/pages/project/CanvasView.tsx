@@ -66,6 +66,7 @@ import {
   getPeriodResults,
   type PeriodResults,
   patchNodePosition,
+  type Removed,
   resultsPath,
   saveProjectOnDisk,
   useElementKinds,
@@ -80,6 +81,7 @@ import { useCriteriaCatalog } from "../../hooks/criteriaCatalog";
 import { useCriteriaValuation } from "../../hooks/criteriaValuation";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
+  clearStacks,
   pushUndoEntry,
   recreateSpecsForDelete,
   stackKey,
@@ -97,6 +99,7 @@ import {
   resolveCanvasPrefs,
   writeCanvasPrefs,
 } from "./CanvasView/canvasPrefs";
+import { deletionSummary } from "./CanvasView/deletionSummary";
 import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
@@ -112,10 +115,34 @@ import {
   viewportIsUserOwned,
 } from "./viewportCause";
 
+/**
+ * The letter a suggested id starts with, per element kind.
+ *
+ * Every engine's kinds, in one table, because the suggestion is a
+ * convenience and not a contract — an unlisted kind falls back to "N",
+ * which is a workable name rather than a wrong one. Keeping it flat also
+ * keeps the two engines' kinds from colliding on a letter by accident:
+ * a drainage outfall takes "O" precisely because "R" and "T" are spoken
+ * for.
+ */
 const NODE_KIND_PREFIX: Record<string, string> = {
   junction: "J",
   reservoir: "R",
   tank: "T",
+  outfall: "O",
+  storage: "S",
+  divider: "D",
+};
+
+/** See {@link NODE_KIND_PREFIX}. */
+const LINK_KIND_PREFIX: Record<string, string> = {
+  pipe: "P",
+  pump: "PU",
+  valve: "V",
+  conduit: "C",
+  orifice: "OR",
+  weir: "W",
+  outlet: "OU",
 };
 
 /**
@@ -342,7 +369,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { project, engine } = useActiveProject();
   // Editing affordances exist only for engines whose model this GUI edits;
   // for read-only engines the tools hide rather than refuse per gesture.
-  const { editing, animatedVariables } = engineComponents(engine?.key);
+  const {
+    editing,
+    animatedVariables,
+    CreateNodeModal: EngineCreateNode,
+    CreateLinkModal: EngineCreateLink,
+  } = engineComponents(engine?.key);
   /** Every animated id, both classes — what the legend's one toggle
    * governs and what its sentence is built from. */
   const animatedIds = useMemo(
@@ -397,6 +429,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [pendingDelete, setPendingDelete] = useState<{
     kind: string;
     id: string;
+    /** Whether removing it takes the links attached to it. Decided here,
+     * where the element's class is known, rather than in the dialog from
+     * a list of kind names — such a list is one engine's vocabulary, and
+     * it silently said nothing for every drainage kind not in it. */
+    takesLinks: boolean;
   } | null>(null);
   // ── Pending node / link creation ─────────────────────────────────────────
   const [pendingCreateNode, setPendingCreateNode] =
@@ -784,6 +821,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Stable refs for keyboard handler so it never goes stale on selection changes.
   const selectedNodeIdRef = useRef<string | null>(null);
   const selectedLinkIdRef = useRef<string | null>(null);
+  const selectedRegionRef = useRef<Region | null>(null);
   const nodeMapRef = useRef<Map<string, (typeof allNodes)[number]>>(new Map());
   const linkMapRef = useRef<Map<string, (typeof allLinks)[number]>>(new Map());
 
@@ -1218,26 +1256,41 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           break;
         case "n":
         case "N":
-          if (positioned && editing.structure) setActiveTool("add-node");
+          if (positioned && editing.create) setActiveTool("add-node");
           break;
         // Not map-gated: creating a link writes only its two node ids.
         case "l":
         case "L":
-          if (editing.structure) setActiveTool("add-link");
+          if (editing.create) setActiveTool("add-link");
           break;
         case "Escape":
           setActiveTool("select");
           break;
         case "Delete":
         case "Backspace": {
+          // Gated like every other editing gesture: without this the key
+          // opened a confirmation for an engine that would refuse the
+          // delete, which is worse than the key doing nothing.
+          if (!editing.delete) break;
           const nid = selectedNodeIdRef.current;
           const lid = selectedLinkIdRef.current;
+          const region = selectedRegionRef.current;
           if (nid) {
             const node = nodeMapRef.current.get(nid);
-            if (node) setPendingDelete({ kind: node.type, id: nid });
+            if (node) {
+              setPendingDelete({ kind: node.type, id: nid, takesLinks: true });
+            }
           } else if (lid) {
             const link = linkMapRef.current.get(lid);
-            if (link) setPendingDelete({ kind: link.type, id: lid });
+            if (link) {
+              setPendingDelete({ kind: link.type, id: lid, takesLinks: false });
+            }
+          } else if (region) {
+            setPendingDelete({
+              kind: region.type,
+              id: region.id,
+              takesLinks: false,
+            });
           }
           break;
         }
@@ -1965,6 +2018,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // selection without being re-registered on every selection change.
   selectedNodeIdRef.current = selectedNodeId;
   selectedLinkIdRef.current = selectedLinkId;
+  selectedRegionRef.current = selectedRegion;
   nodeMapRef.current = nodeMap;
   linkMapRef.current = linkMap;
 
@@ -2111,8 +2165,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // node, from the raw snapshot BEFORE the delete.
     const { nodes: rawNodes, links: rawLinks } = rawNetworkRef.current;
     const recreates = recreateSpecsForDelete(kind, id, rawNodes, rawLinks);
+    let removed: Removed;
     try {
-      await deleteElement(kind, id);
+      removed = await deleteElement(kind, id);
     } catch (err) {
       // A refused delete must surface, not vanish as an unhandled
       // rejection with the element silently still present.
@@ -2125,7 +2180,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         undo: { recreates },
         redo: { deletes: [{ kind, id }] },
       });
+    } else {
+      // No spec to undo with, so the history no longer describes a model
+      // that exists — its entries name elements by id, and one of those
+      // ids has just stopped meaning anything. Clearing is the same
+      // answer a rename gives, for the same reason.
+      clearStacks(stackKey(project.id, activeScenarioId ?? null));
     }
+    // What else went. Correct removals, and the ones a user does not
+    // expect, so they are said rather than discovered.
+    const summary = deletionSummary(removed);
+    if (summary) showToast(summary, "info");
     await saveProjectOnDisk(project.id, activeScenarioId);
     markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
@@ -2144,13 +2209,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       if (!ok) return;
       // Keep the renamed element selected under its new id (the backend
       // `network-changed` event drives the refetch that repopulates it).
-      // Node-vs-link is decided by which array holds the element — a kind
-      // allowlist misrouted every non-wds link kind to the node selector.
+      // Which selector is decided by which array holds the element — a
+      // kind allowlist misrouted every non-wds link kind to the node
+      // selector, and an area is a third class that is neither.
       const newId = rawNewId.trim();
       if (linkMapRef.current.has(oldId)) selectLink(newId);
+      else if (selectedRegionRef.current?.id === oldId) selectRegion(newId);
       else selectNode(newId);
     },
-    [renameElementFlow, selectNode, selectLink],
+    [renameElementFlow, selectNode, selectLink, selectRegion],
   );
 
   // ── Node / link ID suggestion ─────────────────────────────────────────────
@@ -2172,7 +2239,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const suggestLinkId = useCallback(
     (kind: string) => {
-      const prefix = kind === "pump" ? "PU" : kind === "valve" ? "V" : "P";
+      // Same table shape as the node prefixes, and the same reason for
+      // being flat: a suggestion, with a workable fallback.
+      const prefix = LINK_KIND_PREFIX[kind] ?? "L";
       const existing = new Set(allLinks.map((l) => l.id));
       for (let i = 1; i <= 9999; i++) {
         const id = `${prefix}${i}`;
@@ -2274,6 +2343,61 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     },
     [pendingCreateLink, project, activeScenarioId, markEdited],
   );
+
+  // What follows any create the engine's own modal performed: the model
+  // has the element, and the page has to persist it, mark the results
+  // stale, and put the selection on the thing that was just made.
+  //
+  // No undo entry: the recreate specs the stack replays are the
+  // water-distribution create commands, so an engine with its own create
+  // has no entry to push. Clearing is the same answer a rename gives —
+  // the history describes a model that no longer exists.
+  const handleEngineCreated = useCallback(
+    async (kind: string, id: string) => {
+      if (!project) return;
+      setPendingCreateNode(null);
+      setPendingCreateLink(null);
+      clearStacks(stackKey(project.id, activeScenarioId ?? null));
+      await saveProjectOnDisk(project.id, activeScenarioId);
+      markEdited(project.id, activeScenarioId);
+      if (kind === "conduit") selectLink(id);
+      else selectNode(id);
+    },
+    [project, activeScenarioId, markEdited, selectNode, selectLink],
+  );
+
+  // The click that opened the create dialog, in the model's own
+  // coordinate system. A basemap click arrives in WGS84 and is
+  // inverse-projected; a plan click is already there. Null when the
+  // projection fails, so the modal refuses rather than storing a
+  // coordinate nobody chose.
+  const createNodePosition = useMemo<[number, number] | null>(() => {
+    if (!pendingCreateNode) return null;
+    try {
+      return sourceCoordinate(pendingCreateNode, (lngLat) =>
+        wgs84ToSourceCrs(lngLat, sourceCrs),
+      );
+    } catch {
+      return null;
+    }
+  }, [pendingCreateNode, sourceCrs]);
+
+  // The drawn distance between the two ends a link is being created
+  // across, in metres — offered as a starting point for a length field.
+  //
+  // Only for a geographic model, where the two coordinates are lon/lat
+  // and the distance between them is metres by construction. A plan
+  // model's coordinates are in whatever unit its file declares, and
+  // guessing that here would put a length out by a factor of three on
+  // every US-unit model. Null means the field starts empty and the
+  // modeller types it, which is the honest answer.
+  const pendingCreateSpanM = useMemo(() => {
+    if (!pendingCreateLink || !geographic) return null;
+    const from = nodeMap.get(pendingCreateLink.fromId);
+    const to = nodeMap.get(pendingCreateLink.toId);
+    if (!from || !to) return null;
+    return haversineMeters(from.x, from.y, to.x, to.y);
+  }, [pendingCreateLink, geographic, nodeMap]);
 
   // Compute measure distance: geo in map mode, pixel-scaled in schematic.
   const measureDistanceM = useMemo(() => {
@@ -2521,7 +2645,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           {/* Toolbar overlay — left offset tracks the floating rail width */}
           <CanvasToolbar
             canMoveElements={editing.geometry}
-            canAddElements={editing.structure}
+            canAddElements={editing.create}
             viewMode={viewMode}
             localGrid={localGrid}
             canvasBackground={canvasBackground}
@@ -2623,11 +2747,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 // both props are optional and the inspector hides the
                 // gestures entirely when they are absent.
                 onDelete={
-                  editing.structure
+                  editing.delete
                     ? () =>
                         setPendingDelete({
                           kind: stableSelectedNode.type,
                           id: stableSelectedNode.id,
+                          takesLinks: true,
                         })
                     : undefined
                 }
@@ -2673,6 +2798,26 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onOpenInEditor={() =>
                   focusInEditor(selectedRegion.type, selectedRegion.id)
                 }
+                onDelete={
+                  editing.delete
+                    ? () =>
+                        setPendingDelete({
+                          kind: selectedRegion.type,
+                          id: selectedRegion.id,
+                          takesLinks: false,
+                        })
+                    : undefined
+                }
+                onRename={
+                  editing.rename
+                    ? (newId) =>
+                        handleRenameElement(
+                          selectedRegion.type,
+                          selectedRegion.id,
+                          newId,
+                        )
+                    : undefined
+                }
                 genericResults={genericRegionResults}
               />
             )}
@@ -2693,11 +2838,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 }
                 disableZoomTo={!selectedLinkHasCoordinates}
                 onDelete={
-                  editing.structure
+                  editing.delete
                     ? () =>
                         setPendingDelete({
                           kind: stableSelectedLink.type,
                           id: stableSelectedLink.id,
+                          takesLinks: false,
                         })
                     : undefined
                 }
@@ -2766,24 +2912,51 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         open={!!pendingDelete}
         elementKind={pendingDelete?.kind ?? ""}
         elementId={pendingDelete?.id ?? ""}
+        takesLinks={pendingDelete?.takesLinks ?? false}
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
-      <CreateNodeModal
-        open={!!pendingCreateNode}
-        suggestId={suggestNodeId}
-        at={pendingCreateNode}
-        onConfirm={handleConfirmCreateNode}
-        onCancel={() => setPendingCreateNode(null)}
-      />
-      <CreateLinkModal
-        open={!!pendingCreateLink}
-        suggestId={suggestLinkId}
-        fromNodeId={pendingCreateLink?.fromId ?? ""}
-        toNodeId={pendingCreateLink?.toId ?? ""}
-        onConfirm={handleConfirmCreateLink}
-        onCancel={() => setPendingCreateLink(null)}
-      />
+      {/* An engine that supplies its own create dialogs gets them; the
+          water-distribution pair is the fallback, as everywhere else in
+          the registry. Selected once, here, rather than branched on
+          inside either modal. */}
+      {EngineCreateNode ? (
+        <EngineCreateNode
+          open={!!pendingCreateNode}
+          suggestId={suggestNodeId}
+          position={createNodePosition}
+          onCreated={handleEngineCreated}
+          onCancel={() => setPendingCreateNode(null)}
+        />
+      ) : (
+        <CreateNodeModal
+          open={!!pendingCreateNode}
+          suggestId={suggestNodeId}
+          at={pendingCreateNode}
+          onConfirm={handleConfirmCreateNode}
+          onCancel={() => setPendingCreateNode(null)}
+        />
+      )}
+      {EngineCreateLink ? (
+        <EngineCreateLink
+          open={!!pendingCreateLink}
+          suggestId={suggestLinkId}
+          fromNodeId={pendingCreateLink?.fromId ?? ""}
+          toNodeId={pendingCreateLink?.toId ?? ""}
+          spanLength={pendingCreateSpanM}
+          onCreated={handleEngineCreated}
+          onCancel={() => setPendingCreateLink(null)}
+        />
+      ) : (
+        <CreateLinkModal
+          open={!!pendingCreateLink}
+          suggestId={suggestLinkId}
+          fromNodeId={pendingCreateLink?.fromId ?? ""}
+          toNodeId={pendingCreateLink?.toId ?? ""}
+          onConfirm={handleConfirmCreateLink}
+          onCancel={() => setPendingCreateLink(null)}
+        />
+      )}
     </div>
   );
 }

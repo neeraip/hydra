@@ -25,21 +25,22 @@ describe("the retired criteria list", () => {
 
 describe("editorFocusesElements", () => {
   /**
-   * Finding an element and changing it are two different capabilities, and
-   * the registry has a flag for each. Drainage had them conflated: because
-   * its model is read-only, "Open in editor" was hidden — so a drainage
-   * user could see a conduit on the map and had no way to reach its row,
-   * for a reason that was never about editing.
+   * Finding an element and changing it are two different capabilities,
+   * and the registry has a flag for each. Drainage had them conflated:
+   * because its model was read-only, "Open in editor" was hidden — so a
+   * drainage user could see a conduit on the map and had no way to reach
+   * its row, for a reason that was never about editing.
    *
-   * If these two ever agree for every engine again, this assertion is the
-   * one that notices.
+   * A second assertion here used to pin the independence by example,
+   * naming drainage as the engine that focused elements and could not
+   * edit them. That example expired when drainage learned to edit, and
+   * it is gone rather than rewritten: with both engines doing
+   * everything, any version of it either restates a literal or invents
+   * an engine to assert about. The separation now lives where it is
+   * real — `editorFocusesElements` is its own field, read by the
+   * inspector on its own, and this test fails if an engine stops
+   * setting it.
    */
-  it("is independent of whether the engine's model can be edited", () => {
-    const uds = engineComponents("uds");
-    expect(uds.editing.structure).toBe(false);
-    expect(uds.editorFocusesElements).toBe(true);
-  });
-
   it("is offered by every engine with an Editor to focus in", () => {
     for (const key of ["wds", "uds"]) {
       expect(engineComponents(key).editorFocusesElements).toBe(true);

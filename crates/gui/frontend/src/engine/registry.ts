@@ -20,6 +20,8 @@ import {
 import type { GenericQuantity, Link, Node } from "../hooks";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
+import { UdsCreateLinkModal } from "./uds/CreateLinkModal";
+import { UdsCreateNodeModal } from "./uds/CreateNodeModal";
 import { UdsElementsView } from "./uds/ElementsView";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
@@ -88,6 +90,37 @@ export interface RegionInspectorBodyProps {
   results?: GenericElementValue[] | null;
 }
 
+/** Props of the "add node" modal. */
+export interface CreateNodeModalProps {
+  open: boolean;
+  /** A free identifier for the given kind. */
+  suggestId: (kind: string) => string;
+  /**
+   * Where the click landed, already in the model's own coordinate
+   * system. Null while closed — and, if the projection failed, the
+   * modal refuses rather than storing a coordinate nobody chose.
+   */
+  position: [number, number] | null;
+  /** Called after the element exists, so the page can save and select
+   * it. Anything the create throws stays with the modal. */
+  onCreated: (kind: string, id: string) => void;
+  onCancel: () => void;
+}
+
+/** Props of the "add link" modal. */
+export interface CreateLinkModalProps {
+  open: boolean;
+  suggestId: (kind: string) => string;
+  fromNodeId: string;
+  toNodeId: string;
+  /** The drawn distance between the two ends, in metres — a starting
+   * point for a length field, not an answer: a plan distance is not a
+   * pipe's length on any slope. */
+  spanLength: number | null;
+  onCreated: (kind: string, id: string) => void;
+  onCancel: () => void;
+}
+
 export interface EngineComponents {
   /** Body of the run modal's "Simulation settings" card. */
   RunSettingsSummary: ComponentType<RunSettingsSummaryProps>;
@@ -113,6 +146,12 @@ export interface EngineComponents {
   /** Body of the areal-element inspector. Absent = the engine has no
    * areal elements and the canvas never selects one. */
   RegionInspectorBody?: ComponentType<RegionInspectorBodyProps>;
+  /** The "add element" modals. Absent = the water-distribution ones,
+   * which is also what an engine that cannot create gets — the tools
+   * that open them are withheld by `editing.create` first, so this
+   * pair is only reached by an engine that can. */
+  CreateNodeModal?: ComponentType<CreateNodeModalProps>;
+  CreateLinkModal?: ComponentType<CreateLinkModalProps>;
   /** Whether this engine's Editor view can receive and reveal a focused
    * element (the inspector's "Open in editor" affordance). False hides the
    * button instead of navigating to a view that ignores the request. */
@@ -123,15 +162,16 @@ export interface EngineComponents {
   /**
    * What this GUI can do to the engine's model.
    *
-   * Two capabilities rather than one flag, because they are two
-   * questions and the engines answer them differently. Moving an
-   * element and creating one need different things of an engine: the
-   * first needs somewhere to put a position, the second needs defaults
-   * for every field a new element has. Drainage has the first and not
-   * yet the second.
+   * One capability per operation, because they are separate questions
+   * and the engines answer them differently. Moving an element, naming
+   * one, adding one and removing one each need something different: a
+   * place to put a position, a way to follow a name, a default for
+   * every field, a way to find every reference.
    *
-   * They were one flag while drainage could do neither, which is when
-   * a single value answering two questions looks correct. Editing
+   * They keep splitting, and each split has been a bug waiting: one
+   * flag while drainage could do nothing, then "structure" while it
+   * could do neither half of it. A single value answering two
+   * questions only looks correct while both answers agree. Editing
    * affordances are hidden rather than offered-and-refused, so a flag
    * that over-claims shows up as a gesture that does nothing.
    */
@@ -142,10 +182,16 @@ export interface EngineComponents {
      * because renaming maintains references, where creating supplies
      * defaults — an engine can do the first without the second. */
     rename: boolean;
-    /** Elements can be created and deleted: the add tools, create
-     * modals, and the editor's row actions. A project can only begin
-     * from an imported model without this. */
-    structure: boolean;
+    /** Elements can be created: the add tools and the create modals. A
+     * project can only begin from an imported model without this. */
+    create: boolean;
+    /** Elements can be removed. Its own capability because the two
+     * halves of "structure" ask for opposite things — creating needs a
+     * defensible default for every field a new element carries, while
+     * deleting needs every reference to the old one found and either
+     * moved or refused. An engine can do the second without the first,
+     * and drainage does. */
+    delete: boolean;
     /** The model's title can be rewritten. Its own capability because
      * it is its own mutation — a model whose elements are fixed can
      * still be described, and one whose title is fixed can still be
@@ -193,7 +239,13 @@ const WDS: EngineComponents = {
   CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
-  editing: { geometry: true, rename: true, structure: true, title: true },
+  editing: {
+    geometry: true,
+    rename: true,
+    create: true,
+    delete: true,
+    title: true,
+  },
   animatedVariables: {
     // Demand is a rate and would ring honestly, but it is nonzero at
     // nearly every junction — unlike drainage flooding, whose sparsity is
@@ -214,6 +266,8 @@ const UDS: EngineComponents = {
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
   RegionInspectorBody: UdsRegionInspectorBody,
+  CreateNodeModal: UdsCreateNodeModal,
+  CreateLinkModal: UdsCreateLinkModal,
   // The drainage Editor reveals a focused element: it shows the element's
   // own kind and scrolls to its row. It could not when it was a single
   // unnavigable table, which is why this was false — being read-only was
@@ -226,7 +280,13 @@ const UDS: EngineComponents = {
   // control-rule text, and the backend maintains both. Structure is not
   // — creating an element needs a default for every field its kind
   // carries, and nothing supplies those yet.
-  editing: { geometry: true, rename: true, structure: false, title: false },
+  editing: {
+    geometry: true,
+    rename: true,
+    create: true,
+    delete: true,
+    title: false,
+  },
   // Conduit flow and velocity are rates the pulse can carry directly.
   // Depth and capacity are states rather than rates — a full pipe is not a
   // fast one — and animating them would have the motion assert something

@@ -5,7 +5,7 @@ import type { GenericQuantity } from "./results";
  */
 
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
 import { invoke, isTauri, tryInvoke, tryInvokeOr } from "./ipc";
 import type { ValidationFinding } from "./issues";
@@ -639,12 +639,78 @@ export async function patchNodePosition(
 }
 
 /**
- * Delete a node or link from the in-memory network.
- * `kind` must be one of: "junction", "reservoir", "tank", "pipe", "pump", "valve".
- * Deleting a node also removes all links that referenced it.
+ * Add a drainage vertex at a point in the model's own coordinate system.
+ *
+ * `invert` is metres, like every other numeric value crossing this
+ * boundary. Throws the backend's refusal — a kind whose fields cannot be
+ * defaulted says so by name.
  */
-export async function deleteElement(kind: string, id: string): Promise<void> {
-  await tryInvoke<void>("delete_element", { kind, id });
+export async function createUdsVertex(
+  kind: string,
+  id: string,
+  x: number,
+  y: number,
+  invert: number,
+): Promise<void> {
+  await invoke<void>("create_uds_vertex", { kind, id, x, y, invert });
+}
+
+/**
+ * Add a drainage link between two existing vertices.
+ *
+ * One object rather than six positional arguments: two of them are
+ * lengths in metres, and a transposition there is a conduit 300 m wide
+ * and 0.3 m long that nothing would flag.
+ */
+export async function createUdsLink(link: {
+  kind: string;
+  id: string;
+  fromId: string;
+  toId: string;
+  /** Metres. */
+  length: number;
+  /** Metres; becomes the cross-section geometry. */
+  diameter: number;
+}): Promise<void> {
+  await invoke<void>("create_uds_link", { link });
+}
+
+/** What a delete took with it besides the element itself. */
+export interface Removed {
+  /** The element asked for. */
+  id: string;
+  /** Links removed because an end of theirs went. */
+  links: string[];
+  /**
+   * Other records removed because what they attached to went, already
+   * phrased for a sentence ("2 inflows"). Empty for water distribution,
+   * whose nodes carry no such records.
+   */
+  attachments: string[];
+}
+
+/**
+ * Delete an element from the in-memory network.
+ *
+ * `kind` is the water-distribution kind for a wds model; a drainage
+ * model finds the element by id and ignores it.
+ *
+ * Deleting a node also removes the links attached to it — and, in a
+ * drainage model, the records that only described it. The answer says
+ * which, so the caller can report it rather than leave it to be found.
+ *
+ * Throws on a refused delete rather than resolving. It used the silent
+ * variant, which resolves `null` on a backend error — so a refusal
+ * ("still attached to a control") looked exactly like a success to the
+ * caller, which then reported nothing, pushed an undo entry for a
+ * delete that had not happened, and saved. A delete that can be refused
+ * has to be able to say so.
+ */
+export async function deleteElement(
+  kind: string,
+  id: string,
+): Promise<Removed> {
+  return invoke<Removed>("delete_element", { kind, id });
 }
 
 /** Create a new node (junction / tank / reservoir) at the given geographic coordinates. */
@@ -1191,6 +1257,57 @@ export function formatElementAttribute(
 }
 
 /**
+ * The number to offer for editing at one place a value is shown, or
+ * `null` to show it read-only.
+ *
+ * Two different questions have to both say yes, and they are answered by
+ * different things. `editable` is about the *key*: the backend decides
+ * from the same table its setter consults whether that attribute can be
+ * written at all. The value is about this *element*: a null cell means
+ * the element does not carry the attribute, and a field offered there
+ * would invite creating a value the model never had — the table serves a
+ * column for every attribute the kind declares, including ones a given
+ * element has none of.
+ *
+ * A text value is never editable here whatever the flag says. It states
+ * a referent or a choice, and setting one of those is a different
+ * operation from typing a number over it.
+ */
+export function editableNumberOf(
+  editable: boolean,
+  value: number | string | null | undefined,
+): number | null {
+  if (!editable) return null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The text an input holds while a value is being edited: the number in
+ * the displayed unit, without that unit and without trailing zeros.
+ *
+ * Not {@link formatElementAttribute} — that string carries its unit and
+ * pads to the declared decimals, and a field that shows "12.50 m" and
+ * expects "12.5" back punishes reading it. Not the raw number either: a
+ * value converted to US units lands on 3.2808398950131235, and offering
+ * that for editing is offering noise.
+ *
+ * It is the string {@link parseElementAttribute} inverts, so the two are
+ * defined together — a field that displays through one and reads through
+ * the other is only stable while they agree.
+ */
+export function editableNumberText(
+  value: number,
+  quantity: ElementAttributeQuantity | undefined,
+  sys: "si" | "us",
+): string {
+  if (!quantity) return String(Number(value.toFixed(4)));
+  const shown =
+    sys === "us" ? value * quantity.siToUsScale + quantity.siToUsOffset : value;
+  const decimals = sys === "us" ? quantity.usDecimals : quantity.siDecimals;
+  return String(Number(shown.toFixed(decimals)));
+}
+
+/**
  * The number a display string stands for, in the unit the backend
  * serves and takes — the inverse of {@link formatElementAttribute}'s
  * conversion.
@@ -1317,6 +1434,12 @@ const EMPTY_COUPLINGS: InletCoupling[] = [];
 export interface KindColumn {
   key: string;
   label: string;
+  /** Whether this column's cells can be written. Decided by the backend
+   * from the same table its setter consults — the per-column twin of
+   * `ElementAttribute.editable`, true for the same attributes. It says
+   * the key is writable, not that any given cell is: see
+   * {@link editableNumberOf}. */
+  editable: boolean;
   /** Present for numeric columns; values are SI and convert through it. */
   quantity?: ElementAttributeQuantity;
   /** Number, string, or null where the element lacks the attribute. */
@@ -1445,17 +1568,26 @@ export function useKindCounts(
   return counts;
 }
 
-/** The elements of `kind` for a target, refetched when any of them change. */
+/**
+ * The elements of `kind` for a target, with a way to ask again.
+ *
+ * `refetch` rather than a counter the caller bumps: a value that exists
+ * only to re-run an effect is a trigger wearing a dependency's clothes,
+ * and the effect never reads it. After a write, the caller asks for the
+ * table again and redraws from what the model actually holds — not from
+ * what was typed, which may have been converted or clamped on the way
+ * in.
+ */
 export function useKindElements(
   projectId: string | null | undefined,
   scenarioId: string | null | undefined,
   kind: string | null,
-): KindElements {
+): { elements: KindElements; refetch: () => void } {
   const [elements, setElements] = useState<KindElements>(EMPTY_KIND_ELEMENTS);
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!projectId || !kind) {
       setElements(EMPTY_KIND_ELEMENTS);
-      return;
+      return () => {};
     }
     let cancelled = false;
     void getKindElements(projectId, scenarioId, kind).then((e) => {
@@ -1465,5 +1597,6 @@ export function useKindElements(
       cancelled = true;
     };
   }, [projectId, scenarioId, kind]);
-  return elements;
+  useEffect(load, [load]);
+  return { elements, refetch: load };
 }

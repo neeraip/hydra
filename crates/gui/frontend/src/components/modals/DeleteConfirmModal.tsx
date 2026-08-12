@@ -11,14 +11,17 @@
  *     onCancel={() => setPendingDelete(null)}
  *   />
  *
- * For node deletions the dialog warns that connected links will also be removed.
+ * The caller says whether the removal takes the links attached to the
+ * element; the dialog warns when it does. It used to decide that from a
+ * set of kind names — "junction", "reservoir", "tank" — which is one
+ * engine's vocabulary living in a shared component: it warned for a
+ * drainage junction by coincidence and stayed silent for an outfall,
+ * storage unit and divider, all of which take their links too.
  */
 
 import { ExclamationTriangleIcon } from "@heroicons/react/16/solid";
 import { type ReactNode, useEffect, useRef } from "react";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
-
-const NODE_KINDS = new Set(["junction", "reservoir", "tank"]);
 
 /**
  * Confirmations sit above the surface that raised them.
@@ -37,6 +40,11 @@ interface DeleteConfirmModalProps {
   open: boolean;
   elementKind: string;
   elementId: string;
+  /** Whether removing this element also removes the links attached to
+   * it, which the default message warns about. The caller decides: it
+   * knows the element's class, where this dialog only has a kind name
+   * it cannot interpret without knowing the engine. */
+  takesLinks?: boolean;
   /** Overrides the default "Delete {Kind}" heading. */
   title?: string;
   /** Overrides the default "Delete {id}?" body text. */
@@ -62,6 +70,7 @@ export function DeleteConfirmModal({
   open,
   elementKind,
   elementId,
+  takesLinks = false,
   title,
   message,
   confirmLabel = "Delete",
@@ -92,7 +101,6 @@ export function DeleteConfirmModal({
 
   if (!open) return null;
 
-  const isNode = NODE_KINDS.has(elementKind);
   const kindLabel = elementKind.charAt(0).toUpperCase() + elementKind.slice(1);
 
   return (
@@ -162,7 +170,10 @@ export function DeleteConfirmModal({
                   <strong style={{ color: "var(--text-primary)" }}>
                     {elementId}
                   </strong>
-                  ?{isNode && <> All connected links will also be removed.</>}
+                  ?
+                  {takesLinks && (
+                    <> All connected links will also be removed.</>
+                  )}
                 </>
               )}
             </p>

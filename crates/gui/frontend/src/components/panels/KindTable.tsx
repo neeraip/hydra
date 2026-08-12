@@ -14,6 +14,11 @@
 // Columns are engine-authored — labels, units and ordering come from the
 // engine's §4.4 attribute schema — so a kind this file has never heard of
 // renders correctly, and so does an engine that does not exist yet.
+//
+// Which cells take an input is engine-authored too: each column carries
+// the backend's own answer to whether that attribute can be written, and
+// this file never asks which engine it is drawing. A column that cannot
+// be written renders exactly as it did before editing existed.
 
 import {
   ChevronDownIcon,
@@ -22,8 +27,9 @@ import {
 } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
-import { formatElementAttribute } from "../../hooks/network";
+import { editableNumberOf, formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
+import { EditableNumber } from "../ui/EditableNumber";
 
 type SortDir = "asc" | "desc";
 
@@ -84,12 +90,22 @@ export function KindTable({
   elements,
   activeId,
   onSelect,
+  onEdit,
   revealToken,
 }: {
   /** §4.4 property columns for this kind. */
   elements: KindElements;
   activeId?: string | null;
   onSelect?: (id: string) => void;
+  /**
+   * Write one cell back, in the unit the column serves.
+   *
+   * Absent means the table reads only — which is what an engine that
+   * declares no writable attributes gets, without this file knowing
+   * which engine that is. The columns say what may be written; this
+   * prop says whether anything is listening.
+   */
+  onEdit?: (id: string, key: string, value: number) => Promise<void> | void;
   /**
    * Bumped by the caller to mean "bring `activeId` into view now".
    *
@@ -296,28 +312,53 @@ export function KindTable({
                     </td>
                     {elements.columns.map((c) => {
                       const v = c.values[i];
+                      const editable = onEdit
+                        ? editableNumberOf(c.editable, v)
+                        : null;
                       return (
                         <td
                           key={c.key}
-                          style={{ ...TD, fontFamily: "var(--font-mono)" }}
+                          style={{
+                            ...TD,
+                            fontFamily: "var(--font-mono)",
+                            // The table suppresses text selection so that
+                            // dragging across rows does not highlight
+                            // them; a field the user is typing in needs
+                            // it back.
+                            userSelect: editable == null ? undefined : "text",
+                          }}
                         >
-                          {v == null
-                            ? "—"
-                            : typeof v === "number"
-                              ? formatElementAttribute(
-                                  {
-                                    // Formatting only — this row is a
-                                    // table cell, not an addressable
-                                    // attribute.
-                                    key: "",
-                                    editable: false,
-                                    label: c.label,
-                                    number: v,
-                                    quantity: c.quantity,
-                                  },
-                                  sys,
-                                )
-                              : v}
+                          {editable != null ? (
+                            <EditableNumber
+                              value={editable}
+                              quantity={c.quantity}
+                              sys={sys}
+                              // The column heading already carries the
+                              // unit, and the row is identified by its
+                              // id — together that is what a screen
+                              // reader needs to place the field.
+                              label={`${id} ${c.label}`}
+                              onCommit={(next) => onEdit?.(id, c.key, next)}
+                            />
+                          ) : v == null ? (
+                            "—"
+                          ) : typeof v === "number" ? (
+                            formatElementAttribute(
+                              {
+                                // Formatting only — this row is a
+                                // table cell, not an addressable
+                                // attribute.
+                                key: "",
+                                editable: false,
+                                label: c.label,
+                                number: v,
+                                quantity: c.quantity,
+                              },
+                              sys,
+                            )
+                          ) : (
+                            v
+                          )}
                         </td>
                       );
                     })}

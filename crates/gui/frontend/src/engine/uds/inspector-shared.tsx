@@ -16,6 +16,7 @@ import {
   elementSeriesCacheKey,
   LruCache,
 } from "../../components/panels/ElementInspector/seriesCache";
+import { EditableNumber } from "../../components/ui/EditableNumber";
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import {
   ACCENT,
@@ -23,6 +24,7 @@ import {
   type ElementAttributeInfo,
   type ElementSeries,
   type ElementSeriesKind,
+  editableNumberOf,
   formatElementAttribute,
   formatGenericValue,
   type GenericVariable,
@@ -30,11 +32,10 @@ import {
   genericUnitLabel,
   getElementDetails,
   getElementSeries,
-  parseElementAttribute,
-  setElementAttribute,
   useElementAttributes,
   useNetworkData,
 } from "../../hooks";
+import { useElementAttributeWrite } from "../../hooks/useAttributeWrite";
 import { Sparkline } from "../../pages/project/AnalysisPanel/charts";
 import { useUnitSystem } from "../../units";
 import type { GenericElementValue } from "../registry";
@@ -155,8 +156,8 @@ export function PropertiesSection({
       >
         <tbody>
           {rows.map((r) =>
-            r.editable && elementId ? (
-              <EditablePropRow
+            elementId ? (
+              <AttrRow
                 key={r.key}
                 attr={r}
                 sys={sys}
@@ -178,18 +179,20 @@ export function PropertiesSection({
 }
 
 /**
- * A Properties row the user can change.
+ * One Properties row, editable where the attribute allows it.
  *
- * The input holds the number alone, without its unit: a field that
- * displays "12.50 m" and expects "12.5" back is a field that punishes
- * reading it. The unit stays beside it, where it labels rather than
- * participates.
+ * Both cases live in one component so the decision is made once, from
+ * `editableNumberOf` — the same rule the Editor's tables apply to a
+ * cell. Splitting it across the caller's ternary was how the two
+ * surfaces would come to disagree about which rows take an input.
  *
- * A write is committed on blur or Enter and abandoned on Escape, so
- * typing through an intermediate value — "1" on the way to "12" — never
- * reaches the model.
+ * The field itself is the app's shared one; what this row adds is where
+ * the number sits — in `PropRow`'s grid, so an editable row lines up
+ * with the read-only rows above and below it rather than reading as a
+ * second table — and the unit beside it, labelling rather than
+ * participating.
  */
-function EditablePropRow({
+function AttrRow({
   attr,
   sys,
   elementId,
@@ -200,47 +203,17 @@ function EditablePropRow({
   elementId: string;
   onEdited?: () => void;
 }) {
-  const { showToast } = useAppState();
+  const write = useElementAttributeWrite();
   const q = attr.quantity;
-  const shown =
-    attr.number == null
-      ? ""
-      : sys === "us" && q
-        ? String(
-            Number(
-              (attr.number * q.siToUsScale + q.siToUsOffset).toFixed(
-                q.usDecimals,
-              ),
-            ),
-          )
-        : String(Number(attr.number.toFixed(q ? q.siDecimals : 4)));
-  const [draft, setDraft] = useState(shown);
-  const [saving, setSaving] = useState(false);
-  // The row redraws from a refetch after every write; the draft follows
-  // the value it is editing rather than stranding the user on a stale one.
-  useEffect(() => setDraft(shown), [shown]);
-
-  const commit = () => {
-    if (draft === shown || saving) return;
-    const value = parseElementAttribute(draft, q, sys);
-    if (value == null) {
-      setDraft(shown);
-      return;
-    }
-    setSaving(true);
-    setElementAttribute(elementId, attr.key, value)
-      .then(() => onEdited?.())
-      .catch((e) => {
-        setDraft(shown);
-        showToast(String(e), "error");
-      })
-      .finally(() => setSaving(false));
-  };
+  const value = editableNumberOf(attr.editable, attr.number);
+  if (value == null) {
+    return (
+      <PropRow label={attr.label} value={formatElementAttribute(attr, sys)} />
+    );
+  }
 
   return (
     <tr>
-      {/* Matches `PropRow`'s cells: an editable row must sit in the same
-          grid as the ones beside it, or the table reads as two tables. */}
       <td
         style={{
           fontSize: "var(--text-md)",
@@ -261,31 +234,14 @@ function EditablePropRow({
           gap: 6,
         }}
       >
-        <input
-          value={draft}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setDraft(e.target.value)
+        <EditableNumber
+          value={value}
+          quantity={q}
+          sys={sys}
+          label={attr.label}
+          onCommit={(next) =>
+            write(elementId, attr.key, next).then(() => onEdited?.())
           }
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") {
-              setDraft(shown);
-              e.currentTarget.blur();
-            }
-          }}
-          disabled={saving}
-          aria-label={attr.label}
-          style={{
-            width: 72,
-            textAlign: "right",
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            color: "inherit",
-            font: "inherit",
-            padding: "1px 4px",
-          }}
         />
         {q && (
           <span style={{ color: "var(--text-tertiary)" }}>

@@ -734,6 +734,41 @@ pub(crate) fn rename_in_display(net: &mut Network, old: &str, new: &str) {
     }
 }
 
+/// Remove every display line naming any of `ids`, in every section.
+///
+/// The counterpart of `rename_in_display`, and for the same reason: a
+/// deleted element's coordinate, polygon and intermediate vertices are
+/// three lines in three sections, and a delete that took only the first
+/// would leave the writer emitting geometry for something the model no
+/// longer has.
+///
+/// An emptied section goes with them. `[POLYGONS]` with no polygons
+/// under it is not wrong, but it is a heading the file did not have
+/// before the edit, and the writer's output is compared against the
+/// import.
+pub(crate) fn remove_from_display(net: &mut Network, ids: &[&str]) {
+    for section in &mut net.display {
+        section
+            .lines
+            .retain(|line| !ids.iter().any(|id| line_names(line, id)));
+    }
+    net.display.retain(|s| !s.lines.is_empty());
+}
+
+/// Whether `token` is a keyword a control rule names an object after
+/// (§9.1) — so the token following it is an identifier, not a value.
+///
+/// Shared by the rename and the delete guard so they cannot come to
+/// disagree about what counts as naming an element: one would rewrite a
+/// reference the other refused to see.
+pub(crate) fn names_object(token: &str) -> bool {
+    /// The keywords a rule names an object after (§9.1).
+    const OBJECTS: [&str; 8] = [
+        "GAGE", "NODE", "LINK", "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET",
+    ];
+    OBJECTS.iter().any(|k| token.eq_ignore_ascii_case(k))
+}
+
 /// Rename `old` where control-rule text names it as an object.
 ///
 /// Rules are retained as their author's text (§9.1 compiles them later),
@@ -746,17 +781,10 @@ pub(crate) fn rename_in_display(net: &mut Network, old: &str, new: &str) {
 /// identifiers are routinely numeric, so a node named `5` would rewrite
 /// the `5` in `DEPTH > 5` and silently change what the rule tests.
 pub(crate) fn rename_in_controls(net: &mut Network, old: &str, new: &str) {
-    /// The keywords a rule names an object after (§9.1).
-    const OBJECTS: [&str; 8] = [
-        "GAGE", "NODE", "LINK", "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET",
-    ];
     let rewrite = |line: &mut String| {
         let mut tokens: Vec<String> = line.split_whitespace().map(str::to_string).collect();
         for i in 1..tokens.len() {
-            let names_object = OBJECTS
-                .iter()
-                .any(|k| tokens[i - 1].eq_ignore_ascii_case(k));
-            if names_object && tokens[i].eq_ignore_ascii_case(old) {
+            if names_object(&tokens[i - 1]) && tokens[i].eq_ignore_ascii_case(old) {
                 tokens[i] = new.to_string();
             }
         }

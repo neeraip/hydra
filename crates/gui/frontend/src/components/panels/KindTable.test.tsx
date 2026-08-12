@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { KindElements } from "../../hooks";
 import { KindTable } from "./KindTable";
 
@@ -188,5 +188,95 @@ describe("KindTable", () => {
     rerender(<KindTable elements={junctions} activeId="J2" />);
     expect(screen.queryByText("J1")).toBeNull();
     expect(screen.getByText("J2")).toBeDefined();
+  });
+});
+
+/**
+ * Editing is engine-authored twice over: whether an attribute may be
+ * written at all is the backend's answer, carried per column, and
+ * whether *this* element has a value for it is the cell's. This file
+ * never asks which engine it is drawing.
+ */
+describe("KindTable editing", () => {
+  const editable: KindElements = {
+    ids: ["J1", "J2"],
+    columns: [
+      { key: "invert", label: "Invert", editable: true, values: [12, 4] },
+      {
+        key: "shape",
+        label: "Shape",
+        editable: false,
+        values: ["CIRCULAR", null],
+      },
+    ],
+  } as KindElements;
+
+  it("offers an input only where the column says it may be written", () => {
+    render(<KindTable elements={editable} onEdit={() => {}} />);
+    expect(screen.getByLabelText("J1 Invert")).toBeDefined();
+    expect(screen.queryByLabelText("J1 Shape")).toBeNull();
+    // The unwritable column still reads — editing arriving must not cost
+    // a column its value.
+    expect(screen.getByText("CIRCULAR")).toBeDefined();
+  });
+
+  it("reads only when no one is listening for writes", () => {
+    // A column may declare itself writable while the surface drawing it
+    // has nowhere to send the write. Two separate facts, and the table
+    // needs both.
+    render(<KindTable elements={editable} />);
+    expect(screen.queryByLabelText("J1 Invert")).toBeNull();
+    expect(screen.getByText(/12/)).toBeDefined();
+  });
+
+  it("addresses the write by id and schema key", () => {
+    const onEdit = vi.fn();
+    render(<KindTable elements={editable} onEdit={onEdit} />);
+    const cell = screen.getByLabelText("J2 Invert");
+    fireEvent.change(cell, { target: { value: "7" } });
+    fireEvent.blur(cell);
+    // The second row, not the first: the row index and the id have to
+    // stay married through sorting and filtering.
+    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 7);
+  });
+
+  it("still addresses the right element after a sort", () => {
+    // Rows are indices into columnar arrays, and sorting reorders the
+    // indices — so a cell that captured its row position rather than its
+    // id would write to the wrong element the moment a heading is
+    // clicked.
+    const onEdit = vi.fn();
+    const { container } = render(
+      <KindTable elements={editable} onEdit={onEdit} />,
+    );
+    const [, invertHeader] = [...container.querySelectorAll("th")];
+    if (!invertHeader) throw new Error("no Invert header");
+    fireEvent.click(invertHeader); // ascending: J2 (4) first
+    const first = container.querySelector("tbody tr");
+    expect(first?.querySelector("td")?.textContent).toBe("J2");
+    const cell = screen.getByLabelText("J2 Invert");
+    fireEvent.change(cell, { target: { value: "5" } });
+    fireEvent.blur(cell);
+    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 5);
+  });
+
+  it("shows a dash rather than an empty field where an element has no value", () => {
+    // The table serves a column for every attribute the kind declares,
+    // including ones a given element has none of. An input there would
+    // invite creating a value the model never had.
+    const sparse: KindElements = {
+      ids: ["J1"],
+      columns: [
+        {
+          key: "initDepth",
+          label: "Initial depth",
+          editable: true,
+          values: [null],
+        },
+      ],
+    } as KindElements;
+    render(<KindTable elements={sparse} onEdit={() => {}} />);
+    expect(screen.queryByLabelText("J1 Initial depth")).toBeNull();
+    expect(screen.getByText("—")).toBeDefined();
   });
 });

@@ -858,14 +858,34 @@ fn remap_controls_rules(
     }
 }
 
+/// What a removal took with it.
+///
+/// One shape for both engines. A delete is never one element — a node
+/// takes its links, and a drainage vertex takes the records that only
+/// described it — and a caller that cannot say so leaves the user to
+/// notice a missing conduit for themselves.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Removed {
+    /// The element asked for.
+    pub id: String,
+    /// Links removed because an end of theirs went.
+    pub links: Vec<String>,
+    /// Attachments removed because what they attached to went, phrased
+    /// for a sentence rather than for a machine ("2 inflows"). Empty for
+    /// water distribution, whose nodes carry no such records.
+    pub attachments: Vec<String>,
+}
+
 /// Remove a node or link from `network` (see [`delete_element`] for the full
-/// contract). Extracted from the command so the deletion/index-remap logic is
+/// contract), returning the ids of any links that cascaded with a node.
+/// Extracted from the command so the deletion/index-remap logic is
 /// unit-testable without an `AppHandle`.
 fn delete_element_from_network(
     network: &mut hydra::Network,
     kind: &str,
     id: &str,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     match kind {
         "junction" | "reservoir" | "tank" => {
             let pos = network
@@ -932,6 +952,7 @@ fn delete_element_from_network(
             retarget_report_selection(&mut network.report.links, |r| {
                 (!gone.contains(&r)).then(|| r.to_string())
             });
+            return Ok(dangling.into_iter().map(|(lid, _)| lid).collect());
         }
         "pipe" | "pump" | "valve" => {
             let pos = network
@@ -964,7 +985,8 @@ fn delete_element_from_network(
         }
         other => return Err(format!("unknown element kind '{}'", other)),
     }
-    Ok(())
+    // Only a node cascades; a link takes nothing with it.
+    Ok(Vec::new())
 }
 
 /// Remove a node or link from the in-memory network.
@@ -990,10 +1012,34 @@ pub fn delete_element(
     state: tauri::State<'_, NetworkState>,
     kind: String,
     id: String,
-) -> Result<(), String> {
+) -> Result<Removed, String> {
+    // Drainage deletes route to their own path, for the same reason
+    // renames do: a different network type, and a wider set of things
+    // pointing at the element being removed.
+    {
+        let guard = state.0.lock();
+        if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
+            drop(guard);
+            let mut guard = state.0.lock();
+            let mut removed = None;
+            apply_uds_mutation(&mut guard, |network| {
+                removed = Some(super::uds_delete::delete_uds_element(network, &id)?);
+                Ok(())
+            })?;
+            emit_or_warn(&app, NETWORK_CHANGED_EVENT, ());
+            drop(guard);
+            return removed.ok_or_else(|| "the delete reported nothing".to_string());
+        }
+    }
+    let mut removed = Removed {
+        id: id.clone(),
+        ..Removed::default()
+    };
     mutate_structural(&app, &state, |network| {
-        delete_element_from_network(network, &kind, &id)
-    })
+        removed.links = delete_element_from_network(network, &kind, &id)?;
+        Ok(())
+    })?;
+    Ok(removed)
 }
 
 /// Validate a user-supplied element/curve ID and return it trimmed.
@@ -1129,6 +1175,79 @@ pub fn rename_element(
     }
     mutate_structural(&app, &state, |network| {
         rename_element_in_network(network, &kind, &old_id, &new_id)
+    })
+}
+
+/// Add a drainage vertex at a point in the model's own coordinate system.
+///
+/// Its own command rather than an arm of `create_node`, because the two
+/// engines' creates genuinely take different arguments: a tank needs
+/// three level fields a drainage vertex has no analogue for, and a
+/// drainage vertex needs an invert a reservoir does not. A shared
+/// signature would be the union of both, with every caller passing
+/// nulls for the other engine's half.
+#[tauri::command(async)]
+pub fn create_uds_vertex(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    kind: String,
+    id: String,
+    x: f64,
+    y: f64,
+    invert: f64,
+) -> Result<(), String> {
+    let id = validate_inp_id(&id, "element")?;
+    mutate_uds(&app, &state, |network| {
+        super::uds_create::create_uds_vertex(network, &kind, &id, x, y, invert)
+    })
+}
+
+/// Add a drainage link between two existing vertices.
+///
+/// `length` and `diameter` are metres; the diameter becomes the
+/// cross-section's geometry, which converts to the file's own units on
+/// the way in (§5).
+/// The shape of a new drainage link, as one argument.
+///
+/// Grouped rather than spread across the command's parameter list, and
+/// not only because the list was over the arity clippy allows: six
+/// positional values of which two are lengths is one transposition away
+/// from a conduit 300 m wide and 0.3 m long, and named fields cannot be
+/// transposed.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewUdsLink {
+    /// Element kind, e.g. `conduit`.
+    pub kind: String,
+    /// Identifier for the new link.
+    pub id: String,
+    /// Upstream vertex, by name.
+    pub from_id: String,
+    /// Downstream vertex, by name.
+    pub to_id: String,
+    /// Metres.
+    pub length: f64,
+    /// Metres; becomes the cross-section geometry.
+    pub diameter: f64,
+}
+
+#[tauri::command(async)]
+pub fn create_uds_link(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    link: NewUdsLink,
+) -> Result<(), String> {
+    let id = validate_inp_id(&link.id, "element")?;
+    mutate_uds(&app, &state, |network| {
+        super::uds_create::create_uds_link(
+            network,
+            &link.kind,
+            &id,
+            &link.from_id,
+            &link.to_id,
+            link.length,
+            link.diameter,
+        )
     })
 }
 

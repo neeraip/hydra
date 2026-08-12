@@ -219,7 +219,7 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
   // Engines whose model this GUI cannot edit have no starter-network path —
   // a project can only begin from an imported model.
   const importRequired =
-    engine != null && !engineComponents(engine.key).editing.structure;
+    engine != null && !engineComponents(engine.key).editing.create;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

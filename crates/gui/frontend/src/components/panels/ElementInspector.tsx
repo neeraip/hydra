@@ -365,21 +365,31 @@ interface RegionInspectorProps {
   onLocateOutlet: (id: string) => void;
   /** Reveal this element in the Editor. */
   onOpenInEditor: () => void;
+  /** Absent = this engine's areas cannot be removed. */
+  onDelete?: () => void;
+  /** Absent = this engine's areas cannot be renamed. */
+  onRename?: (newId: string) => void;
   /** See NodeInspectorProps.genericResults. */
   genericResults?: GenericElementValue[] | null;
 }
 
 /**
- * Inspector for an areal element (a subcatchment). Same chrome as the node
- * and link variants — header with the kind badge, engine body, footer
- * actions — minus rename/delete, which need an engine whose model this GUI
- * edits, and only read-only engines have areas today.
+ * Inspector for an areal element (a subcatchment). Same chrome as the
+ * node and link variants — header with the kind badge, engine body,
+ * footer actions — and, now, the same rename and delete affordances.
  *
- * "Open in editor" is *not* one of those exclusions. It was, on the
- * reasoning that no engine edits areas here — but revealing an element is
- * navigation, not editing, and the Editor lists subcatchments as a kind
- * like any other. Excluding it meant a node and a conduit could be found
- * from the map and the subcatchment between them could not.
+ * They were left out on the reasoning that no engine whose model this
+ * GUI edits has areas. That was a fact about which engines existed, not
+ * a fact about areas, and it expired: drainage edits its model, and its
+ * subcatchments were the one element class the map could show and not
+ * touch. Both are optional props, so an engine that cannot do either
+ * still gets an inspector with neither.
+ *
+ * "Open in editor" was excluded for the same expired reason, and came
+ * back earlier for a different one — revealing an element is navigation,
+ * not editing, and the Editor lists subcatchments as a kind like any
+ * other. Excluding it meant a node and a conduit could be found from the
+ * map and the subcatchment between them could not.
  *
  * Renders nothing when the engine supplies no region body, which is also
  * when nothing can select one.
@@ -390,6 +400,8 @@ export function RegionInspector({
   onZoomTo,
   onLocateOutlet,
   onOpenInEditor,
+  onDelete,
+  onRename,
   genericResults,
 }: RegionInspectorProps) {
   const { engine } = useActiveProject();
@@ -427,6 +439,7 @@ export function RegionInspector({
           />
         }
         onClose={onClose}
+        onRename={onRename}
       />
 
       <EngineBody
@@ -435,7 +448,7 @@ export function RegionInspector({
         results={genericResults}
       />
 
-      {(onZoomTo || canOpenInEditor) && (
+      {(onZoomTo || canOpenInEditor || onDelete) && (
         <div
           style={{
             flexShrink: 0,
@@ -465,6 +478,21 @@ export function RegionInspector({
               style={btnIcon}
             >
               <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              data-tooltip="Delete element"
+              aria-label="Delete element"
+              style={{
+                ...btnIcon,
+                color: "var(--color-danger, #ef4444)",
+                marginLeft: "auto",
+              }}
+            >
+              <TrashIcon style={{ width: 14, height: 14 }} />
             </button>
           )}
         </div>

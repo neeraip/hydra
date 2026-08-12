@@ -35,17 +35,25 @@ describe("toolAvailableIn", () => {
 });
 
 describe("toolAllowedBy", () => {
-  const both = { geometry: true, rename: true, structure: true, title: true };
+  const both = {
+    geometry: true,
+    rename: true,
+    create: true,
+    delete: true,
+    title: true,
+  };
   const moveOnly = {
     geometry: true,
     rename: true,
-    structure: false,
+    create: false,
+    delete: true,
     title: false,
   };
   const neither = {
     geometry: false,
     rename: false,
-    structure: false,
+    create: false,
+    delete: false,
     title: false,
   };
 
@@ -56,13 +64,22 @@ describe("toolAllowedBy", () => {
   });
 
   it("separates moving from creating", () => {
-    // The whole reason this is two capabilities rather than one flag.
-    // Drainage can move an element — its position is a line the backend
-    // maintains — and cannot create one, because nothing supplies the
-    // defaults a new element needs.
+    // The whole reason these are separate capabilities rather than one
+    // flag. Drainage can move an element — its position is a line the
+    // backend maintains — and cannot create one, because nothing
+    // supplies the defaults a new element needs.
     expect(toolAllowedBy(moveOnly, "edit")).toBe(true);
     expect(toolAllowedBy(moveOnly, "add-node")).toBe(false);
     expect(toolAllowedBy(moveOnly, "add-link")).toBe(false);
+  });
+
+  it("does not read deleting as permission to create", () => {
+    // The pair that used to be one "structure" flag. They ask for
+    // opposite things — a default for every field versus every
+    // reference found — so an engine that can remove an element is not
+    // thereby able to add one.
+    expect(moveOnly.delete).toBe(true);
+    expect(toolAllowedBy(moveOnly, "add-node")).toBe(false);
   });
 
   it("withholds every editing tool from an engine that edits nothing", () => {

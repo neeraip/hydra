@@ -67,6 +67,8 @@ mod storage;
 #[cfg(test)]
 mod test_fixtures;
 mod uds_attrs;
+mod uds_create;
+mod uds_delete;
 mod uds_results;
 mod uds_view;
 

@@ -277,6 +277,11 @@ pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<Element
 pub struct KindColumnDto {
     pub key: String,
     pub label: String,
+    /// Whether this column's cells can be written, from the same table
+    /// the setter consults — the per-column half of the flag
+    /// `ElementAttributeDto` carries per row, and true for exactly the
+    /// same (kind, key) pairs.
+    pub editable: bool,
     /// The §5 quantity for numeric values (SI), absent for text columns.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantity: Option<QuantityDescriptor>,
@@ -912,6 +917,7 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
                 })
                 .collect();
             KindColumnDto {
+                editable: is_writable(kind, &attr.key),
                 key: attr.key,
                 label: attr.label,
                 quantity,
@@ -1205,6 +1211,57 @@ mod tests {
 
         // A kind the model has none of is empty, not an error.
         assert!(kind_elements(&net, "weir").ids.is_empty());
+    }
+
+    /// The table and the inspector must offer the same set of writes for
+    /// the same element. They are built by different functions from the
+    /// same table, so the way this drifts is one of them gaining a key
+    /// the other does not have — asserted against each other rather than
+    /// against a list written here, which would drift with neither.
+    #[test]
+    fn a_column_is_editable_exactly_where_the_inspector_row_is() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [OUTFALLS]\nO1 88 FREE NO\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let mut compared = 0;
+        for (kind, id) in [("junction", "J1"), ("outfall", "O1"), ("conduit", "C1")] {
+            let table = kind_elements(&net, kind);
+            let rows = element_attributes(&net, id).expect("element");
+            for column in &table.columns {
+                // A column the element does not carry has no row to
+                // compare against — the table serves it as a null cell,
+                // which is why the flag alone cannot decide whether a
+                // given cell takes an input.
+                let Some(row) = rows.iter().find(|r| r.key == column.key) else {
+                    continue;
+                };
+                compared += 1;
+                assert_eq!(
+                    column.editable, row.editable,
+                    "{kind}.{} disagrees between the table and the inspector",
+                    column.key,
+                );
+            }
+        }
+        assert!(compared >= 8, "only {compared} columns had a row to check");
+
+        // And the flag is not simply true everywhere: a conduit's length
+        // is settable, its cross-section — a referent, not a number — is
+        // not.
+        let conduits = kind_elements(&net, "conduit");
+        let editable = |key: &str| {
+            conduits
+                .columns
+                .iter()
+                .find(|c| c.key == key)
+                .map(|c| c.editable)
+        };
+        assert_eq!(editable("length"), Some(true));
+        assert_eq!(editable("shape"), Some(false));
     }
 
     #[test]

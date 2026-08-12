@@ -13,8 +13,8 @@
  * whose boundary condition means nothing to a storage unit.
  */
 
-import { LockClosedIcon } from "@heroicons/react/16/solid";
-import { useEffect, useMemo, useState } from "react";
+import { PencilSquareIcon } from "@heroicons/react/16/solid";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { KindTable } from "../../components/panels/KindTable";
@@ -24,6 +24,7 @@ import {
   useKindCounts,
   useKindElements,
 } from "../../hooks";
+import { useElementAttributeWrite } from "../../hooks/useAttributeWrite";
 import {
   type EditorSection,
   EditorShell,
@@ -84,7 +85,22 @@ export function UdsElementsView() {
     setRevealToken(editorFocus.nonce);
   }, [editorFocus]);
 
-  const elements = useKindElements(project?.id, activeScenarioId, kind);
+  const { elements, refetch } = useKindElements(
+    project?.id,
+    activeScenarioId,
+    kind,
+  );
+
+  // The table redraws from a refetch rather than from what was typed:
+  // the backend is the one that knows what the value became, and a cell
+  // showing the entered number while the model holds a converted one
+  // lies until the next reload.
+  const write = useElementAttributeWrite();
+  const onEdit = useCallback(
+    (id: string, key: string, value: number) =>
+      write(id, key, value).then(refetch),
+    [write, refetch],
+  );
 
   // A container's row reports only its size, so selecting one opens what
   // is actually inside it. A local selection, not the canvas's: a curve
@@ -162,11 +178,13 @@ export function UdsElementsView() {
       footer={
         <EditorStatusBar>
           {/* This bar is where the Editor reports the state of editing —
-              water distribution says "3 unsaved changes" here. Drainage's
-              answer is that there is no editing at all, and it is said
-              once, in that same place, rather than repeated beside every
+              water distribution says "3 unsaved changes" here, because it
+              stages its edits. Drainage does not stage: a committed cell
+              is written and saved before the field gives focus back, so
+              there is never a count to report. That difference is the
+              whole message, and it belongs here rather than beside every
               table.
-              
+
               It reads as a state rather than a caption: WDS's version
               earns peripheral attention by warming to amber when work is
               staged, and this one never changes, so it leans on the icon
@@ -180,26 +198,29 @@ export function UdsElementsView() {
               fontWeight: 500,
             }}
           >
-            <LockClosedIcon
+            <PencilSquareIcon
               style={{ width: 12, height: 12, flexShrink: 0 }}
               aria-hidden="true"
             />
-            Read-only
+            Saved as you edit
           </span>
-          {/* The sentence has to track what is actually true, because a
-              reader takes it as the whole answer. "Edited outside Hydra"
-              read as a design stance; "editing isn't built yet" was right
-              until the map could move and rename an element, and is now
-              wrong in a way that sends people looking elsewhere.
+          {/* Five versions of this line have described what drainage
+              editing could not do yet, and all five went stale the week
+              after they were written: "edited outside Hydra", "editing
+              isn't built yet", "these tables don't edit yet", "adding
+              and removing", "adding". Each was true when written and
+              each outlived its truth, because a sentence about what is
+              missing has to be revisited every time something lands —
+              and it never was, until someone read it and believed it.
 
-              What is true today: these tables read, the map edits. Point
-              at the place that works rather than describing an absence.
-
-              Remove this footer when the tables themselves edit; the
-              `editing` capabilities in the engine registry say which
-              operations exist. */}
+              So this one describes where an operation lives instead,
+              which does not expire: values are edited in these tables,
+              and the set of elements is changed on the map, where an
+              element is placed by pointing at somewhere to put it. That
+              is a fact about the shape of the interface rather than
+              about how far it has got. */}
           <span style={{ color: "var(--text-tertiary)" }}>
-            These tables don't edit yet — move and rename on the map.
+            Add and remove elements on the map.
           </span>
         </EditorStatusBar>
       }
@@ -218,6 +239,7 @@ export function UdsElementsView() {
             elements={elements}
             activeId={selectedId}
             onSelect={select}
+            onEdit={onEdit}
             revealToken={revealToken || undefined}
           />
           {containerId && (
