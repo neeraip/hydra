@@ -2074,7 +2074,8 @@ impl Simulation {
     }
 
     /// The §11.2 origin split of `pollutant`'s admitted load, indexed by
-    /// [`MassSource`]. Sums to `quality_ledger`'s admitted term.
+    /// [`crate::transport::MassSource`]. Sums to `quality_ledger`'s admitted
+    /// term.
     pub fn quality_inflow_by_source(
         &self,
         pollutant: &str,
