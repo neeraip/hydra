@@ -33,6 +33,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Conveyance),
         badge: "J",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "outfall",
@@ -41,6 +43,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Boundary),
         badge: "OF",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "divider",
@@ -49,6 +53,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Control),
         badge: "FD",
+        creatable: false,
+        not_creatable_because: Some("a divider needs the link its diverted flow leaves by"),
     },
     ElementKind {
         id: "storage",
@@ -57,6 +63,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Boundary),
         badge: "SU",
+        creatable: false,
+        not_creatable_because: Some(
+            "a storage unit needs a stage-area relation — a curve, or a fitted shape",
+        ),
     },
     ElementKind {
         id: "raingage",
@@ -65,6 +75,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: None,
         badge: "RG",
+        creatable: false,
+        not_creatable_because: Some("a rain gage needs a rainfall series or file to read"),
     },
     ElementKind {
         id: "conduit",
@@ -73,6 +85,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Conveyance),
         badge: "C",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pump",
@@ -81,6 +95,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "PU",
+        creatable: false,
+        not_creatable_because: Some("a pump needs a characteristic curve"),
     },
     ElementKind {
         id: "orifice",
@@ -89,6 +105,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "OR",
+        creatable: false,
+        not_creatable_because: Some(
+            "an orifice needs an opening geometry and a discharge coefficient",
+        ),
     },
     ElementKind {
         id: "weir",
@@ -97,6 +117,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "W",
+        creatable: false,
+        not_creatable_because: Some("a weir needs an opening geometry and a discharge coefficient"),
     },
     ElementKind {
         id: "outlet",
@@ -105,6 +127,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "OL",
+        creatable: false,
+        not_creatable_because: Some("an outlet needs a rating — a curve, or a power relation"),
     },
     ElementKind {
         id: "subcatchment",
@@ -113,6 +137,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Region,
         role: Some(ElementRole::Boundary),
         badge: "SC",
+        creatable: false,
+        not_creatable_because: Some(
+            "a subcatchment needs an area, which is its polygon rather than a number to type",
+        ),
     },
     ElementKind {
         id: "pollutant",
@@ -121,6 +149,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Po",
+        creatable: false,
+        not_creatable_because: Some(
+            "a pollutant is defined by its buildup and washoff, authored with its land uses",
+        ),
     },
     ElementKind {
         id: "curve",
@@ -129,6 +161,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Cv",
+        creatable: false,
+        not_creatable_because: Some("a curve is its list of points, authored in the curve editor"),
     },
     ElementKind {
         id: "timeseries",
@@ -137,6 +171,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Ts",
+        creatable: false,
+        not_creatable_because: Some(
+            "a time series is its list of values, authored in its own editor",
+        ),
     },
     ElementKind {
         id: "pattern",
@@ -145,6 +183,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Pa",
+        creatable: false,
+        not_creatable_because: Some(
+            "a pattern is its list of multipliers, authored in the pattern editor",
+        ),
     },
     ElementKind {
         id: "rule",
@@ -153,6 +195,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Ru",
+        creatable: false,
+        not_creatable_because: Some(
+            "a rule is a statement about the network, authored in the controls editor",
+        ),
     },
     ElementKind {
         id: "landuse",
@@ -161,6 +207,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Lu",
+        creatable: false,
+        not_creatable_because: Some("a land use is defined by its buildup and washoff functions"),
     },
     ElementKind {
         id: "aquifer",
@@ -169,6 +217,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Aq",
+        creatable: false,
+        not_creatable_because: Some(
+            "an aquifer is a set of soil parameters with no defensible defaults",
+        ),
     },
     ElementKind {
         id: "snowpack",
@@ -177,6 +229,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Sn",
+        creatable: false,
+        not_creatable_because: Some(
+            "a snow pack is a set of melt parameters with no defensible defaults",
+        ),
     },
     ElementKind {
         id: "hydrograph",
@@ -185,6 +241,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Uh",
+        creatable: false,
+        not_creatable_because: Some("a unit hydrograph is its per-month responses"),
     },
     ElementKind {
         id: "lidcontrol",
@@ -193,6 +251,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Li",
+        creatable: false,
+        not_creatable_because: Some("a control measure is defined by its layers"),
     },
     ElementKind {
         id: "transect",
@@ -201,6 +261,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Tr",
+        creatable: false,
+        not_creatable_because: Some("a transect is its surveyed station-elevation pairs"),
     },
     // A street cross-section: the roadway geometry a conduit routes surface
     // flow across in a dual-drainage model. A named registry like transects
@@ -212,6 +274,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "St",
+        creatable: false,
+        not_creatable_because: Some("a street section is its cross-slope geometry"),
     },
     // An inlet design: the grate, curb opening or slotted drain through
     // which a street captures flow into the sewer below. One design serves
@@ -224,6 +288,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "In",
+        creatable: false,
+        not_creatable_because: Some("an inlet design is its opening geometry"),
     },
 ];
 
@@ -281,18 +347,18 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
         "subcatchment" => vec![
             attr("raingage", "Rain gage", text(), None),
             attr("outlet", "Outlet", text(), None),
-            attr("area", "Area", num(), Some("area")),
-            attr("width", "Width", num(), Some("length")),
-            attr("slope", "Slope", num(), Some("percent")),
-            attr("imperviousness", "Imperviousness", num(), Some("percent")),
+            rw("area", "Area", num(), Some("area")),
+            rw("width", "Width", num(), Some("length")),
+            rw("slope", "Slope", num(), Some("percent")),
+            rw("imperviousness", "Imperviousness", num(), Some("percent")),
         ],
         "junction" => vec![
-            attr("invert", "Invert elevation", num(), Some("elevation")),
-            attr("maxDepth", "Maximum depth", num(), Some("depth")),
-            attr("initDepth", "Initial depth", num(), Some("depth")),
+            rw("invert", "Invert elevation", num(), Some("elevation")),
+            rw("maxDepth", "Maximum depth", num(), Some("depth")),
+            rw("initDepth", "Initial depth", num(), Some("depth")),
         ],
         "outfall" => vec![
-            attr("invert", "Invert elevation", num(), Some("elevation")),
+            rw("invert", "Invert elevation", num(), Some("elevation")),
             attr(
                 "boundary",
                 "Boundary",
@@ -316,12 +382,18 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "divider" => vec![
-            attr("invert", "Invert elevation", num(), Some("elevation")),
+            rw("invert", "Invert elevation", num(), Some("elevation")),
+            // A divider is a junction under the one solver (§7.5) and
+            // carries a junction's depths; the schema simply never
+            // published them, so a divider's table showed one column
+            // where a junction's showed three.
+            rw("maxDepth", "Maximum depth", num(), Some("depth")),
+            rw("initDepth", "Initial depth", num(), Some("depth")),
             attr("divertedLink", "Diverted link", text(), None),
         ],
         "storage" => vec![
-            attr("invert", "Invert elevation", num(), Some("elevation")),
-            attr("maxDepth", "Maximum depth", num(), Some("depth")),
+            rw("invert", "Invert elevation", num(), Some("elevation")),
+            rw("maxDepth", "Maximum depth", num(), Some("depth")),
             attr("shape", "Shape", text(), None),
         ],
         "raingage" => vec![
@@ -330,8 +402,8 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("source", "Data source", text(), None),
         ],
         "conduit" => vec![
-            attr("length", "Length", num(), Some("length")),
-            attr("roughness", "Roughness", num(), None),
+            rw("length", "Length", num(), Some("length")),
+            rw("roughness", "Roughness", num(), None),
             attr("shape", "Cross-section", text(), None),
             attr("maxDepth", "Full depth", num(), Some("depth")),
         ],
@@ -361,11 +433,11 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
                 None,
             ),
             attr("height", "Opening height", num(), Some("depth")),
-            attr("dischargeCoeff", "Discharge coefficient", num(), None),
+            rw("dischargeCoeff", "Discharge coefficient", num(), None),
         ],
         "weir" => vec![
             attr("crestHeight", "Crest height", num(), Some("depth")),
-            attr("dischargeCoeff", "Discharge coefficient", num(), None),
+            rw("dischargeCoeff", "Discharge coefficient", num(), None),
         ],
         "outlet" => vec![
             attr("outletCurve", "Rating curve", text(), None),
@@ -499,12 +571,34 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
     }
 }
 
+/// A read-only attribute: shown, never offered for editing.
+///
+/// The bulk of this engine's schema. Most of what a drainage element
+/// publishes either names a referent — a cross-section shape, a storage
+/// curve, an outfall's boundary condition — or is a choice, and setting
+/// one of those is a different operation from typing a number over it.
 fn attr(key: &str, label: &str, kind: OptionKind, quantity: Option<&str>) -> AttributeDescriptor {
+    descriptor(key, label, kind, quantity, false)
+}
+
+/// A writable attribute (spec §4.5.1).
+fn rw(key: &str, label: &str, kind: OptionKind, quantity: Option<&str>) -> AttributeDescriptor {
+    descriptor(key, label, kind, quantity, true)
+}
+
+fn descriptor(
+    key: &str,
+    label: &str,
+    kind: OptionKind,
+    quantity: Option<&str>,
+    editable: bool,
+) -> AttributeDescriptor {
     AttributeDescriptor {
         key: key.to_string(),
         label: label.to_string(),
         kind,
         quantity: quantity.map(str::to_string),
+        editable,
     }
 }
 
@@ -634,6 +728,59 @@ fn var(
 
 #[cfg(test)]
 mod tests {
+
+    /// The editing contract's one hard rule about the catalog
+    /// (hydra-common §4.5.3): a kind that cannot be created has to say
+    /// what a new one would need. A refusal with nothing behind it is a
+    /// dead end, and the application shows this text rather than
+    /// inventing its own.
+    #[test]
+    fn every_uncreatable_kind_says_what_is_missing() {
+        for kind in ELEMENT_KINDS {
+            if kind.creatable {
+                assert!(
+                    kind.not_creatable_because.is_none(),
+                    "{} is creatable and still explains why it is not",
+                    kind.id
+                );
+            } else {
+                let why = kind
+                    .not_creatable_because
+                    .unwrap_or_else(|| panic!("{} refuses creation without a reason", kind.id));
+                assert!(
+                    why.len() > 20 && !why.ends_with('.'),
+                    "{}: a reason is a clause the caller builds a sentence from, got {why:?}",
+                    kind.id
+                );
+            }
+        }
+    }
+
+    /// An attribute is marked editable here only if it is a number.
+    ///
+    /// Not a rule of the contract — the water-distribution engine marks
+    /// references and choices editable and is right to. It is a rule of
+    /// *this* engine's write, which takes a number: marking a referent
+    /// editable would have the editor offer a numeric field for a
+    /// cross-section shape, and the write refuse every use of it.
+    #[test]
+    fn only_values_are_marked_editable() {
+        for kind in ELEMENT_KINDS {
+            for a in attribute_schema(kind.id) {
+                if a.editable {
+                    assert!(
+                        matches!(
+                            a.kind,
+                            OptionKind::Number { .. } | OptionKind::Integer { .. }
+                        ),
+                        "{}.{} is editable but is not a number",
+                        kind.id,
+                        a.key
+                    );
+                }
+            }
+        }
+    }
     /// The kinds placed on a map come first, and the ones that are not
     /// come last — with no interleaving.
     ///

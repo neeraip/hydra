@@ -1507,26 +1507,18 @@ pub fn set_element_attribute(
 /// below drives itself from this table, so a key added here without a
 /// matching arm fails rather than silently offering an input that
 /// refuses.
-pub(crate) const WRITABLE: &[(&str, &[&str])] = &[
-    ("junction", &["invert", "maxDepth", "initDepth"]),
-    ("outfall", &["invert"]),
-    ("divider", &["invert", "maxDepth", "initDepth"]),
-    ("storage", &["invert", "maxDepth"]),
-    ("conduit", &["length", "roughness"]),
-    ("orifice", &["dischargeCoeff"]),
-    ("weir", &["dischargeCoeff"]),
-    (
-        "subcatchment",
-        &["area", "width", "slope", "imperviousness"],
-    ),
-];
-
 /// Whether `key` is settable on `kind`.
+///
+/// Read from the engine's own attribute schema, which carries the
+/// answer since the editing contract landed (hydra-common §4.5.1).
+/// There used to be a table here, and it was a second answer to a
+/// question the engine already answers: it claimed a divider's maximum
+/// and initial depth were writable while the schema published neither,
+/// so the rows never appeared and nothing said they were missing.
 pub(crate) fn is_writable(kind: &str, key: &str) -> bool {
-    WRITABLE
+    hydra::uds::descriptors::attribute_schema(kind)
         .iter()
-        .find(|(k, _)| *k == kind)
-        .is_some_and(|(_, keys)| keys.contains(&key))
+        .any(|a| a.key == key && a.editable)
 }
 
 fn unwritable(key: &str) -> String {
@@ -1652,9 +1644,11 @@ RS1  0:00  0.4
     /// exactly what went wrong first: an area is served in hectares and a
     /// slope as a percentage, not in the SI the module's summary implies.
     ///
-    /// Driven from `WRITABLE` rather than from a list written here, so a
-    /// key added to the table without a matching arm in the setter fails
-    /// instead of quietly offering the inspector an input that refuses.
+    /// Driven from the engine's own schema rather than from a list
+    /// written here, so an attribute marked editable without a matching
+    /// arm in the setter fails instead of quietly offering the inspector
+    /// an input that refuses. That is the pairing the editing contract
+    /// asks for: the flag is advisory and this is what keeps it honest.
     #[test]
     fn every_writable_attribute_reads_back_as_it_was_set() {
         // One element of each kind the table covers, and a value that is
@@ -1671,14 +1665,21 @@ RS1  0:00  0.4
             }
         };
         let mut checked = 0;
-        for (kind, keys) in WRITABLE {
-            let Some(id) = sample(kind) else { continue };
-            for key in *keys {
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let Some(id) = sample(kind.id) else { continue };
+            let kind = kind.id;
+            for key in hydra::uds::descriptors::attribute_schema(kind)
+                .iter()
+                .filter(|a| a.editable)
+                .map(|a| a.key.clone())
+                .collect::<Vec<_>>()
+            {
+                let key = key.as_str();
                 let mut net = model();
                 let before = element_attributes(&net, id)
                     .expect("attributes")
                     .into_iter()
-                    .find(|r| r.key == *key)
+                    .find(|r| r.key == key)
                     .unwrap_or_else(|| panic!("{kind}.{key} has no row"));
                 assert!(before.editable, "{kind}.{key} reads as not editable");
                 let value = before.number.expect("a number") + 1.5;

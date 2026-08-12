@@ -23,6 +23,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Conveyance),
         badge: "J",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "reservoir",
@@ -31,6 +33,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Boundary),
         badge: "R",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "tank",
@@ -39,6 +43,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Boundary),
         badge: "TK",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pipe",
@@ -47,6 +53,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Conveyance),
         badge: "P",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pump",
@@ -55,6 +63,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "PU",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "valve",
@@ -63,6 +73,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "V",
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pattern",
@@ -71,6 +83,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Pa",
+        creatable: false,
+        not_creatable_because: Some(
+            "a pattern is its list of multipliers, authored in the pattern editor",
+        ),
     },
     ElementKind {
         id: "curve",
@@ -79,6 +95,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Cv",
+        creatable: false,
+        not_creatable_because: Some("a curve is its list of points, authored in the curve editor"),
     },
     ElementKind {
         id: "control",
@@ -87,6 +105,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Ct",
+        creatable: false,
+        not_creatable_because: Some(
+            "a control is a statement about the network, authored in the controls editor",
+        ),
     },
     ElementKind {
         id: "rule",
@@ -95,6 +117,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Ru",
+        creatable: false,
+        not_creatable_because: Some(
+            "a rule is a statement about the network, authored in the controls editor",
+        ),
     },
 ];
 
@@ -154,23 +180,23 @@ const fn q(
 pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
     match kind_id {
         "junction" => vec![
-            attr("elevation", "Elevation", num(), Some("elevation")),
-            attr("baseDemand", "Base demand", num(), Some("demand")),
-            attr("demandPattern", "Demand pattern", text(), None),
+            rw("elevation", "Elevation", num(), Some("elevation")),
+            rw("baseDemand", "Base demand", num(), Some("demand")),
+            rw("demandPattern", "Demand pattern", text(), None),
         ],
         "reservoir" => vec![
-            attr("head", "Head", num(), Some("head")),
-            attr("headPattern", "Head pattern", text(), None),
+            rw("head", "Head", num(), Some("head")),
+            rw("headPattern", "Head pattern", text(), None),
         ],
         "tank" => vec![
-            attr("elevation", "Elevation", num(), Some("elevation")),
-            attr("initLevel", "Initial level", num(), Some("length")),
-            attr("minLevel", "Minimum level", num(), Some("length")),
-            attr("maxLevel", "Maximum level", num(), Some("length")),
-            attr("diameter", "Diameter", num(), Some("length")),
-            attr("minVolume", "Minimum volume", num(), Some("volume")),
-            attr("volumeCurve", "Volume curve", text(), None),
-            attr(
+            rw("elevation", "Elevation", num(), Some("elevation")),
+            rw("initLevel", "Initial level", num(), Some("length")),
+            rw("minLevel", "Minimum level", num(), Some("length")),
+            rw("maxLevel", "Maximum level", num(), Some("length")),
+            rw("diameter", "Diameter", num(), Some("length")),
+            rw("minVolume", "Minimum volume", num(), Some("volume")),
+            rw("volumeCurve", "Volume curve", text(), None),
+            rw(
                 "overflow",
                 "Overflow",
                 OptionKind::Boolean { default: None },
@@ -178,11 +204,11 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "pipe" => vec![
-            attr("length", "Length", num(), Some("length")),
-            attr("diameter", "Diameter", num(), Some("diameter")),
-            attr("roughness", "Roughness", num(), None),
-            attr("minorLoss", "Minor loss", num(), None),
-            attr(
+            rw("length", "Length", num(), Some("length")),
+            rw("diameter", "Diameter", num(), Some("diameter")),
+            rw("roughness", "Roughness", num(), None),
+            rw("minorLoss", "Minor loss", num(), None),
+            rw(
                 "checkValve",
                 "Check valve",
                 OptionKind::Boolean { default: None },
@@ -190,13 +216,13 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "pump" => vec![
-            attr("headCurve", "Head curve", text(), None),
-            attr("power", "Rated power", num(), None),
-            attr("speed", "Relative speed", num(), None),
-            attr("speedPattern", "Speed pattern", text(), None),
+            rw("headCurve", "Head curve", text(), None),
+            rw("power", "Rated power", num(), None),
+            rw("speed", "Relative speed", num(), None),
+            rw("speedPattern", "Speed pattern", text(), None),
         ],
         "valve" => vec![
-            attr(
+            rw(
                 "valveType",
                 "Type",
                 OptionKind::Choice {
@@ -211,23 +237,46 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
                 },
                 None,
             ),
-            attr("diameter", "Diameter", num(), Some("diameter")),
+            rw("diameter", "Diameter", num(), Some("diameter")),
             // The setting's unit depends on the valve type (pressure for
             // PRV/PSV/PBV, flow for FCV, dimensionless otherwise), so no
             // single quantity is truthful here.
-            attr("setting", "Setting", num(), None),
-            attr("minorLoss", "Minor loss", num(), None),
+            rw("setting", "Setting", num(), None),
+            rw("minorLoss", "Minor loss", num(), None),
         ],
         _ => Vec::new(),
     }
 }
 
+/// A read-only attribute: shown, never offered for editing.
+///
+/// Unused today — every attribute this engine publishes is a stored
+/// model value, so every one is [`rw`]. It exists because the
+/// distinction is the schema's to draw and a derived attribute would
+/// need it, not because nothing is read-only by accident.
+#[allow(dead_code)]
 fn attr(key: &str, label: &str, kind: OptionKind, quantity: Option<&str>) -> AttributeDescriptor {
+    descriptor(key, label, kind, quantity, false)
+}
+
+/// A writable attribute (spec §4.5.1).
+fn rw(key: &str, label: &str, kind: OptionKind, quantity: Option<&str>) -> AttributeDescriptor {
+    descriptor(key, label, kind, quantity, true)
+}
+
+fn descriptor(
+    key: &str,
+    label: &str,
+    kind: OptionKind,
+    quantity: Option<&str>,
+    editable: bool,
+) -> AttributeDescriptor {
     AttributeDescriptor {
         key: key.to_string(),
         label: label.to_string(),
         kind,
         quantity: quantity.map(str::to_string),
+        editable,
     }
 }
 
@@ -349,6 +398,60 @@ fn cat(value: i64, label: &str, severity: CategorySeverity) -> CategoryItem {
 
 #[cfg(test)]
 mod tests {
+
+    /// The editing contract's one hard rule about the catalog
+    /// (hydra-common §4.5.3): a kind that cannot be created has to say
+    /// what a new one would need. A refusal with nothing behind it is a
+    /// dead end, and the application shows this text rather than
+    /// inventing its own.
+    #[test]
+    fn every_uncreatable_kind_says_what_is_missing() {
+        for kind in ELEMENT_KINDS {
+            if kind.creatable {
+                assert!(
+                    kind.not_creatable_because.is_none(),
+                    "{} is creatable and still explains why it is not",
+                    kind.id
+                );
+            } else {
+                let why = kind
+                    .not_creatable_because
+                    .unwrap_or_else(|| panic!("{} refuses creation without a reason", kind.id));
+                assert!(
+                    why.len() > 20 && !why.ends_with('.'),
+                    "{}: a reason is a clause the caller builds a sentence from, got {why:?}",
+                    kind.id
+                );
+            }
+        }
+    }
+
+    /// Everything this engine publishes is a stored model value, so
+    /// everything it publishes is editable.
+    ///
+    /// Asserted rather than assumed, because the reverse — an attribute
+    /// added for display only — is the case that needs the flag, and it
+    /// would arrive silently. This engine's editable set includes
+    /// references and choices, not only numbers: a demand pattern and a
+    /// valve type are both edited in its tables today, which is why the
+    /// contract does not restrict editability to numbers even though the
+    /// drainage engine's write happens to.
+    #[test]
+    fn every_published_attribute_is_a_value_the_user_may_set() {
+        let mut seen = 0;
+        for kind in ELEMENT_KINDS {
+            for a in attribute_schema(kind.id) {
+                assert!(
+                    a.editable,
+                    "{}.{} is published but not editable — if that is deliberate, \
+                     say why here",
+                    kind.id, a.key
+                );
+                seen += 1;
+            }
+        }
+        assert!(seen > 20, "only {seen} attributes were checked");
+    }
 
     /// Role is the engine's judgement, not a lookup — see the drainage
     /// engine's counterpart. Pinned so an unsimulated network cannot change

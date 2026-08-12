@@ -47,8 +47,32 @@ fn taken(net: &Network, id: &str) -> bool {
         || net.parcels.iter().any(|p| p.id.eq_ignore_ascii_case(id))
 }
 
-fn needs_a_referent(kind: &str, what: &str) -> String {
-    format!("a {kind} needs {what}, so it cannot be added from the map yet")
+/// Why this kind cannot be created, in the engine's own words.
+///
+/// The reason is catalog data since the editing contract landed
+/// (hydra-common §4.5.3), so it is one sentence in one place rather than
+/// one here and another wherever an application explains itself. A kind
+/// this engine does not publish at all is a caller error, not a refusal.
+fn refuse_kind(kind: &str) -> String {
+    hydra::uds::descriptors::ELEMENT_KINDS
+        .iter()
+        .find(|k| k.id == kind)
+        .map_or_else(
+            || format!("unknown element kind '{kind}'"),
+            |k| {
+                k.not_creatable_because.map_or_else(
+                    || format!("a {} cannot be added here", k.label.to_lowercase()),
+                    |why| format!("{why}, so it cannot be added from the map yet"),
+                )
+            },
+        )
+}
+
+/// Whether the engine's catalog says this kind can be created at all.
+fn creatable(kind: &str) -> bool {
+    hydra::uds::descriptors::ELEMENT_KINDS
+        .iter()
+        .any(|k| k.id == kind && k.creatable)
 }
 
 /// Add a vertex at `(x, y)` in the model's own coordinate system.
@@ -65,6 +89,9 @@ pub(crate) fn create_uds_vertex(
 ) -> Result<(), String> {
     if taken(net, id) {
         return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable(kind) {
+        return Err(refuse_kind(kind));
     }
     let vertex_kind = match kind {
         "junction" => VertexKind::Junction {
@@ -86,19 +113,11 @@ pub(crate) fn create_uds_vertex(
             flap_gate: false,
             route_to_parcel: None,
         },
-        "storage" => {
-            return Err(needs_a_referent(
-                "storage unit",
-                "a stage-area relation — a curve, or a fitted shape",
-            ));
-        }
-        "divider" => {
-            return Err(needs_a_referent(
-                "divider",
-                "the link its diverted flow leaves by",
-            ));
-        }
-        other => return Err(format!("unknown vertex kind '{other}'")),
+        // Every other kind was refused above, by the catalog. This arm
+        // is reached only by a kind that is creatable and has no
+        // constructor here, which is a gap in this file rather than a
+        // refusal to report.
+        other => return Err(format!("no constructor for vertex kind '{other}'")),
     };
     net.vertices.push(Vertex {
         id: id.to_string(),
@@ -128,6 +147,9 @@ pub(crate) fn create_uds_link(
     if taken(net, id) {
         return Err(format!("ID '{id}' is already in use"));
     }
+    if !creatable(kind) {
+        return Err(refuse_kind(kind));
+    }
     let find = |name: &str| {
         net.vertices
             .iter()
@@ -145,22 +167,8 @@ pub(crate) fn create_uds_link(
     if !(diameter.is_finite() && diameter > 0.0) {
         return Err("a conduit needs a positive diameter".into());
     }
-    match kind {
-        "conduit" => {}
-        "pump" => return Err(needs_a_referent("pump", "a characteristic curve")),
-        "outlet" => {
-            return Err(needs_a_referent(
-                "outlet",
-                "a rating — a curve, or a power relation",
-            ));
-        }
-        "orifice" | "weir" => {
-            return Err(needs_a_referent(
-                kind,
-                "an opening geometry and a discharge coefficient",
-            ));
-        }
-        other => return Err(format!("unknown link kind '{other}'")),
+    if kind != "conduit" {
+        return Err(format!("no constructor for link kind '{kind}'"));
     }
     let per_unit = net.options.flow_units.m_per_length_unit();
     net.links.push(Link {

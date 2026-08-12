@@ -90,6 +90,21 @@ pub struct ElementKind {
     pub role: Option<ElementRole>,
     /// One- or two-character glyph for dense UI (markers, chips).
     pub badge: &'static str,
+    /// Whether elements of this kind may be created (spec §4.5.3).
+    ///
+    /// Advisory, like [`AttributeDescriptor::editable`]: creation is the
+    /// authority. `false` is the default a kind gets by saying nothing,
+    /// so a catalog written before the editing contract offers nothing
+    /// rather than everything.
+    pub creatable: bool,
+    /// What a new element of this kind would need that cannot be
+    /// defaulted — a relation curve, a rating, an opening geometry.
+    ///
+    /// Present only when `creatable` is false, and required then: a
+    /// refusal without a reason is a dead end, and the application shows
+    /// this rather than inventing its own explanation. Plain text,
+    /// engine-authored.
+    pub not_creatable_because: Option<&'static str>,
 }
 
 /// Description of one attribute an application may display for elements of
@@ -98,9 +113,7 @@ pub struct ElementKind {
 /// Reuses the option-descriptor value vocabulary ([`OptionKind`], spec
 /// §3.2.1) and is advisory in exactly that sense: it tells a generic UI
 /// what to show; it is not the validation authority, and an engine remains
-/// free to hold data no schema advertises. This revision describes
-/// attributes for **display**; editability, defaults, and creation flows
-/// are a later additive revision.
+/// free to hold data no schema advertises.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttributeDescriptor {
@@ -114,6 +127,22 @@ pub struct AttributeDescriptor {
     /// Key of the physical quantity the value carries (spec §5), or `None`
     /// for dimensionless or textual attributes.
     pub quantity: Option<String>,
+    /// Whether a write to this attribute may be offered (spec §4.5.1).
+    ///
+    /// Advisory: the write is the authority, and an engine refuses one it
+    /// will not accept whether or not this said so. It exists so a
+    /// surface can offer an input rather than offer one and be refused,
+    /// which teaches the user the same thing one interaction later.
+    ///
+    /// This says the *attribute* can be written, not that a particular
+    /// element can be: an element that carries no value for the key has
+    /// nothing to change, and offering an input there would invite
+    /// creating a value the model never held.
+    ///
+    /// Defaulted on the wire so a schema written before the editing
+    /// contract deserialises, offering nothing rather than everything.
+    #[serde(default)]
+    pub editable: bool,
 }
 
 #[cfg(test)]
@@ -141,10 +170,33 @@ mod tests {
             class: ElementClass::Point,
             role: Some(ElementRole::Boundary),
             badge: "K",
+            creatable: false,
+            not_creatable_because: Some("a kind needs something only its engine knows"),
         };
         let json = serde_json::to_value(kind).unwrap();
         assert_eq!(json["labelPlural"], "Kinds");
         assert_eq!(json["class"], "point");
         assert_eq!(json["role"], "boundary");
+        assert_eq!(json["creatable"], false);
+        assert_eq!(
+            json["notCreatableBecause"],
+            "a kind needs something only its engine knows"
+        );
+    }
+
+    /// A schema written before the editing contract has no `editable`
+    /// field, and must deserialise as offering nothing rather than
+    /// failing outright (spec §4.5.1).
+    #[test]
+    fn an_attribute_without_the_flag_is_not_editable() {
+        let json = serde_json::json!({
+            "key": "elevation",
+            "label": "Elevation",
+            "kind": { "type": "number" },
+            "quantity": "elevation",
+        });
+        let attr: AttributeDescriptor =
+            serde_json::from_value(json).expect("a pre-contract schema still reads");
+        assert!(!attr.editable);
     }
 }
