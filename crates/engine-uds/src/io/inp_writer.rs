@@ -132,6 +132,11 @@ fn id(s: &str) -> String {
     }
 }
 
+/// The predecessor's placeholder for an omitted value in a positional
+/// column: an empty quoted string, which its lexer reads as a token
+/// present and blank rather than as the next column shifted left.
+const BLANK: &str = "\"\"";
+
 /// A duration or clock time as `HH:MM:SS` (§14.13.3): a bare number
 /// re-reads as decimal hours and would multiply by 3600 each cycle.
 fn hms(seconds: f64) -> String {
@@ -238,6 +243,8 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_vertices(network, &u, &mut out);
     write_links(network, &u, &mut out);
     write_hydrology(network, &u, &mut out);
+    write_quality(network, &mut out);
+    write_inflows(network, &u, &mut out);
     write_transects(network, &u, &mut out);
     write_streets(network, &u, &mut out);
     write_xsections(network, &mut out);
@@ -948,6 +955,253 @@ fn outlet_rating(
 
 // ── Curves, series and patterns ─────────────────────────────────────────
 
+/// `[INFLOWS]` and `[DWF]`: what enters the network at its boundaries.
+///
+/// A flow inflow's baseline and its series scale both carry the flow
+/// dimension, so both invert; a constituent inflow's baseline is a
+/// concentration or a mass rate as written, and does not.
+fn write_inflows(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::InflowKind as K;
+
+    let mut inflows = Rows::new(
+        "[INFLOWS]",
+        &[
+            "Node",
+            "Constituent",
+            "TimeSeries",
+            "Type",
+            "Mfactor",
+            "Sfactor",
+            "Baseline",
+            "Pattern",
+        ],
+    );
+    for f in &network.inflows {
+        let is_flow = f.kind == K::Flow;
+        inflows.push([
+            id(&network.vertices[f.vertex].id),
+            f.constituent
+                .map_or("FLOW".into(), |c| id(&network.constituents[c].id)),
+            // The series column is positional and the columns after it
+            // are meaningful, so an inflow with no series writes the
+            // predecessor's placeholder rather than an empty field.
+            f.series
+                .map_or(BLANK.to_string(), |ts| id(&network.timeseries[ts].id)),
+            match f.kind {
+                K::Flow => "FLOW",
+                K::Concentration => "CONCEN",
+                K::Mass => "MASS",
+            }
+            .to_string(),
+            num(f.units_factor),
+            num(if is_flow { u.flow(f.scale) } else { f.scale }),
+            num(if is_flow {
+                u.flow(f.baseline)
+            } else {
+                f.baseline
+            }),
+            f.base_pattern
+                .map_or(String::new(), |p| id(&network.patterns[p].id)),
+        ]);
+    }
+    inflows.write(out);
+
+    let mut dwf = Rows::new("[DWF]", &["Node", "Constituent", "Average", "Patterns"]);
+    for d in &network.dry_weather {
+        let mut row = vec![
+            id(&network.vertices[d.vertex].id),
+            d.constituent
+                .map_or("FLOW".into(), |c| id(&network.constituents[c].id)),
+            num(if d.constituent.is_none() {
+                u.flow(d.average)
+            } else {
+                d.average
+            }),
+        ];
+        // The four slots are positional — monthly, daily, hourly,
+        // weekend — and a pattern's declared type does not have to match
+        // the slot it sits in (§14.7 warns about that rather than moving
+        // it), so they are written where the model holds them.
+        let last = d.patterns.iter().rposition(Option::is_some);
+        if let Some(last) = last {
+            for slot in &d.patterns[..=last] {
+                row.push(slot.map_or(BLANK.to_string(), |p| id(&network.patterns[p].id)));
+            }
+        }
+        dwf.rows.push(row);
+    }
+    dwf.write(out);
+}
+
+/// The quality sections: what the constituents are, how each land use
+/// accumulates and mobilises them, which parcels are covered by which
+/// use, what is standing there at the start, and what any vertex does to
+/// what passes through it.
+///
+/// Every value here is written as the file carried it. The buildup and
+/// wash-off coefficients are dimensioned by their own form rather than
+/// by the unit system — the model stores them in the file's column order
+/// for exactly that reason — so §14.13.3's exact inverse is the identity.
+fn write_quality(network: &Network, out: &mut String) {
+    use crate::model::{
+        BuildupForm as B, BuildupNormalizer as N, ConcentrationUnits as Cu, TreatmentKind,
+        WashoffForm as W,
+    };
+
+    let mut pollutants = Rows::new(
+        "[POLLUTANTS]",
+        &[
+            "Name", "Units", "Crain", "Cgw", "Crdii", "Kdecay", "SnowOnly", "CoPollut", "CoFrac",
+            "Cdwf", "Cinit",
+        ],
+    );
+    for c in &network.constituents {
+        pollutants.push([
+            id(&c.id),
+            match c.units {
+                Cu::MgPerL => "MG/L",
+                Cu::UgPerL => "UG/L",
+                Cu::CountPerL => "#/L",
+            }
+            .to_string(),
+            num(c.c_rain),
+            num(c.c_groundwater),
+            num(c.c_rdii),
+            num(c.decay * 86_400.0),
+            yes_no(c.snow_only),
+            // The co-pollutant columns are positional, so a constituent
+            // with none writes the predecessor's placeholder rather than
+            // an empty field that would shift everything after it.
+            c.co_constituent
+                .map_or("*".into(), |i| id(&network.constituents[i].id)),
+            num(c.co_fraction),
+            num(c.c_dwf),
+            num(c.c_init),
+        ]);
+    }
+    pollutants.write(out);
+
+    let mut uses = Rows::new(
+        "[LANDUSES]",
+        &["Name", "SweepInterval", "Availability", "LastSweep"],
+    );
+    let mut buildup = Rows::new(
+        "[BUILDUP]",
+        &[
+            "LandUse",
+            "Pollutant",
+            "FuncType",
+            "C1",
+            "C2",
+            "C3",
+            "PerUnit",
+        ],
+    );
+    let mut washoff = Rows::new(
+        "[WASHOFF]",
+        &[
+            "LandUse",
+            "Pollutant",
+            "FuncType",
+            "C1",
+            "C2",
+            "SweepRmvl",
+            "BmpRmvl",
+        ],
+    );
+    for lu in &network.land_uses {
+        uses.push([
+            id(&lu.id),
+            num(lu.sweep_interval),
+            num(lu.sweep_removal),
+            num(lu.sweep_days_since),
+        ]);
+        for (ci, b) in lu.buildup.iter().enumerate() {
+            let Some(b) = b else { continue };
+            let word = match b.form {
+                B::None => "NONE",
+                B::Power => "POW",
+                B::Exponential => "EXP",
+                B::Saturation => "SAT",
+                B::External => "EXT",
+            };
+            // The external form reads a series name where the others
+            // read their third coefficient.
+            let c3 = match (b.form, b.series) {
+                (B::External, Some(ts)) => id(&network.timeseries[ts].id),
+                _ => num(b.coeffs[2]),
+            };
+            buildup.push([
+                id(&lu.id),
+                id(&network.constituents[ci].id),
+                word.to_string(),
+                num(b.coeffs[0]),
+                num(b.coeffs[1]),
+                c3,
+                match b.normalizer {
+                    N::PerArea => "AREA",
+                    N::PerCurb => "CURB",
+                }
+                .to_string(),
+            ]);
+        }
+        for (ci, w) in lu.washoff.iter().enumerate() {
+            let Some(w) = w else { continue };
+            washoff.push([
+                id(&lu.id),
+                id(&network.constituents[ci].id),
+                match w.form {
+                    W::None => "NONE",
+                    W::Exponential => "EXP",
+                    W::RatingCurve => "RC",
+                    W::Emc => "EMC",
+                }
+                .to_string(),
+                num(w.coeff),
+                num(w.exponent),
+                num(w.sweep_efficiency),
+                num(w.bmp_efficiency),
+            ]);
+        }
+    }
+    uses.write(out);
+    buildup.write(out);
+    washoff.write(out);
+
+    let mut coverages = Rows::new("[COVERAGES]", &["Subcatch", "LandUse", "Percent"]);
+    let mut loadings = Rows::new("[LOADINGS]", &["Subcatch", "Pollutant", "InitBuildup"]);
+    for p in &network.parcels {
+        for (lu, frac) in &p.land_cover {
+            coverages.push([id(&p.id), id(&network.land_uses[*lu].id), num(frac * 100.0)]);
+        }
+        for (ci, load) in &p.init_buildup {
+            loadings.push([id(&p.id), id(&network.constituents[*ci].id), num(*load)]);
+        }
+    }
+    coverages.write(out);
+    loadings.write(out);
+
+    let mut treatment = Rows::new("[TREATMENT]", &["Node", "Pollutant", "Result"]);
+    for t in &network.treatments {
+        // The expression is written as its author wrote it: §14.6 keeps
+        // expressions unconverted precisely because a formula cannot be
+        // dimensionally converted, so there is nothing to invert.
+        treatment.rows.push(vec![
+            id(&network.vertices[t.vertex].id),
+            id(&network.constituents[t.constituent].id),
+            format!(
+                "{} = {}",
+                match t.kind {
+                    TreatmentKind::Removal => "R",
+                    TreatmentKind::Concentration => "C",
+                },
+                t.expression
+            ),
+        ]);
+    }
+    treatment.write(out);
+}
+
 /// The hydrology sections that describe a surface: its gages, its
 /// parcels, their sub-areas and their infiltration.
 fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
@@ -1590,6 +1844,43 @@ SUB2  0.012  0.10  0.05  0.1  100  OUTLET
 SUB1  3.5  0.6  4.14  6  1.2
 SUB2  3.0  0.5  4.14  7
 
+[POLLUTANTS]
+TSS   MG/L  0.2  0.1  0.05  0.4  NO   *     0    1.5  0.3
+LEAD  UG/L  0    0    0     0    YES  TSS   0.2  0    0
+
+[LANDUSES]
+RES  7  0.6  3
+
+[BUILDUP]
+RES  TSS   POW  50  0.6  0.9  AREA
+RES  LEAD  EXP  20  0.4  0    CURB
+
+[WASHOFF]
+RES  TSS   EMC  50  0    30  10
+RES  LEAD  RC   0.1  1.8  0   0
+
+[COVERAGES]
+SUB1  RES  75
+
+[LOADINGS]
+SUB1  TSS  12.5
+
+[TREATMENT]
+J2  TSS  R = 0.4*exp(-1.2*HRT)
+
+[INFLOWS]
+J1  FLOW  QIN   FLOW    1.0  1.5  0.02  DPAT
+J1  TSS   \"\"    CONCEN  1.0  1.0  25    DPAT
+J2  LEAD  \"\"    MASS    2.5  1.0  0.5
+
+[DWF]
+J2  FLOW  0.04  DPAT  \"\"  HPAT
+J2  TSS   30
+
+[PATTERNS]
+DPAT  DAILY   1  1.1  1.2  1  0.9  0.8  1
+HPAT  HOURLY  1  1  1  1  1  1  1  1  1.2  1.4  1.3  1.1  1  1  1  1  1  1  1  1  1  1  1  1
+
 [LOSSES]
 C1  0.5  0.8  0.1  YES  0.25
 
@@ -1617,6 +1908,8 @@ RC1  RATING   0  0    1  3.5  2  9
 RS1  0:00  0.4
 RS1  1:00  0.9
 RS1  2:00  0
+QIN  0:00  0.1
+QIN  4:00  0.1
 ";
         let (a, da) = crate::io::objects::parse_network(inp);
         assert!(da.iter().all(|d| !d.kind.is_error()), "{da:?}");
@@ -1682,6 +1975,12 @@ RS1  2:00  0
         // Curves carry a different conversion per role, so they are
         // compared as a body rather than trusted to the link and node
         // comparisons that merely reference them.
+        assert_eq!(a.inflows, b.inflows, "inflows\n{text}");
+        assert_eq!(a.dry_weather, b.dry_weather, "dry weather\n{text}");
+        assert_eq!(a.patterns, b.patterns, "patterns\n{text}");
+        assert_eq!(a.constituents, b.constituents, "pollutants\n{text}");
+        assert_eq!(a.land_uses, b.land_uses, "land uses\n{text}");
+        assert_eq!(a.treatments, b.treatments, "treatment\n{text}");
         assert_eq!(a.gages, b.gages, "gages\n{text}");
         assert_eq!(a.parcels, b.parcels, "parcels\n{text}");
         assert_eq!(a.transects, b.transects, "transects\n{text}");
