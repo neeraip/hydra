@@ -12,5 +12,5 @@
 pub mod quality;
 pub mod surface;
 
-pub use quality::NetworkQuality;
+pub use quality::{MassSource, NetworkQuality, SourceMass, BASE_SOURCES, HYDRO_SOURCES};
 pub use surface::SurfaceQuality;

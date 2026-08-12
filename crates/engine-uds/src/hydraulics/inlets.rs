@@ -200,7 +200,8 @@ impl Inlets {
         router: &Router,
         net: &Network,
         lat: &mut [f64],
-        mass: &mut [Vec<f64>],
+        mass: &mut crate::transport::quality::SourceMass,
+        np: usize,
         conc: &dyn Fn(usize, usize) -> f64,
     ) {
         for inlet in &mut self.list {
@@ -231,13 +232,21 @@ impl Inlets {
             let backflow_si = router.flood_rate(inlet.capture) * inlet.backflow_ratio;
             lat[inlet.bypass] -= captured_si - backflow_si;
             lat[inlet.capture] += captured_si;
-            for (p, row) in mass.iter_mut().enumerate() {
+            for p in 0..np {
                 // The transfer carries the bypass concentration, clamped
-                // to the lateral mass actually present (§8.1).
-                let m = (captured_si * conc(p, inlet.bypass)).min(row[inlet.bypass].max(0.0));
-                row[inlet.bypass] -= m;
-                row[inlet.capture] += m;
-                row[inlet.bypass] += backflow_si * conc(p, inlet.capture);
+                // to the lateral mass actually present (§8.1). It moves
+                // between vertices without changing where the load
+                // entered, so the origin split rides along with it
+                // (§11.2).
+                let present = mass.total(p, inlet.bypass).max(0.0);
+                let m = (captured_si * conc(p, inlet.bypass)).min(present);
+                mass.transfer(p, inlet.bypass, inlet.capture, m);
+                mass.add_mixed(
+                    p,
+                    inlet.bypass,
+                    inlet.capture,
+                    backflow_si * conc(p, inlet.capture),
+                );
             }
         }
     }

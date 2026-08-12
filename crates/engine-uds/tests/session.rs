@@ -3,6 +3,7 @@
 //! event windows, and reporting.
 
 use hydra_engine_uds::simulation::Simulation;
+use hydra_engine_uds::transport::MassSource;
 
 #[test]
 fn an_inflow_series_drives_the_network_from_file_alone() {
@@ -1459,6 +1460,111 @@ RES  TSS  EMC  50  0  0  0
         load.inflow,
         load.outflow
     );
+}
+
+#[test]
+fn the_admitted_load_splits_into_its_origins_without_loss() {
+    // §11.2 splits the admitted load five ways. The split is only worth
+    // printing if it partitions the total exactly — a report whose
+    // inflow rows do not add up to what entered is worse than one that
+    // never claimed to break it down. Asserted against a model whose
+    // load arrives by two different routes, so more than one bucket is
+    // non-zero and a mistake cannot hide in a single term.
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EMC  50  0  0  0
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+
+    let (admitted, ..) = sim.quality_ledger("TSS").expect("ledger");
+    let by_source = sim.quality_inflow_by_source("TSS").expect("split");
+    let summed: f64 = by_source.iter().sum();
+    assert!(
+        (summed - admitted).abs() <= 1e-9 * admitted.abs().max(1.0),
+        "origin split sums to {summed}, admitted {admitted}: {by_source:?}"
+    );
+    assert!(admitted > 0.0, "fixture admitted no load at all");
+    // Wash-off is wet-weather load, so that bucket carries it — a split
+    // that summed correctly while booking everything to one wrong
+    // origin would pass the check above.
+    let wet = by_source[MassSource::WetWeather.index()];
+    assert!(
+        wet > 0.9 * admitted,
+        "wash-off booked as {wet} of {admitted} wet-weather load: {by_source:?}"
+    );
+}
+
+#[test]
+fn sanitary_and_declared_loads_book_to_their_own_origins() {
+    // The corpus only ever admits wash-off, so wet weather is the one
+    // bucket a real model exercises. A split that quietly booked
+    // everything there would pass every other check in this file. This
+    // model admits by two named routes at once — sanitary base flow and
+    // a declared concentration — and asserts each lands in its own
+    // bucket and nowhere else.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1  100.4  3
+J2  100.2  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  J2  200  0.013  0  0
+C2  J2  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+C2  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+QIN  0:00  0.05
+QIN  9:00  0.05
+CIN  0:00  100.0
+CIN  9:00  100.0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  0  NO
+
+[DWF]
+J1  FLOW  0.05
+
+[INFLOWS]
+J2  FLOW  QIN
+J2  TSS   CIN  CONCEN
+";
+    let (mut sim, _, findings) = Simulation::open(inp).expect("open");
+    assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
+    sim.run();
+
+    let (admitted, ..) = sim.quality_ledger("TSS").expect("ledger");
+    let by = sim.quality_inflow_by_source("TSS").expect("split");
+    assert!(
+        (by.iter().sum::<f64>() - admitted).abs() <= 1e-9 * admitted.abs().max(1.0),
+        "origin split sums to {} against admitted {admitted}: {by:?}",
+        by.iter().sum::<f64>()
+    );
+    // The declared concentration rides the external inflow, so that is
+    // the bucket it lands in — and the only one.
+    let ext = by[MassSource::External.index()];
+    assert!(ext > 0.0, "declared load booked nothing external: {by:?}");
+    for (i, v) in by.iter().enumerate() {
+        if i != MassSource::External.index() {
+            assert!(*v == 0.0, "declared load leaked into source {i}: {by:?}");
+        }
+    }
 }
 
 #[test]

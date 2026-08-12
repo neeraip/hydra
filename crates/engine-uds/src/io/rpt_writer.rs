@@ -359,9 +359,10 @@ pub struct ReportInputs<'a> {
     /// external, outflow, flooding, evaporation, exfiltration, initial,
     /// final, error %).
     pub flow: [f64; 12],
-    /// Per-constituent quality parts: (id, admitted, discharged,
-    /// flooded, reacted, seepage, final storage, stored, error %).
-    pub quality: Vec<(String, [f64; 8])>,
+    /// Per-constituent quality parts: (id, the five §11.2 admitted
+    /// loads by origin, discharged, flooded, exfiltrated, reacted,
+    /// initial stored, final stored, error %).
+    pub quality: Vec<(String, [f64; 12])>,
     /// Per-constituent §11.1 surface-loading parts: (id, initial
     /// buildup, buildup, deposition, swept, infiltrated, BMP removed,
     /// washed off, remaining, error %).
@@ -663,17 +664,21 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
                 .map(|(id, v)| rv.load(constituent_units(inp, id), v[k]))
                 .collect()
         };
-        // The admitted load is one total here: §11.2's split by origin
-        // is specified but not yet accumulated, so the row that would
-        // carry it prints undivided rather than guessing a partition.
-        line(w, "Total Inflow Load", &col(0))?;
-        line(w, "External Outflow", &col(1))?;
-        line(w, "Flooding Loss", &col(2))?;
-        line(w, "Mass Reacted", &col(3))?;
-        line(w, "Exfiltration Loss", &col(4))?;
-        line(w, "Final Storage Flushes", &col(5))?;
-        line(w, "Final Stored Mass", &col(6))?;
-        let errs: Vec<f64> = inp.quality.iter().map(|(_, v)| v[7]).collect();
+        // The admitted load is split by origin (§11.2) into the same
+        // five the volumetric ledger uses, so the two blocks partition
+        // the same question.
+        line(w, "Dry Weather Inflow", &col(0))?;
+        line(w, "Wet Weather Inflow", &col(1))?;
+        line(w, "Groundwater Inflow", &col(2))?;
+        line(w, "RDII Inflow", &col(3))?;
+        line(w, "External Inflow", &col(4))?;
+        line(w, "External Outflow", &col(5))?;
+        line(w, "Flooding Loss", &col(6))?;
+        line(w, "Exfiltration Loss", &col(7))?;
+        line(w, "Mass Reacted", &col(8))?;
+        line(w, "Initial Stored Mass", &col(9))?;
+        line(w, "Final Stored Mass", &col(10))?;
+        let errs: Vec<f64> = inp.quality.iter().map(|(_, v)| v[11]).collect();
         line(w, "Continuity Error (%)", &errs)?;
     }
     Ok(())

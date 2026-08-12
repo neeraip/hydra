@@ -323,7 +323,26 @@ characteristic.
 accumulated *by origin* — dry weather, wet weather, subsurface, sewer, and
 external — summing exactly to the total admitted load, so the constituent
 balance is reportable by source in the same partition the volumetric ledger
-uses. Per-link cumulative transported load is tallied alongside.
+uses. The total and its parts are booked in one place, from the same
+per-origin quantities, so no rounding or clamp can open a gap between them.
+Apportioning a single total by the volumetric shares would not do:
+concentrations differ by origin, so a small high-concentration inflow would
+be booked as though it carried the system average — a closed balance that
+misattributes, which §1.8's stance forbids as firmly for reported
+quantities as for solved ones.
+
+Routing-interface inflow (§14.8) is external: it crosses the model
+boundary, whatever produced it upstream.
+
+An inlet transfer (§7.8) moves admitted load between vertices without
+changing where it entered. The moved mass therefore leaves the origins in
+the proportions standing at the bypass vertex and rejoins them at the
+capture vertex. Backflow returning from a surcharged sewer is not a new
+entry: it carries the composition of the vertex it returns from, or — with
+nothing standing there to imitate — counts as wet weather, the only origin
+a flooded street surface has.
+
+Per-link cumulative transported load is tallied alongside.
 
 **Numerical performance.** Accepted steps; rejected trials; the
 degraded-accuracy tally of §6.5; minimum, maximum, and time-weighted mean

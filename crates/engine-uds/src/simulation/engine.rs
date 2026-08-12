@@ -241,8 +241,10 @@ pub struct Simulation {
     /// A supplied routing interface inflow file (§14.8).
     iface_in: Option<crate::io::iface::RoutingInterface>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
-    hydro_mass_prev: Vec<Vec<f64>>,
-    hydro_mass_now: Vec<Vec<f64>>,
+    hydro_mass_prev: Vec<Vec<Vec<f64>>>,
+    /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
+    /// `[source][constituent][vertex]` (§11.2).
+    hydro_mass_now: Vec<Vec<Vec<f64>>>,
     /// The next rule-evaluation boundary (s) under the rule-step option;
     /// zero rule step evaluates every routing step.
     next_rule_t: f64,
@@ -633,7 +635,9 @@ impl Simulation {
                 self.vol_wet += lats.iter().sum::<f64>() * dt;
             }
             let np = self.net.constituents.len();
-            let mut mass = vec![vec![0.0; lats.len()]; np];
+            // One plane per hydrology origin, in HYDRO_SOURCES order:
+            // wet weather, subsurface, sewer (§11.2).
+            let mut mass = vec![vec![vec![0.0; lats.len()]; np]; 3];
             // §8.2–§8.3: surface quality advances on the same clock; the
             // runoff and drain streams join the lateral mass at their
             // parcels' concentrations.
@@ -665,7 +669,7 @@ impl Simulation {
                 for (pi, parcel) in self.net.parcels.iter().enumerate() {
                     let q_out = surface.parcel_runoff(pi);
                     if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
-                        for (ci, row) in mass.iter_mut().enumerate() {
+                        for (ci, row) in mass[0].iter_mut().enumerate() {
                             row[v] += sq.conc[pi][ci] * q_out;
                         }
                     }
@@ -673,7 +677,7 @@ impl Simulation {
                     // concentration, less any drain removal (§8.1).
                     let removals = surface.lid_drain_removals(pi);
                     for &(v, qd) in surface.lid_drains(pi) {
-                        for (ci, row) in mass.iter_mut().enumerate() {
+                        for (ci, row) in mass[0].iter_mut().enumerate() {
                             let keep = 1.0 - removals.get(ci).copied().unwrap_or(0.0);
                             row[v] += sq.conc[pi][ci] * qd * keep;
                         }
@@ -705,7 +709,7 @@ impl Simulation {
                 }
                 // §8.1: subsurface inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
-                    mass[ci][gw.vertex] += (q * p.area).max(0.0) * c.c_groundwater;
+                    mass[1][ci][gw.vertex] += (q * p.area).max(0.0) * c.c_groundwater;
                 }
                 // §9.3: a domain-guarded custom relation announces itself
                 // once without changing any result.
@@ -734,7 +738,7 @@ impl Simulation {
                 }
                 // §8.1: sewer inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
-                    mass[ci][r.vertex] += q * c.c_rdii;
+                    mass[2][ci][r.vertex] += q * c.c_rdii;
                 }
             }
             self.hydro_t += dt;
@@ -1033,7 +1037,7 @@ impl Simulation {
                 let nv = self.net.vertices.len();
                 let (mt0, mt1) = (self.hydro_prev.0, self.hydro_now.0);
                 let mut lat = vec![0.0; nv];
-                let mut mass = vec![vec![0.0; nv]; np];
+                let mut mass = crate::transport::quality::SourceMass::new(np, nv);
                 while self.router.time() < period_end - 1e-9 {
                     let tt = self.router.time();
                     interp(tt, &mut lat);
@@ -1045,18 +1049,12 @@ impl Simulation {
                         } else {
                             1.0
                         };
-                        for p in 0..np {
-                            for v in 0..nv {
-                                let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
-                                let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
-                                mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
-                            }
-                        }
+                        mass.compose(&base_mass, &self.hydro_mass_prev, &self.hydro_mass_now, f);
                         let quality = self.quality.as_ref();
                         let conc =
                             move |p: usize, v: usize| quality.map_or(0.0, |q| q.c_vertex[p][v]);
                         let before = lat.clone();
-                        inlets.apply(&self.router, &self.net, &mut lat, &mut mass, &conc);
+                        inlets.apply(&self.router, &self.net, &mut lat, &mut mass, np, &conc);
                         self.inlets = Some(inlets);
                         // §7.8: the capture transfer is part of each
                         // vertex's lateral for reporting — record the
@@ -1096,13 +1094,12 @@ impl Simulation {
                             } else {
                                 1.0
                             };
-                            for p in 0..np {
-                                for v in 0..nv {
-                                    let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
-                                    let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
-                                    mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
-                                }
-                            }
+                            mass.compose(
+                                &base_mass,
+                                &self.hydro_mass_prev,
+                                &self.hydro_mass_now,
+                                f,
+                            );
                         }
                         q.update(&self.router, &self.net, &lat, &mass, self.router.last_dt());
                         self.quality = Some(q);
@@ -1935,16 +1932,21 @@ impl Simulation {
                 .zip(led.constituents.iter().map(|(_, l)| *l))
                 .enumerate()
             {
+                let by = q.inflow_by_source[p];
                 quality.push((
                     id,
                     [
-                        q.initial_mass[p] + q.inflow_mass[p],
+                        by[0],
+                        by[1],
+                        by[2],
+                        by[3],
+                        by[4],
                         q.outfall_mass[p],
                         q.flooded_mass[p],
-                        q.reacted[p],
                         q.seepage_mass[p],
-                        q.final_storage[p],
-                        q.stored_mass(p),
+                        q.reacted[p],
+                        q.initial_mass[p],
+                        q.final_storage[p] + q.stored_mass(p),
                         l.error_percent,
                     ],
                 ));
@@ -2071,6 +2073,16 @@ impl Simulation {
         ))
     }
 
+    /// The §11.2 origin split of `pollutant`'s admitted load, indexed by
+    /// [`MassSource`]. Sums to `quality_ledger`'s admitted term.
+    pub fn quality_inflow_by_source(
+        &self,
+        pollutant: &str,
+    ) -> Option<[f64; crate::transport::quality::MassSource::COUNT]> {
+        let q = self.quality.as_ref()?;
+        Some(q.inflow_by_source[self.constituent_index(pollutant)?])
+    }
+
     /// A series value at run time `t` under the §10.1 extension contract.
     /// `hold_ends` holds the first/last value outside the range (stages);
     /// otherwise the value falls to zero, with a one-time warning when the
@@ -2136,13 +2148,17 @@ impl Simulation {
     /// Assemble the lateral inflow vector at a period start (§10.1):
     /// external inflows and sanitary base flows, evaluated at the
     /// step-start date, near-zero values truncated; §12.4 overrides win.
-    fn assemble_lateral(&mut self, t: f64) -> (Vec<f64>, Vec<Vec<f64>>) {
+    /// The mass planes come back in [`BASE_SOURCES`] order — sanitary
+    /// first, external second — so the origin split of §11.2 is fixed
+    /// where the load is assembled rather than inferred later.
+    fn assemble_lateral(&mut self, t: f64) -> (Vec<f64>, Vec<Vec<Vec<f64>>>) {
         let nv = self.net.vertices.len();
         let np = self.net.constituents.len();
         let mut lat = vec![0.0; nv];
         let mut ext_flow = vec![0.0; nv];
         let mut dwf_flow = vec![0.0; nv];
-        let mut mass = vec![vec![0.0; nv]; np];
+        let mut dwf_mass = vec![vec![0.0; nv]; np];
+        let mut ext_mass = vec![vec![0.0; nv]; np];
 
         for i in 0..self.net.inflows.len() {
             let inflow = &self.net.inflows[i];
@@ -2201,10 +2217,10 @@ impl Simulation {
                 }
                 match kind {
                     InflowKind::Concentration => {
-                        mass[ci][vertex] += v * ext_flow[vertex].max(0.0);
+                        ext_mass[ci][vertex] += v * ext_flow[vertex].max(0.0);
                     }
                     InflowKind::Mass => {
-                        mass[ci][vertex] += v * units_factor;
+                        ext_mass[ci][vertex] += v * units_factor;
                     }
                     InflowKind::Flow => {}
                 }
@@ -2216,12 +2232,12 @@ impl Simulation {
                 };
                 let (vertex, average, patterns) = (dwf.vertex, dwf.average, dwf.patterns);
                 let c = average * self.dwf_pattern_factor(patterns, t);
-                mass[ci][vertex] += c * dwf_flow[vertex];
+                dwf_mass[ci][vertex] += c * dwf_flow[vertex];
             }
             for (ci, c) in self.net.constituents.iter().enumerate() {
                 if c.c_dwf != 0.0 {
                     for v in 0..nv {
-                        mass[ci][v] += c.c_dwf * dwf_flow[v];
+                        dwf_mass[ci][v] += c.c_dwf * dwf_flow[v];
                     }
                 }
             }
@@ -2233,7 +2249,7 @@ impl Simulation {
             for (vi, q, conc) in ifc.inflows_at(self.start_epoch + t, np) {
                 lat[vi] += q;
                 for (p, c) in conc.iter().enumerate() {
-                    mass[p][vi] += q.max(0.0) * c;
+                    ext_mass[p][vi] += q.max(0.0) * c;
                 }
             }
         }
@@ -2245,7 +2261,7 @@ impl Simulation {
                 *l = 0.0;
             }
         }
-        (lat, mass)
+        (lat, vec![dwf_mass, ext_mass])
     }
 
     /// Update tidal and series outfall stages for the period (§2.6):

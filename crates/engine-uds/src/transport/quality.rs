@@ -13,6 +13,162 @@ const ZERO_VOL: f64 = 1.0e-3;
 /// The §8.4 dry-depth threshold (m): one millimetre.
 const DRY_DEPTH: f64 = 1.0e-3;
 
+/// Where an admitted constituent load entered the system (§11.2).
+///
+/// The order is the report's row order and the volumetric ledger's
+/// partition, so the mass split and the volume split read as the same
+/// question answered about two quantities. It is a named type rather
+/// than a bare index because the index would otherwise mean two things
+/// at once — which ledger row, and which producer filled the plane —
+/// and those agree only until a source is added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MassSource {
+    /// Sanitary base flow.
+    DryWeather,
+    /// Surface runoff and control-measure drains.
+    WetWeather,
+    /// Aquifer discharge.
+    Subsurface,
+    /// Rainfall-derived infiltration and inflow.
+    Sewer,
+    /// Declared inflows and routing-interface inflows.
+    External,
+}
+
+impl MassSource {
+    pub const COUNT: usize = 5;
+    /// Position in a per-source array. Fixed, because the report's rows
+    /// and the §11.1 partition both depend on the order.
+    pub fn index(self) -> usize {
+        match self {
+            Self::DryWeather => 0,
+            Self::WetWeather => 1,
+            Self::Subsurface => 2,
+            Self::Sewer => 3,
+            Self::External => 4,
+        }
+    }
+}
+
+/// The lateral-mass planes assembled from the model's own boundary
+/// sections at a period start, in the order that assembly fills them.
+pub const BASE_SOURCES: [MassSource; 2] = [MassSource::DryWeather, MassSource::External];
+
+/// The planes the hydrology clock fills, in the order it fills them.
+pub const HYDRO_SOURCES: [MassSource; 3] = [
+    MassSource::WetWeather,
+    MassSource::Subsurface,
+    MassSource::Sewer,
+];
+
+/// Lateral mass rates split by origin: one plane per [`MassSource`],
+/// each `[constituent][vertex]`.
+///
+/// The split is carried rather than derived. Apportioning a single
+/// total by the volumetric shares would close the ledger while
+/// misattributing it — concentrations differ by source, so a small
+/// high-concentration inflow would be booked as though it carried the
+/// system average. §1.8's stance on deferred capabilities applies to
+/// reported quantities too: a typed split, never an approximated one.
+pub struct SourceMass {
+    planes: [Vec<Vec<f64>>; MassSource::COUNT],
+}
+
+impl SourceMass {
+    pub fn new(np: usize, nv: usize) -> SourceMass {
+        SourceMass {
+            planes: std::array::from_fn(|_| vec![vec![0.0; nv]; np]),
+        }
+    }
+
+    /// The rate on one plane at one vertex (unit·m³/s).
+    pub fn plane(&self, source: usize, p: usize, v: usize) -> f64 {
+        self.planes[source][p][v]
+    }
+
+    /// The rate summed over every origin — what the physics admits.
+    pub fn total(&self, p: usize, v: usize) -> f64 {
+        self.planes.iter().map(|plane| plane[p][v]).sum()
+    }
+
+    /// Recompose every plane for one routing step (§8.1): the
+    /// period-start base planes, in [`BASE_SOURCES`] order, plus the
+    /// hydrology planes in [`HYDRO_SOURCES`] order interpolated by `f`
+    /// exactly as their flows are.
+    pub fn compose(
+        &mut self,
+        base: &[Vec<Vec<f64>>],
+        hydro_prev: &[Vec<Vec<f64>>],
+        hydro_now: &[Vec<Vec<f64>>],
+        f: f64,
+    ) {
+        for plane in &mut self.planes {
+            for row in plane.iter_mut() {
+                row.fill(0.0);
+            }
+        }
+        for (k, source) in BASE_SOURCES.iter().enumerate() {
+            let Some(src) = base.get(k) else { continue };
+            let dst = &mut self.planes[source.index()];
+            for (p, row) in src.iter().enumerate() {
+                dst[p].copy_from_slice(row);
+            }
+        }
+        for (k, source) in HYDRO_SOURCES.iter().enumerate() {
+            let dst = &mut self.planes[source.index()];
+            for (p, row) in dst.iter_mut().enumerate() {
+                for (v, cell) in row.iter_mut().enumerate() {
+                    let m0 = hydro_prev
+                        .get(k)
+                        .and_then(|x| x.get(p))
+                        .map_or(0.0, |r| r[v]);
+                    let m1 = hydro_now
+                        .get(k)
+                        .and_then(|x| x.get(p))
+                        .map_or(0.0, |r| r[v]);
+                    *cell = m0 + f * (m1 - m0);
+                }
+            }
+        }
+    }
+
+    /// Move `m` of constituent `p` from one vertex to another (§7.8).
+    ///
+    /// An inlet transfer redistributes load between vertices without
+    /// changing where it entered, so the moved mass leaves the origin
+    /// planes in the proportions standing at `from` and rejoins them at
+    /// `to`. A vertex holding nothing has no proportions to move.
+    pub fn transfer(&mut self, p: usize, from: usize, to: usize, m: f64) {
+        let total: f64 = self.planes.iter().map(|plane| plane[p][from]).sum();
+        if total <= 0.0 {
+            return;
+        }
+        for plane in &mut self.planes {
+            let share = m * plane[p][from] / total;
+            plane[p][from] -= share;
+            plane[p][to] += share;
+        }
+    }
+
+    /// Add `m` at vertex `at`, composed like the load standing at
+    /// vertex `like` (§7.8 backflow).
+    ///
+    /// Backflow returning from a surcharged sewer is not a new entry
+    /// into the system; it carries whatever entered the vertex it
+    /// returns from. With nothing standing there to imitate it is
+    /// wet-weather load, the only origin a flooded street can have.
+    pub fn add_mixed(&mut self, p: usize, at: usize, like: usize, m: f64) {
+        let total: f64 = self.planes.iter().map(|plane| plane[p][like]).sum();
+        if total <= 0.0 {
+            self.planes[MassSource::WetWeather.index()][p][at] += m;
+            return;
+        }
+        for plane in &mut self.planes {
+            plane[p][at] += m * plane[p][like] / total;
+        }
+    }
+}
+
 /// Concentration state across the network, per constituent.
 pub struct NetworkQuality {
     /// `[constituent][vertex]` concentration, in the declared unit.
@@ -32,6 +188,10 @@ pub struct NetworkQuality {
     pub flooded_mass: Vec<f64>,
     /// Mass admitted from §8.1 sources (unit·m³).
     pub inflow_mass: Vec<f64>,
+    /// The same mass split by where it entered (§11.2), per constituent
+    /// and [`MassSource`] index. Sums to `inflow_mass` by construction:
+    /// the admission books the total and its parts in one place.
+    pub inflow_by_source: Vec<[f64; MassSource::COUNT]>,
     /// Mass present at the start (unit·m³), §11.1.
     pub initial_mass: Vec<f64>,
     /// §11.2 per-outfall discharged mass `[constituent][vertex]`.
@@ -146,6 +306,7 @@ impl NetworkQuality {
             seepage_mass: vec![0.0; np],
             flooded_mass: vec![0.0; np],
             inflow_mass: vec![0.0; np],
+            inflow_by_source: vec![[0.0; MassSource::COUNT]; np],
             initial_mass,
             outfall_load: vec![vec![0.0; nv]; np],
             link_load: vec![vec![0.0; net.links.len()]; np],
@@ -208,7 +369,7 @@ impl NetworkQuality {
         router: &Router,
         net: &Network,
         lat_flow: &[f64],
-        lat_mass: &[Vec<f64>],
+        lat_mass: &SourceMass,
         dt: f64,
     ) {
         let chans = router.channel_transport();
@@ -258,10 +419,16 @@ impl NetworkQuality {
                 if lat_flow[v] > 0.0 {
                     flow_in[v] += lat_flow[v];
                 }
-                let m = lat_mass[p][v] * dt;
+                // The total and its origin split are booked together
+                // from the same planes, so no rounding or clamp can open
+                // a gap between `inflow_mass` and `inflow_by_source`.
+                let m = lat_mass.total(p, v) * dt;
                 if m > 0.0 {
                     mass_in[v] += m;
                     self.inflow_mass[p] += m;
+                    for s in 0..MassSource::COUNT {
+                        self.inflow_by_source[p][s] += lat_mass.plane(s, p, v) * dt;
+                    }
                 }
             }
 
