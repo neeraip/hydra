@@ -167,6 +167,77 @@ describe("GenericLegend", () => {
     expect(screen.getByText("< 0.1 low")).toBeDefined();
   });
 
+  // The button that opens the popover previews it with a mini ramp. The
+  // preview and the bar it previews are two renderers of one colouring,
+  // and only the bar consulted the switch: a variable with thresholds and
+  // an unticked box drew magnitude colours in the popover and criteria
+  // colours on the button. Asserted on the button specifically, because
+  // every other criteria test here reads the popover and all of them
+  // passed while the button was wrong.
+  // The button that opens the popover previews it with a mini ramp. The
+  // preview and the bar it previews are two renderers of one colouring,
+  // and only the bar consulted the switch: a banded variable with an
+  // unticked box drew magnitude colours in the popover and criteria
+  // colours on the button.
+  //
+  // Both cases need a *banded* ramp, because that is the only kind whose
+  // colouring depends on the switch — a sequential variable paints the
+  // same either way, which is why every other criteria test here passed
+  // while the button was wrong.
+  const banded = () =>
+    meta({
+      pointVars: [v({ id: "depth", label: "Depth", ramp: { type: "banded", criterion: "c" } })],
+      polylineVars: [v({ id: "flow", label: "Flow", ramp: { type: "banded", criterion: "c" } })],
+    });
+
+  const swatchBackgrounds = () =>
+    Array.from(
+      screen
+        .getByRole("button", { name: "Color scale" })
+        .querySelectorAll("div > div"),
+    ).map((el) => (el as HTMLElement).style.background);
+
+  it("previews magnitude colours while the criteria switch is off", () => {
+    renderLegend({
+      meta: banded(),
+      criteriaVariables: ["flow", "depth"],
+      criteriaScale: { point: false, polyline: false },
+      bandColors: () => ["#ff0000", "#00ff00"],
+    });
+    const backgrounds = swatchBackgrounds();
+    expect(backgrounds).toHaveLength(2);
+    for (const b of backgrounds) {
+      expect(b).not.toContain("255, 0, 0");
+    }
+  });
+
+  it("previews criteria colours once it is on", () => {
+    renderLegend({
+      meta: banded(),
+      criteriaVariables: ["flow", "depth"],
+      criteriaScale: { point: true, polyline: true },
+      bandColors: () => ["#ff0000", "#00ff00"],
+    });
+    for (const b of swatchBackgrounds()) {
+      expect(b).toContain("255, 0, 0");
+    }
+  });
+
+  it("previews each class against its own switch", () => {
+    // The two renderers agreeing is not enough: they must agree per
+    // class. One switch on and one off has to show one banded preview
+    // and one magnitude preview.
+    renderLegend({
+      meta: banded(),
+      criteriaVariables: ["flow", "depth"],
+      criteriaScale: { point: true, polyline: false },
+      bandColors: () => ["#ff0000", "#00ff00"],
+    });
+    const backgrounds = swatchBackgrounds();
+    expect(backgrounds[0]).toContain("255, 0, 0");
+    expect(backgrounds[1]).not.toContain("255, 0, 0");
+  });
+
   it("annotates only variables the engine has bands for", () => {
     const annotation = vi.fn(() => "< 0.1 low");
     renderLegend({ criteriaVariables: [], criteriaAnnotation: annotation });

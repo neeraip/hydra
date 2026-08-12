@@ -426,6 +426,20 @@ export function GenericLegend({
   const selected = (c: ClassConfig): GenericVariable =>
     c.variables.find((v) => v.id === selection[c.key]) ?? c.variables[0];
 
+  /**
+   * Whether `variableId` in class `key` is being judged against criteria
+   * right now — it has thresholds *and* the switch beside it is on.
+   *
+   * Named because two places colour a ramp: the popover's bars and the
+   * swatch on the button that opens it. They must agree, and they did
+   * not: the swatch asked only whether thresholds existed, so a variable
+   * with an unticked box showed magnitude colours in the popover and
+   * criteria colours on the button.
+   */
+  const judgingCriteria = (variableId: string, key: GenericClassKey) =>
+    (criteriaVariables?.includes(variableId) ?? false) &&
+    (criteriaScale?.[key] ?? false);
+
   // Same rule one step further: a steady-state run has one reporting step,
   // so scaling to *this* step and across the *whole run* are one scale, and
   // offering both is offering a choice with one outcome.
@@ -489,7 +503,7 @@ export function GenericLegend({
             // beneath a magnitude ramp they describe a colouring that is
             // not on screen.
             const judgeable = criteriaVariables?.includes(v.id) ?? false;
-            const judging = judgeable && (criteriaScale?.[c.key] ?? false);
+            const judging = judgingCriteria(v.id, c.key);
             const bands = judging ? (criteriaAnnotation?.(v.id) ?? null) : null;
             return (
               <div key={c.key}>
@@ -732,7 +746,9 @@ export function GenericLegend({
                   background: rampGradient(
                     selected(c).ramp,
                     c.key,
-                    bandColors?.(selected(c).id),
+                    judgingCriteria(selected(c).id, c.key)
+                      ? bandColors?.(selected(c).id)
+                      : null,
                   ),
                 }}
               />
@@ -817,8 +833,7 @@ export function GenericLegend({
                 }}
                 style={{
                   ...PICKER_BTN_STYLE,
-                  padding: "4px 7px 4px 6px",
-                  marginRight: "3px",
+                  padding: "4px 6px 4px 6px",
                   // Right corners nest inside the bar's 20px rounding so the
                   // hover fill is never clipped at the bar's rounded end.
                   borderRadius: "6px 16px 16px 6px",

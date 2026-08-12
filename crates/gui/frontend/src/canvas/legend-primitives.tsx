@@ -101,7 +101,7 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
 export const LEGEND_SWATCH_BTN_STYLE: CSSProperties = {
   width: "auto",
   height: "auto",
-  padding: "5px 6px 5px 8px",
+  padding: "5px 6px 5px 7px",
   borderRadius: "16px 6px 6px 16px",
 };
 
