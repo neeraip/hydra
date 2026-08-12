@@ -605,3 +605,22 @@ describe("KindTable references", () => {
     expect(container.querySelectorAll("datalist")).toHaveLength(1);
   });
 });
+
+describe("KindTable add", () => {
+  it("offers no button when there is nothing it could add", () => {
+    // A kind that cannot be created, and a table with nowhere to put a
+    // new one, both get the same answer: no button rather than one that
+    // refuses.
+    render(<KindTable elements={junctions} />);
+    expect(screen.queryByRole("button", { name: /add/i })).toBeNull();
+  });
+
+  it("asks the caller to add, rather than adding", () => {
+    // What a new element needs is the engine's business, so the table
+    // opens whatever dialog the caller has and knows none of it.
+    const onAdd = vi.fn();
+    render(<KindTable elements={junctions} onAdd={onAdd} />);
+    fireEvent.click(screen.getByRole("button", { name: /add/i }));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+});

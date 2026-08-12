@@ -9,6 +9,7 @@ describe("elementClassHeading", () => {
       labelPlural: "Junctions",
       class: "point",
       badge: "J",
+      creatable: true,
     },
     {
       id: "outfall",
@@ -16,6 +17,7 @@ describe("elementClassHeading", () => {
       labelPlural: "Outfalls",
       class: "point",
       badge: "Of",
+      creatable: true,
     },
     {
       id: "conduit",
@@ -23,6 +25,7 @@ describe("elementClassHeading", () => {
       labelPlural: "Conduits",
       class: "polyline",
       badge: "C",
+      creatable: true,
     },
     {
       id: "weir",
@@ -30,6 +33,7 @@ describe("elementClassHeading", () => {
       labelPlural: "Weirs",
       class: "polyline",
       badge: "W",
+      creatable: true,
     },
     {
       id: "subcatchment",
@@ -37,6 +41,7 @@ describe("elementClassHeading", () => {
       labelPlural: "Subcatchments",
       class: "region",
       badge: "Sc",
+      creatable: true,
     },
   ];
 

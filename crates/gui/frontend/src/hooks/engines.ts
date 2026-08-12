@@ -175,6 +175,11 @@ export interface ElementKindInfo {
   role?: ElementRole;
   /** One- or two-character glyph for dense UI. */
   badge: string;
+  /** Whether elements of this kind may be created (§4.5.3). */
+  creatable: boolean;
+  /** What a new one would need that cannot be defaulted, in the
+   * engine's own words. Present only when `creatable` is false. */
+  notCreatableBecause?: string;
 }
 
 // Static per engine — a property of the domain, not of any model.

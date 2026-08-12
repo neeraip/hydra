@@ -73,6 +73,7 @@ export function KindTable({
   onEdit,
   onMove,
   referenceIds,
+  onAdd,
   onReveal,
   onRename,
   onDelete,
@@ -125,6 +126,12 @@ export function KindTable({
    * still refuses a name that means nothing.
    */
   referenceIds?: Record<string, string[]>;
+  /**
+   * Add an element of this kind. Absent, and no button appears — which
+   * is what a kind that cannot be created gets, and a table with
+   * nowhere to put a new one.
+   */
+  onAdd?: () => void;
   onReveal?: (id: string) => void;
   onRename?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -326,6 +333,26 @@ export function KindTable({
             outline: "none",
           }}
         />
+        {onAdd && (
+          <button
+            type="button"
+            onClick={onAdd}
+            style={{
+              marginLeft: 8,
+              height: 28,
+              padding: "0 10px",
+              background: "var(--accent-dim)",
+              color: "var(--accent)",
+              border: "1px solid var(--border-focus)",
+              borderRadius: 5,
+              fontSize: "var(--text-md)",
+              fontWeight: 500,
+              cursor: "pointer",
+            }}
+          >
+            + Add
+          </button>
+        )}
       </div>
       {/* A search that matches nothing is not the same as a kind with
           nothing in it, and saying "no elements of this kind" here would

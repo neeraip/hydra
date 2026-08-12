@@ -37,6 +37,7 @@ import {
   EditorShell,
   EditorStatusBar,
 } from "../../pages/project/EditorShell";
+import { engineComponents } from "../registry";
 import { CollectionDetail } from "./CollectionDetail";
 import { railGroupBreak } from "./railGroups";
 
@@ -57,6 +58,7 @@ export function UdsElementsView() {
   const renameFlow = useElementRename();
 
   const kinds = useElementKinds(project?.engine);
+  const { CreateNodeModal: CreateNode } = engineComponents(project?.engine);
   const counts = useKindCounts(project?.id, activeScenarioId);
 
   // Every kind the engine declares gets a rail entry, including the ones
@@ -177,6 +179,26 @@ export function UdsElementsView() {
 
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  // The catalog's answer, not this file's: a kind that needs a relation
+  // curve says so, and the button is simply absent rather than present
+  // and refusing.
+  const creatableHere = present.find((k) => k.id === kind)?.creatable ?? false;
+
+  /** A free id for a new element of `newKind`, from the ids in view. */
+  const suggestId = useCallback(
+    (newKind: string) => {
+      const prefix = newKind.slice(0, 1).toUpperCase();
+      const taken = new Set(elements.ids);
+      for (let i = 1; i <= 9999; i += 1) {
+        const candidate = `${prefix}${i}`;
+        if (!taken.has(candidate)) return candidate;
+      }
+      return `${prefix}${elements.ids.length + 1}`;
+    },
+    [elements.ids],
+  );
 
   // A container's row reports only its size, so selecting one opens what
   // is actually inside it. A local selection, not the canvas's: a curve
@@ -311,6 +333,15 @@ export function UdsElementsView() {
             onEdit={onEdit}
             onMove={onMove}
             referenceIds={referenceIds}
+            // Only where a new one can be put somewhere by typing. A
+            // conduit is drawn between two nodes, which is a gesture the
+            // map has and a table does not — so its table offers no add
+            // rather than a dialog with two more blanks in it.
+            onAdd={
+              activeClass === "point" && creatableHere
+                ? () => setAdding(true)
+                : undefined
+            }
             onReveal={spatial ? onReveal : undefined}
             onRename={setRenaming}
             onDelete={setDeleting}
@@ -320,6 +351,20 @@ export function UdsElementsView() {
             <CollectionDetail detail={detail} elementId={containerId} />
           )}
         </div>
+      )}
+      {CreateNode && (
+        <CreateNode
+          open={adding}
+          suggestId={suggestId}
+          // No click behind this one: the dialog asks where to put it.
+          position={null}
+          onCreated={(_kind, id) => {
+            setAdding(false);
+            refetch();
+            select(id);
+          }}
+          onCancel={() => setAdding(false)}
+        />
       )}
       {renaming && kind && (
         <RenameElementModal

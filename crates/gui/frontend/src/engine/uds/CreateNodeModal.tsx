@@ -42,6 +42,12 @@ export function UdsCreateNodeModal({
   const [id, setId] = useState("");
   const [invert, setInvert] = useState(0);
   const [edited, setEdited] = useState(false);
+  // Where to put it, when nobody pointed at anywhere. A dialog opened
+  // from a table has no click behind it, and a node with no position is
+  // a node the map cannot draw — so the position is asked for rather
+  // than defaulted to the origin, which is a real place and would be a
+  // lie about where the element is.
+  const [typedAt, setTypedAt] = useState<[number, number]>([0, 0]);
 
   const schema = useElementAttributes("uds", kind);
   const invertAttr = useMemo(
@@ -55,6 +61,7 @@ export function UdsCreateNodeModal({
     setId(suggestId("junction"));
     setEdited(false);
     setInvert(0);
+    setTypedAt([0, 0]);
   }, [open, suggestId]);
 
   const label = invertAttr?.label ?? "Invert elevation";
@@ -84,12 +91,11 @@ export function UdsCreateNodeModal({
           : "A free outfall: the stage follows the connecting conduit."
       }
       onSubmit={async () => {
-        if (!position) throw new Error("no position for the new node");
         const name = id.trim();
         await createElement(projectId, {
           kind,
           id: name,
-          position,
+          position: position ?? typedAt,
           fields: { invert },
         });
         onCreated(kind, name);
@@ -103,6 +109,27 @@ export function UdsCreateNodeModal({
         sys={sys}
         onCommit={setInvert}
       />
+      {/* Only when the caller could not say: a click on the map already
+          answered this, and asking again would invite disagreeing with
+          it. The numbers are the model's own coordinate system, which
+          is why they carry no quantity — a model may be a map or a
+          drawing and this dialog cannot tell. */}
+      {!position && (
+        <>
+          <CreateNumberField
+            label="X"
+            value={typedAt[0]}
+            sys={sys}
+            onCommit={(v) => setTypedAt(([, y]) => [v, y])}
+          />
+          <CreateNumberField
+            label="Y"
+            value={typedAt[1]}
+            sys={sys}
+            onCommit={(v) => setTypedAt(([x]) => [x, v])}
+          />
+        </>
+      )}
     </CreateElementDialog>
   );
 }
