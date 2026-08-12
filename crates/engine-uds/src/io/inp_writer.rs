@@ -20,28 +20,42 @@ use crate::model::Network;
 /// ft → m, the same exact factor import uses (§14.13.3 inverts it).
 const FT: f64 = 0.3048;
 
-/// Everything export needs to invert a §14.6 conversion, resolved once
-/// from the model's own flow-units selection.
+/// Everything export needs to invert a §14.6 conversion.
+///
+/// The fields mirror the importer's converter one for one, and every
+/// method here is a single division by the same constant import
+/// multiplied by. That is not fussiness: §14.13.3 requires the *exact*
+/// inverse, and a factor decomposed into two operations is not one.
+/// Writing an infiltration rate as `depth(v) * 3600` rather than
+/// `v / conductivity` rounds differently each cycle, so the second
+/// export of a model differs from the first — which is exactly how
+/// idempotence caught it.
 pub(crate) struct Units {
     /// True when the file's unit system is US customary.
     us: bool,
+    /// m per file length unit.
+    len: f64,
     /// m³/s per file flow unit.
     flow: f64,
-    /// The weir-coefficient factor import multiplies by (`objects.rs`):
-    /// every weir form shares one dimension, so one factor inverts them
-    /// all.
+    /// m per file suction-head unit.
+    suction: f64,
+    /// m/s per file conductivity unit.
+    conductivity: f64,
+    /// m² per file land-area unit.
+    land_area: f64,
+    /// m per file surface-depth unit.
+    rain_depth: f64,
+    /// The weir-coefficient factor: every weir form's coefficient shares
+    /// the dimension, so one factor serves them all.
     weir_coeff: f64,
 }
 
 impl Units {
     fn of(options: &AnalysisOptions) -> Units {
+        let us = options.flow_units.is_us();
         Units {
-            us: options.flow_units.is_us(),
-            weir_coeff: if options.flow_units.is_us() {
-                0.3048_f64.sqrt()
-            } else {
-                1.0
-            },
+            us,
+            len: if us { FT } else { 1.0 },
             flow: match options.flow_units {
                 FlowUnits::Cfs => 0.028_316_846_592,
                 FlowUnits::Gpm => 6.309_019_64e-5,
@@ -50,59 +64,50 @@ impl Units {
                 FlowUnits::Lps => 1.0e-3,
                 FlowUnits::Mld => 1.0 / 86.4,
             },
+            suction: if us { 0.0254 } else { 1.0e-3 },
+            conductivity: if us { 0.0254 / 3600.0 } else { 1.0e-3 / 3600.0 },
+            land_area: if us { 4_046.856_422_4 } else { 10_000.0 },
+            rain_depth: if us { 0.0254 } else { 1.0e-3 },
+            weir_coeff: if us { 0.3048_f64.sqrt() } else { 1.0 },
         }
     }
-    /// m → ft | m.
+    /// m → the file's length unit.
     fn len(&self, v: f64) -> f64 {
-        if self.us {
-            v / FT
-        } else {
-            v
-        }
+        v / self.len
     }
-    /// m² → ft² | m².
+    /// m² → the file's length unit squared. Import multiplies by the
+    /// length factor twice, so the inverse divides by it twice.
     fn area(&self, v: f64) -> f64 {
-        if self.us {
-            v / (FT * FT)
-        } else {
-            v
-        }
+        v / self.len / self.len
     }
-    /// m³ → ft³ | m³, the volume a Pump1 curve is indexed by.
+    /// m³ → the file's length unit cubed, as a Pump1 curve is indexed.
     fn vol(&self, v: f64) -> f64 {
-        if self.us {
-            v / (FT * FT * FT)
-        } else {
-            v
-        }
-    }
-    /// m^½/s → the file's weir-coefficient unit.
-    fn weir(&self, v: f64) -> f64 {
-        v / self.weir_coeff
-    }
-    /// m² → acres | hectares, the unit a parcel's area is entered in.
-    fn land(&self, v: f64) -> f64 {
-        if self.us {
-            v / 4_046.856_422_4
-        } else {
-            v / 10_000.0
-        }
+        v / self.len.powi(3)
     }
     /// m³/s → the file's flow unit.
     fn flow(&self, v: f64) -> f64 {
         v / self.flow
     }
-    /// m → in | mm, the rain-depth unit.
+    /// m → the file's surface-depth unit (inches or millimetres).
     fn depth(&self, v: f64) -> f64 {
-        if self.us {
-            v / 0.0254
-        } else {
-            v * 1000.0
-        }
+        v / self.rain_depth
     }
-    /// m/s → in/h | mm/h.
+    /// m → the file's suction-head unit, which is the same measure the
+    /// predecessor happens to convert through its own constant.
+    fn suction(&self, v: f64) -> f64 {
+        v / self.suction
+    }
+    /// m/s → the file's conductivity unit.
     fn rate(&self, v: f64) -> f64 {
-        self.depth(v) * 3600.0
+        v / self.conductivity
+    }
+    /// m² → the file's land-area unit (acres or hectares).
+    fn land(&self, v: f64) -> f64 {
+        v / self.land_area
+    }
+    /// m^½/s → the file's weir-coefficient unit.
+    fn weir(&self, v: f64) -> f64 {
+        v / self.weir_coeff
     }
 }
 
@@ -252,6 +257,7 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_curves(network, &u, &mut out);
     write_tables(network, &u, &mut out);
     write_timeseries(network, &mut out);
+    write_admin(network, &mut out);
     write_display(network, &mut out);
     out.trim_start_matches('\n')
         .to_string()
@@ -955,6 +961,121 @@ fn outlet_rating(
 
 // ── Curves, series and patterns ─────────────────────────────────────────
 
+/// The administrative sections: control rules, the report selection,
+/// interface-file declarations, and routing event windows.
+fn write_admin(network: &Network, out: &mut String) {
+    use crate::model::{FileMode, ReportSelection as Sel};
+
+    // Rules are held as the lines their author wrote — §9.1 compiles
+    // them from text — so they are written back unparsed. Round-tripping
+    // a rule through a compiled form and out again would rewrite a
+    // language this engine deliberately does not reformat.
+    let c = &network.controls;
+    if !c.variables.is_empty() || !c.expressions.is_empty() || !c.rules.is_empty() {
+        let _ = writeln!(out, "\n[CONTROLS]");
+        for v in &c.variables {
+            let _ = writeln!(out, "{v}");
+        }
+        for e in &c.expressions {
+            let _ = writeln!(out, "{e}");
+        }
+        for r in &c.rules {
+            let _ = writeln!(out, "RULE {}", id(&r.name));
+            for line in &r.lines {
+                let _ = writeln!(out, "{line}");
+            }
+        }
+    }
+
+    let mut files = Rows::new("[FILES]", &["Usage", "Type", "Fname"]);
+    let mode_word = |m: FileMode| match m {
+        FileMode::No => "NO",
+        FileMode::Scratch => "SCRATCH",
+        FileMode::Use => "USE",
+        FileMode::Save => "SAVE",
+    };
+    let f = &network.interface_files;
+    for (slot, kind) in [
+        (&f.rainfall, "RAINFALL"),
+        (&f.runoff, "RUNOFF"),
+        (&f.rdii, "RDII"),
+    ] {
+        if let Some((mode, name)) = slot {
+            files.push([mode_word(*mode).to_string(), kind.to_string(), id(name)]);
+        }
+    }
+    // Hotstart holds its two directions in separate slots so one run may
+    // both load and save (§14.8); each writes its own line.
+    if let Some(name) = &f.hotstart_use {
+        files.push(["USE".into(), "HOTSTART".into(), id(name)]);
+    }
+    if let Some(name) = &f.hotstart_save {
+        files.push(["SAVE".into(), "HOTSTART".into(), id(name)]);
+    }
+    if let Some(name) = &f.inflows {
+        files.push(["USE".into(), "INFLOWS".into(), id(name)]);
+    }
+    if let Some(name) = &f.outflows {
+        files.push(["SAVE".into(), "OUTFLOWS".into(), id(name)]);
+    }
+    files.write(out);
+
+    let mut events = Rows::new("[EVENTS]", &["Start", "", "End", ""]);
+    for e in &network.events {
+        events.push([
+            date(e.start_date),
+            hms(e.start_time),
+            date(e.end_date),
+            hms(e.end_time),
+        ]);
+    }
+    events.write(out);
+
+    // §14.5: the selection lists round-trip as authored, `ALL` and
+    // `NONE` included. Rewriting `ALL` as an enumeration would freeze a
+    // selection that was written to follow the model.
+    let r = &network.report;
+    let d = crate::model::ReportOptions::default();
+    let mut report = Rows::new("[REPORT]", &["Directive", "Value"]);
+    for (flag, default, word) in [
+        (r.disabled, d.disabled, "DISABLED"),
+        (r.input, d.input, "INPUT"),
+        (r.continuity, d.continuity, "CONTINUITY"),
+        (r.flow_stats, d.flow_stats, "FLOWSTATS"),
+        (r.control_actions, d.control_actions, "CONTROLS"),
+        (r.averages, d.averages, "AVERAGES"),
+    ] {
+        if flag != default {
+            report.push([word.to_string(), yes_no(flag)]);
+        }
+    }
+    let mut selection = |word: &str, sel: &Sel, names: Vec<String>| match sel {
+        Sel::None => {}
+        Sel::All => report.push([word.to_string(), "ALL".into()]),
+        Sel::Ids(ids) => {
+            let mut row = vec![word.to_string()];
+            row.extend(ids.iter().filter_map(|i| names.get(*i).cloned()));
+            report.rows.push(row);
+        }
+    };
+    selection(
+        "SUBCATCHMENTS",
+        &r.parcels,
+        network.parcels.iter().map(|p| id(&p.id)).collect(),
+    );
+    selection(
+        "NODES",
+        &r.vertices,
+        network.vertices.iter().map(|v| id(&v.id)).collect(),
+    );
+    selection(
+        "LINKS",
+        &r.links,
+        network.links.iter().map(|l| id(&l.id)).collect(),
+    );
+    report.write(out);
+}
+
 /// `[INFLOWS]` and `[DWF]`: what enters the network at its boundaries.
 ///
 /// A flow inflow's baseline and its series scale both carry the flow
@@ -1336,7 +1457,7 @@ fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
                     conductivity,
                     initial_deficit,
                 } => [
-                    num(u.depth(*suction)),
+                    num(u.suction(*suction)),
                     num(u.rate(*conductivity)),
                     num(*initial_deficit),
                     String::new(),
@@ -1703,11 +1824,12 @@ mod tests {
     /// relation is the whole of what the engine solves.
     #[test]
     fn analytical_storage_shapes_recompile_to_their_own_area_relation() {
-        let u = Units {
-            us: false,
-            flow: 1.0,
-            weir_coeff: 1.0,
-        };
+        // SI, so the shape algebra is read without a length conversion
+        // sitting between the assertion and what it is asserting about.
+        let u = Units::of(&AnalysisOptions {
+            flow_units: FlowUnits::Cms,
+            ..AnalysisOptions::default()
+        });
         // Authored parameters, chosen asymmetric so a symmetric answer
         // cannot pass by luck.
         let cases = [
@@ -2009,11 +2131,12 @@ QIN  4:00  0.1
     /// to swapping its axes, so export recovers what the author wrote.
     #[test]
     fn a_pyramids_own_axes_come_back() {
-        let u = Units {
-            us: false,
-            flow: 1.0,
-            weir_coeff: 1.0,
-        };
+        // SI, so the shape algebra is read without a length conversion
+        // sitting between the assertion and what it is asserting about.
+        let u = Units::of(&AnalysisOptions {
+            flow_units: FlowUnits::Cms,
+            ..AnalysisOptions::default()
+        });
         let (a0, a1, a2) = recompile(StorageShapeKind::Pyramidal, 30.0, 12.0, 2.5);
         let geom = StorageGeometry::Shape {
             kind: StorageShapeKind::Pyramidal,
