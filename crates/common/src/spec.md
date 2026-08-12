@@ -38,7 +38,8 @@ The layer defines five contracts:
    recognised from a model's bytes (§2).
 2. **Reportable output** — what an engine can contribute to a report (§3).
 3. **Element taxonomy** — how an engine describes its model's element
-   vocabulary so an application can present any engine's model (§4).
+   vocabulary so an application can present and edit any engine's model
+   (§4).
 4. **Quantities** — how an engine declares the physical quantities its
    values carry, so applications can format and convert them (§5).
 5. **Result variables** — how an engine describes the per-element result
@@ -464,8 +465,9 @@ report layer never invokes an engine; engines never render.
 ## 4. Element Taxonomy Contract
 
 The contract by which an engine describes its model's element vocabulary,
-so that an application can enumerate, render, and inspect *any* engine's
-model without knowing what a junction or a subcatchment is. It follows the
+so that an application can enumerate, render, inspect and **edit** *any*
+engine's model without knowing what a junction or a subcatchment is. It
+follows the
 same discipline as recognition (§2.5) and reportable output (§3):
 **engine-specific meaning travels only through opaque ids and
 engine-authored text**; this layer contributes structure, never domain
@@ -569,10 +571,142 @@ descriptors reusing the option-descriptor vocabulary of §3.2.1:
 
 An attribute schema is advisory in exactly the §3.2.1 sense: it tells a
 generic UI what to show; it is not the validation authority, and an engine
-remains free to hold data no schema advertises. This revision defines
-attribute schemas for **display**. Editability, defaults, and creation
-flows are a later additive revision — describing them before a second
-engine's editor exists would repeat the mistake §1 warns against.
+remains free to hold data no schema advertises.
+
+### 4.5 Editing contract
+
+The contract by which an engine describes and accepts *changes* to its
+model, so that one editing surface serves any engine.
+
+It was deferred from the revision that defined §4.1–4.4, on the grounds
+that describing editability before a second engine's editor existed would
+repeat the mistake §1 warns against. That editor now exists, and it
+exposed the failure this section prevents: with no contract, the two
+engines were edited through two different sets of operations, and the
+difference reached the screen. One editor staged its changes behind a
+Save while the other wrote them through. One showed a position as two
+ordinary columns while the other could not show it at all, because
+position was not in this contract and the engine that stores it outside
+its model had no way to say it had one. Neither difference is a fact
+about drainage or distribution; both are facts about which engine's
+editor was written first.
+
+The rule this section exists to enforce: **a difference between file
+formats is the engine's to absorb, never the application's to display.**
+An application asks to move an element, name it, change a value, add one
+or remove one. What that costs underneath — a field assignment, a
+rewritten line in a section the engine otherwise preserves verbatim, a
+cascade through a dozen index spaces — is invisible above this line.
+
+#### 4.5.1 Editable attributes
+
+An attribute descriptor (§4.4) carries whether it may be **written**.
+
+The flag is advisory in the §3.2.1 sense and the write is the authority:
+an engine refuses a write it will not accept whether or not any schema
+advertised it, and a consumer that never reads the flag is wrong about
+what to offer, never about what happens. The flag exists so a surface can
+offer an input rather than offering one and being refused, which teaches
+the user the same thing one interaction later.
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `editable` | Whether a write to this attribute may be offered | Advisory; the write is the authority. Absent reads as not editable, so a schema written before this revision offers nothing rather than everything. |
+
+Editability is a property of the *attribute*, not of the element. Whether
+a **particular** element accepts a write is answered by whether it
+carries that attribute at all: a kind's schema describes every attribute
+elements of that kind may have, and an element that has none for a given
+key has no value to change. A consumer needs both answers, and confusing
+them offers an input that would create a value the model never held.
+
+#### 4.5.2 Position
+
+Elements of the spatial classes (§4.1: `point`, `polyline`, `region`)
+have a **position**, and it is editable through this contract
+independently of any attribute schema.
+
+Position is deliberately *not* an attribute. It is implied by the class —
+this layer already requires an application to render a point as a marker,
+so it already presumes the point has somewhere to be — and making it a
+schema entry would let an engine omit it, which would mean an element the
+application must draw and cannot move. It is also the place where the two
+engines' storage differs most and matters least: one holds coordinates as
+model fields, the other as lines in a section it preserves verbatim and
+never interprets. An application says where; the engine decides what that
+means in its own file.
+
+A position is expressed in the model's own coordinate system. This layer
+defines no projection, no unit and no datum for it — those belong to the
+application's handling of the model as a whole, and a contract that
+guessed here would be wrong for every model that is a drawing rather than
+a map.
+
+#### 4.5.3 Creation
+
+A kind descriptor (§4.2) carries whether elements of it may be
+**created**, and, when they may not, engine-authored text saying what is
+missing.
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `creatable` | Whether elements of this kind may be created | Advisory; creation is the authority. Absent reads as not creatable. |
+| `not_creatable_because` | What a new one would need that cannot be defaulted | Plain text, engine-authored. Present only when `creatable` is false, and required then — a refusal without a reason is a dead end. |
+
+Not every kind can be created from a generic surface, and the reason is
+never that the engine cannot be bothered. Some kinds require a referent
+that has to be chosen rather than defaulted — a relation curve, a rating,
+an opening geometry — and there is no defensible value for one. Inventing
+it is worse than refusing: it produces a model that runs and is wrong,
+which is the failure mode this whole layer is built to avoid.
+
+So the contract carries the refusal *and its reason*, as text the engine
+writes and the application shows. An application that lists creatable
+kinds and says why the others are absent is telling the user something
+true; one that offers every kind and fails on submit is teaching them the
+same thing later and less kindly.
+
+What a new element needs is exactly what this contract already describes:
+an identifier, a position if its class is spatial (§4.5.2), and values
+for its editable attributes (§4.5.1). Everything else is the engine's
+default, and defaults are the engine's judgement — a zero maximum depth
+that means "raise it to the crown of the highest connecting conduit" is a
+sensible default in one engine and meaningless in another.
+
+#### 4.5.4 Removal
+
+Removing an element is rarely removing one thing. The contract's answer to
+a removal therefore reports what actually went: the element, any elements
+removed with it because they cannot exist without it, and any records that
+described only it.
+
+A removal an engine cannot perform safely **refuses, naming what
+prevents it**, and changes nothing. Two outcomes are acceptable — it
+happened and here is everything that went, or it did not happen and here
+is why — and the third, a partial removal reported as a success, is the
+one this shape exists to make unrepresentable. Which references cascade
+and which refuse is the engine's judgement: a reference with exactly one
+correct repair may be repaired, and one that needs a choice belongs to
+whoever can make it.
+
+#### 4.5.5 When an edit exists
+
+An accepted edit is part of the model when the operation returns. This
+contract has no staged, pending, or uncommitted state.
+
+That is a deliberate narrowing rather than an omission. An application is
+free to offer staging on top — collecting changes and applying them
+together is an application's affair — but it may not require it, and it
+may not present two engines differently because one of them was built
+around a Save button. A contract that admitted both would make "has this
+change happened yet" an engine-dependent question, and that question
+reaches the user faster than any other.
+
+Since an edit cannot be un-made by discarding a draft, an application
+offering undo must implement it above this contract, in terms of the
+operations here — a position restored is a move, a removed element
+restored is a creation. An undo built from one engine's operations is not
+undo; it is that engine's editor with a longer reach.
 
 ---
 
@@ -807,8 +941,13 @@ crate depends on nothing.
   identity or report contracts. The one remaining deferred contract — a
   neutral simulation session — follows the same path when a further engine
   proves its shape (§2.6); until then only its dispatch home is assigned.
-- Known additive follow-ups already anticipated: editability, defaults,
-  and creation flows on attribute schemas (§4.3), and additional element
+- The editing contract (§4.5) arrived the same way in a later revision,
+  on the same gate: it was named as a follow-up when §4 landed and held
+  until a second engine's editor existed to shape it. It adds fields to
+  the kind and attribute descriptors and no others, and an engine that
+  sets none of them is exactly as editable as it was before — which is
+  to say, not.
+- Known additive follow-ups already anticipated: additional element
   classes (§4.1) should an engine need one.
 - If a future revision must break a contract, the break follows the
   library release track's semver discipline.
