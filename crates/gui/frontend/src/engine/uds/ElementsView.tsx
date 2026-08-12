@@ -186,17 +186,20 @@ export function UdsElementsView() {
             />
             Read-only
           </span>
-          {/* "Edited outside Hydra" read as a design stance — as though
-              drainage models were deliberately someone else's to change.
-              The truth is narrower and temporary: the engine simulates
-              drainage fully from the CLI and the SDK, and only the GUI's
-              editing has not been built. Say that, so the sentence stops
-              being wrong the day it ships rather than merely stale.
+          {/* The sentence has to track what is actually true, because a
+              reader takes it as the whole answer. "Edited outside Hydra"
+              read as a design stance; "editing isn't built yet" was right
+              until the map could move and rename an element, and is now
+              wrong in a way that sends people looking elsewhere.
 
-              Remove this whole footer when drainage becomes editable;
-              `modelEditable` in the engine registry is the switch. */}
+              What is true today: these tables read, the map edits. Point
+              at the place that works rather than describing an absence.
+
+              Remove this footer when the tables themselves edit; the
+              `editing` capabilities in the engine registry say which
+              operations exist. */}
           <span style={{ color: "var(--text-tertiary)" }}>
-            Editing drainage models here isn't built yet.
+            These tables don't edit yet — move and rename on the map.
           </span>
         </EditorStatusBar>
       }

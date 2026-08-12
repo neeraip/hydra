@@ -157,6 +157,7 @@ fn main() {
             commands::list_engines,
             commands::list_element_kinds,
             commands::list_element_attributes,
+            commands::set_uds_element_attribute,
             commands::list_curve_axes,
             commands::updater_supported,
             commands::get_run_queue,

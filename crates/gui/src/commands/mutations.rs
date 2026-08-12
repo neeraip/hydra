@@ -464,6 +464,26 @@ where
     }
 }
 
+/// Command wrapper for a drainage mutation: applies it, then emits the
+/// structural event so the canvas refetches its snapshot.
+///
+/// The lock is held across the emit for the same reason the wds wrapper
+/// holds it — event order has to match commit order.
+pub(crate) fn mutate_uds<F>(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, NetworkState>,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::uds::model::Network) -> Result<(), String>,
+{
+    let mut guard = state.0.lock();
+    apply_uds_mutation(&mut guard, f)?;
+    emit_or_warn(app, NETWORK_CHANGED_EVENT, ());
+    drop(guard);
+    Ok(())
+}
+
 /// Rename a drainage element, following the name everywhere it is used.
 ///
 /// A drainage model refers to an element by name in two places the model
@@ -1099,13 +1119,12 @@ pub fn rename_element(
     // Drainage renames route to their own path: a different network type,
     // and different places the old name is written down.
     {
-        let mut guard = state.0.lock();
+        let guard = state.0.lock();
         if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
-            apply_uds_mutation(&mut guard, |network| {
+            drop(guard);
+            return mutate_uds(&app, &state, |network| {
                 rename_uds_element(network, &old_id, &new_id)
-            })?;
-            emit_or_warn(&app, NETWORK_CHANGED_EVENT, ());
-            return Ok(());
+            });
         }
     }
     mutate_structural(&app, &state, |network| {

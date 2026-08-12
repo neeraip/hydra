@@ -1357,3 +1357,253 @@ GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE
         assert_eq!(net.inlets[coupling.design].id, "CB1");
     }
 }
+
+// ── Writing an attribute back ───────────────────────────────────────────
+
+/// Set one attribute on one element of the loaded drainage model.
+///
+/// Takes the value in the descriptor's base unit, the same one
+/// [`element_attributes`] serves it in.
+#[tauri::command(async)]
+pub fn set_uds_element_attribute(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    element_id: String,
+    key: String,
+    value: f64,
+) -> Result<(), String> {
+    super::mutations::mutate_uds(&app, &state, |network| {
+        set_element_attribute(network, &element_id, &key, value)
+    })
+}
+
+/// Set one engine-described attribute on one element (§4.4).
+///
+/// Keyed by the same schema key the read path serves, and taking a value
+/// in the same unit that path serves it in: the descriptor's own base
+/// unit, which is not always SI — an area is stated in hectares and a
+/// slope as a percentage, because that is what the §5 quantity for each
+/// declares. The frontend converts for display and converts back, so the
+/// backend never learns the user's preference.
+///
+/// Each writable key therefore inverts whatever its read applies. That
+/// pairing is asserted rather than assumed: the test below sets a value
+/// and reads it back through `element_attributes`, so a conversion that
+/// exists on one side and not the other fails.
+///
+/// Not every key is writable. A referent — a gage, an outlet, a curve —
+/// names another object, and setting one is a different operation from
+/// setting a number; a shape carries four geometry values behind one
+/// label. Those refuse by name rather than being silently ignored, so a
+/// caller learns which of the two it asked for.
+pub fn set_element_attribute(
+    net: &mut Network,
+    element_id: &str,
+    key: &str,
+    value: f64,
+) -> Result<(), String> {
+    if !value.is_finite() {
+        return Err("that value is not a number".into());
+    }
+    if let Some(v) = net
+        .vertices
+        .iter_mut()
+        .find(|v| v.id.eq_ignore_ascii_case(element_id))
+    {
+        return set_vertex_attribute(v, key, value);
+    }
+    if let Some(l) = net
+        .links
+        .iter_mut()
+        .find(|l| l.id.eq_ignore_ascii_case(element_id))
+    {
+        return set_link_attribute(l, key, value);
+    }
+    if let Some(p) = net
+        .parcels
+        .iter_mut()
+        .find(|p| p.id.eq_ignore_ascii_case(element_id))
+    {
+        return set_parcel_attribute(p, key, value);
+    }
+    Err(format!("element '{element_id}' not found"))
+}
+
+fn unwritable(key: &str) -> String {
+    format!("'{key}' cannot be edited here")
+}
+
+fn set_vertex_attribute(
+    vertex: &mut hydra::uds::model::Vertex,
+    key: &str,
+    value: f64,
+) -> Result<(), String> {
+    use hydra::uds::model::VertexKind as K;
+    if key == "invert" {
+        vertex.invert = value;
+        return Ok(());
+    }
+    match (&mut vertex.kind, key) {
+        (K::Junction { max_depth, .. } | K::Storage { max_depth, .. }, "maxDepth")
+        | (K::Divider { max_depth, .. }, "maxDepth") => *max_depth = value,
+        (K::Junction { init_depth, .. } | K::Storage { init_depth, .. }, "initDepth")
+        | (K::Divider { init_depth, .. }, "initDepth") => *init_depth = value,
+        _ => return Err(unwritable(key)),
+    }
+    Ok(())
+}
+
+fn set_link_attribute(
+    link: &mut hydra::uds::model::Link,
+    key: &str,
+    value: f64,
+) -> Result<(), String> {
+    use hydra::uds::model::LinkKind as K;
+    match (&mut link.kind, key) {
+        (K::Channel { length, .. }, "length") => *length = value,
+        (K::Channel { roughness, .. }, "roughness") => *roughness = value,
+        (
+            K::Orifice {
+                discharge_coeff, ..
+            }
+            | K::Weir {
+                discharge_coeff, ..
+            },
+            "dischargeCoeff",
+        ) => {
+            *discharge_coeff = value;
+        }
+        _ => return Err(unwritable(key)),
+    }
+    Ok(())
+}
+
+fn set_parcel_attribute(
+    parcel: &mut hydra::uds::model::Parcel,
+    key: &str,
+    value: f64,
+) -> Result<(), String> {
+    match key {
+        // The `area` quantity's base unit is hectares, not square metres.
+        "area" => parcel.area = value * 10_000.0,
+        "width" => parcel.width = value,
+        // Stored as fractions, described as percentages.
+        "slope" => parcel.slope = value / 100.0,
+        "imperviousness" => parcel.frac_imperv = value / 100.0,
+        _ => return Err(unwritable(key)),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+J1  10  3  0.5  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0  1
+
+[SUBCATCHMENTS]
+S1  G1  J1  4.5  35  400  1.2  0
+
+[SUBAREAS]
+S1  0.015  0.24  0.06  0.2  20  OUTLET
+
+[INFILTRATION]
+S1  3.5  0.6  4.14  6
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RS1
+
+[TIMESERIES]
+RS1  0:00  0.4
+";
+
+    fn model() -> Network {
+        let (net, diags) = hydra::uds::io::objects::parse_network(INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    fn read(net: &Network, id: &str, label: &str) -> f64 {
+        element_attributes(net, id)
+            .unwrap_or_else(|| panic!("{id} has no attributes"))
+            .into_iter()
+            .find(|r| r.label == label)
+            .unwrap_or_else(|| panic!("{id} has no {label} row"))
+            .number
+            .expect("a number")
+    }
+
+    /// Setting a value and reading it back is the only check that catches
+    /// a conversion applied on one side and not the other — which is
+    /// exactly what went wrong first: an area is served in hectares and a
+    /// slope as a percentage, not in the SI the module's summary implies.
+    #[test]
+    fn every_writable_attribute_reads_back_as_it_was_set() {
+        for (id, key, label, value) in [
+            ("J1", "invert", "Invert elevation", 12.5),
+            ("J1", "maxDepth", "Maximum depth", 4.25),
+            ("J1", "initDepth", "Initial depth", 0.75),
+            ("C1", "length", "Length", 250.0),
+            ("C1", "roughness", "Roughness", 0.017),
+            ("S1", "area", "Area", 7.5),
+            ("S1", "width", "Width", 320.0),
+            ("S1", "slope", "Slope", 2.5),
+            ("S1", "imperviousness", "Imperviousness", 62.0),
+        ] {
+            let mut net = model();
+            set_element_attribute(&mut net, id, key, value)
+                .unwrap_or_else(|e| panic!("{id}.{key}: {e}"));
+            let got = read(&net, id, label);
+            assert!(
+                (got - value).abs() < 1e-9,
+                "{id}.{key} set {value}, read back {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_written_attribute_survives_the_file() {
+        // The edit has to reach the model text and come back, not just
+        // sit in memory.
+        let mut net = model();
+        set_element_attribute(&mut net, "S1", "imperviousness", 62.0).expect("set");
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
+        let (again, diags) = hydra::uds::io::objects::parse_network(&text);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert!((read(&again, "S1", "Imperviousness") - 62.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_key_this_path_cannot_set_says_so() {
+        // A referent names another object and a shape carries four
+        // geometry values behind one label; both refuse by name rather
+        // than being quietly ignored, so a caller learns which of the two
+        // it asked for.
+        let mut net = model();
+        let err = set_element_attribute(&mut net, "S1", "outlet", 1.0).expect_err("refused");
+        assert!(err.contains("outlet"), "{err}");
+        let err = set_element_attribute(&mut net, "C1", "shape", 1.0).expect_err("refused");
+        assert!(err.contains("shape"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_element_is_not_silently_ignored() {
+        let mut net = model();
+        let err = set_element_attribute(&mut net, "NOPE", "invert", 1.0).expect_err("refused");
+        assert!(err.contains("NOPE"), "{err}");
+    }
+}
