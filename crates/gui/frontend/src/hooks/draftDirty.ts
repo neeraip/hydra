@@ -19,10 +19,6 @@
 
 /** Sizes of every container the draft holds, in staging order. */
 export interface DraftContainerSizes {
-  /** Field-level edits to existing elements. */
-  elementsDraft: number;
-  pendingAdds: number;
-  pendingDeletes: number;
   curveAdds: number;
   curveEdits: number;
   curveDeletes: number;
@@ -38,7 +34,6 @@ export interface DraftContainerSizes {
 }
 
 export interface DirtyBySection {
-  elements: number;
   curves: number;
   patterns: number;
   controls: number;
@@ -55,7 +50,6 @@ const SECTION_CONTAINERS: Record<
   keyof DirtyBySection,
   readonly (keyof DraftContainerSizes)[]
 > = {
-  elements: ["elementsDraft", "pendingAdds", "pendingDeletes"],
   curves: ["curveAdds", "curveEdits", "curveDeletes"],
   patterns: ["patternAdds", "patternEdits", "patternDeletes"],
   // Controls and rules are edited in one section, so they count as one.

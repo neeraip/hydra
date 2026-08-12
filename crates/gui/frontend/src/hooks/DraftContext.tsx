@@ -34,19 +34,6 @@ import {
 } from "../AppContext";
 import { draftDirty } from "./draftDirty";
 import {
-  buildPreviewPatches,
-  collectAllElementIds,
-  type DraftEntry,
-  type ElementKind,
-  junctionRowsFromNodes,
-  linkRefRowsFromLinks,
-  type PendingAdd,
-  type PendingDelete,
-  reservoirRowsFromNodes,
-  tankRowsFromNodes,
-} from "./elementDrafts/elementsEditorDerivations";
-import { saveStagedElements } from "./elementDrafts/elementsEditorSave";
-import {
   type CurvePoint,
   createControl,
   createCurve,
@@ -66,22 +53,8 @@ import {
   updateCurvePoints,
   updatePatternMultipliers,
   updateRule,
-  useLinks,
-  useNodes,
 } from "./index";
 import { useNetworkVersion } from "./NetworkVersionContext";
-import {
-  buildSaveUndoEntry,
-  clearRedo,
-  pushUndoEntry,
-  stackKey,
-} from "./undoStack";
-
-// ── Elements (types re-exported from elementsEditorDerivations) ──────────────
-
-export type { DraftEntry, ElementKind, PendingAdd, PendingDelete };
-
-export const ELEMENT_TEMP_ID_PREFIX = "__new__:";
 
 // ── Save result ────────────────────────────────────────────────────────────────
 
@@ -92,17 +65,6 @@ export interface SaveAllResult {
 }
 
 interface DraftContextValue {
-  // Elements
-  elementsDraft: Map<string, DraftEntry>;
-  setElementsDraft: React.Dispatch<
-    React.SetStateAction<Map<string, DraftEntry>>
-  >;
-  pendingAdds: PendingAdd[];
-  setPendingAdds: React.Dispatch<React.SetStateAction<PendingAdd[]>>;
-  pendingDeletes: PendingDelete[];
-  setPendingDeletes: React.Dispatch<React.SetStateAction<PendingDelete[]>>;
-  nextTempIndex: React.RefObject<number>;
-
   // Curves — keyed by curve ID. `curveAdds` holds not-yet-created curves
   // (key = the chosen ID); `curveEdits` holds staged point edits for
   // existing curves.
@@ -150,7 +112,6 @@ interface DraftContextValue {
   dirtyCount: number;
   /** Per-tab pending-change counts, for the section-rail dots. */
   dirtyBySection: {
-    elements: number;
     curves: number;
     patterns: number;
     controls: number;
@@ -179,29 +140,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   const { showToast, activeScenarioId } = useAppState();
   const { project } = useActiveProject();
   const { markEdited } = useNetworkVersion();
-
-  // Base data needed for save orchestration (element ID pools, cascade
-  // detection). The provider deliberately does NOT call the row-model hooks
-  // (`useJunctionRows()` etc.): those materialise a second full ~92k-row copy
-  // plus a 46k-id Set, recomputed on every network mutation and kept alive
-  // even while the editor is hidden with no draft. Instead, `saveAll` derives
-  // exactly what it needs lazily at save time from the raw nodes/links via
-  // the pure mappers in elementsEditorDerivations (the row mappers are pure
-  // functions over network data), read through a ref.
-  const nodes = useNodes();
-  const links = useLinks();
-  const networkRef = useRef({ nodes, links });
-  useEffect(() => {
-    networkRef.current = { nodes, links };
-  });
-
-  // Elements
-  const [elementsDraft, setElementsDraft] = useState<Map<string, DraftEntry>>(
-    () => new Map(),
-  );
-  const [pendingAdds, setPendingAdds] = useState<PendingAdd[]>([]);
-  const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
-  const nextTempIndex = useRef(1);
 
   // Curves
   const [curveAdds, setCurveAdds] = useState<Map<string, CurvePoint[]>>(
@@ -255,9 +193,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   const { bySection: dirtyBySection, total: dirtyCount } = useMemo(
     () =>
       draftDirty({
-        elementsDraft: elementsDraft.size,
-        pendingAdds: pendingAdds.length,
-        pendingDeletes: pendingDeletes.length,
         curveAdds: curveAdds.size,
         curveEdits: curveEdits.size,
         curveDeletes: curveDeletes.size,
@@ -272,9 +207,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         ruleDeletes: ruleDeletes.size,
       }),
     [
-      elementsDraft.size,
-      pendingAdds.length,
-      pendingDeletes.length,
       curveAdds.size,
       curveEdits.size,
       curveDeletes.size,
@@ -295,27 +227,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     // identity is stable and the derivation loops are skipped entirely
     // (dirtyCount is derived from the same state this memo depends on).
     if (dirtyCount === 0) return EMPTY_PREVIEW_PATCHES;
-    // Link rows are only consulted for rename/delete cascade detection, so
-    // the (comparatively expensive) projection from the live link list is
-    // skipped entirely while no element drafts exist.
-    const hasElementDrafts =
-      elementsDraft.size > 0 ||
-      pendingAdds.length > 0 ||
-      pendingDeletes.length > 0;
-    const items: PatchItem[] = buildPreviewPatches({
-      draftEntries: Array.from(elementsDraft.values()),
-      pendingAdds,
-      pendingDeletes,
-      pendingDeleteKeys: new Set(
-        pendingDeletes.map((d) => `${d.kind}:${d.id}`),
-      ),
-      pipeRowsAll: hasElementDrafts ? linkRefRowsFromLinks(links, "pipe") : [],
-      pumpRowsAll: hasElementDrafts ? linkRefRowsFromLinks(links, "pump") : [],
-      valveRowsAll: hasElementDrafts
-        ? linkRefRowsFromLinks(links, "valve")
-        : [],
-      tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
-    });
+    const items: PatchItem[] = [];
     for (const [id, points] of curveAdds) {
       items.push({
         kind: "curve",
@@ -415,10 +327,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     return items;
   }, [
     dirtyCount,
-    elementsDraft,
-    pendingAdds,
-    pendingDeletes,
-    links,
     curveAdds,
     curveEdits,
     curveDeletes,
@@ -434,9 +342,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   ]);
 
   const discardAll = useCallback(() => {
-    setElementsDraft(new Map());
-    setPendingAdds([]);
-    setPendingDeletes([]);
     setCurveAdds(new Map());
     setCurveEdits(new Map());
     setCurveDeletes(new Set());
@@ -481,56 +386,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
           errors.push(typeof err === "string" ? err : `Could not ${label}`);
         }
       };
-
-      // ── Elements (creates → field patches → deletes) ──────────────────────
-      if (dirtyBySection.elements > 0) {
-        // Row models and the ID pool are derived here, lazily, from the
-        // current network snapshot — see the comment on `networkRef` above.
-        const { nodes: nodesNow, links: linksNow } = networkRef.current;
-        const draftEntriesNow = Array.from(elementsDraft.values());
-        // Undo capture — built BEFORE the save commits, from the current
-        // committed snapshot: inverse patches for staged field edits, undo
-        // deletes for pending adds, undo recreates (incl. cascade links) for
-        // pending deletes. Pushed only for fully successful saves — after a
-        // partial failure the applied/failed split is ambiguous, so the redo
-        // branch is dropped instead (the network did change).
-        const undoKey = project?.id
-          ? stackKey(project.id, activeScenarioId ?? null)
-          : null;
-        const undoCapture = undoKey
-          ? buildSaveUndoEntry({
-              draftEntries: draftEntriesNow,
-              pendingAdds,
-              pendingDeletes,
-              nodes: nodesNow,
-              links: linksNow,
-              tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
-            })
-          : null;
-        const result = await saveStagedElements({
-          draftEntries: draftEntriesNow,
-          pendingAdds,
-          pendingDeletes,
-          pendingDeleteKeys: new Set(
-            pendingDeletes.map((d) => `${d.kind}:${d.id}`),
-          ),
-          junctionRowsAll: junctionRowsFromNodes(nodesNow),
-          tankRowsAll: tankRowsFromNodes(nodesNow),
-          reservoirRowsAll: reservoirRowsFromNodes(nodesNow),
-          allElementIds: collectAllElementIds(nodesNow, linksNow),
-          tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
-        });
-        applied += result.applied;
-        failed += result.failed;
-        errors.push(...result.errors);
-        if (undoKey && result.applied > 0) {
-          if (undoCapture && result.failed === 0) {
-            pushUndoEntry(undoKey, undoCapture);
-          } else {
-            clearRedo(undoKey);
-          }
-        }
-      }
 
       // ── Curves: edits → deletes → creates ─────────────────────────────────
       for (const [id, points] of curveEdits) {
@@ -646,10 +501,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       return { applied, failed, errors };
     }
   }, [
-    dirtyBySection.elements,
-    elementsDraft,
-    pendingAdds,
-    pendingDeletes,
     curveAdds,
     curveEdits,
     curveDeletes,
@@ -697,14 +548,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   // above, so the value only changes when actual draft state changes.
   const value: DraftContextValue = useMemo(
     () => ({
-      elementsDraft,
-      setElementsDraft,
-      pendingAdds,
-      setPendingAdds,
-      pendingDeletes,
-      setPendingDeletes,
-      nextTempIndex,
-
       curveAdds,
       setCurveAdds,
       curveEdits,
@@ -742,9 +585,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       isSaving,
     }),
     [
-      elementsDraft,
-      pendingAdds,
-      pendingDeletes,
       curveAdds,
       curveEdits,
       curveDeletes,

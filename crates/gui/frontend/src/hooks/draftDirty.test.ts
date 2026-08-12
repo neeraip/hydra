@@ -46,14 +46,12 @@ describe("draftDirty", () => {
   it("keeps the total equal to the sum of its sections", () => {
     const sizes: DraftContainerSizes = {
       ...none,
-      elementsDraft: 3,
-      pendingAdds: 1,
       curveEdits: 2,
       ruleDeletes: 5,
     };
     const { total, bySection } = draftDirty(sizes);
     expect(total).toBe(Object.values(bySection).reduce((a, b) => a + b, 0));
-    expect(total).toBe(11);
+    expect(total).toBe(7);
   });
 
   it("groups rules with controls, as the editor does", () => {
@@ -61,13 +59,14 @@ describe("draftDirty", () => {
     expect(bySection.controls).toBe(2);
   });
 
-  it("splits element edits, additions and deletions into one section", () => {
-    const { bySection } = draftDirty({
-      ...none,
-      elementsDraft: 1,
-      pendingAdds: 1,
-      pendingDeletes: 1,
-    });
-    expect(bySection.elements).toBe(3);
+  it("has no section for elements", () => {
+    // They are not staged any more: an element edit is written and saved
+    // before the field gives focus back, so there is never a count of
+    // them to report and never a section for it in the rail.
+    expect(Object.keys(draftDirty(none).bySection)).toEqual([
+      "curves",
+      "patterns",
+      "controls",
+    ]);
   });
 });

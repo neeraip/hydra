@@ -1,12 +1,11 @@
 /**
  * Pure-logic tests for the undo/redo stack store (push/cap/redo-clear/key
  * isolation) and the inverse-set construction used at capture time
- * (`inverseFieldPatch`, `recreateSpecsForDelete`, `buildSaveUndoEntry`).
+ * (`inverseFieldPatch`, `recreateSpecsForDelete`, `inverseOp`).
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type { Link, Node } from "../types";
 import {
-  buildSaveUndoEntry,
   clearAllStacks,
   clearRedo,
   getUndoStacks,
@@ -24,8 +23,6 @@ import {
   takeUndo,
   type UndoEntry,
 } from "./undoStack";
-
-const TEMP = "__new__:";
 
 function entry(label: string): UndoEntry {
   return { label, undo: {}, redo: {} };
@@ -331,151 +328,6 @@ describe("recreateSpecsForDelete", () => {
     // create_link already defaults to open — no redundant patch.
     const openSpec = recreateSpecForLink({ ...pipe, initialStatus: "open" });
     expect(openSpec.patches.some((p) => p.field === "status")).toBe(false);
-  });
-});
-
-// ── buildSaveUndoEntry ─────────────────────────────────────────────────────
-
-describe("buildSaveUndoEntry", () => {
-  const base = {
-    nodes,
-    links,
-    tempIdPrefix: TEMP,
-    pendingAdds: [],
-    pendingDeletes: [],
-    draftEntries: [],
-  };
-
-  it("returns null when nothing capturable is staged", () => {
-    expect(buildSaveUndoEntry(base)).toBeNull();
-    // id/from/to edits are unsupported by the patch API and dropped.
-    expect(
-      buildSaveUndoEntry({
-        ...base,
-        draftEntries: [
-          { kind: "pipe", id: "P1", field: "from", value: "J9" },
-          { kind: "junction", id: "J1", field: "id", value: "J9" },
-        ],
-      }),
-    ).toBeNull();
-  });
-
-  it("builds inverse patches from committed snapshot values", () => {
-    const entry = buildSaveUndoEntry({
-      ...base,
-      draftEntries: [
-        { kind: "junction", id: "J1", field: "elevation", value: 60 },
-        { kind: "pipe", id: "P1", field: "roughness", value: 90 },
-      ],
-    });
-    expect(entry).not.toBeNull();
-    if (!entry) throw new Error("unreachable");
-    expect(entry.label).toBe("Edited 2 fields");
-    expect(entry.redo.patches).toEqual([
-      { kind: "junction", id: "J1", field: "elevation", value: 60 },
-      { kind: "pipe", id: "P1", field: "roughness", value: 90 },
-    ]);
-    expect(entry.undo.patches).toEqual([
-      { kind: "junction", id: "J1", field: "elevation", value: 55 },
-      { kind: "pipe", id: "P1", field: "roughness", value: 110 },
-    ]);
-    expect(entry.undo.recreates).toBeUndefined();
-    expect(entry.undo.deletes).toBeUndefined();
-  });
-
-  it("predicts created ids and undoes adds with deletes", () => {
-    // J1 exists → the first free junction id is J2.
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingAdds: [{ kind: "junction", tempId: `${TEMP}1` }],
-      draftEntries: [
-        { kind: "junction", id: `${TEMP}1`, field: "elevation", value: 12 },
-      ],
-    });
-    if (!entry) throw new Error("expected entry");
-    expect(entry.label).toBe("Added J2, Edited 1 field");
-    expect(entry.undo.deletes).toEqual([{ kind: "junction", id: "J2" }]);
-    expect(entry.redo.recreates).toMatchObject([
-      { elementType: "node", kind: "junction", id: "J2", elevation: 12 },
-    ]);
-    // The temp element's field patch replays on redo, retargeted to the
-    // real id, and needs no inverse (the element is deleted wholesale).
-    expect(entry.redo.patches).toEqual([
-      { kind: "junction", id: "J2", field: "elevation", value: 12 },
-    ]);
-    expect(entry.undo.patches).toBeUndefined();
-  });
-
-  it("honours an explicitly requested id for a pending add", () => {
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingAdds: [{ kind: "reservoir", tempId: `${TEMP}9` }],
-      draftEntries: [
-        { kind: "reservoir", id: `${TEMP}9`, field: "id", value: "R-NEW" },
-        { kind: "reservoir", id: `${TEMP}9`, field: "head", value: 42 },
-      ],
-    });
-    if (!entry) throw new Error("expected entry");
-    expect(entry.undo.deletes).toEqual([{ kind: "reservoir", id: "R-NEW" }]);
-    expect(entry.redo.recreates).toMatchObject([
-      { id: "R-NEW", kind: "reservoir", elevation: 42 },
-    ]);
-  });
-
-  it("undoes a node delete by recreating it and its cascade links", () => {
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingDeletes: [{ kind: "junction", id: "J1" }],
-    });
-    if (!entry) throw new Error("expected entry");
-    expect(entry.label).toBe("Deleted J1");
-    expect(entry.redo.deletes).toEqual([{ kind: "junction", id: "J1" }]);
-    // J1 first, then every link touching it — derived from the snapshot.
-    expect(entry.undo.recreates?.map((s) => s.id)).toEqual([
-      "J1",
-      "P1",
-      "PU1",
-      "V1",
-    ]);
-  });
-
-  it("does not duplicate a cascade link that is also explicitly deleted", () => {
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingDeletes: [
-        { kind: "pipe", id: "P1" },
-        { kind: "junction", id: "J1" },
-      ],
-    });
-    if (!entry) throw new Error("expected entry");
-    const ids = entry.undo.recreates?.map((s) => s.id) ?? [];
-    expect(ids.filter((id) => id === "P1")).toHaveLength(1);
-  });
-
-  it("drops patches targeting elements staged for deletion", () => {
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingDeletes: [{ kind: "pipe", id: "P1" }],
-      draftEntries: [{ kind: "pipe", id: "P1", field: "roughness", value: 1 }],
-    });
-    if (!entry) throw new Error("expected entry");
-    expect(entry.redo.patches).toBeUndefined();
-    expect(entry.undo.patches).toBeUndefined();
-  });
-
-  it("predicts link endpoints with the grouped node-pool fallback", () => {
-    // Mirrors saveStagedElements: pool is grouped junctions → tanks →
-    // reservoirs, so an endpoint-less pipe connects J1 → T1.
-    const entry = buildSaveUndoEntry({
-      ...base,
-      pendingAdds: [{ kind: "pipe", tempId: `${TEMP}2` }],
-    });
-    if (!entry) throw new Error("expected entry");
-    // P1 exists → predicted id P2.
-    expect(entry.redo.recreates).toMatchObject([
-      { elementType: "link", kind: "pipe", id: "P2", fromId: "J1", toId: "T1" },
-    ]);
-    expect(entry.undo.deletes).toEqual([{ kind: "pipe", id: "P2" }]);
   });
 });
 
