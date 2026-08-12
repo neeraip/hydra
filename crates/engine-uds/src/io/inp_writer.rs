@@ -27,12 +27,21 @@ pub(crate) struct Units {
     us: bool,
     /// m³/s per file flow unit.
     flow: f64,
+    /// The weir-coefficient factor import multiplies by (`objects.rs`):
+    /// every weir form shares one dimension, so one factor inverts them
+    /// all.
+    weir_coeff: f64,
 }
 
 impl Units {
     fn of(options: &AnalysisOptions) -> Units {
         Units {
             us: options.flow_units.is_us(),
+            weir_coeff: if options.flow_units.is_us() {
+                0.3048_f64.sqrt()
+            } else {
+                1.0
+            },
             flow: match options.flow_units {
                 FlowUnits::Cfs => 0.028_316_846_592,
                 FlowUnits::Gpm => 6.309_019_64e-5,
@@ -58,6 +67,18 @@ impl Units {
         } else {
             v
         }
+    }
+    /// m³ → ft³ | m³, the volume a Pump1 curve is indexed by.
+    fn vol(&self, v: f64) -> f64 {
+        if self.us {
+            v / (FT * FT * FT)
+        } else {
+            v
+        }
+    }
+    /// m^½/s → the file's weir-coefficient unit.
+    fn weir(&self, v: f64) -> f64 {
+        v / self.weir_coeff
     }
     /// m³/s → the file's flow unit.
     fn flow(&self, v: f64) -> f64 {
@@ -209,6 +230,7 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_vertices(network, &u, &mut out);
     write_links(network, &u, &mut out);
     write_xsections(network, &mut out);
+    write_curves(network, &u, &mut out);
     write_tables(network, &u, &mut out);
     write_timeseries(network, &mut out);
     write_display(network, &mut out);
@@ -824,10 +846,10 @@ fn write_links(network: &Network, u: &Units, out: &mut String) {
                 vid(l.to),
                 weir_form(*form),
                 offset(*off, u),
-                num(*discharge_coeff),
+                num(u.weir(*discharge_coeff)),
                 yes_no(*flap_gate),
                 num(*end_contractions),
-                num(*end_coeff),
+                num(u.weir(*end_coeff)),
                 yes_no(*can_surcharge),
                 num(u.len(*road_width)),
                 match road_surface {
@@ -844,7 +866,7 @@ fn write_links(network: &Network, u: &Units, out: &mut String) {
                 head_basis,
                 flap_gate,
             } => {
-                let (kind, a, b) = outlet_rating(rating, *head_basis, network, u);
+                let (kind, a, b) = outlet_rating(rating, *head_basis, network);
                 outlets.push([
                     id(&l.id),
                     vid(l.from),
@@ -890,7 +912,6 @@ fn outlet_rating(
     rating: &crate::model::OutletRating,
     basis: crate::model::OutletHeadBasis,
     network: &Network,
-    u: &Units,
 ) -> (String, String, String) {
     use crate::model::OutletHeadBasis as B;
     use crate::model::OutletRating as R;
@@ -899,11 +920,12 @@ fn outlet_rating(
         B::Head => "HEAD",
     };
     match rating {
-        R::Functional { coeff, exponent } => (
-            format!("FUNCTIONAL/{arg}"),
-            num(functional_coeff(*coeff, *exponent, u)),
-            num(*exponent),
-        ),
+        // Stored as written: import applies no conversion here, so
+        // neither does export (§14.13.3 inverts exactly, including by
+        // doing nothing).
+        R::Functional { coeff, exponent } => {
+            (format!("FUNCTIONAL/{arg}"), num(*coeff), num(*exponent))
+        }
         R::Tabular { curve } => (
             format!("TABULAR/{arg}"),
             id(&network.curves[*curve].id),
@@ -912,18 +934,20 @@ fn outlet_rating(
     }
 }
 
-/// The §14.6 inverse for a power-function discharge coefficient: the
-/// stored SI coefficient carries a flow dimension and a length dimension
-/// raised to the relation's own exponent, so both invert together.
-fn functional_coeff(coeff: f64, exponent: f64, u: &Units) -> f64 {
-    if u.us {
-        coeff / u.flow(1.0) * FT.powf(exponent)
-    } else {
-        coeff
+// ── Curves, series and patterns ─────────────────────────────────────────
+
+/// A link kind's position in the export's section order, so anything
+/// listing links across kinds can match it.
+fn link_kind_rank(kind: &crate::model::LinkKind) -> u8 {
+    use crate::model::LinkKind as K;
+    match kind {
+        K::Channel { .. } => 0,
+        K::Pump { .. } => 1,
+        K::Orifice { .. } => 2,
+        K::Weir { .. } => 3,
+        K::Outlet { .. } => 4,
     }
 }
-
-// ── Curves, series and patterns ─────────────────────────────────────────
 
 /// `[XSECTIONS]`, whose four geometry values the model keeps in the
 /// file's own units (§2.7), so they are written back unconverted.
@@ -935,7 +959,15 @@ fn write_xsections(network: &Network, out: &mut String) {
             "Link", "Shape", "Geom1", "Geom2", "Geom3", "Geom4", "Barrels", "Culvert",
         ],
     );
-    for l in &network.links {
+    // Ordered by the kind grouping the link sections use, not by
+    // registration order. Export groups links by kind (§14.13.5), so an
+    // xsection list following registration order would come out in one
+    // order on the first export and another on the second — the model is
+    // the same either way, but idempotence is not, and a file that
+    // differs from its own re-export hides which of the two is canonical.
+    let mut ordered: Vec<&crate::model::Link> = network.links.iter().collect();
+    ordered.sort_by_key(|l| link_kind_rank(&l.kind));
+    for l in ordered {
         let Some(x) = &l.cross_section else { continue };
         // A referent-carrying shape names its referent in the first
         // geometry column, where import reads it.
@@ -997,6 +1029,61 @@ fn write_timeseries(network: &Network, out: &mut String) {
                     rows.push([id(&s.id), stamp, t, num(p.value)]);
                 }
             }
+        }
+    }
+    rows.write(out);
+}
+
+/// `[CURVES]`, each role's points inverted by the conversion
+/// `io::tables` applied to them — the roles convert differently, so the
+/// inverse is chosen per role rather than per column.
+fn write_curves(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::CurveKind as C;
+    let mut rows = Rows::new("[CURVES]", &["Name", "Type", "X-Value", "Y-Value"]);
+    for c in &network.curves {
+        let word = match c.kind {
+            C::Storage => "STORAGE",
+            C::Diversion => "DIVERSION",
+            C::Tidal => "TIDAL",
+            C::Rating => "RATING",
+            C::Control => "CONTROL",
+            C::Shape => "SHAPE",
+            C::WeirCoeff => "WEIR",
+            C::Pump1 => "PUMP1",
+            C::Pump2 => "PUMP2",
+            C::Pump3 => "PUMP3",
+            C::Pump4 => "PUMP4",
+            C::Pump5 => "PUMP5",
+        };
+        for (i, (x, y)) in c.points.iter().enumerate() {
+            let (fx, fy) = match c.kind {
+                C::Storage => (u.len(*x), u.area(*y)),
+                C::Diversion => (u.flow(*x), u.flow(*y)),
+                // A tidal curve's abscissa is an hour of the day, held
+                // in seconds.
+                C::Tidal => (*x / 3600.0, u.len(*y)),
+                C::Rating => (u.len(*x), u.flow(*y)),
+                // Control and shape curves are dimensionless, or in the
+                // units their consumer reads them in; either way import
+                // left them alone.
+                C::Control | C::Shape => (*x, *y),
+                C::WeirCoeff => (u.len(*x), u.weir(*y)),
+                C::Pump1 => (u.vol(*x), u.flow(*y)),
+                C::Pump2 | C::Pump3 | C::Pump4 | C::Pump5 => (u.len(*x), u.flow(*y)),
+            };
+            // The type word rides the first line only, as the reader's
+            // own writer emits it; repeating it re-reads identically but
+            // is not the form the ecosystem produces.
+            rows.push([
+                id(&c.id),
+                if i == 0 {
+                    word.to_string()
+                } else {
+                    String::new()
+                },
+                num(fx),
+                num(fy),
+            ]);
         }
     }
     rows.write(out);
@@ -1070,6 +1157,7 @@ mod tests {
         let u = Units {
             us: false,
             flow: 1.0,
+            weir_coeff: 1.0,
         };
         // Authored parameters, chosen asymmetric so a symmetric answer
         // cannot pass by luck.
@@ -1178,16 +1266,29 @@ O1  100.0  FREE  YES
 
 [STORAGE]
 S1  99.0  10  0  CONICAL  30  12  2.5
+S2  98.0  8   0  TABULAR  SC1
+
+[WEIRS]
+W1  S1  S2  TRANSVERSE  0.5  3.33  NO  2  1.5
 
 [CONDUITS]
 C1  J1  J2  200  0.013  0.1  0.2  0.5  9
 C2  J2  S1  150  0.015  0    0    0    0
-C3  S1  O1  120  0.014  0    0    0    0
+C3  S2  O1  120  0.014  0    0    0    0
+
+[PUMPS]
+P1  S1  S2  PC1  OFF  1.2  0.4
 
 [XSECTIONS]
 C1  CIRCULAR   1.5  0  0  0  2
 C2  RECT_OPEN  2    3  0  0  1
 C3  CIRCULAR   1    0  0  0  1
+W1  RECT_OPEN  2    4  0  0  1
+
+[CURVES]
+SC1  STORAGE  0  100  2  400  6  900
+PC1  PUMP3    0  8    5  6    10 2
+RC1  RATING   0  0    1  3.5  2  9
 ";
         let (a, da) = crate::io::objects::parse_network(inp);
         assert!(da.iter().all(|d| !d.kind.is_error()), "{da:?}");
@@ -1215,7 +1316,54 @@ C3  CIRCULAR   1    0  0  0  1
                 y.kind
             );
         }
-        assert_eq!(a.links, b.links, "links\n{text}");
+        // Matched by identity, not by position. Export groups objects by
+        // kind (§14.13.5) while a file may interleave them, so a model
+        // whose author wrote weirs above conduits comes back with the
+        // same links registered in a different order. The predecessor's
+        // own interface does the same, and every reference between
+        // objects resolves by identifier — but registration order is
+        // what the results file orders elements by, so this is a
+        // difference worth naming rather than hiding behind a sort.
+        assert_eq!(a.links.len(), b.links.len(), "link count\n{text}");
+        for x in &a.links {
+            let y = b
+                .links
+                .iter()
+                .find(|y| y.id == x.id)
+                .unwrap_or_else(|| panic!("link {} missing after export\n{text}", x.id));
+            assert_eq!(
+                a.vertices[x.from].id, b.vertices[y.from].id,
+                "link {} upstream end\n{text}",
+                x.id
+            );
+            assert_eq!(
+                a.vertices[x.to].id, b.vertices[y.to].id,
+                "link {} downstream end\n{text}",
+                x.id
+            );
+            assert_eq!(x.cross_section, y.cross_section, "link {}\n{text}", x.id);
+            // Kinds carry curve indices, which the reordering also
+            // shifts, so they are compared with those resolved to names.
+            assert_eq!(
+                format!("{:?}", x.kind).replace(char::is_numeric, ""),
+                format!("{:?}", y.kind).replace(char::is_numeric, ""),
+                "link {} kind\n{text}",
+                x.id
+            );
+        }
+        // Curves carry a different conversion per role, so they are
+        // compared as a body rather than trusted to the link and node
+        // comparisons that merely reference them.
+        assert_eq!(a.curves.len(), b.curves.len(), "curve count\n{text}");
+        for x in &a.curves {
+            let y = b
+                .curves
+                .iter()
+                .find(|y| y.id == x.id)
+                .unwrap_or_else(|| panic!("curve {} missing\n{text}", x.id));
+            assert_eq!(x.kind, y.kind, "curve {} role\n{text}", x.id);
+            assert_eq!(x.points, y.points, "curve {} points\n{text}", x.id);
+        }
         assert_eq!(a.options.flow_units, b.options.flow_units);
         assert_eq!(a.options.routing_step, b.options.routing_step);
         assert_eq!(a.options.report_step, b.options.report_step);
@@ -1233,6 +1381,7 @@ C3  CIRCULAR   1    0  0  0  1
         let u = Units {
             us: false,
             flow: 1.0,
+            weir_coeff: 1.0,
         };
         let (a0, a1, a2) = recompile(StorageShapeKind::Pyramidal, 30.0, 12.0, 2.5);
         let geom = StorageGeometry::Shape {
