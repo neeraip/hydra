@@ -494,6 +494,16 @@ Three properties define correctness, in ascending strength:
    identical to the first — every value, every identifier, every
    relationship. This is the property that matters, and it is the one the
    corpus is tested against.
+
+   *Identical* is exact wherever a quantity's conversion is a
+   multiplication, which is almost everywhere. It is exact **to
+   floating-point rounding** where export must invert a relation that
+   import compiled, because such an inversion passes through a root:
+   §14.13.5's storage shapes are the case that exists today. The
+   distinction is worth drawing rather than blurring into a general
+   tolerance — a value that comes back differing in its last digit is
+   reporting the arithmetic it travelled through, and a value that comes
+   back differing in its third is reporting a defect.
 2. **Writer idempotence.** The second export is byte-identical to the
    first. A writer that is semantically correct but not idempotent hides a
    value that survives one cycle and drifts on the next.
@@ -556,6 +566,36 @@ Sections are written in a fixed order — the predecessor's own, so a reader
 comparing an exported file against a hand-authored one finds them where it
 expects — and a section with nothing to write is omitted entirely rather
 than written empty.
+
+**Objects are therefore grouped by kind, and a file that interleaved them
+does not come back interleaved.** Each kind has one section, so a model
+whose author wrote weirs above conduits returns with the same links
+registered in a different order. Every reference between objects resolves
+by identifier, so nothing in the model changes meaning — but registration
+order is the order §14.9's results file lists elements in, so a
+save-and-reload can renumber the records a consumer reads positionally.
+That is a property of grouping the sections, which the format requires;
+it is stated here because it is invisible in the model and visible in the
+results.
+
+A list spanning kinds — cross-section assignments are the case today —
+follows that same grouping rather than registration order. Following
+registration order would make the first export and the second disagree,
+since the first is what reordered the objects: the model would be right
+both times and neither file would be canonical.
+
+**Analytical relations are written as some member of the family that
+reproduces them, not as the parameters their author wrote.** Import
+compiles the analytical storage shapes to $A = a_0 + a_1y + a_2y^2$,
+keeping the shape's name and discarding its axes. The engine solves
+$A(y)$ and re-import recompiles whatever is written, so export solves for
+parameters reproducing the stored coefficients. Where that system is
+underdetermined — a cone's coefficients satisfy $a_1^2 = 4a_0a_2$
+identically, leaving two independent equations in three unknowns — export
+takes the symmetric member, the circular cone. A pyramid's parameters are
+uniquely recoverable and come back as written. Every member of such a
+family is the same storage unit as far as the engine is concerned, which
+is what makes the choice free rather than lossy.
 
 The nine display-metadata sections (§14.5) are written from what import
 preserved, verbatim, in their original order. They carry no engine
