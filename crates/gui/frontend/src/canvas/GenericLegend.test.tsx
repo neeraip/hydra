@@ -186,8 +186,20 @@ describe("GenericLegend", () => {
   // while the button was wrong.
   const banded = () =>
     meta({
-      pointVars: [v({ id: "depth", label: "Depth", ramp: { type: "banded", criterion: "c" } })],
-      polylineVars: [v({ id: "flow", label: "Flow", ramp: { type: "banded", criterion: "c" } })],
+      pointVars: [
+        v({
+          id: "depth",
+          label: "Depth",
+          ramp: { type: "banded", criterion: "c" },
+        }),
+      ],
+      polylineVars: [
+        v({
+          id: "flow",
+          label: "Flow",
+          ramp: { type: "banded", criterion: "c" },
+        }),
+      ],
     });
 
   const swatchBackgrounds = () =>

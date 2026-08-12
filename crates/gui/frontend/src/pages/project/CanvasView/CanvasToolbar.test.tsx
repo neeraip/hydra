@@ -18,7 +18,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 function toolbar(over: Partial<React.ComponentProps<typeof CanvasToolbar>>) {
   return render(
     <CanvasToolbar
-      editable
+      canMoveElements
+      canAddElements
       viewMode="map"
       onViewModeChange={vi.fn()}
       coordStatus="complete"
@@ -87,7 +88,12 @@ describe("the canvas toolbar's tools", () => {
   it("hides every editing tool for a read-only engine", () => {
     // Unchanged by the split: whether the model can be edited at all is a
     // third question, and it is the engine's to answer.
-    toolbar({ editable: false, localGrid: true, viewMode: "map" });
+    toolbar({
+      canMoveElements: false,
+      canAddElements: false,
+      localGrid: true,
+      viewMode: "map",
+    });
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add node" })).toBeNull();
   });

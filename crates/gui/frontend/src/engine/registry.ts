@@ -120,10 +120,34 @@ export interface EngineComponents {
   /** Whether the settings modal edits (true) or views (false). Drives the
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
-  /** Whether the model itself is editable in this GUI — canvas editing
-   * tools, element tables, create modals. Read-only engines hide those
-   * affordances entirely rather than offering gestures that refuse. */
-  modelEditable: boolean;
+  /**
+   * What this GUI can do to the engine's model.
+   *
+   * Two capabilities rather than one flag, because they are two
+   * questions and the engines answer them differently. Moving an
+   * element and creating one need different things of an engine: the
+   * first needs somewhere to put a position, the second needs defaults
+   * for every field a new element has. Drainage has the first and not
+   * yet the second.
+   *
+   * They were one flag while drainage could do neither, which is when
+   * a single value answering two questions looks correct. Editing
+   * affordances are hidden rather than offered-and-refused, so a flag
+   * that over-claims shows up as a gesture that does nothing.
+   */
+  editing: {
+    /** Positions can be changed: the edit tool, dragging on the canvas. */
+    geometry: boolean;
+    /** Elements can be created, deleted and renamed: the add tools,
+     * create modals, and the editor's row actions. A project can only
+     * begin from an imported model without this. */
+    structure: boolean;
+    /** The model's title can be rewritten. Its own capability because
+     * it is its own mutation — a model whose elements are fixed can
+     * still be described, and one whose title is fixed can still be
+     * rearranged. */
+    title: boolean;
+  };
   /**
    * Result-variable ids whose motion the canvas can animate, per element
    * class.
@@ -165,7 +189,7 @@ const WDS: EngineComponents = {
   CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
-  modelEditable: true,
+  editing: { geometry: true, structure: true, title: true },
   animatedVariables: {
     // Demand is a rate and would ring honestly, but it is nonzero at
     // nearly every junction — unlike drainage flooding, whose sparsity is
@@ -193,7 +217,11 @@ const UDS: EngineComponents = {
   // cannot change this" with "you cannot find this".
   editorFocusesElements: true,
   settingsEditable: false,
-  modelEditable: false,
+  // Positions are editable: a drainage node's coordinate is a line in a
+  // preserved display section, and the backend maintains it. Structure
+  // is not — creating an element needs a default for every field its
+  // kind carries, and nothing supplies those yet.
+  editing: { geometry: true, structure: false, title: false },
   // Conduit flow and velocity are rates the pulse can carry directly.
   // Depth and capacity are states rather than rates — a full pipe is not a
   // fast one — and animating them would have the motion assert something

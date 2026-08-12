@@ -36,7 +36,7 @@ describe("editorFocusesElements", () => {
    */
   it("is independent of whether the engine's model can be edited", () => {
     const uds = engineComponents("uds");
-    expect(uds.modelEditable).toBe(false);
+    expect(uds.editing.structure).toBe(false);
     expect(uds.editorFocusesElements).toBe(true);
   });
 

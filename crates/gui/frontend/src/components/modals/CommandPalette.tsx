@@ -207,7 +207,7 @@ export function CommandPalette() {
     projects.find((p) => p.id === activeProjectId)?.engine ?? null;
   // Same gate as the toolbar and shortcuts: editing tool commands do not
   // exist for read-only engines — the palette must not bypass the registry.
-  const modelEditable = engineComponents(activeProjectEngine).modelEditable;
+  const editing = engineComponents(activeProjectEngine).editing;
   // Scenario quick-switch entries — only meaningful with a project open.
   const scenarios = useScenarios(
     page === "project" ? activeProjectId : null,
@@ -471,7 +471,7 @@ export function CommandPalette() {
         // Editing tools exist only for engines whose model this GUI edits
         // (the CanvasView event listener re-checks, but a listed command
         // that no-ops would read as broken).
-        ...(modelEditable
+        ...(editing.geometry
           ? [
               {
                 id: "p-tool-edit",
@@ -587,7 +587,7 @@ export function CommandPalette() {
     projectView,
     activeProjectId,
     resultMeta,
-    modelEditable,
+    editing,
     navCanvasShortcut,
     navEditorShortcut,
     navAnalysisShortcut,

@@ -101,7 +101,7 @@ import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
-import { toolAvailableIn } from "./CanvasView/toolAvailability";
+import { toolAllowedBy, toolAvailableIn } from "./CanvasView/toolAvailability";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 import { wdsValuation } from "./criteriaValuation";
@@ -342,7 +342,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { project, engine } = useActiveProject();
   // Editing affordances exist only for engines whose model this GUI edits;
   // for read-only engines the tools hide rather than refuse per gesture.
-  const { modelEditable, animatedVariables } = engineComponents(engine?.key);
+  const { editing, animatedVariables } = engineComponents(engine?.key);
   /** Every animated id, both classes — what the legend's one toggle
    * governs and what its sentence is built from. */
   const animatedIds = useMemo(
@@ -369,15 +369,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   } = useCanvasSelection();
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
   useEffect(() => {
-    if (
-      !modelEditable &&
-      (activeTool === "edit" ||
-        activeTool === "add-node" ||
-        activeTool === "add-link")
-    ) {
+    if (!toolAllowedBy(editing, activeTool)) {
       setActiveTool("select");
     }
-  }, [modelEditable, activeTool]);
+  }, [editing, activeTool]);
   const [currentHour, setCurrentHour] = useState(0);
   // A scrub position belongs to the run it was scrubbed in. Carrying it to
   // another project pointed at a period that project may not even have, and
@@ -748,10 +743,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // Same gate as the toolbar and keyboard shortcuts: editing tools do
       // not exist for read-only engines, and the palette dispatches through
       // this event too.
-      if (
-        !modelEditable &&
-        (tool === "edit" || tool === "add-node" || tool === "add-link")
-      ) {
+      if (!toolAllowedBy(editing, tool)) {
         return;
       }
       if (tool === "measure") clearAnnotations();
@@ -759,7 +751,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("hydra:canvas-tool", onToolCommand);
     return () => window.removeEventListener("hydra:canvas-tool", onToolCommand);
-  }, [clearAnnotations, modelEditable]);
+  }, [clearAnnotations, editing]);
 
   useEffect(() => {
     function onViewportCommand(e: Event) {
@@ -1222,16 +1214,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         // the network's own geometry.
         case "e":
         case "E":
-          if (positioned && modelEditable) setActiveTool("edit");
+          if (positioned && editing.geometry) setActiveTool("edit");
           break;
         case "n":
         case "N":
-          if (positioned && modelEditable) setActiveTool("add-node");
+          if (positioned && editing.structure) setActiveTool("add-node");
           break;
         // Not map-gated: creating a link writes only its two node ids.
         case "l":
         case "L":
-          if (modelEditable) setActiveTool("add-link");
+          if (editing.structure) setActiveTool("add-link");
           break;
         case "Escape":
           setActiveTool("select");
@@ -1253,14 +1245,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [
-    clearAnnotations,
-    maxStep,
-    projectView,
-    geographic,
-    positioned,
-    modelEditable,
-  ]);
+  }, [clearAnnotations, maxStep, projectView, geographic, positioned, editing]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -2535,7 +2520,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
           {/* Toolbar overlay — left offset tracks the floating rail width */}
           <CanvasToolbar
-            editable={modelEditable}
+            canMoveElements={editing.geometry}
+            canAddElements={editing.structure}
             viewMode={viewMode}
             localGrid={localGrid}
             canvasBackground={canvasBackground}
@@ -2637,7 +2623,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 // both props are optional and the inspector hides the
                 // gestures entirely when they are absent.
                 onDelete={
-                  modelEditable
+                  editing.structure
                     ? () =>
                         setPendingDelete({
                           kind: stableSelectedNode.type,
@@ -2646,7 +2632,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     : undefined
                 }
                 onRename={
-                  modelEditable
+                  editing.structure
                     ? (newId) =>
                         handleRenameElement(
                           stableSelectedNode.type,
@@ -2707,7 +2693,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 }
                 disableZoomTo={!selectedLinkHasCoordinates}
                 onDelete={
-                  modelEditable
+                  editing.structure
                     ? () =>
                         setPendingDelete({
                           kind: stableSelectedLink.type,
@@ -2716,7 +2702,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     : undefined
                 }
                 onRename={
-                  modelEditable
+                  editing.structure
                     ? (newId) =>
                         handleRenameElement(
                           stableSelectedLink.type,

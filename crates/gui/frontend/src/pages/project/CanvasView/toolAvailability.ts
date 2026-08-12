@@ -1,4 +1,5 @@
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
+import type { EngineComponents } from "../../../engine/registry";
 
 /**
  * Whether `tool` can be used in `viewMode`.
@@ -26,4 +27,30 @@ export function toolAvailableIn(viewMode: ViewMode, tool: CanvasTool): boolean {
     tool !== "add-link" &&
     tool !== "measure"
   );
+}
+
+/**
+ * Whether the engine's model can have done to it what `tool` does.
+ *
+ * The pairing is the point: `edit` moves an element, which needs
+ * somewhere to put a position; `add-node` and `add-link` create one,
+ * which needs a default for every field the new element carries. An
+ * engine can have the first without the second, and drainage does.
+ *
+ * Navigation and measurement ask nothing of the model and are always
+ * allowed — a read-only engine still has a canvas worth reading.
+ */
+export function toolAllowedBy(
+  editing: EngineComponents["editing"],
+  tool: CanvasTool,
+): boolean {
+  switch (tool) {
+    case "edit":
+      return editing.geometry;
+    case "add-node":
+    case "add-link":
+      return editing.structure;
+    default:
+      return true;
+  }
 }

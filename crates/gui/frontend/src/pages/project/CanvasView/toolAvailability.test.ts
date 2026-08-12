@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CanvasTool } from "../../../canvas/types";
-import { toolAvailableIn } from "./toolAvailability";
+import { toolAllowedBy, toolAvailableIn } from "./toolAvailability";
 
 const ALL: CanvasTool[] = ["select", "measure", "edit", "add-node", "add-link"];
 
@@ -31,5 +31,39 @@ describe("toolAvailableIn", () => {
     // reads it has to survive the switch — otherwise resetting to Select
     // on entry would land on a tool that is itself withheld.
     expect(toolAvailableIn("schematic", "select")).toBe(true);
+  });
+});
+
+describe("toolAllowedBy", () => {
+  const both = { geometry: true, structure: true, title: true };
+  const moveOnly = { geometry: true, structure: false, title: false };
+  const neither = { geometry: false, structure: false, title: false };
+
+  it("offers every tool to an engine that can do everything", () => {
+    for (const tool of ALL) {
+      expect(toolAllowedBy(both, tool)).toBe(true);
+    }
+  });
+
+  it("separates moving from creating", () => {
+    // The whole reason this is two capabilities rather than one flag.
+    // Drainage can move an element — its position is a line the backend
+    // maintains — and cannot create one, because nothing supplies the
+    // defaults a new element needs.
+    expect(toolAllowedBy(moveOnly, "edit")).toBe(true);
+    expect(toolAllowedBy(moveOnly, "add-node")).toBe(false);
+    expect(toolAllowedBy(moveOnly, "add-link")).toBe(false);
+  });
+
+  it("withholds every editing tool from an engine that edits nothing", () => {
+    expect(toolAllowedBy(neither, "edit")).toBe(false);
+    expect(toolAllowedBy(neither, "add-node")).toBe(false);
+    expect(toolAllowedBy(neither, "add-link")).toBe(false);
+  });
+
+  it("never withholds the tools that ask nothing of the model", () => {
+    // A model no one can edit still has a canvas worth reading.
+    expect(toolAllowedBy(neither, "select")).toBe(true);
+    expect(toolAllowedBy(neither, "measure")).toBe(true);
   });
 });

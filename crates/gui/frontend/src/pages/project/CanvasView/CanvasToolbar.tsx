@@ -50,7 +50,8 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
  * `data-toolbar-dropdown` markers rendered here).
  */
 export function CanvasToolbar({
-  editable,
+  canMoveElements,
+  canAddElements,
   viewMode,
   localGrid = false,
   onViewModeChange,
@@ -76,7 +77,10 @@ export function CanvasToolbar({
   onClearAnnotations,
 }: {
   /** Whether model-editing tools (edit, add node, add link) appear. */
-  editable: boolean;
+  /** Positions can be changed — offers the edit tool. */
+  canMoveElements: boolean;
+  /** Elements can be created — offers the add tools. */
+  canAddElements: boolean;
   viewMode: ViewMode;
   /** The model has no georeference: there is no map to switch to, and no
    * basemap to draw under it. */
@@ -489,21 +493,23 @@ export function CanvasToolbar({
           <CursorArrowRaysIcon style={ICON_14} />
         </button>
 
-        {editable && (
-          <>
-            <button
-              type="button"
-              className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
-              onClick={() => onToolChange("edit")}
-              disabled={placementOnly}
-              data-tooltip={placementTooltip("Edit / move nodes (E)")}
-              data-tooltip-pos="bottom"
-              aria-label="Edit"
-              style={{ ...ICON_BTN_STYLE, ...placementDim }}
-            >
-              <PencilSquareIcon style={ICON_14} />
-            </button>
+        {canMoveElements && (
+          <button
+            type="button"
+            className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
+            onClick={() => onToolChange("edit")}
+            disabled={placementOnly}
+            data-tooltip={placementTooltip("Edit / move nodes (E)")}
+            data-tooltip-pos="bottom"
+            aria-label="Edit"
+            style={{ ...ICON_BTN_STYLE, ...placementDim }}
+          >
+            <PencilSquareIcon style={ICON_14} />
+          </button>
+        )}
 
+        {canAddElements && (
+          <>
             <button
               type="button"
               className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}

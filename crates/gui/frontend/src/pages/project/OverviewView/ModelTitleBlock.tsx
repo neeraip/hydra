@@ -19,10 +19,10 @@ import {
 export function ModelTitleBlock() {
   const { showToast } = useAppState();
   const { engine } = useActiveProject();
-  // Read-only engines show the title as plain text — offering the edit
-  // gesture only to refuse on save is exactly what `modelEditable` exists
-  // to prevent.
-  const modelEditable = engineComponents(engine?.key).modelEditable;
+  // An engine whose title this GUI cannot rewrite shows it as plain
+  // text: offering the gesture only to refuse on save is exactly what
+  // the capability exists to prevent.
+  const modelEditable = engineComponents(engine?.key).editing.title;
   const { version } = useNetworkVersion();
   const [lines, setLines] = useState<string[] | null>(null);
   const [editing, setEditing] = useState(false);
