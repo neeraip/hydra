@@ -19,9 +19,6 @@ const OverviewView = lazy(() =>
 const CanvasView = lazy(() =>
   import("./CanvasView").then((m) => ({ default: m.CanvasView })),
 );
-const NetworkEditor = lazy(() =>
-  import("./NetworkEditor").then((m) => ({ default: m.NetworkEditor })),
-);
 const AnalysisPanel = lazy(() =>
   import("./AnalysisPanel").then((m) => ({ default: m.AnalysisPanel })),
 );
@@ -148,7 +145,7 @@ export function ProjectPage() {
                     minHeight: 0,
                   }}
                 >
-                  {EditorView ? <EditorView /> : <NetworkEditor />}
+                  <EditorView />
                 </div>
                 <div
                   style={{

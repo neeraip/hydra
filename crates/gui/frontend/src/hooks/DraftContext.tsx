@@ -32,6 +32,7 @@ import {
   useActiveProject,
   useAppState,
 } from "../AppContext";
+import { draftDirty } from "./draftDirty";
 import {
   buildPreviewPatches,
   collectAllElementIds,
@@ -43,9 +44,8 @@ import {
   type PendingDelete,
   reservoirRowsFromNodes,
   tankRowsFromNodes,
-} from "../pages/project/NetworkEditor/elementsEditorDerivations";
-import { saveStagedElements } from "../pages/project/NetworkEditor/elementsEditorSave";
-import { draftDirty } from "./draftDirty";
+} from "./elementDrafts/elementsEditorDerivations";
+import { saveStagedElements } from "./elementDrafts/elementsEditorSave";
 import {
   type CurvePoint,
   createControl,

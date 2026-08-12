@@ -7,7 +7,7 @@ import {
   patchElements,
   type ReservoirRow,
   type TankRow,
-} from "../../../hooks";
+} from "../index";
 import type {
   DraftEntry,
   ElementKind,

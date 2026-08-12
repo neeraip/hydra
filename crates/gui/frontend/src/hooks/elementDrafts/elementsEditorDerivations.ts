@@ -7,7 +7,7 @@ import {
   PRESSURE_THRESHOLD,
   type ReservoirRow,
   type TankRow,
-} from "../../../hooks";
+} from "../index";
 
 export type ElementKind =
   | "junction"

@@ -27,9 +27,9 @@ import {
 import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { inpIdError } from "../../inpId";
-import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
 import { useUnitSystem } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { EditableCell } from "../panels/editorCells";
 import { useVirtualRows, VirtualSpacerRow } from "../panels/editorTable";
 import { curveRoleLabel } from "./curveRole";
 import { EditorSidebarList } from "./EditorSidebarList";

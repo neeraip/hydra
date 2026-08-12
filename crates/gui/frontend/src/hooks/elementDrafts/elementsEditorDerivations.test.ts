@@ -5,7 +5,7 @@
  * keeps a duplicate full row-model copy alive).
  */
 import { describe, expect, it } from "vitest";
-import type { Link, Node } from "../../../hooks";
+import type { Link, Node } from "../index";
 import {
   buildPreviewPatches,
   collectAllElementIds,

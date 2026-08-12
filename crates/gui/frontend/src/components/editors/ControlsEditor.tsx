@@ -22,8 +22,6 @@ import {
   useRules,
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
-import { RefOptionsDatalist } from "../../pages/project/NetworkEditor/TablePrimitives";
-import { shouldUseRefDatalist } from "../../pages/project/NetworkEditor/tableSearch";
 import {
   fromDisplay,
   type Quantity,
@@ -33,6 +31,8 @@ import {
   useUnitSystem,
 } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { RefOptionsDatalist } from "../panels/editorCells";
+import { offerDatalist } from "../panels/editorTable";
 import {
   parseTriggerTime,
   type TriggerTimeKind,
@@ -264,10 +264,10 @@ export function ControlsEditor({ accent }: { accent: string }) {
   // rendered at all and the pickers act as validated text inputs.
   const nodeIds = useMemo(() => nodes.map((n) => n.id), [nodes]);
   const linkIds = useMemo(() => links.map((l) => l.id), [links]);
-  const nodeListId = shouldUseRefDatalist(nodeIds.length)
+  const nodeListId = offerDatalist(nodeIds.length)
     ? CONTROLS_NODE_LIST_ID
     : undefined;
-  const linkListId = shouldUseRefDatalist(linkIds.length)
+  const linkListId = offerDatalist(linkIds.length)
     ? CONTROLS_LINK_LIST_ID
     : undefined;
   const pickers: PickerContext = useMemo(

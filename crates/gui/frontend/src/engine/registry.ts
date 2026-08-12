@@ -127,10 +127,15 @@ export interface EngineComponents {
   /** Body of the settings modal. Absent = the shared wds editor owns it
    * (until it, too, moves behind this interface). */
   SettingsView?: ComponentType<SettingsViewProps>;
-  /** Body of the Editor project view. Every engine uses the shared one;
-   * the field stays so an engine whose model is not a network of typed
-   * elements can supply its own. */
-  EditorView?: ComponentType;
+  /** Body of the Editor project view.
+   *
+   * Required: every engine's model is a network of typed elements, and
+   * the shared view renders any of them from the catalogs. It stays a
+   * registry entry rather than becoming a hard import so an engine
+   * whose model is not that shape can supply its own — but there is no
+   * fallback to a second editor any more, because there is no second
+   * editor. */
+  EditorView: ComponentType;
   /** Body of the Results project view. Absent = the wds analysis panels. */
   AnalysisView?: ComponentType;
   /** The project toolbar's criteria control: a chip opening this engine's
