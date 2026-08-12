@@ -13,12 +13,13 @@
 // to disagree about what a junction's first number is called.
 
 import { useEffect, useMemo, useState } from "react";
+import { useActiveProject } from "../../AppContext";
 import {
   CreateElementDialog,
   type CreateKind,
   CreateNumberField,
 } from "../../components/modals/CreateElementDialog";
-import { createUdsVertex, useElementAttributes } from "../../hooks";
+import { createElement, useElementAttributes } from "../../hooks";
 import { useUnitSystem } from "../../units";
 import type { CreateNodeModalProps } from "../registry";
 
@@ -34,6 +35,8 @@ export function UdsCreateNodeModal({
   onCreated,
   onCancel,
 }: CreateNodeModalProps) {
+  const { project } = useActiveProject();
+  const projectId = project?.id ?? "";
   const sys = useUnitSystem();
   const [kind, setKind] = useState("junction");
   const [id, setId] = useState("");
@@ -83,7 +86,12 @@ export function UdsCreateNodeModal({
       onSubmit={async () => {
         if (!position) throw new Error("no position for the new node");
         const name = id.trim();
-        await createUdsVertex(kind, name, position[0], position[1], invert);
+        await createElement(projectId, {
+          kind,
+          id: name,
+          position,
+          fields: { invert },
+        });
         onCreated(kind, name);
       }}
       onCancel={onCancel}

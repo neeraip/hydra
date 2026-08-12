@@ -638,41 +638,33 @@ export async function patchNodePosition(
   await tryInvoke<void>("patch_node_position", { id, x, y });
 }
 
-/**
- * Add a drainage vertex at a point in the model's own coordinate system.
- *
- * `invert` is metres, like every other numeric value crossing this
- * boundary. Throws the backend's refusal — a kind whose fields cannot be
- * defaulted says so by name.
- */
-export async function createUdsVertex(
-  kind: string,
-  id: string,
-  x: number,
-  y: number,
-  invert: number,
-): Promise<void> {
-  await invoke<void>("create_uds_vertex", { kind, id, x, y, invert });
+/** What an application supplies to create one element (§4.5.3). */
+export interface NewElement {
+  /** The engine's kind id, from its catalog. */
+  kind: string;
+  id: string;
+  /** Where to put it, in the model's own coordinate system. Required for
+   * a point or a region; a polyline is placed by its two ends instead. */
+  position?: [number, number];
+  fromId?: string;
+  toId?: string;
+  /** Values for the kind's editable attributes, by schema key. Anything
+   * omitted keeps the engine's default. */
+  fields?: Record<string, number | string>;
 }
 
 /**
- * Add a drainage link between two existing vertices.
+ * Add one element to the loaded model, whichever engine holds it.
  *
- * One object rather than six positional arguments: two of them are
- * lengths in metres, and a transposition there is a conduit 300 m wide
- * and 0.3 m long that nothing would flag.
+ * Throws the engine's refusal — a kind that needs a relation curve says
+ * what is missing, and a create that cannot finish leaves nothing
+ * behind.
  */
-export async function createUdsLink(link: {
-  kind: string;
-  id: string;
-  fromId: string;
-  toId: string;
-  /** Metres. */
-  length: number;
-  /** Metres; becomes the cross-section geometry. */
-  diameter: number;
-}): Promise<void> {
-  await invoke<void>("create_uds_link", { link });
+export async function createElement(
+  projectId: string,
+  element: NewElement,
+): Promise<void> {
+  await invoke<void>("create_element", { projectId, element });
 }
 
 /** What a delete took with it besides the element itself. */

@@ -11,12 +11,13 @@
 // lot in a manhole drop.
 
 import { useEffect, useMemo, useState } from "react";
+import { useActiveProject } from "../../AppContext";
 import {
   CreateElementDialog,
   type CreateKind,
   CreateNumberField,
 } from "../../components/modals/CreateElementDialog";
-import { createUdsLink, useElementAttributes } from "../../hooks";
+import { createElement, useElementAttributes } from "../../hooks";
 import { useUnitSystem } from "../../units";
 import type { CreateLinkModalProps } from "../registry";
 
@@ -35,6 +36,8 @@ export function UdsCreateLinkModal({
   onCreated,
   onCancel,
 }: CreateLinkModalProps) {
+  const { project } = useActiveProject();
+  const projectId = project?.id ?? "";
   const sys = useUnitSystem();
   const [id, setId] = useState("");
   const [length, setLength] = useState(0);
@@ -78,13 +81,12 @@ export function UdsCreateLinkModal({
       }
       onSubmit={async () => {
         const name = id.trim();
-        await createUdsLink({
+        await createElement(projectId, {
           kind: "conduit",
           id: name,
           fromId: fromNodeId,
           toId: toNodeId,
-          length,
-          diameter,
+          fields: { length, diameter },
         });
         onCreated("conduit", name);
       }}
