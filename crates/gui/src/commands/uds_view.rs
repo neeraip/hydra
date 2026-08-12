@@ -662,3 +662,183 @@ mod tests {
         assert_eq!(view.points[0].id, "J1");
     }
 }
+
+// ── Editing the preserved display sections ──────────────────────────────
+
+// Maintaining the identifier-keyed display metadata under mutation.
+//
+// The engine keeps `[COORDINATES]`, `[VERTICES]` and `[POLYGONS]` as
+// opaque text (§14.5) — it has no use for geometry, and the writer emits
+// them back verbatim. That is invisible while an application only reads
+// them, and it is why the reader above exists.
+//
+// It stops being invisible the moment a model can be edited, because
+// those lines are keyed by identifier: renaming an element orphans its
+// line, moving one has to rewrite it, creating one has to append it, and
+// deleting one leaves a line naming nothing. The water-distribution
+// engine never poses the question — a node there carries its own `x` and
+// `y`, so moving it is a field assignment.
+//
+// This is where that difference is handled, once, rather than at each
+// mutation site. A "remember to also update the display sections" rule
+// spread across every command is the shape of defect that gets written
+// about later; concentrating it here makes it one named thing with its
+// own tests.
+//
+// Positions are written in the model's own coordinate system, whatever
+// that is: these numbers are never converted on the way in, so they are
+// never converted on the way out.
+
+/// Move or place `id`'s point in a display section, appending the line —
+/// and the section — when either is absent.
+pub(crate) fn set_display_point(net: &mut Network, header: &str, id: &str, x: f64, y: f64) {
+    let line = format!("{id} {} {}", fmt_coord(x), fmt_coord(y));
+    let Some(section) = net
+        .display
+        .iter_mut()
+        .find(|s| s.header.eq_ignore_ascii_case(header))
+    else {
+        net.display.push(hydra::uds::model::DisplaySection {
+            header: header.to_string(),
+            lines: vec![line],
+        });
+        return;
+    };
+    match section.lines.iter_mut().find(|l| line_names(l, id)) {
+        Some(existing) => *existing = line,
+        None => section.lines.push(line),
+    }
+}
+
+/// Whether a display line's first token is `id`.
+///
+/// Compared case-insensitively because §14.2 matches identifiers that way:
+/// a model referring to `Node1` and a coordinate line spelling it `NODE1`
+/// are the same element, and a rename that missed one would silently
+/// strand its geometry.
+fn line_names(line: &str, id: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .is_some_and(|first| first.eq_ignore_ascii_case(id))
+}
+
+/// A coordinate in the shortest form that reads back as the same number.
+///
+/// The same rule the engine's writer applies, for the same reason: these
+/// are the model's own numbers in the model's own system, and a fixed
+/// precision would move an element every time the file was saved.
+fn fmt_coord(v: f64) -> String {
+    if v == 0.0 {
+        "0".into()
+    } else {
+        format!("{v}")
+    }
+}
+
+#[cfg(test)]
+mod display_edit_tests {
+    use super::*;
+
+    const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+
+[JUNCTIONS]
+J1  10  3  0  0  0
+J2  9   3  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  J2  100  0.01  0  0  0  0
+
+[COORDINATES]
+J1  100  200
+J2  300  400
+O1  500  600
+
+[VERTICES]
+C1  150  250
+
+[POLYGONS]
+S1  0  0
+";
+
+    fn model() -> Network {
+        let (net, diags) = hydra::uds::io::objects::parse_network(INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    fn coords(net: &Network) -> Vec<(String, f64, f64)> {
+        parse_xy_lines(net, "[COORDINATES]")
+            .map(|(id, x, y)| (id.to_string(), x, y))
+            .collect()
+    }
+
+    #[test]
+    fn moving_a_node_rewrites_its_line_and_leaves_the_others() {
+        let mut net = model();
+        set_display_point(&mut net, "[COORDINATES]", "J2", 999.5, -1.25);
+        let after = coords(&net);
+        assert_eq!(after.len(), 3, "a move must not add or drop a line");
+        assert!(after.contains(&("J2".into(), 999.5, -1.25)), "{after:?}");
+        assert!(after.contains(&("J1".into(), 100.0, 200.0)), "{after:?}");
+    }
+
+    #[test]
+    fn placing_a_node_with_no_line_yet_appends_one() {
+        let mut net = model();
+        set_display_point(&mut net, "[COORDINATES]", "NEW", 1.0, 2.0);
+        assert!(coords(&net).contains(&("NEW".into(), 1.0, 2.0)));
+    }
+
+    #[test]
+    fn placing_into_a_section_the_model_lacks_creates_it() {
+        // A model authored with no map has no `[COORDINATES]` at all, so
+        // the first placement has nowhere to go unless one is made.
+        let (mut net, _) = hydra::uds::io::objects::parse_network(
+            "[OPTIONS]\nFLOW_UNITS CMS\n\n[JUNCTIONS]\nJ1 10 3 0 0 0\n",
+        );
+        assert!(coords(&net).is_empty());
+        set_display_point(&mut net, "[COORDINATES]", "J1", 7.0, 8.0);
+        assert_eq!(coords(&net), vec![("J1".into(), 7.0, 8.0)]);
+    }
+
+    #[test]
+    fn a_move_matches_the_spelling_the_reader_would() {
+        // §14.2 matches identifiers case-insensitively, so a model naming
+        // `J1` and a coordinate line spelling it `j1` are one element.
+        // Matching by exact text would append a second line for the same
+        // node, and the reader takes the first — so the node would appear
+        // not to have moved at all.
+        let mut net = model();
+        net.display
+            .iter_mut()
+            .find(|s| s.header == "[COORDINATES]")
+            .unwrap()
+            .lines[0] = "j1 100 200".into();
+        set_display_point(&mut net, "[COORDINATES]", "J1", 5.0, 6.0);
+        let after = coords(&net);
+        assert_eq!(after.len(), 3, "a duplicate line was appended: {after:?}");
+        assert!(after.contains(&("J1".into(), 5.0, 6.0)), "{after:?}");
+    }
+
+    #[test]
+    fn a_moved_position_survives_a_write_and_a_re_read() {
+        // The point of the section: the engine writes display metadata
+        // back verbatim, so an edit here has to reach the file and come
+        // back as itself.
+        let mut net = model();
+        set_display_point(&mut net, "[COORDINATES]", "J1", 12.5, -7.25);
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
+        let (again, diags) = hydra::uds::io::objects::parse_network(&text);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert!(
+            coords(&again).contains(&("J1".into(), 12.5, -7.25)),
+            "{:?}",
+            coords(&again)
+        );
+    }
+}

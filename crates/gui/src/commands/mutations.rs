@@ -588,10 +588,28 @@ pub fn patch_node_position(
                 *dirty = true;
                 Ok(moved)
             }
-            NetworkStateInner::LoadedUds { .. } => Err(
-                "This project's engine is read-only in the GUI — editing is not available yet."
-                    .into(),
-            ),
+            NetworkStateInner::LoadedUds { dirty, network, .. } => {
+                // The same refusal the wds arm makes, for the same reason:
+                // an unknown id would append a display line naming nothing
+                // and dirty the model to do it.
+                if !network.vertices.iter().any(|v| v.id == id) {
+                    return Err(format!("node '{id}' not found"));
+                }
+                // A drainage node's position is not a field on the node —
+                // it is a line in a preserved display section (§14.5), so
+                // moving one is a text edit rather than an assignment.
+                super::uds_view::set_display_point(
+                    std::sync::Arc::make_mut(network),
+                    "[COORDINATES]",
+                    &id,
+                    x,
+                    y,
+                );
+                *dirty = true;
+                // No delta: this engine's canvas reads a snapshot rather
+                // than the wds DTO, so the frontend refetches.
+                Ok(None)
+            }
             NetworkStateInner::Empty => Err("no network loaded".into()),
         }
     };
