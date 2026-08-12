@@ -19,10 +19,19 @@ import { useCallback, useRef } from "react";
 import { useAppState } from "../AppContext";
 import { invoke } from "./ipc";
 import { useNetworkVersion } from "./NetworkVersionContext";
-import { createLink, createNode, patchElements } from "./network";
+import {
+  createElement,
+  createLink,
+  createNode,
+  patchElements,
+  patchNodePosition,
+  renameElement,
+  setElementAttribute,
+} from "./network";
 import { saveProjectOnDisk } from "./projects";
 import {
   type EditSet,
+  type ElementOp,
   type FieldPatch,
   pushRedoEntry,
   type RecreateSpec,
@@ -62,7 +71,16 @@ async function applyRecreate(spec: RecreateSpec): Promise<void> {
 
 /** Apply one edit set in recreate → patch → delete order. Throws on the
  *  first failed step. Exported for tests. */
-export async function applyEditSet(set: EditSet): Promise<void> {
+export async function applyEditSet(
+  set: EditSet,
+  projectId: string,
+): Promise<void> {
+  // Contract operations first: they are the ones any engine understands,
+  // and an entry that mixes them with the water-distribution editor's own
+  // sets does not exist — a surface captures one vocabulary or the other.
+  for (const op of set.ops ?? []) {
+    await applyOp(op, projectId);
+  }
   for (const spec of set.recreates ?? []) {
     await applyRecreate(spec);
   }
@@ -90,7 +108,10 @@ export function useUndoRedo(): { undo: () => void; redo: () => void } {
       let mutated = false;
       try {
         mutated = true;
-        await applyEditSet(direction === "undo" ? entry.undo : entry.redo);
+        await applyEditSet(
+          direction === "undo" ? entry.undo : entry.redo,
+          activeProjectId,
+        );
         if (direction === "undo") pushRedoEntry(key, entry);
         else restoreUndoEntry(key, entry);
         showToast(
@@ -120,4 +141,32 @@ export function useUndoRedo(): { undo: () => void; redo: () => void } {
   const undo = useCallback(() => void run("undo"), [run]);
   const redo = useCallback(() => void run("redo"), [run]);
   return { undo, redo };
+}
+
+/**
+ * Apply one contract operation (hydra-common §4.5).
+ *
+ * Every one of these is an ordinary edit — the same command the surface
+ * that made the change used, in the same vocabulary — which is what
+ * §4.5.5 means by an undo built above the contract rather than out of
+ * one engine's commands. The previous stack replayed water-distribution
+ * commands, so an entry captured from a drainage model looked undoable
+ * and refused when applied.
+ */
+async function applyOp(op: ElementOp, projectId: string): Promise<void> {
+  switch (op.op) {
+    case "move":
+      return patchNodePosition(op.id, op.x, op.y);
+    case "set":
+      return setElementAttribute(projectId, op.id, op.key, op.value);
+    case "rename":
+      return renameElement(op.kind, op.from, op.to);
+    case "create":
+      return createElement(projectId, op.element);
+    case "remove":
+      // The throwing invoke, not the wrapper: a failed removal has to
+      // abort the apply rather than resolve as though it happened.
+      await invoke<void>("delete_element", { kind: op.kind, id: op.id });
+      return;
+  }
 }

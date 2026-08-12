@@ -11,6 +11,7 @@ import {
   clearRedo,
   getUndoStacks,
   inverseFieldPatch,
+  inverseOp,
   MAX_UNDO_ENTRIES,
   pushRedoEntry,
   pushUndoEntry,
@@ -475,5 +476,64 @@ describe("buildSaveUndoEntry", () => {
       { elementType: "link", kind: "pipe", id: "P2", fromId: "J1", toId: "T1" },
     ]);
     expect(entry.undo.deletes).toEqual([{ kind: "pipe", id: "P2" }]);
+  });
+});
+
+describe("inverseOp", () => {
+  /**
+   * The vocabulary an undo entry is made of now. Every one of these is
+   * an ordinary edit applied by the same command that made the change,
+   * which is what §4.5.5 means by an undo built above the contract
+   * rather than out of one engine's commands — the previous stack
+   * replayed water-distribution commands, so an entry captured from a
+   * drainage model looked undoable and refused when applied.
+   */
+  it("puts a move back where it came from", () => {
+    expect(
+      inverseOp({ op: "move", id: "J1", x: 5, y: 6 }, { x: 1, y: 2 }),
+    ).toEqual({ op: "move", id: "J1", x: 1, y: 2 });
+  });
+
+  it("puts an attribute back to the value it had", () => {
+    expect(
+      inverseOp(
+        { op: "set", id: "J1", key: "invert", value: 90 },
+        { value: 85 },
+      ),
+    ).toEqual({ op: "set", id: "J1", key: "invert", value: 85 });
+  });
+
+  it("declines when nobody can say what was there", () => {
+    // An inverse nobody can supply is better absent than guessed: an
+    // entry captured without one would sit in the history looking
+    // undoable and fail on apply, which is the exact defect this
+    // replaced.
+    expect(inverseOp({ op: "move", id: "J1", x: 5, y: 6 })).toBeNull();
+    expect(
+      inverseOp({ op: "set", id: "J1", key: "invert", value: 90 }),
+    ).toBeNull();
+  });
+
+  it("inverts a rename by renaming back", () => {
+    expect(
+      inverseOp({ op: "rename", kind: "junction", from: "J1", to: "J2" }),
+    ).toEqual({ op: "rename", kind: "junction", from: "J2", to: "J1" });
+  });
+
+  it("inverts a create by removing what it made", () => {
+    expect(
+      inverseOp({
+        op: "create",
+        element: { kind: "junction", id: "J9" },
+      }),
+    ).toEqual({ op: "remove", kind: "junction", id: "J9" });
+  });
+
+  it("has no inverse for a removal", () => {
+    // Recreating the element is expressible; the records a drainage
+    // removal also takes — an inflow, a treatment — are not. An undo
+    // that silently gave back less than it removed would be worse than
+    // none, so a removal clears the history instead.
+    expect(inverseOp({ op: "remove", kind: "junction", id: "J1" })).toBeNull();
   });
 });

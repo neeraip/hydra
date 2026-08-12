@@ -240,7 +240,8 @@ function AttrRow({
           sys={sys}
           label={attr.label}
           onCommit={(next) =>
-            write(elementId, attr.key, next).then(() => onEdited?.())
+            // The value the row was showing is what an undo restores.
+            write(elementId, attr.key, next, value).then(() => onEdited?.())
           }
         />
         {q && (

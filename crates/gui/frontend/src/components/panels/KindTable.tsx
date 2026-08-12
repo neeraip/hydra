@@ -76,7 +76,13 @@ export function KindTable({
    * which engine that is. The columns say what may be written; this
    * prop says whether anything is listening.
    */
-  onEdit?: (id: string, key: string, value: number) => Promise<void> | void;
+  onEdit?: (
+    id: string,
+    key: string,
+    value: number,
+    /** What the cell was showing, so the write can be undone. */
+    previous: number,
+  ) => Promise<void> | void;
   /**
    * Move one element, in the model's own coordinate system.
    *
@@ -403,7 +409,9 @@ export function KindTable({
                               label={`${id} ${c.label}`}
                               chrome="cell"
                               align={align}
-                              onCommit={(next) => onEdit?.(id, c.key, next)}
+                              onCommit={(next) =>
+                                onEdit?.(id, c.key, next, editable)
+                              }
                             />
                           </td>
                         );

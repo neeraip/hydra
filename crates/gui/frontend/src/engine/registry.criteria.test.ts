@@ -70,7 +70,7 @@ describe("hasStarterModel", () => {
   });
 });
 
-describe("undoableEdits", () => {
+describe("undoableRemoval", () => {
   /**
    * The undo stack stores its inverses as water-distribution commands —
    * a position patch, a node recreate, a link recreate. Replaying one
@@ -85,7 +85,7 @@ describe("undoableEdits", () => {
    * could not do it.
    */
   it("is false for an engine whose edits the stack cannot replay", () => {
-    expect(engineComponents("uds").undoableEdits).toBe(false);
+    expect(engineComponents("uds").undoableRemoval).toBe(false);
   });
 
   it("is not implied by being able to edit at all", () => {
@@ -95,10 +95,10 @@ describe("undoableEdits", () => {
     const uds = engineComponents("uds");
     expect(uds.editing.geometry).toBe(true);
     expect(uds.editing.delete).toBe(true);
-    expect(uds.undoableEdits).toBe(false);
+    expect(uds.undoableRemoval).toBe(false);
   });
 
   it("is true where the stack was built", () => {
-    expect(engineComponents("wds").undoableEdits).toBe(true);
+    expect(engineComponents("wds").undoableRemoval).toBe(true);
   });
 });

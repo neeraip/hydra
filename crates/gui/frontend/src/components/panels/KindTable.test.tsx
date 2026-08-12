@@ -260,7 +260,9 @@ describe("KindTable editing", () => {
     fireEvent.blur(cell);
     // The second row, not the first: the row index and the id have to
     // stay married through sorting and filtering.
-    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 7);
+    // The value the cell was showing travels with the write, so the
+    // edit can be undone without re-reading the model.
+    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 7, 4);
   });
 
   it("still addresses the right element after a sort", () => {
@@ -281,7 +283,7 @@ describe("KindTable editing", () => {
     const cell = screen.getByLabelText("J2 Invert");
     fireEvent.change(cell, { target: { value: "5" } });
     fireEvent.blur(cell);
-    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 5);
+    expect(onEdit).toHaveBeenCalledWith("J2", "invert", 5, 4);
   });
 
   it("shows a dash rather than an empty field where an element has no value", () => {
