@@ -236,7 +236,9 @@ fn a_swmm_model_routes_to_uds_and_runs() {
         .success();
 
     let report = std::fs::read_to_string(&rpt).expect("report written");
-    assert!(report.contains("urban drainage engine"), "{report}");
+    // The banner names the engine that produced the report, never the
+    // predecessor's — a report is evidence of what ran.
+    assert!(report.contains("HYDRA URBAN DRAINAGE ENGINE"), "{report}");
     assert!(out.metadata().expect("results written").len() > 0);
 }
 
