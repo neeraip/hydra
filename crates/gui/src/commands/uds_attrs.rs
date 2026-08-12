@@ -233,6 +233,13 @@ pub struct KindColumnDto {
     /// `ElementAttributeDto` carries per row, and true for exactly the
     /// same (kind, key) pairs.
     pub editable: bool,
+    /// The value's shape and bounds (§3.2.1 vocabulary, reused by §4.4).
+    ///
+    /// A table that knows only "number or text" can offer a field and a
+    /// field only. This is what lets one table render a select for a
+    /// valve type, a yes/no for a check valve and a number for a
+    /// diameter — without naming any of them, which is the whole point.
+    pub kind: hydra::common::OptionKind,
     /// The §5 quantity for numeric values (SI), absent for text columns.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantity: Option<QuantityDescriptor>,
@@ -919,6 +926,7 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
                 .collect();
             KindColumnDto {
                 editable: attr.editable,
+                kind: attr.kind,
                 key: attr.key,
                 label: attr.label,
                 quantity,

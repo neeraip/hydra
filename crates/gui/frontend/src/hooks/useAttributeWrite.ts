@@ -36,11 +36,11 @@ import { pushUndoEntry, stackKey } from "./undoStack";
 export function useElementAttributeWrite(): (
   elementId: string,
   key: string,
-  value: number,
+  value: number | string,
   /** What the field showed before, so the write can be undone. Omit
    * and the edit is not captured — an inverse nobody can supply is
    * better absent than guessed. */
-  previous?: number,
+  previous?: number | string,
 ) => Promise<void> {
   const { activeProjectId, activeScenarioId, showToast } = useAppState();
   const { markEdited } = useNetworkVersion();

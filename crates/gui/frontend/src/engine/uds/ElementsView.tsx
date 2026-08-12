@@ -98,8 +98,12 @@ export function UdsElementsView() {
   // lies until the next reload.
   const write = useElementAttributeWrite();
   const onEdit = useCallback(
-    (id: string, key: string, value: number, previous?: number) =>
-      write(id, key, value, previous).then(refetch),
+    (
+      id: string,
+      key: string,
+      value: number | string,
+      previous?: number | string,
+    ) => write(id, key, value, previous).then(refetch),
     [write, refetch],
   );
 

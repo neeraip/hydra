@@ -212,6 +212,7 @@ pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElement
                 .collect();
             KindColumnDto {
                 editable: attr.editable,
+                kind: attr.kind,
                 key: attr.key,
                 label: attr.label,
                 quantity: attr

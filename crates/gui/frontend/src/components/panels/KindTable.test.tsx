@@ -13,10 +13,20 @@ function sortButton(th: Element): HTMLButtonElement {
   return button;
 }
 
+/** The shape a numeric column declares; spelled once here because most
+ * of the fixtures below are numbers. */
+const NUMBER = { type: "number", default: null, min: null, max: null } as const;
+
 const junctions: KindElements = {
   ids: ["J1", "J2"],
   columns: [
-    { key: "invert", label: "Invert", editable: false, values: [12, 4] },
+    {
+      key: "invert",
+      label: "Invert",
+      editable: false,
+      kind: NUMBER,
+      values: [12, 4],
+    },
   ],
   positions: [],
 } as KindElements;
@@ -24,7 +34,13 @@ const junctions: KindElements = {
 const conduits: KindElements = {
   ids: ["C1", "C2"],
   columns: [
-    { key: "length", label: "Length", editable: false, values: [30, 10] },
+    {
+      key: "length",
+      label: "Length",
+      editable: false,
+      kind: NUMBER,
+      values: [30, 10],
+    },
   ],
   positions: [],
 } as KindElements;
@@ -223,11 +239,18 @@ describe("KindTable editing", () => {
   const editable: KindElements = {
     ids: ["J1", "J2"],
     columns: [
-      { key: "invert", label: "Invert", editable: true, values: [12, 4] },
+      {
+        key: "invert",
+        label: "Invert",
+        editable: true,
+        kind: NUMBER,
+        values: [12, 4],
+      },
       {
         key: "shape",
         label: "Shape",
         editable: false,
+        kind: { type: "text", default: null },
         values: ["CIRCULAR", null],
       },
     ],
@@ -297,6 +320,7 @@ describe("KindTable editing", () => {
           key: "initDepth",
           label: "Initial depth",
           editable: true,
+          kind: NUMBER,
           values: [null],
         },
       ],
@@ -323,6 +347,7 @@ describe("KindTable virtualisation", () => {
         key: "length",
         label: "Length",
         editable: false,
+        kind: NUMBER,
         values: Array.from({ length: 5000 }, (_, i) => i),
       },
     ],
@@ -384,7 +409,13 @@ describe("KindTable positions", () => {
   const placed: KindElements = {
     ids: ["J1", "J2"],
     columns: [
-      { key: "invert", label: "Invert", editable: false, values: [12, 4] },
+      {
+        key: "invert",
+        label: "Invert",
+        editable: false,
+        kind: NUMBER,
+        values: [12, 4],
+      },
     ],
     positions: [[10, 20], null],
   } as KindElements;

@@ -1,3 +1,4 @@
+import type { OptionKind } from "./reports";
 import type { GenericQuantity } from "./results";
 /**
  * Network model hooks and mutation commands: nodes/links/patterns/curves,
@@ -1457,6 +1458,10 @@ export interface KindColumn {
    * the key is writable, not that any given cell is: see
    * {@link editableNumberOf}. */
   editable: boolean;
+  /** The value's shape and bounds. What lets one table render a select
+   * for a valve type, a yes/no for a check valve and a number for a
+   * diameter, without naming any of them. */
+  kind: OptionKind;
   /** Present for numeric columns; values are SI and convert through it. */
   quantity?: ElementAttributeQuantity;
   /** Number, string, or null where the element lacks the attribute. */

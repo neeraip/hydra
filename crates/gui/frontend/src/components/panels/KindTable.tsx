@@ -29,10 +29,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
-import { editableNumberOf, formatElementAttribute } from "../../hooks/network";
+import { formatElementAttribute } from "../../hooks/network";
 import { readTextScale } from "../../textScale";
 import { useUnitSystem } from "../../units";
 import { EditableNumber } from "../ui/EditableNumber";
+import { cellEditor } from "./cellEditor";
 import {
   EDITOR_TD,
   editorRowHeight,
@@ -79,9 +80,9 @@ export function KindTable({
   onEdit?: (
     id: string,
     key: string,
-    value: number,
+    value: number | string,
     /** What the cell was showing, so the write can be undone. */
-    previous: number,
+    previous: number | string,
   ) => Promise<void> | void;
   /**
    * Move one element, in the model's own coordinate system.
@@ -392,14 +393,16 @@ export function KindTable({
                     {elements.columns.map((c, ci) => {
                       const v = c.values[i];
                       const align = numeric[ci] ? "right" : "left";
-                      const editable = onEdit
-                        ? editableNumberOf(c.editable, v)
-                        : null;
-                      if (editable != null) {
+                      // What this cell offers is the column's declared
+                      // shape, not a guess from the value: a valve type
+                      // is a choice of seven and a check valve is a
+                      // yes/no, and neither is a box to type in.
+                      const editor = cellEditor(c, v, !!onEdit);
+                      if (editor.kind === "number") {
                         return (
                           <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
                             <EditableNumber
-                              value={editable}
+                              value={editor.value}
                               quantity={c.quantity}
                               sys={sys}
                               // The column heading already carries the
@@ -410,7 +413,34 @@ export function KindTable({
                               chrome="cell"
                               align={align}
                               onCommit={(next) =>
-                                onEdit?.(id, c.key, next, editable)
+                                onEdit?.(id, c.key, next, editor.value)
+                              }
+                            />
+                          </td>
+                        );
+                      }
+                      if (editor.kind === "choice") {
+                        return (
+                          <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
+                            <CellSelect
+                              label={`${id} ${c.label}`}
+                              value={editor.value}
+                              items={editor.items}
+                              onCommit={(next) =>
+                                onEdit?.(id, c.key, next, editor.value)
+                              }
+                            />
+                          </td>
+                        );
+                      }
+                      if (editor.kind === "text") {
+                        return (
+                          <td key={c.key} style={{ ...EDITOR_TD, padding: 0 }}>
+                            <CellText
+                              label={`${id} ${c.label}`}
+                              value={editor.value}
+                              onCommit={(next) =>
+                                onEdit?.(id, c.key, next, editor.value)
                               }
                             />
                           </td>
@@ -450,5 +480,93 @@ export function KindTable({
         </div>
       )}
     </div>
+  );
+}
+
+/** Shared chrome for the two cell editors that are not numbers: no
+ * border at rest, a focus ring while in use, the cell's own padding. */
+const CELL_INPUT: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "7px 10px",
+  background: "transparent",
+  border: "none",
+  outline: "none",
+  borderRadius: 0,
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-md)",
+};
+
+/** A cell whose value is one of a declared list. */
+function CellSelect({
+  label,
+  value,
+  items,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  items: Array<{ value: string; label: string }>;
+  onCommit: (value: string) => void;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        if (e.target.value !== value) onCommit(e.target.value);
+      }}
+      style={{ ...CELL_INPUT, cursor: "pointer" }}
+    >
+      {/* A value the engine holds that the list does not offer still has
+          to be shown, or the select would silently claim the element is
+          something it is not. */}
+      {!items.some((i) => i.value === value) && (
+        <option value={value}>{value}</option>
+      )}
+      {items.map((i) => (
+        <option key={i.value} value={i.value}>
+          {i.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** A cell whose value is free text — a reference to another element,
+ * most often. Committed on blur or Enter, abandoned on Escape, and
+ * silent when unchanged, exactly as the numeric field is. */
+function CellText({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      aria-label={label}
+      value={draft}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setDraft(value);
+          e.currentTarget.blur();
+        }
+      }}
+      style={CELL_INPUT}
+    />
   );
 }
