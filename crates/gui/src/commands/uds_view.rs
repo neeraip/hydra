@@ -717,18 +717,12 @@ pub(crate) fn set_display_point(net: &mut Network, header: &str, id: &str, x: f6
 /// fixed only the point would strand the rest of the geometry.
 pub(crate) fn rename_in_display(net: &mut Network, old: &str, new: &str) {
     for section in &mut net.display {
+        let at = named_field(&section.header);
         for line in &mut section.lines {
-            if line_names(line, old) {
-                let rest = line
-                    .split_whitespace()
-                    .skip(1)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                *line = if rest.is_empty() {
-                    new.to_string()
-                } else {
-                    format!("{new} {rest}")
-                };
+            if named_at(line, old, at) {
+                let mut fields: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+                fields[at] = new.to_string();
+                *line = fields.join(" ");
             }
         }
     }
@@ -748,11 +742,77 @@ pub(crate) fn rename_in_display(net: &mut Network, old: &str, new: &str) {
 /// import.
 pub(crate) fn remove_from_display(net: &mut Network, ids: &[&str]) {
     for section in &mut net.display {
+        let at = named_field(&section.header);
         section
             .lines
-            .retain(|line| !ids.iter().any(|id| line_names(line, id)));
+            .retain(|line| !ids.iter().any(|id| named_at(line, id, at)));
     }
     net.display.retain(|s| !s.lines.is_empty());
+}
+
+/// The `[TAGS]` object word for an element, by what the model holds it
+/// as — the three words the section's grammar allows.
+///
+/// `None` for an id the model does not have, which is what stops a tag
+/// being written for something that is not there.
+pub(crate) fn tag_object_word(net: &Network, id: &str) -> Option<&'static str> {
+    if net.parcels.iter().any(|p| p.id.eq_ignore_ascii_case(id)) {
+        return Some("Subcatch");
+    }
+    if net.vertices.iter().any(|v| v.id.eq_ignore_ascii_case(id)) {
+        return Some("Node");
+    }
+    net.links
+        .iter()
+        .any(|l| l.id.eq_ignore_ascii_case(id))
+        .then_some("Link")
+}
+
+/// An element's tag, or empty when it has none.
+///
+/// The tag is everything after the object word and the name, joined by
+/// single spaces — SWMM allows a tag with spaces in it, and taking only
+/// the third field would truncate one.
+pub(crate) fn tag_of(net: &Network, id: &str) -> String {
+    net.display
+        .iter()
+        .find(|s| s.header.eq_ignore_ascii_case("[TAGS]"))
+        .and_then(|s| s.lines.iter().find(|l| named_at(l, id, 1)))
+        .map(|l| l.split_whitespace().skip(2).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// Set an element's tag, or clear it when `tag` is empty.
+///
+/// Cleared by removing the line rather than by writing a blank one: the
+/// writer emits the section verbatim, and a name with nothing after it
+/// is a line the file did not have before the edit.
+pub(crate) fn set_tag(net: &mut Network, id: &str, tag: &str) -> Result<(), String> {
+    let word = tag_object_word(net, id).ok_or_else(|| format!("no element '{id}'"))?;
+    let tag = tag.trim();
+    let Some(section) = net
+        .display
+        .iter_mut()
+        .find(|s| s.header.eq_ignore_ascii_case("[TAGS]"))
+    else {
+        if tag.is_empty() {
+            return Ok(());
+        }
+        net.display.push(hydra::uds::model::DisplaySection {
+            header: "[TAGS]".to_string(),
+            lines: vec![format!("{word} {id} {tag}")],
+        });
+        return Ok(());
+    };
+    section.lines.retain(|l| !named_at(l, id, 1));
+    if !tag.is_empty() {
+        section.lines.push(format!("{word} {id} {tag}"));
+    }
+    // An emptied section goes with its last line, for the same reason
+    // `remove_from_display` drops one: a heading with nothing under it
+    // is a heading the imported file did not have.
+    net.display.retain(|s| !s.lines.is_empty());
+    Ok(())
 }
 
 /// Whether `token` is a keyword a control rule names an object after
@@ -804,9 +864,25 @@ pub(crate) fn rename_in_controls(net: &mut Network, old: &str, new: &str) {
 /// are the same element, and a rename that missed one would silently
 /// strand its geometry.
 fn line_names(line: &str, id: &str) -> bool {
+    named_at(line, id, 0)
+}
+
+/// Whether `line`'s field at `at` is `id`.
+fn named_at(line: &str, id: &str, at: usize) -> bool {
     line.split_whitespace()
-        .next()
-        .is_some_and(|first| first.eq_ignore_ascii_case(id))
+        .nth(at)
+        .is_some_and(|field| field.eq_ignore_ascii_case(id))
+}
+
+/// Which field of a line in `header` names the object it is about.
+///
+/// Every display section but one puts it first. `[TAGS]` puts an object
+/// word there — `Subcatch`, `Node`, `Link` — and the name second, so a
+/// rename or a delete that assumed the first field silently skipped
+/// every tag line: a renamed element kept a tag under its old name, and
+/// a deleted one left a tag behind for a thing the model no longer had.
+fn named_field(header: &str) -> usize {
+    usize::from(header.eq_ignore_ascii_case("[TAGS]"))
 }
 
 /// A coordinate in the shortest form that reads back as the same number.
@@ -910,6 +986,86 @@ S1  0  0
         let after = coords(&net);
         assert_eq!(after.len(), 3, "a duplicate line was appended: {after:?}");
         assert!(after.contains(&("J1".into(), 5.0, 6.0)), "{after:?}");
+    }
+
+    /// The defect exposing tags uncovered: `[TAGS]` is the one display
+    /// section that does not name its object first — an object word
+    /// comes first and the name second — so a rename or a delete that
+    /// read the first field skipped every tag line. A renamed element
+    /// kept a tag under its old name, and a deleted one left a tag
+    /// behind for a thing the model no longer had.
+    #[test]
+    fn a_rename_and_a_delete_reach_the_tag_section() {
+        let tagged = |net: &Network| -> Vec<String> {
+            net.display
+                .iter()
+                .find(|s| s.header.eq_ignore_ascii_case("[TAGS]"))
+                .map(|s| s.lines.clone())
+                .unwrap_or_default()
+        };
+
+        let mut net = model();
+        set_tag(&mut net, "J1", "Residential").expect("tag");
+        set_tag(&mut net, "J2", "Industrial").expect("tag");
+
+        rename_in_display(&mut net, "J1", "J9");
+        assert_eq!(tagged(&net), ["Node J9 Residential", "Node J2 Industrial"]);
+        // And the object word is untouched — renaming the field the
+        // section names its object in, not the first field it has.
+        assert_eq!(tag_of(&net, "J9"), "Residential");
+
+        remove_from_display(&mut net, &["J9"]);
+        assert_eq!(tagged(&net), ["Node J2 Industrial"]);
+    }
+
+    #[test]
+    fn a_tag_is_read_written_cleared_and_survives_the_writer() {
+        let mut net = model();
+        assert_eq!(tag_of(&net, "J1"), "", "an untagged element has no tag");
+
+        // Written into a section the model did not have, since a model
+        // with no tags in it has no `[TAGS]` at all.
+        set_tag(&mut net, "J1", "Trunk sewer").expect("tag");
+        // Spaces and all: SWMM allows a tag with them, and taking the
+        // third field alone would truncate one.
+        assert_eq!(tag_of(&net, "J1"), "Trunk sewer");
+
+        let written = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let (again, _) = hydra::uds::io::objects::parse_network(&written);
+        assert_eq!(
+            tag_of(&again, "J1"),
+            "Trunk sewer",
+            "lost in the round trip"
+        );
+
+        // Cleared by removing the line, and the emptied section with it:
+        // a heading with nothing under it is one the imported file did
+        // not have.
+        let mut net = again;
+        set_tag(&mut net, "J1", "").expect("clear");
+        assert_eq!(tag_of(&net, "J1"), "");
+        assert!(
+            !net.display
+                .iter()
+                .any(|s| s.header.eq_ignore_ascii_case("[TAGS]")),
+            "an emptied section stayed behind"
+        );
+    }
+
+    #[test]
+    fn a_tag_takes_the_object_word_of_what_it_names() {
+        let mut net = model();
+        set_tag(&mut net, "C1", "Culvert").expect("tag");
+        let line = net
+            .display
+            .iter()
+            .find(|s| s.header.eq_ignore_ascii_case("[TAGS]"))
+            .and_then(|s| s.lines.first())
+            .expect("a tag line");
+        // The section's grammar, not a guess: a link tagged as a node is
+        // a line the predecessor reads as naming a node that is missing.
+        assert_eq!(line, "Link C1 Culvert");
+        assert!(set_tag(&mut net, "NOPE", "x").is_err());
     }
 
     #[test]

@@ -36,6 +36,18 @@ use hydra::uds::model::{
 /// reason not to.
 const DEFAULT_ROUGHNESS: f64 = 0.013;
 
+/// The bore a new conduit gets, in metres: 300 mm, the smallest pipe
+/// most standards allow in a public sewer and the size a modeller is
+/// least surprised to have to change.
+///
+/// A default rather than something the caller supplies, because a
+/// cross-section is more than a bore — a shape, a barrel count, a
+/// culvert code — and none of the rest is editable anywhere yet. Asking
+/// for one number of it at creation while the others stay out of reach
+/// answers a fraction of the question and makes the fraction look like
+/// the whole.
+const DEFAULT_DIAMETER_M: f64 = 0.3;
+
 /// Whether a name is already taken.
 ///
 /// Vertices, links and parcels share one namespace here, as they do for
@@ -142,7 +154,8 @@ pub(crate) fn create_uds_link(
     from_id: &str,
     to_id: &str,
     length: f64,
-    diameter: f64,
+    // Metres; `None` takes `DEFAULT_DIAMETER_M`.
+    diameter: Option<f64>,
 ) -> Result<(), String> {
     if taken(net, id) {
         return Err(format!("ID '{id}' is already in use"));
@@ -164,6 +177,7 @@ pub(crate) fn create_uds_link(
     if !(length.is_finite() && length > 0.0) {
         return Err("a conduit needs a positive length".into());
     }
+    let diameter = diameter.unwrap_or(DEFAULT_DIAMETER_M);
     if !(diameter.is_finite() && diameter > 0.0) {
         return Err("a conduit needs a positive diameter".into());
     }
@@ -243,7 +257,8 @@ O1 100 0
         let mut net = model();
         create_uds_vertex(&mut net, "junction", "J2", 50.0, 25.0, 95.0).expect("junction");
         create_uds_vertex(&mut net, "outfall", "O2", 200.0, 0.0, 80.0).expect("outfall");
-        create_uds_link(&mut net, "conduit", "C2", "J1", "J2", 55.9, 0.4572).expect("conduit");
+        create_uds_link(&mut net, "conduit", "C2", "J1", "J2", 55.9, Some(0.4572))
+            .expect("conduit");
 
         let written = write_inp(&net).expect("write");
         let (again, diags) = parse_network(&written);
@@ -285,7 +300,8 @@ O1 100 0
     #[test]
     fn a_diameter_is_written_in_the_files_own_units() {
         let mut us = model();
-        create_uds_link(&mut us, "conduit", "C2", "J1", "O1", 100.0, 0.4572).expect("conduit");
+        create_uds_link(&mut us, "conduit", "C2", "J1", "O1", 100.0, Some(0.4572))
+            .expect("conduit");
         let xs = us.links.last().unwrap().cross_section.as_ref().unwrap();
         assert!(
             (xs.geom_user[0] - 1.5).abs() < 1e-9,
@@ -294,7 +310,8 @@ O1 100 0
         );
 
         let (mut si, _) = parse_network(&MODEL.replace("FLOW_UNITS CFS", "FLOW_UNITS CMS"));
-        create_uds_link(&mut si, "conduit", "C2", "J1", "O1", 100.0, 0.4572).expect("conduit");
+        create_uds_link(&mut si, "conduit", "C2", "J1", "O1", 100.0, Some(0.4572))
+            .expect("conduit");
         let xs = si.links.last().unwrap().cross_section.as_ref().unwrap();
         assert!(
             (xs.geom_user[0] - 0.4572).abs() < 1e-12,
@@ -341,17 +358,36 @@ O1 100 0
             ("outlet", "rating"),
             ("weir", "discharge coefficient"),
         ] {
-            let err = create_uds_link(&mut net, kind, "X", "J1", "O1", 10.0, 0.3)
+            let err = create_uds_link(&mut net, kind, "X", "J1", "O1", 10.0, Some(0.3))
                 .expect_err("should refuse");
             assert!(err.contains(expect), "unhelpful for {kind}: {err}");
         }
     }
 
+    /// A conduit added from a table names its two ends and nothing about
+    /// its bore, because a bore is one number out of a cross-section and
+    /// the rest is not editable anywhere yet. The engine supplies one
+    /// rather than refusing — and supplies it in the file's own units,
+    /// like any other geometry parameter.
+    #[test]
+    fn a_conduit_with_nothing_said_about_its_size_gets_the_default_bore() {
+        let mut net = model();
+        create_uds_link(&mut net, "conduit", "C2", "J1", "O1", 100.0, None).expect("conduit");
+        let xs = net.links.last().unwrap().cross_section.as_ref().unwrap();
+        // A CFS file, so 300 mm is 0.984 ft on the page.
+        let per_unit = net.options.flow_units.m_per_length_unit();
+        assert!(
+            (xs.geom_user[0] - DEFAULT_DIAMETER_M / per_unit).abs() < 1e-12,
+            "got {}",
+            xs.geom_user[0]
+        );
+    }
+
     #[test]
     fn a_link_needs_two_different_ends_that_exist() {
         let mut net = model();
-        assert!(create_uds_link(&mut net, "conduit", "C2", "J1", "J1", 10.0, 0.3).is_err());
-        assert!(create_uds_link(&mut net, "conduit", "C2", "J1", "NOPE", 10.0, 0.3).is_err());
+        assert!(create_uds_link(&mut net, "conduit", "C2", "J1", "J1", 10.0, Some(0.3)).is_err());
+        assert!(create_uds_link(&mut net, "conduit", "C2", "J1", "NOPE", 10.0, Some(0.3)).is_err());
         assert_eq!(net.links.len(), 1, "a refused create still added one");
     }
 
@@ -362,7 +398,16 @@ O1 100 0
         let mut net = model();
         for (length, diameter) in [(0.0, 0.3), (10.0, 0.0), (f64::NAN, 0.3), (10.0, f64::NAN)] {
             assert!(
-                create_uds_link(&mut net, "conduit", "C2", "J1", "O1", length, diameter).is_err(),
+                create_uds_link(
+                    &mut net,
+                    "conduit",
+                    "C2",
+                    "J1",
+                    "O1",
+                    length,
+                    Some(diameter)
+                )
+                .is_err(),
                 "accepted length {length} diameter {diameter}",
             );
         }

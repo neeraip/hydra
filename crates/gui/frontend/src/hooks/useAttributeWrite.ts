@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useAppState } from "../AppContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
-import { setElementAttribute } from "./network";
+import { setElementAttribute, setElementEnds } from "./network";
 import { saveProjectOnDisk } from "./projects";
 import { pushUndoEntry, stackKey } from "./undoStack";
 
@@ -66,6 +66,62 @@ export function useElementAttributeWrite(): (
             ops: [{ op: "set", id: elementId, key, value: previous }],
           },
           redo: { ops: [{ op: "set", id: elementId, key, value }] },
+        });
+      }
+      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      markEdited(activeProjectId, activeScenarioId);
+    },
+    [activeProjectId, activeScenarioId, markEdited, showToast],
+  );
+}
+
+/**
+ * The same flow for a line's two ends (hydra-common §4.5.2.1).
+ *
+ * A reconnection is not an attribute write — it goes through its own
+ * command, and there is no schema key to address — but everything around
+ * it is identical: persist, mark the results stale, capture the inverse.
+ * Written as a second hook rather than a branch inside the first so
+ * neither has to ask which of the two it is doing.
+ *
+ * `previous` is the pair the row was showing. Both ends travel together,
+ * so the inverse is that pair and nothing has to be read back.
+ */
+export function useElementEndsWrite(): (
+  elementId: string,
+  fromId: string,
+  toId: string,
+  previous?: readonly [string, string],
+) => Promise<void> {
+  const { activeProjectId, activeScenarioId, showToast } = useAppState();
+  const { markEdited } = useNetworkVersion();
+
+  return useCallback(
+    async (elementId, fromId, toId, previous) => {
+      if (!activeProjectId) return;
+      try {
+        await setElementEnds(activeProjectId, elementId, fromId, toId);
+      } catch (err) {
+        showToast(
+          typeof err === "string" ? err : `Could not reconnect ${elementId}`,
+          "error",
+        );
+        throw err;
+      }
+      if (previous) {
+        pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
+          label: `Reconnected ${elementId}`,
+          undo: {
+            ops: [
+              {
+                op: "reconnect",
+                id: elementId,
+                fromId: previous[0],
+                toId: previous[1],
+              },
+            ],
+          },
+          redo: { ops: [{ op: "reconnect", id: elementId, fromId, toId }] },
         });
       }
       await saveProjectOnDisk(activeProjectId, activeScenarioId);

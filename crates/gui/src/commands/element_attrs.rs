@@ -156,15 +156,9 @@ pub fn set_element_attribute(
     validate_target_ids(&project_id, None)?;
     let app_data = app_data_dir(&app)?;
     match project_engine_key(&app_data, &project_id).as_str() {
-        "uds" => {
-            let number = value
-                .as_f64()
-                .filter(|v| v.is_finite())
-                .ok_or_else(|| format!("'{key}' takes a number"))?;
-            super::mutations::mutate_uds(&app, &state, |network| {
-                super::uds_attrs::set_attribute(network, &element_id, &key, number)
-            })
-        }
+        "uds" => super::mutations::mutate_uds(&app, &state, |network| {
+            super::uds_attrs::set_attribute(network, &element_id, &key, &value)
+        }),
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             super::wds_attrs::set_attribute(network, &element_id, &key, &value)
         }),

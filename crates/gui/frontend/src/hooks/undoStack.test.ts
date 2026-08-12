@@ -366,6 +366,21 @@ describe("inverseOp", () => {
     ).toBeNull();
   });
 
+  it("puts both ends back where they were", () => {
+    // Both, not just the one that changed: the pair is the whole of what
+    // a reconnection replaced, so restoring one end would leave the line
+    // half undone and pointing somewhere nobody chose.
+    expect(
+      inverseOp(
+        { op: "reconnect", id: "C1", fromId: "J2", toId: "O1" },
+        { fromId: "J1", toId: "O1" },
+      ),
+    ).toEqual({ op: "reconnect", id: "C1", fromId: "J1", toId: "O1" });
+    expect(
+      inverseOp({ op: "reconnect", id: "C1", fromId: "J2", toId: "O1" }),
+    ).toBeNull();
+  });
+
   it("inverts a rename by renaming back", () => {
     expect(
       inverseOp({ op: "rename", kind: "junction", from: "J1", to: "J2" }),

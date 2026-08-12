@@ -1361,6 +1361,31 @@ export async function setElementAttribute(
 }
 
 /**
+ * Point one line at two other elements (hydra-common §4.5.2.1).
+ *
+ * Both ends every time, even to change one: it makes the operation
+ * idempotent, makes its inverse the pair that was there before — which
+ * is what undo needs — and puts the "must differ" check on the values
+ * actually being stored.
+ *
+ * Throws what the engine refused, so a caller can restore what the cell
+ * was showing.
+ */
+export async function setElementEnds(
+  projectId: string,
+  elementId: string,
+  fromId: string,
+  toId: string,
+): Promise<void> {
+  await invoke<void>("set_element_ends", {
+    projectId,
+    elementId,
+    fromId,
+    toId,
+  });
+}
+
+/**
  * Engine-described attribute rows for one element, from whichever engine
  * holds the model.
  *
@@ -1473,11 +1498,14 @@ export interface KindColumn {
    * for a valve type, a yes/no for a check valve and a number for a
    * diameter, without naming any of them. */
   kind: OptionKind;
-  /** The kind id whose elements this column may name, for a column that
-   * is a reference. Absent for ordinary text — and also for a reference
-   * whose target may be more than one kind, which the field cannot
-   * describe. */
-  references?: string;
+  /** The kind ids whose elements this column may name (hydra-common
+   * §4.5.1.1). Absent or empty for ordinary text.
+   *
+   * A list because a reference is not always to one kind: a drainage
+   * subcatchment discharges to a conveyance node or to another
+   * subcatchment. Every kind it may name is here, because a list that
+   * looks complete is read as complete. */
+  references?: string[];
   /** Present for numeric columns; values are SI and convert through it. */
   quantity?: ElementAttributeQuantity;
   /** Number, string, or null where the element lacks the attribute. */
@@ -1501,12 +1529,23 @@ export interface KindElements {
    * in no attribute schema.
    */
   positions: Array<[number, number] | null>;
+  /**
+   * Each element's two ends, first then second (hydra-common §4.5.2.1).
+   * Parallel to `ids`, and empty for any class but `polyline`.
+   *
+   * Not a column, for the same reason a position is not one: an end is
+   * implied by the element's class rather than declared by a schema —
+   * which is what stops an engine publishing a line an application must
+   * draw and cannot reconnect.
+   */
+  ends: Array<[string, string]>;
 }
 
 const EMPTY_KIND_ELEMENTS: KindElements = {
   ids: [],
   columns: [],
   positions: [],
+  ends: [],
 };
 
 export async function getKindElements(

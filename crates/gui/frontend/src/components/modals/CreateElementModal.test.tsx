@@ -63,10 +63,12 @@ const SCHEMA: Record<string, unknown[]> = {
     },
   ],
   tank: [{ key: "diameter", label: "Diameter", editable: true, kind: NUMBER }],
+  pipe: [{ key: "length", label: "Length", editable: true, kind: NUMBER }],
 };
 
 vi.mock("../../AppContext", () => ({
   useActiveProject: () => ({ project: { id: "p1", engine: "wds" } }),
+  useAppState: () => ({ activeScenarioId: null }),
 }));
 // Partial: `EditableNumber` reaches through the same barrel for the
 // format/parse pair, and mocking those would be mocking the thing under
@@ -76,6 +78,7 @@ vi.mock("../../hooks", async (importOriginal) => ({
   createElement: vi.fn(() => Promise.resolve()),
   useElementKinds: () => KINDS,
   useElementAttributes: (_engine: string, kind: string) => SCHEMA[kind] ?? [],
+  useReferenceIds: () => ({ junction: ["J1", "J2"], tank: ["T1"] }),
 }));
 vi.mock("../../units", () => ({ useUnitSystem: () => "si" }));
 
@@ -94,8 +97,8 @@ describe("CreateElementModal", () => {
     expect(screen.getByRole("button", { name: "Tank" })).toBeDefined();
     // Not creatable, and not a class a position places.
     expect(screen.queryByRole("button", { name: "Curve" })).toBeNull();
-    // A polyline is drawn between two elements, which is a gesture the
-    // map has and this dialog does not.
+    // A polyline is a different class and is added by naming its two
+    // ends; this dialog is showing the point kinds.
     expect(screen.queryByRole("button", { name: "Pipe" })).toBeNull();
   });
 
@@ -123,5 +126,59 @@ describe("CreateElementModal", () => {
   it("does not ask again when a click already answered", () => {
     render(<CreateElementModal {...props} position={[5, 6]} />);
     expect(screen.queryByLabelText("X")).toBeNull();
+  });
+
+  it("asks for the two ends when adding a link", () => {
+    // The reason a link can be added from a table at all: the ends are
+    // named rather than drawn, with the model's own ids offered.
+    render(<CreateElementModal {...props} klass="polyline" />);
+    // One creatable polyline in this catalog, so it is stated rather
+    // than offered as a row of one button.
+    expect(screen.getByText("Pipe")).toBeDefined();
+    expect(screen.getByLabelText("From")).toBeDefined();
+    expect(screen.getByLabelText("To")).toBeDefined();
+    // One list per end, each offering every point in the model whatever
+    // kind it is — a pipe may run to a tank as readily as to a junction.
+    const lists = [...document.querySelectorAll("datalist")];
+    expect(lists).toHaveLength(2);
+    for (const list of lists) {
+      const options = [...list.querySelectorAll("option")].map((o) =>
+        o.getAttribute("value"),
+      );
+      expect(options).toEqual(["J1", "J2", "T1"]);
+    }
+    // A link is placed by its ends, not by a coordinate.
+    expect(screen.queryByLabelText("X")).toBeNull();
+  });
+
+  it("starts a drawn link's length at the distance drawn", () => {
+    // The one number the gesture itself measured. Losing it when the
+    // link modal became the shared dialog would have made every pipe
+    // drawn on the map start at zero length.
+    render(
+      <CreateElementModal
+        {...props}
+        klass="polyline"
+        fromNodeId="J1"
+        toNodeId="J2"
+        spanLength={42.5}
+      />,
+    );
+    expect(screen.getByLabelText("Length")).toHaveProperty("value", "42.5");
+  });
+
+  it("does not let a drawn line's ends be changed", () => {
+    // The line on screen has answered this; an editable field would
+    // invite disagreeing with it.
+    render(
+      <CreateElementModal
+        {...props}
+        klass="polyline"
+        fromNodeId="J1"
+        toNodeId="J2"
+      />,
+    );
+    expect(screen.getByLabelText("From")).toHaveProperty("readOnly", true);
+    expect(screen.getByLabelText("From")).toHaveProperty("value", "J1");
   });
 });

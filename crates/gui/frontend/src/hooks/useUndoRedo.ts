@@ -27,6 +27,7 @@ import {
   patchNodePosition,
   renameElement,
   setElementAttribute,
+  setElementEnds,
 } from "./network";
 import { saveProjectOnDisk } from "./projects";
 import {
@@ -161,6 +162,8 @@ async function applyOp(op: ElementOp, projectId: string): Promise<void> {
       return setElementAttribute(projectId, op.id, op.key, op.value);
     case "rename":
       return renameElement(op.kind, op.from, op.to);
+    case "reconnect":
+      return setElementEnds(projectId, op.id, op.fromId, op.toId);
     case "create":
       return createElement(projectId, op.element);
     case "remove":

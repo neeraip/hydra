@@ -14,15 +14,17 @@
 // catalog said yes, while the dialog behind it only existed for one
 // engine.
 
-import { useEffect, useMemo, useState } from "react";
-import { useActiveProject } from "../../AppContext";
+import { useEffect, useId, useMemo, useState } from "react";
+import { useActiveProject, useAppState } from "../../AppContext";
 import type { CreateNodeModalProps } from "../../engine/registry";
 import {
   createElement,
   useElementAttributes,
   useElementKinds,
+  useReferenceIds,
 } from "../../hooks";
 import { useUnitSystem } from "../../units";
+import { offerDatalist } from "../panels/editorTable";
 import {
   CreateElementDialog,
   type CreateKind,
@@ -33,27 +35,41 @@ export function CreateElementModal({
   open,
   suggestId,
   position,
+  klass = "point",
+  fromNodeId,
+  toNodeId,
+  spanLength,
   onCreated,
   onCancel,
 }: CreateNodeModalProps) {
   const { project } = useActiveProject();
+  const { activeScenarioId: scenarioId } = useAppState();
   const projectId = project?.id ?? "";
   const engine = project?.engine;
   const sys = useUnitSystem();
 
-  // The kinds this dialog offers: creatable, and of a class a position
-  // places. A polyline is drawn between two elements, which is a gesture
-  // the map has and this dialog does not.
+  // The creatable kinds of the class being added. A point or a region
+  // is placed by a position; a polyline by naming its two ends.
   const catalog = useElementKinds(engine);
   const kinds: CreateKind[] = useMemo(
     () =>
       catalog
-        .filter(
-          (k) => k.creatable && (k.class === "point" || k.class === "region"),
-        )
+        .filter((k) => k.creatable && k.class === klass)
         .map((k) => ({ value: k.id, label: k.label })),
-    [catalog],
+    [catalog, klass],
   );
+
+  // The ids a polyline may name: every point the model has, whatever
+  // kind of point. Fetched only for that case.
+  const pointKinds = useMemo(
+    () =>
+      klass === "polyline"
+        ? catalog.filter((k) => k.class === "point").map((k) => k.id)
+        : [],
+    [catalog, klass],
+  );
+  const endIds = useReferenceIds(project?.id, scenarioId, pointKinds);
+  const allEnds = useMemo(() => Object.values(endIds).flat().sort(), [endIds]);
 
   const [kind, setKind] = useState("");
   const [id, setId] = useState("");
@@ -65,6 +81,22 @@ export function CreateElementModal({
   // than defaulted to the origin, which is a real place and would be a
   // lie about where the element is.
   const [typedAt, setTypedAt] = useState<[number, number]>([0, 0]);
+  // The ends, when the caller could not name them — an add from the
+  // table has no drawn line behind it.
+  const [typedFrom, setTypedFrom] = useState("");
+  const [typedTo, setTypedTo] = useState("");
+
+  // What a field starts at before anyone types in it. Only one has an
+  // answer: a link drawn across a known distance starts its length
+  // there, which is the one number the gesture itself measured. Not
+  // stored into `values` — a seed that lived in state would have to be
+  // re-seeded on every kind change, and would be indistinguishable from
+  // a number the user typed.
+  const seeded = useMemo<Record<string, number>>(() => {
+    const at: Record<string, number> = {};
+    if (spanLength != null) at.length = spanLength;
+    return at;
+  }, [spanLength]);
 
   const schema = useElementAttributes(engine, kind);
   // Only the numbers. A new element's references and choices keep the
@@ -88,7 +120,9 @@ export function CreateElementModal({
     setEdited(false);
     setValues({});
     setTypedAt([0, 0]);
-  }, [open, first, suggestId]);
+    setTypedFrom(fromNodeId ?? "");
+    setTypedTo(toNodeId ?? "");
+  }, [open, first, suggestId, fromNodeId, toNodeId]);
 
   return (
     <CreateElementDialog
@@ -116,8 +150,10 @@ export function CreateElementModal({
         await createElement(projectId, {
           kind,
           id: name,
-          position: position ?? typedAt,
-          fields: values,
+          ...(klass === "polyline"
+            ? { fromId: typedFrom.trim(), toId: typedTo.trim() }
+            : { position: position ?? typedAt }),
+          fields: { ...seeded, ...values },
         });
         onCreated(kind, name);
       }}
@@ -127,18 +163,36 @@ export function CreateElementModal({
         <CreateNumberField
           key={a.key}
           label={a.label}
-          value={values[a.key] ?? 0}
+          value={values[a.key] ?? seeded[a.key] ?? 0}
           quantity={a.quantity}
           sys={sys}
           onCommit={(v) => setValues((prev) => ({ ...prev, [a.key]: v }))}
         />
       ))}
+      {klass === "polyline" && (
+        <>
+          <ReferenceField
+            label="From"
+            value={typedFrom}
+            options={allEnds}
+            readOnly={fromNodeId != null}
+            onChange={setTypedFrom}
+          />
+          <ReferenceField
+            label="To"
+            value={typedTo}
+            options={allEnds}
+            readOnly={toNodeId != null}
+            onChange={setTypedTo}
+          />
+        </>
+      )}
       {/* Only when the caller could not say: a click on the map already
           answered this, and asking again would invite disagreeing with
           it. The numbers are the model's own coordinate system, which is
           why they carry no quantity — a model may be a map or a drawing
           and this dialog cannot tell. */}
-      {!position && (
+      {klass !== "polyline" && !position && (
         <>
           <CreateNumberField
             label="X"
@@ -155,5 +209,66 @@ export function CreateElementModal({
         </>
       )}
     </CreateElementDialog>
+  );
+}
+
+/**
+ * An end of a link: typed, with the model's own ids offered.
+ *
+ * Read-only when the caller already named it — a line drawn between two
+ * elements on the map has answered this, and a field that let it be
+ * changed would invite disagreeing with the line on screen.
+ */
+function ReferenceField({
+  label,
+  value,
+  options,
+  readOnly,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  readOnly?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const listId = useId();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-tertiary)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+        }}
+      >
+        {label}
+      </span>
+      {offerDatalist(options.length) && (
+        <datalist id={listId}>
+          {options.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      )}
+      <input
+        aria-label={label}
+        value={value}
+        readOnly={readOnly}
+        list={offerDatalist(options.length) ? listId : undefined}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          background: readOnly ? "transparent" : "var(--bg-input)",
+          border: `1px solid ${readOnly ? "transparent" : "var(--border)"}`,
+          borderRadius: 6,
+          padding: "6px 10px",
+          color: "var(--text-primary)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--text-md)",
+          outline: "none",
+        }}
+      />
+    </div>
   );
 }

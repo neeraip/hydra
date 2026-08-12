@@ -132,7 +132,10 @@ pub fn create_element(
                     from,
                     to,
                     length_of(&element)?,
-                    diameter_of(&element)?,
+                    // Optional: a cross-section is more than a bore, and
+                    // the engine's default is the honest answer until
+                    // the rest of one can be edited too.
+                    optional(&element, "diameter"),
                 )?,
             }
             let consumed: &[&str] = match &where_ {
@@ -140,11 +143,7 @@ pub fn create_element(
                 Placement::Between(_, _) => &["length", "diameter"],
             };
             apply_fields(&element, consumed, |key, value| {
-                let number = value
-                    .as_f64()
-                    .filter(|v| v.is_finite())
-                    .ok_or_else(|| format!("'{key}' takes a number"))?;
-                super::uds_attrs::set_attribute(&mut draft, &id, key, number)
+                super::uds_attrs::set_attribute(&mut draft, &id, key, value)
             })?;
             *network = draft;
             Ok(())
@@ -217,10 +216,13 @@ fn length_of(element: &NewElement) -> Result<f64, String> {
     required(element, "length")
 }
 
-/// A drainage conduit's diameter, which reaches the cross-section rather
-/// than any attribute the schema publishes.
-fn diameter_of(element: &NewElement) -> Result<f64, String> {
-    required(element, "diameter")
+/// A supplied value the engine may default, or `None`.
+fn optional(element: &NewElement, key: &str) -> Option<f64> {
+    element
+        .fields
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)
 }
 
 fn required(element: &NewElement, key: &str) -> Result<f64, String> {
@@ -307,8 +309,7 @@ mod tests {
             .fields
             .insert("invert".into(), serde_json::json!(87.5));
         apply_fields(&element, &[], |key, value| {
-            let n = value.as_f64().expect("a number");
-            super::super::uds_attrs::set_attribute(&mut net, "J2", key, n)
+            super::super::uds_attrs::set_attribute(&mut net, "J2", key, value)
         })
         .expect("fields");
 
@@ -336,8 +337,7 @@ mod tests {
             .fields
             .insert("shape".into(), serde_json::json!(1.0));
         let err = apply_fields(&element, &[], |key, value| {
-            let n = value.as_f64().expect("a number");
-            super::super::uds_attrs::set_attribute(&mut net, "J2", key, n)
+            super::super::uds_attrs::set_attribute(&mut net, "J2", key, value)
         })
         .expect_err("a junction has no shape");
         assert!(err.contains("shape"), "unhelpful: {err}");
@@ -370,11 +370,19 @@ mod tests {
         element
             .fields
             .insert("length".into(), serde_json::json!(50.0));
-        assert!(diameter_of(&element).is_err());
+        // A diameter, unlike a length, is not asked of the caller: a
+        // cross-section is more than a bore, so the engine's own default
+        // stands until the whole of one can be edited. Absent and zero
+        // both mean "nothing was said" here, and the engine decides.
+        assert_eq!(optional(&element, "diameter"), None);
         element
             .fields
             .insert("diameter".into(), serde_json::json!(0.0));
-        assert!(diameter_of(&element).is_err(), "zero is not a diameter");
+        assert_eq!(optional(&element, "diameter"), None, "zero is not a size");
+        element
+            .fields
+            .insert("diameter".into(), serde_json::json!(0.45));
+        assert_eq!(optional(&element, "diameter"), Some(0.45));
     }
 
     /// The whole create, as the dialog sends it — which is the only way
@@ -408,12 +416,11 @@ mod tests {
             from,
             to,
             length_of(&element).expect("a length"),
-            diameter_of(&element).expect("a diameter"),
+            optional(&element, "diameter"),
         )
         .expect("create");
         apply_fields(&element, &["length", "diameter"], |key, value| {
-            let n = value.as_f64().expect("a number");
-            super::super::uds_attrs::set_attribute(&mut net, &element.id, key, n)
+            super::super::uds_attrs::set_attribute(&mut net, &element.id, key, value)
         })
         .expect("the fields the constructor already consumed must not be rewritten");
 

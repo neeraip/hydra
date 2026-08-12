@@ -43,7 +43,6 @@ import type {
 } from "../../canvas/types";
 import type { Criterion, Valuation } from "../../components/analysis/criteria";
 import { toDisplayValue } from "../../components/analysis/criteria";
-import { CreateLinkModal } from "../../components/modals/CreateLinkModal";
 import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import {
   LinkInspector,
@@ -52,7 +51,6 @@ import {
 } from "../../components/panels/ElementInspector";
 import { engineComponents } from "../../engine/registry";
 import {
-  createLink,
   deleteElement,
   type GenericPeriodValues,
   type GenericQuantity,
@@ -369,7 +367,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     undoableRemoval,
     animatedVariables,
     CreateNodeModal: EngineCreateNode,
-    CreateLinkModal: EngineCreateLink,
   } = engineComponents(engine?.key);
   /** Every animated id, both classes — what the legend's one toggle
    * governs and what its sentence is built from. */
@@ -2259,30 +2256,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     [],
   );
 
-  const handleConfirmCreateLink = useCallback(
-    async (kind: string, id: string) => {
-      if (!pendingCreateLink || !project) return;
-      const { fromId, toId } = pendingCreateLink;
-      // Throws on backend error — the modal catches and stays open with the error message.
-      await createLink(kind, id, fromId, toId);
-      // Only runs on success:
-      setPendingCreateLink(null);
-      pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
-        label: `Added ${id}`,
-        undo: { deletes: [{ kind, id }] },
-        redo: {
-          recreates: [
-            { elementType: "link", kind, id, fromId, toId, patches: [] },
-          ],
-        },
-      });
-      await saveProjectOnDisk(project.id, activeScenarioId);
-      markEdited(project.id, activeScenarioId);
-      // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
-    },
-    [pendingCreateLink, project, activeScenarioId, markEdited],
-  );
-
   // What follows any create the engine's own modal performed: the model
   // has the element, and the page has to persist it, mark the results
   // stale, and put the selection on the thing that was just made.
@@ -2328,7 +2301,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // and the distance between them is metres by construction. A plan
   // model's coordinates are in whatever unit its file declares, and
   // guessing that here would put a length out by a factor of three on
-  // every US-unit model. Null means the field starts empty and the
+  // every US-unit model. Null means the field starts at zero and the
   // modeller types it, which is the honest answer.
   const pendingCreateSpanM = useMemo(() => {
     if (!pendingCreateLink || !geographic) return null;
@@ -2867,23 +2840,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           onCancel={() => setPendingCreateNode(null)}
         />
       )}
-      {EngineCreateLink ? (
-        <EngineCreateLink
+      {/* The same dialog the table opens, with the drawn line's two ends
+          filled in and not editable — the line on screen has answered
+          that, and a field that let it be changed would invite
+          disagreeing with it. */}
+      {EngineCreateNode && (
+        <EngineCreateNode
           open={!!pendingCreateLink}
           suggestId={suggestLinkId}
-          fromNodeId={pendingCreateLink?.fromId ?? ""}
-          toNodeId={pendingCreateLink?.toId ?? ""}
+          position={null}
+          klass="polyline"
+          fromNodeId={pendingCreateLink?.fromId}
+          toNodeId={pendingCreateLink?.toId}
           spanLength={pendingCreateSpanM}
           onCreated={handleEngineCreated}
-          onCancel={() => setPendingCreateLink(null)}
-        />
-      ) : (
-        <CreateLinkModal
-          open={!!pendingCreateLink}
-          suggestId={suggestLinkId}
-          fromNodeId={pendingCreateLink?.fromId ?? ""}
-          toNodeId={pendingCreateLink?.toId ?? ""}
-          onConfirm={handleConfirmCreateLink}
           onCancel={() => setPendingCreateLink(null)}
         />
       )}

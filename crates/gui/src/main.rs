@@ -133,6 +133,7 @@ fn main() {
             commands::create_node,
             commands::create_link,
             commands::create_element,
+            commands::set_element_ends,
             commands::create_curve,
             commands::update_curve_points,
             commands::delete_curve,

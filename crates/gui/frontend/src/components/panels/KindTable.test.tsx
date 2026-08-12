@@ -29,6 +29,7 @@ const junctions: KindElements = {
     },
   ],
   positions: [],
+  ends: [],
 } as KindElements;
 
 const conduits: KindElements = {
@@ -43,6 +44,7 @@ const conduits: KindElements = {
     },
   ],
   positions: [],
+  ends: [],
 } as KindElements;
 
 describe("KindTable", () => {
@@ -117,7 +119,9 @@ describe("KindTable", () => {
   it("says so when a kind has no elements", () => {
     render(
       <KindTable
-        elements={{ ids: [], columns: [], positions: [] } as KindElements}
+        elements={
+          { ids: [], columns: [], positions: [], ends: [] } as KindElements
+        }
       />,
     );
     expect(screen.getByText("No elements of this kind.")).toBeDefined();
@@ -255,6 +259,7 @@ describe("KindTable editing", () => {
       },
     ],
     positions: [],
+    ends: [],
   } as KindElements;
 
   it("offers an input only where the column says it may be written", () => {
@@ -325,6 +330,7 @@ describe("KindTable editing", () => {
         },
       ],
       positions: [],
+      ends: [],
     } as KindElements;
     render(<KindTable elements={sparse} onEdit={() => {}} />);
     expect(screen.queryByLabelText("J1 Initial depth")).toBeNull();
@@ -352,6 +358,7 @@ describe("KindTable virtualisation", () => {
       },
     ],
     positions: [],
+    ends: [],
   } as KindElements;
 
   it("mounts a windowful of rows, not the whole model", () => {
@@ -423,6 +430,103 @@ describe("KindTable virtualisation", () => {
  * and Y columns all along, because that engine happens to store them as
  * fields.
  */
+/**
+ * The other half of "where is this element" — a line is not at a place,
+ * it runs between two, and until these columns existed a link could be
+ * created and deleted from this table but never reconnected.
+ */
+describe("KindTable ends", () => {
+  const conduits: KindElements = {
+    ids: ["C1", "C2"],
+    columns: [
+      {
+        key: "length",
+        label: "Length",
+        editable: false,
+        kind: NUMBER,
+        values: [400, 250],
+      },
+    ],
+    positions: [],
+    ends: [
+      ["J1", "O1"],
+      ["J2", "J1"],
+    ],
+  } as KindElements;
+
+  it("shows a column per end, in the order that is the sign convention", () => {
+    const { container } = render(<KindTable elements={conduits} />);
+    const headers = [...container.querySelectorAll("th")].map((h) =>
+      (h.textContent ?? "").trim(),
+    );
+    // After the id and before the schema's own columns, and never the
+    // other way round: swapping them reverses the element.
+    expect(headers.slice(0, 4)).toEqual(["ID", "From", "To", "Length"]);
+  });
+
+  it("shows no such columns for a kind that is not a line", () => {
+    const { container } = render(<KindTable elements={junctions} />);
+    const headers = [...container.querySelectorAll("th")].map((h) =>
+      (h.textContent ?? "").trim(),
+    );
+    expect(headers.includes("From")).toBe(false);
+  });
+
+  it("sends both ends when one changes, keeping the other", () => {
+    // The defect this shape prevents: a cell that sent only its own end
+    // would leave the engine guessing at the other, and the "must
+    // differ" check with only one value to check.
+    const onReconnect = vi.fn();
+    render(<KindTable elements={conduits} onReconnect={onReconnect} />);
+    const cell = screen.getByLabelText("C1 To") as HTMLInputElement;
+    fireEvent.change(cell, { target: { value: "O2" } });
+    fireEvent.blur(cell);
+    expect(onReconnect).toHaveBeenCalledWith("C1", "J1", "O2");
+  });
+
+  it("reads only when nothing is listening for a reconnection", () => {
+    render(<KindTable elements={conduits} />);
+    expect(screen.queryByLabelText("C1 From")).toBeNull();
+    // Twice: C1 starts at J1 and C2 ends there.
+    expect(screen.getAllByText("J1")).toHaveLength(2);
+  });
+
+  it("offers the ids an end may name, once for both columns", () => {
+    const { container } = render(
+      <KindTable
+        elements={conduits}
+        onReconnect={() => {}}
+        endIds={["J1", "J2", "O1"]}
+      />,
+    );
+    // One list shared by the two columns: a copy per column, per row, is
+    // what makes a datalist hang the tab at model scale.
+    const lists = [...container.querySelectorAll("datalist")];
+    expect(lists).toHaveLength(1);
+    const options = [...lists[0].querySelectorAll("option")].map((o) =>
+      o.getAttribute("value"),
+    );
+    expect(options).toEqual(["J1", "J2", "O1"]);
+    expect((screen.getByLabelText("C1 From") as HTMLInputElement).list).toBe(
+      lists[0],
+    );
+  });
+
+  it("sorts by an end column", () => {
+    const { container } = render(<KindTable elements={conduits} />);
+    const header = [...container.querySelectorAll("th")].find(
+      (h) => (h.textContent ?? "").trim() === "From",
+    );
+    if (!header) throw new Error("no From header");
+    // Ascending puts J1 first, which is the order the rows already had
+    // — so the descending click is the one that proves it sorted.
+    fireEvent.click(sortButton(header));
+    expect(container.querySelector("tbody tr td")?.textContent).toBe("C1");
+    fireEvent.click(sortButton(header));
+    expect(container.querySelector("tbody tr td")?.textContent).toBe("C2");
+  });
+});
+
 describe("KindTable positions", () => {
   const placed: KindElements = {
     ids: ["J1", "J2"],
@@ -436,6 +540,7 @@ describe("KindTable positions", () => {
       },
     ],
     positions: [[10, 20], null],
+    ends: [],
   } as KindElements;
 
   it("shows a column per axis when the kind is somewhere", () => {
@@ -554,11 +659,12 @@ describe("KindTable references", () => {
         label: "Demand pattern",
         editable: true,
         kind: { type: "text", default: null },
-        references: "pattern",
+        references: ["pattern"],
         values: ["P1"],
       },
     ],
     positions: [],
+    ends: [],
   } as KindElements;
 
   it("offers the ids of the kind the column names", () => {
@@ -588,6 +694,46 @@ describe("KindTable references", () => {
     expect(
       screen.getByLabelText("J1 Demand pattern").getAttribute("list"),
     ).toBeNull();
+  });
+
+  it("offers every kind a reference may name, as one list", () => {
+    // The §4.5.1.1 widening: a drainage subcatchment's outlet names a
+    // conveyance node *or* another subcatchment. Offering one kind
+    // would hide most of the valid answers behind a list that looks
+    // complete.
+    const outlet: KindElements = {
+      ids: ["S1"],
+      columns: [
+        {
+          key: "outlet",
+          label: "Outlet",
+          editable: true,
+          kind: { type: "text", default: null },
+          references: ["junction", "outfall", "subcatchment"],
+          values: ["J1"],
+        },
+      ],
+      positions: [],
+      ends: [],
+    } as KindElements;
+    const { container } = render(
+      <KindTable
+        elements={outlet}
+        onEdit={() => {}}
+        referenceIds={{
+          junction: ["J1", "J2"],
+          outfall: ["O1"],
+          subcatchment: ["S1", "S2"],
+        }}
+      />,
+    );
+    const lists = [...container.querySelectorAll("datalist")];
+    expect(lists).toHaveLength(1);
+    // Sorted as one set, not three lists run together: a reader looking
+    // for an id should not need to know its kind to know where to look.
+    expect(
+      [...lists[0].querySelectorAll("option")].map((o) => o.value),
+    ).toEqual(["J1", "J2", "O1", "S1", "S2"]);
   });
 
   it("drops the list rather than truncating it when it is too long", () => {

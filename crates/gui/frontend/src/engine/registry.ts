@@ -22,7 +22,6 @@ import type { GenericQuantity, Link, Node } from "../hooks";
 import { ElementsView } from "../pages/project/ElementsView";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
-import { UdsCreateLinkModal } from "./uds/CreateLinkModal";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
 import { UdsOverviewComposition } from "./uds/OverviewComposition";
@@ -90,7 +89,7 @@ export interface RegionInspectorBodyProps {
   results?: GenericElementValue[] | null;
 }
 
-/** Props of the "add node" modal. */
+/** Props of the "add element" modal. */
 export interface CreateNodeModalProps {
   open: boolean;
   /** A free identifier for the given kind. */
@@ -101,22 +100,25 @@ export interface CreateNodeModalProps {
    * modal refuses rather than storing a coordinate nobody chose.
    */
   position: [number, number] | null;
+  /**
+   * Which class of element is being added.
+   *
+   * A point or a region is placed by a position; a polyline by naming
+   * its two ends. Defaults to `point`, which is what a click on empty
+   * map means.
+   */
+  klass?: "point" | "region" | "polyline";
+  /** The ends, when a drawn line already named them. Absent and the
+   * dialog asks, which is how a link is added from a table. */
+  fromNodeId?: string;
+  toNodeId?: string;
+  /** The drawn distance between those two ends, in metres — a starting
+   * point for a length field, not an answer: a plan distance is not a
+   * pipe's length on any slope. Null when nobody drew anything, or when
+   * the model's coordinates are in a unit this side cannot read. */
+  spanLength?: number | null;
   /** Called after the element exists, so the page can save and select
    * it. Anything the create throws stays with the modal. */
-  onCreated: (kind: string, id: string) => void;
-  onCancel: () => void;
-}
-
-/** Props of the "add link" modal. */
-export interface CreateLinkModalProps {
-  open: boolean;
-  suggestId: (kind: string) => string;
-  fromNodeId: string;
-  toNodeId: string;
-  /** The drawn distance between the two ends, in metres — a starting
-   * point for a length field, not an answer: a plan distance is not a
-   * pipe's length on any slope. */
-  spanLength: number | null;
   onCreated: (kind: string, id: string) => void;
   onCancel: () => void;
 }
@@ -153,12 +155,13 @@ export interface EngineComponents {
   /** Body of the areal-element inspector. Absent = the engine has no
    * areal elements and the canvas never selects one. */
   RegionInspectorBody?: ComponentType<RegionInspectorBodyProps>;
-  /** The "add element" modals. Absent = the water-distribution ones,
-   * which is also what an engine that cannot create gets — the tools
-   * that open them are withheld by `editing.create` first, so this
-   * pair is only reached by an engine that can. */
+  /** The "add element" modal — one for every class, because a kind's
+   * class is what decides whether it is placed at a position or between
+   * two ends, and the shared dialog reads that from the catalog. Absent
+   * = the shared one, which is also what an engine that cannot create
+   * gets: the tools that open it are withheld by `editing.create`
+   * first, so it is only reached by an engine that can. */
   CreateNodeModal?: ComponentType<CreateNodeModalProps>;
-  CreateLinkModal?: ComponentType<CreateLinkModalProps>;
   /** Whether this engine's Editor view can receive and reveal a focused
    * element (the inspector's "Open in editor" affordance). False hides the
    * button instead of navigating to a view that ignores the request. */
@@ -315,7 +318,6 @@ const UDS: EngineComponents = {
   LinkInspectorBody: UdsLinkInspectorBody,
   RegionInspectorBody: UdsRegionInspectorBody,
   CreateNodeModal: CreateElementModal,
-  CreateLinkModal: UdsCreateLinkModal,
   // The drainage Editor reveals a focused element: it shows the element's
   // own kind and scrolls to its row. It could not when it was a single
   // unnavigable table, which is why this was false — being read-only was

@@ -37,7 +37,10 @@ import {
   useKindElements,
   useReferenceIds,
 } from "../../../hooks";
-import { useElementAttributeWrite } from "../../../hooks/useAttributeWrite";
+import {
+  useElementAttributeWrite,
+  useElementEndsWrite,
+} from "../../../hooks/useAttributeWrite";
 import { useElementRename } from "../../../hooks/useElementRename";
 import { deletionSummary } from "../CanvasView/deletionSummary";
 import {
@@ -167,6 +170,35 @@ export function ElementsView() {
           throw e;
         }),
     [refetch, showToast],
+  );
+
+  // Reconnecting is its own operation too, for the same reason a move
+  // is: an end is implied by the polyline class rather than declared by
+  // a schema, so it has no key an attribute write could address.
+  const writeEnds = useElementEndsWrite();
+  const onReconnect = useCallback(
+    (id: string, fromId: string, toId: string) => {
+      const previous = elements.ends[elements.ids.indexOf(id)];
+      return writeEnds(id, fromId, toId, previous).then(refetch);
+    },
+    [writeEnds, refetch, elements.ends, elements.ids],
+  );
+
+  // The ids either end may name: every point in the model, whatever kind
+  // of point. Not a §4.5.1.1 reference — an end names no single declared
+  // kind — so the list is built from the class catalog rather than from
+  // a column's `references`.
+  const pointKinds = useMemo(
+    () =>
+      activeClass === "polyline"
+        ? kinds.filter((k) => k.class === "point").map((k) => k.id)
+        : [],
+    [kinds, activeClass],
+  );
+  const endsByKind = useReferenceIds(project?.id, activeScenarioId, pointKinds);
+  const endIds = useMemo(
+    () => Object.values(endsByKind).flat().sort(),
+    [endsByKind],
   );
 
   // Memoised because the reveal action closes over it: a fresh function
@@ -320,15 +352,13 @@ export function ElementsView() {
             />
             Saved as you edit
           </span>
-          {/* Six versions of this line described what the drainage
-              editor could not do yet, and every one went stale the week
-              after it was written. So this one describes where an
-              operation lives, which does not expire: a link is drawn
-              between two elements, which is a gesture the map has and a
-              table does not. */}
-          <span style={{ color: "var(--text-tertiary)" }}>
-            Draw links on the map.
-          </span>
+          {/* Seven versions of this line described something the editor
+              could not do yet, and every one went stale the week after
+              it was written — the last of them said links were drawn on
+              the map, which stopped being true once a link could name
+              its two ends here. Nothing replaced it: the bar says how
+              edits are kept, and where an element is added is answered
+              by the Add button being there. */}
         </EditorStatusBar>
       }
     >
@@ -348,18 +378,21 @@ export function ElementsView() {
             onSelect={select}
             onEdit={onEdit}
             onMove={onMove}
+            onReconnect={onReconnect}
+            endIds={endIds}
             referenceIds={referenceIds}
             // Only where a new one can be put somewhere by typing. A
             // conduit is drawn between two nodes, which is a gesture the
             // map has and a table does not — so its table offers no add
             // rather than a dialog with two more blanks in it.
             onAdd={
-              // Three things have to be true, and the third is the one
-              // that was missing: the kind can be created, a position
-              // can place it, and there is a dialog to ask for one. The
-              // button appeared without the last of those and did
-              // nothing when pressed.
-              CreateNode && activeClass === "point" && creatableHere
+              // The kind can be created, this dialog knows how to place
+              // its class, and there is a dialog at all — the third
+              // clause is the one that was once missing, and the button
+              // did nothing when pressed.
+              CreateNode &&
+              creatableHere &&
+              (activeClass === "point" || activeClass === "polyline")
                 ? () => setAdding(true)
                 : undefined
             }
@@ -377,8 +410,10 @@ export function ElementsView() {
         <CreateNode
           open={adding}
           suggestId={suggestId}
-          // No click behind this one: the dialog asks where to put it.
+          // No gesture behind this one: the dialog asks where to put it,
+          // or which two elements to run it between.
           position={null}
+          klass={activeClass === "polyline" ? "polyline" : "point"}
           onCreated={(_kind, id) => {
             setAdding(false);
             refetch();

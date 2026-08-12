@@ -41,14 +41,26 @@ fn extract(
     net: &Network,
     element_id: &str,
 ) -> Option<(&'static str, HashMap<&'static str, AttrValue>)> {
-    if let Some(p) = net.parcels.iter().find(|p| p.id == element_id) {
-        return Some(("subcatchment", parcel_values(net, p)));
-    }
-    if let Some(v) = net.vertices.iter().find(|v| v.id == element_id) {
-        return Some(vertex_values(net, v));
-    }
-    let l = net.links.iter().find(|l| l.id == element_id)?;
-    Some(link_values(net, l))
+    let (kind, mut values) = if let Some(p) = net.parcels.iter().find(|p| p.id == element_id) {
+        ("subcatchment", parcel_values(net, p))
+    } else if let Some(v) = net.vertices.iter().find(|v| v.id == element_id) {
+        vertex_values(net, v)
+    } else {
+        link_values(net, net.links.iter().find(|l| l.id == element_id)?)
+    };
+    values.insert("tag", tag_value(net, element_id));
+    Some((kind, values))
+}
+
+/// An element's tag, empty when it has none.
+///
+/// Always a value, never absent — the one place a tag departs from every
+/// other attribute here. §4.5.1 makes a missing value mean "this element
+/// has nothing to change", and for a tag that is the wrong statement: an
+/// untagged element is one whose tag is empty, and a cell that vanished
+/// for it could never be typed into.
+fn tag_value(net: &Network, id: &str) -> AttrValue {
+    AttrValue::Text(super::uds_view::tag_of(net, id))
 }
 
 fn parcel_values(net: &Network, p: &hydra::uds::model::Parcel) -> HashMap<&'static str, AttrValue> {
@@ -233,10 +245,10 @@ pub struct KindColumnDto {
     /// `ElementAttributeDto` carries per row, and true for exactly the
     /// same (kind, key) pairs.
     pub editable: bool,
-    /// The kind whose elements this column may name (§4.5.1.1), for a
-    /// column that is a reference.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub references: Option<String>,
+    /// The kinds whose elements this column may name (§4.5.1.1), empty
+    /// for a column that is not a reference.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
     /// The value's shape and bounds (§3.2.1 vocabulary, reused by §4.4).
     ///
     /// A table that knows only "number or text" can offer a field and a
@@ -269,6 +281,14 @@ pub struct KindElementsDto {
     /// engine from publishing an element an application must draw and
     /// cannot move.
     pub positions: Vec<Option<[f64; 2]>>,
+    /// Each element's two ends, first then second (hydra-common
+    /// §4.5.2.1). Parallel to `ids`, and empty for any class but
+    /// `polyline` — only a line runs between two things.
+    ///
+    /// The order is the sign convention for what the line carries, not
+    /// an arbitrary pair, which is why it is a fixed-length array and
+    /// not a set.
+    pub ends: Vec<[String; 2]>,
 }
 
 impl KindElementsDto {
@@ -278,6 +298,7 @@ impl KindElementsDto {
             ids: Vec::new(),
             columns: Vec::new(),
             positions: Vec::new(),
+            ends: Vec::new(),
         }
     }
 }
@@ -307,9 +328,10 @@ pub struct AttributeInfoDto {
     /// The value's shape and bounds — what a form needs to know which
     /// control to draw for it, before any element exists to read.
     pub kind: hydra::common::OptionKind,
-    /// The kind whose elements this attribute may name (§4.5.1.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub references: Option<String>,
+    /// The kinds whose elements this attribute may name (§4.5.1.1),
+    /// empty for a value that is not a reference.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
 }
 
 #[tauri::command]
@@ -989,6 +1011,11 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
             rows.push((l.id.clone(), values));
         }
     }
+    // After the classification, because it is the one value every one of
+    // them carries whatever it is.
+    for (id, values) in &mut rows {
+        values.insert("tag", tag_value(net, id));
+    }
 
     let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
     let columns = hydra::uds::descriptors::attribute_schema(kind)
@@ -1017,18 +1044,16 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
             }
         })
         .collect();
-    // Only the classes that are somewhere. A drainage link's position
-    // is its two ends, which the table shows as its from/to columns
-    // rather than as a coordinate.
-    let spatial = hydra::uds::descriptors::ELEMENT_KINDS
+    let class = hydra::uds::descriptors::ELEMENT_KINDS
         .iter()
         .find(|k| k.id == kind)
-        .is_some_and(|k| {
-            matches!(
-                k.class,
-                hydra::common::ElementClass::Point | hydra::common::ElementClass::Region
-            )
-        });
+        .map(|k| k.class);
+    // Only the classes that are at a place. A link is not at one — it
+    // runs between two, which is `ends` below rather than a coordinate.
+    let spatial = matches!(
+        class,
+        Some(hydra::common::ElementClass::Point | hydra::common::ElementClass::Region)
+    );
     let positions = if spatial {
         let placed: HashMap<&str, (f64, f64)> =
             super::uds_view::parse_xy_lines(net, "[COORDINATES]")
@@ -1040,10 +1065,25 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
     } else {
         Vec::new()
     };
+    let ends = if class == Some(hydra::common::ElementClass::Polyline) {
+        net.links
+            .iter()
+            .filter(|l| link_values(net, l).0 == kind)
+            .map(|l| {
+                [
+                    net.vertices[l.from].id.clone(),
+                    net.vertices[l.to].id.clone(),
+                ]
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     KindElementsDto {
         ids,
         columns,
         positions,
+        ends,
     }
 }
 
@@ -1107,10 +1147,11 @@ mod tests {
         let (net, _diags) = hydra::uds::io::objects::parse_network(model);
 
         let rows = element_attributes(&net, "J1").expect("junction rows");
-        // Schema order: invert, maxDepth, initDepth.
+        // Schema order: the kind's own values, then the tag every
+        // element carries.
         assert_eq!(
             rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
-            vec!["Invert elevation", "Maximum depth", "Initial depth"],
+            vec!["Invert elevation", "Maximum depth", "Initial depth", "Tag"],
         );
         // CFS file: 100 ft invert → 30.48 m, served in SI with the §5
         // elevation descriptor for the frontend to convert back.
@@ -1134,6 +1175,26 @@ mod tests {
     /// The five collection kinds are declared by the engine but had no
     /// rows, so the editor hid them and a drainage model's pollutants,
     /// curves, time series, patterns and rules were unreachable in the GUI.
+    #[test]
+    fn a_line_reports_its_ends_and_a_point_reports_a_position() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0 0 0\n\
+                     [OUTFALLS]\nO1 90 FREE NO\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [COORDINATES]\nJ1 0 0\nO1 100 0\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let conduits = kind_elements(&net, "conduit");
+        assert_eq!(conduits.ids, vec!["C1"]);
+        assert_eq!(conduits.ends, vec![["J1".to_string(), "O1".to_string()]]);
+        assert!(conduits.positions.is_empty(), "a line is not at a place");
+
+        let junctions = kind_elements(&net, "junction");
+        assert!(junctions.ends.is_empty(), "a point runs between nothing");
+        assert_eq!(junctions.positions.len(), junctions.ids.len());
+    }
+
     #[test]
     fn kind_elements_lists_the_collection_kinds() {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
@@ -1355,7 +1416,7 @@ mod tests {
                 .iter()
                 .map(|c| c.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Invert elevation", "Maximum depth", "Initial depth"],
+            vec!["Invert elevation", "Maximum depth", "Initial depth", "Tag"],
         );
         // Values are columnar and parallel to ids, in SI.
         let invert = &junctions.columns[0];
@@ -1622,8 +1683,25 @@ pub(crate) fn set_attribute(
     net: &mut Network,
     element_id: &str,
     key: &str,
-    value: f64,
+    value: &serde_json::Value,
 ) -> Result<(), String> {
+    // The one key this engine writes that is not a number, and the
+    // reason this takes a JSON value at all: a tag is free text, and it
+    // is not on the element — it is a line in a section the engine
+    // preserves verbatim, like a coordinate.
+    if key == "tag" {
+        return super::uds_view::set_tag(net, element_id, value.as_str().unwrap_or(""));
+    }
+    // The other textual write: a subcatchment's outlet names an element
+    // rather than holding a number, and the model stores it as an index
+    // into one of two arrays — which of the two is what the name
+    // decides.
+    if key == "outlet" {
+        return set_parcel_outlet(net, element_id, value.as_str().unwrap_or("").trim());
+    }
+    let value = value
+        .as_f64()
+        .ok_or_else(|| format!("'{key}' takes a number"))?;
     if !value.is_finite() {
         return Err("that value is not a number".into());
     }
@@ -1720,6 +1798,46 @@ fn set_link_attribute(
         }
         _ => return Err(unwritable(key)),
     }
+    Ok(())
+}
+
+/// Point a subcatchment at where its runoff goes.
+///
+/// Either a conveyance node or another subcatchment — runoff enters the
+/// network or cascades overland — and the name says which. Refuses a
+/// subcatchment pointed at itself, which is not a short cascade but a
+/// loop the router would never leave.
+///
+/// Resolved to an index, because that is what the model holds. Nothing
+/// above this line knows that: the id is the whole of what an
+/// application says, here and in the read that served it.
+fn set_parcel_outlet(net: &mut Network, id: &str, outlet: &str) -> Result<(), String> {
+    let parcel = net
+        .parcels
+        .iter()
+        .position(|p| p.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let target = if let Some(v) = net
+        .vertices
+        .iter()
+        .position(|v| v.id.eq_ignore_ascii_case(outlet))
+    {
+        ParcelOutlet::Vertex(v)
+    } else if let Some(p) = net
+        .parcels
+        .iter()
+        .position(|p| p.id.eq_ignore_ascii_case(outlet))
+    {
+        if p == parcel {
+            return Err(format!("'{id}' cannot drain to itself"));
+        }
+        ParcelOutlet::Parcel(p)
+    } else {
+        return Err(format!(
+            "'{outlet}' is not a node or a subcatchment in this model"
+        ));
+    };
+    net.parcels[parcel].outlet = target;
     Ok(())
 }
 
@@ -1821,10 +1939,10 @@ RS1  0:00  0.4
         for kind in hydra::uds::descriptors::ELEMENT_KINDS {
             let Some(id) = sample(kind.id) else { continue };
             let kind = kind.id;
-            for key in hydra::uds::descriptors::attribute_schema(kind)
+            for (key, references) in hydra::uds::descriptors::attribute_schema(kind)
                 .iter()
                 .filter(|a| a.editable)
-                .map(|a| a.key.clone())
+                .map(|a| (a.key.clone(), a.references.clone()))
                 .collect::<Vec<_>>()
             {
                 let key = key.as_str();
@@ -1835,8 +1953,38 @@ RS1  0:00  0.4
                     .find(|r| r.key == key)
                     .unwrap_or_else(|| panic!("{kind}.{key} has no row"));
                 assert!(before.editable, "{kind}.{key} reads as not editable");
+                // A textual attribute round-trips as text, and one that
+                // names another element round-trips through a name that
+                // model actually holds — read from the kinds the
+                // descriptor declares (§4.5.1.1), so a reference the
+                // engine widens later is exercised without this loop
+                // being told about it.
+                if let Some(text) = &before.text {
+                    let value = if references.is_empty() {
+                        format!("{text}x")
+                    } else {
+                        references
+                            .iter()
+                            .flat_map(|k| kind_elements(&net, k).ids)
+                            .find(|target| target != id && Some(target) != before.text.as_ref())
+                            .unwrap_or_else(|| {
+                                panic!("{kind}.{key} references {references:?}, none in the model")
+                            })
+                    };
+                    set_attribute(&mut net, id, key, &serde_json::json!(value))
+                        .unwrap_or_else(|e| panic!("{kind}.{key}: {e}"));
+                    let got = element_attributes(&net, id)
+                        .expect("attributes")
+                        .into_iter()
+                        .find(|r| r.key == key)
+                        .and_then(|r| r.text)
+                        .unwrap_or_default();
+                    assert_eq!(got, value, "{kind}.{key} did not read back");
+                    checked += 1;
+                    continue;
+                }
                 let value = before.number.expect("a number") + 1.5;
-                set_attribute(&mut net, id, key, value)
+                set_attribute(&mut net, id, key, &serde_json::json!(value))
                     .unwrap_or_else(|e| panic!("{kind}.{key}: {e}"));
                 let got = read(&net, id, &before.label);
                 assert!(
@@ -1849,12 +1997,70 @@ RS1  0:00  0.4
         assert!(checked >= 9, "only {checked} attributes were exercised");
     }
 
+    /// The attribute §4.5.1.1 was widened for. Its target is a
+    /// conveyance node *or* another subcatchment, which no single kind
+    /// id could say — so it stayed unwritable, and re-routing a
+    /// catchment was the one topological edit no surface offered.
+    #[test]
+    fn a_subcatchment_can_be_re_routed_to_either_kind_of_outlet() {
+        let mut net = model();
+        set_attribute(&mut net, "S1", "outlet", &serde_json::json!("O1")).expect("to a node");
+        assert!(matches!(net.parcels[0].outlet, ParcelOutlet::Vertex(_)));
+        assert_eq!(
+            element_attributes(&net, "S1")
+                .expect("rows")
+                .into_iter()
+                .find(|r| r.key == "outlet")
+                .and_then(|r| r.text),
+            Some("O1".to_string())
+        );
+
+        // Overland, to another subcatchment — the half a single kind id
+        // would have had to omit.
+        let mut two = model();
+        two.parcels.push(two.parcels[0].clone());
+        two.parcels[1].id = "S2".to_string();
+        set_attribute(&mut two, "S1", "outlet", &serde_json::json!("S2")).expect("to a parcel");
+        assert!(matches!(two.parcels[0].outlet, ParcelOutlet::Parcel(1)));
+
+        // A catchment draining to itself is a loop the router never
+        // leaves, not a short cascade.
+        let err = set_attribute(&mut two, "S1", "outlet", &serde_json::json!("S1"))
+            .expect_err("self-drainage");
+        assert!(err.contains("itself"), "{err}");
+        let err = set_attribute(&mut two, "S1", "outlet", &serde_json::json!("NOPE"))
+            .expect_err("unknown");
+        assert!(err.contains("NOPE"), "{err}");
+    }
+
+    /// The catalog has to name every kind an outlet may be, because a
+    /// list that looks complete is read as complete — an application
+    /// offering only junctions would hide every other valid answer.
+    #[test]
+    fn an_outlet_declares_every_kind_it_may_name() {
+        let outlet = hydra::uds::descriptors::attribute_schema("subcatchment")
+            .into_iter()
+            .find(|a| a.key == "outlet")
+            .expect("an outlet attribute");
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let expected = matches!(kind.class, hydra::common::ElementClass::Point)
+                || kind.id == "subcatchment";
+            assert_eq!(
+                outlet.references.iter().any(|r| r == kind.id),
+                expected,
+                "{} is {}declared",
+                kind.id,
+                if expected { "not " } else { "wrongly " }
+            );
+        }
+    }
+
     /// A row the setter refuses must not be offered as editable, or the
     /// inspector renders an input whose every use fails.
     #[test]
     fn a_row_that_cannot_be_set_does_not_read_as_editable() {
         let net = model();
-        for (id, key) in [("S1", "outlet"), ("S1", "raingage"), ("C1", "shape")] {
+        for (id, key) in [("S1", "raingage"), ("C1", "shape")] {
             let row = element_attributes(&net, id)
                 .expect("attributes")
                 .into_iter()
@@ -1870,7 +2076,7 @@ RS1  0:00  0.4
         // The edit has to reach the model text and come back, not just
         // sit in memory.
         let mut net = model();
-        set_attribute(&mut net, "S1", "imperviousness", 62.0).expect("set");
+        set_attribute(&mut net, "S1", "imperviousness", &serde_json::json!(62.0)).expect("set");
         let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
         let (again, diags) = hydra::uds::io::objects::parse_network(&text);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
@@ -1884,16 +2090,19 @@ RS1  0:00  0.4
         // than being quietly ignored, so a caller learns which of the two
         // it asked for.
         let mut net = model();
-        let err = set_attribute(&mut net, "S1", "outlet", 1.0).expect_err("refused");
-        assert!(err.contains("outlet"), "{err}");
-        let err = set_attribute(&mut net, "C1", "shape", 1.0).expect_err("refused");
+        let err = set_attribute(&mut net, "S1", "raingage", &serde_json::json!("G1"))
+            .expect_err("refused");
+        assert!(err.contains("raingage"), "{err}");
+        let err =
+            set_attribute(&mut net, "C1", "shape", &serde_json::json!(1.0)).expect_err("refused");
         assert!(err.contains("shape"), "{err}");
     }
 
     #[test]
     fn an_unknown_element_is_not_silently_ignored() {
         let mut net = model();
-        let err = set_attribute(&mut net, "NOPE", "invert", 1.0).expect_err("refused");
+        let err = set_attribute(&mut net, "NOPE", "invert", &serde_json::json!(1.0))
+            .expect_err("refused");
         assert!(err.contains("NOPE"), "{err}");
     }
 }

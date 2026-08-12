@@ -55,6 +55,18 @@ import {
 
 type SortDir = "asc" | "desc";
 
+/** The two end columns, in the order that is the sign convention for
+ *  whatever the line carries (hydra-common §4.5.2.1) — never sorted or
+ *  swapped, because reversing them reverses the element. */
+const END_COLUMNS = [
+  { field: "from", label: "From" },
+  { field: "to", label: "To" },
+] as const;
+
+/** Datalist key for the ends, which share one list. Leading space so no
+ *  attribute key can collide with it. */
+const END_LIST = " ends";
+
 /**
  * One element kind's table.
  *
@@ -72,6 +84,8 @@ export function KindTable({
   onSelect,
   onEdit,
   onMove,
+  onReconnect,
+  endIds,
   referenceIds,
   onAdd,
   onReveal,
@@ -108,6 +122,32 @@ export function KindTable({
    * appear.
    */
   onMove?: (id: string, x: number, y: number) => Promise<void> | void;
+  /**
+   * Point one line at two other elements, first end then second.
+   *
+   * Separate from `onEdit` for the same reason `onMove` is (hydra-common
+   * §4.5.2.1): an end is implied by the `polyline` class, has no schema
+   * key to be addressed by, and is written by its own operation. Both
+   * ends go together even to change one, so the cell that changed sends
+   * the value beside it unchanged.
+   *
+   * Absent, or a kind that is not a line, and the columns are read-only.
+   */
+  onReconnect?: (
+    id: string,
+    fromId: string,
+    toId: string,
+  ) => Promise<void> | void;
+  /**
+   * Ids the two end columns may name.
+   *
+   * A separate prop from `referenceIds` because an end is not a
+   * reference in the §4.5.1.1 sense: it names no single declared kind,
+   * since a line in a real model may run to several kinds of thing. The
+   * caller decides which elements can be an end; this table offers what
+   * it is given.
+   */
+  endIds?: string[];
   /**
    * Per-row actions, each offered only when its handler is given.
    *
@@ -187,9 +227,11 @@ export function KindTable({
     if (!sortCol) return idx;
     const propCol = elements.columns.find((c) => c.key === sortCol);
     const axis = sortCol === "x" ? 0 : sortCol === "y" ? 1 : null;
+    const end = sortCol === "from" ? 0 : sortCol === "to" ? 1 : null;
     const get = (i: number): number | string | null => {
       if (propCol) return propCol.values[i] ?? null;
       if (axis != null) return elements.positions[i]?.[axis] ?? null;
+      if (end != null) return elements.ends[i]?.[end] ?? null;
       return elements.ids[i];
     };
     return idx.sort((a, b) => {
@@ -260,15 +302,33 @@ export function KindTable({
   const lists = useMemo(() => {
     const out: Array<{ key: string; ids: string[] }> = [];
     for (const c of elements.columns) {
-      const ids = c.references ? referenceIds?.[c.references] : undefined;
+      // The union across every kind the column may name, sorted so the
+      // list reads as one set of ids rather than as several lists run
+      // together — a reader scanning for "J12" should not have to know
+      // which kind it is to know where to look.
+      const named = [
+        ...new Set(
+          (c.references ?? []).flatMap((k) => referenceIds?.[k] ?? []),
+        ),
+      ].sort();
+      // Undefined rather than empty, so a column whose kinds the caller
+      // supplied nothing for stays a plain field — an empty list is a
+      // list, and the browser draws it as one that offers nothing.
+      const ids = named.length ? named : undefined;
       // Above the cutoff the list is dropped rather than truncated: a
       // shortened list silently hides valid ids, and the browser's own
       // filter is the bottleneck at that size anyway. The cell stays a
       // text field and the engine still judges what was typed.
       if (ids && offerDatalist(ids.length)) out.push({ key: c.key, ids });
     }
+    // The ends share one list between them, under a key no schema can
+    // collide with — an attribute key is an identifier, so it cannot
+    // start with a space.
+    if (endIds && offerDatalist(endIds.length)) {
+      out.push({ key: END_LIST, ids: endIds });
+    }
     return out;
-  }, [elements.columns, referenceIds]);
+  }, [elements.columns, referenceIds, endIds]);
 
   // An empty kind has no positions and no ids, and 0 === 0 would put X
   // and Y on a table of curves. Unreachable today — an empty kind
@@ -277,9 +337,18 @@ export function KindTable({
   const placed =
     elements.ids.length > 0 &&
     elements.positions.length === elements.ids.length;
+  // A line is not at a place, it runs between two — so a kind has one of
+  // these or the other, never both, and each is derived from the arrays
+  // actually being parallel rather than from the kind's name.
+  const joined =
+    elements.ids.length > 0 && elements.ends.length === elements.ids.length;
   const hasActions = !!(onReveal || onRename || onDelete);
   const columnCount =
-    elements.columns.length + 1 + (placed ? 2 : 0) + (hasActions ? 1 : 0);
+    elements.columns.length +
+    1 +
+    (placed ? 2 : 0) +
+    (joined ? 2 : 0) +
+    (hasActions ? 1 : 0);
 
   if (elements.ids.length === 0) {
     return (
@@ -304,10 +373,10 @@ export function KindTable({
         minHeight: 0,
       }}
     >
-      {/* The same bar the water-distribution editor puts above its
-          tables: 44px tall, search right-aligned in it. That editor also
-          has an Add button here; drainage adds elements on the map,
-          where a new one needs somewhere to go. */}
+      {/* The bar above every editor table: 44px tall, search right-
+          aligned, Add on the left when the catalog says the kind can be
+          created. Both engines get the same one — which is the point of
+          the shared table. */}
       <div
         style={{
           height: 44,
@@ -412,6 +481,18 @@ export function KindTable({
                       markUnsorted
                     />
                   ))}
+                {joined &&
+                  END_COLUMNS.map(({ field, label }) => (
+                    <SortTh
+                      key={field}
+                      field={field}
+                      label={label}
+                      sortField={sortCol}
+                      sortAsc={sortDir === "asc"}
+                      onSort={toggleSort}
+                      markUnsorted
+                    />
+                  ))}
                 {elements.columns.map((c, ci) => (
                   <SortTh
                     key={c.key}
@@ -479,6 +560,44 @@ export function KindTable({
                                   id,
                                   ai === 0 ? next : at[0],
                                   ai === 1 ? next : at[1],
+                                )
+                              }
+                            />
+                          </td>
+                        );
+                      })}
+                    {joined &&
+                      END_COLUMNS.map(({ field, label }, ei) => {
+                        const ends = elements.ends[i];
+                        if (!ends) {
+                          return (
+                            <td key={field} style={EDITOR_TD}>
+                              —
+                            </td>
+                          );
+                        }
+                        if (!onReconnect) {
+                          return (
+                            <td key={field} style={EDITOR_TD}>
+                              {ends[ei]}
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={field} style={{ ...EDITOR_TD, padding: 0 }}>
+                            <CellText
+                              label={`${id} ${label}`}
+                              value={ends[ei]}
+                              listId={
+                                lists.some((l) => l.key === END_LIST)
+                                  ? `${listPrefix}-${END_LIST}`
+                                  : undefined
+                              }
+                              onCommit={(next) =>
+                                onReconnect(
+                                  id,
+                                  ei === 0 ? next : ends[0],
+                                  ei === 1 ? next : ends[1],
                                 )
                               }
                             />

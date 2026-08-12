@@ -67,13 +67,25 @@ fn extract(
     element_id: &str,
 ) -> Option<(&'static str, HashMap<&'static str, AttrValue>)> {
     if let Some(node) = network.nodes.iter().find(|n| n.base.id == element_id) {
-        return Some(node_values(node));
+        let (kind, mut m) = node_values(node);
+        m.insert("tag", tag_value(&network.node_tags, element_id));
+        return Some((kind, m));
     }
-    network
-        .links
-        .iter()
-        .find(|l| l.base.id == element_id)
-        .map(link_values)
+    let link = network.links.iter().find(|l| l.base.id == element_id)?;
+    let (kind, mut m) = link_values(link);
+    m.insert("tag", tag_value(&network.link_tags, element_id));
+    Some((kind, m))
+}
+
+/// An element's tag, empty when it has none.
+///
+/// Always a value, never absent — which is the one place a tag departs
+/// from every other attribute here. §4.5.1 makes a missing value mean
+/// "this element has nothing to change", and for a tag that is the wrong
+/// statement: an untagged element is one whose tag is empty, and a cell
+/// that vanished for it could never be typed into.
+fn tag_value(tags: &HashMap<String, String>, id: &str) -> AttrValue {
+    AttrValue::Text(tags.get(id).cloned().unwrap_or_default())
 }
 
 fn node_values(node: &hydra::Node) -> (&'static str, HashMap<&'static str, AttrValue>) {
@@ -226,12 +238,16 @@ pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElement
     let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> = Vec::new();
     for node in &network.nodes {
         if node_kind_id(node) == kind {
-            rows.push((node.base.id.clone(), node_values(node).1));
+            let mut m = node_values(node).1;
+            m.insert("tag", tag_value(&network.node_tags, &node.base.id));
+            rows.push((node.base.id.clone(), m));
         }
     }
     for link in &network.links {
         if link_kind_id(link) == kind {
-            rows.push((link.base.id.clone(), link_values(link).1));
+            let mut m = link_values(link).1;
+            m.insert("tag", tag_value(&network.link_tags, &link.base.id));
+            rows.push((link.base.id.clone(), m));
         }
     }
 
@@ -262,20 +278,39 @@ pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElement
         })
         .collect();
 
-    // Only the classes that are somewhere. A link's position is its two
-    // ends, which the table shows as its own columns.
-    let spatial = hydra::descriptors::ELEMENT_KINDS
+    let class = hydra::descriptors::ELEMENT_KINDS
         .iter()
         .find(|k| k.id == kind)
-        .is_some_and(|k| {
-            matches!(
-                k.class,
-                hydra::common::ElementClass::Point | hydra::common::ElementClass::Region
-            )
-        });
+        .map(|k| k.class);
+    // Only the classes that are at a place. A link is not at one — it
+    // runs between two, which is `ends` below rather than a coordinate.
+    let spatial = matches!(
+        class,
+        Some(hydra::common::ElementClass::Point | hydra::common::ElementClass::Region)
+    );
     let positions = if spatial {
         ids.iter()
             .map(|id| network.coordinates.get(id).map(|&(x, y)| [x, y]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // Node indices are 1-based in the model, so the lookup goes through
+    // the id rather than through the array — an off-by-one here would
+    // name the wrong element on every row and still look plausible.
+    let ends = if class == Some(hydra::common::ElementClass::Polyline) {
+        let name = |index: usize| {
+            network
+                .nodes
+                .iter()
+                .find(|n| n.base.index == index)
+                .map_or_else(String::new, |n| n.base.id.clone())
+        };
+        network
+            .links
+            .iter()
+            .filter(|l| link_kind_id(l) == kind)
+            .map(|l| [name(l.base.from_node), name(l.base.to_node)])
             .collect()
     } else {
         Vec::new()
@@ -284,6 +319,7 @@ pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElement
         ids,
         columns,
         positions,
+        ends,
     }
 }
 
@@ -331,6 +367,32 @@ pub(crate) fn set_attribute(
             other => Err(format!("'{key}' takes Yes or No, not '{other}'")),
         }
     };
+
+    // Before the per-kind arms, because a tag belongs to the element
+    // rather than to its kind, and it lives in a table beside the model
+    // rather than on the element — so there is nothing for those arms
+    // to match on.
+    if key == "tag" {
+        let text = value.as_str().unwrap_or("").trim().to_string();
+        let is_node = network.nodes.iter().any(|n| n.base.id == element_id);
+        let is_link = network.links.iter().any(|l| l.base.id == element_id);
+        let tags = if is_node {
+            &mut network.node_tags
+        } else if is_link {
+            &mut network.link_tags
+        } else {
+            return Err(format!("no element '{element_id}'"));
+        };
+        // An emptied tag is removed rather than stored blank: the writer
+        // emits a line per entry, and a blank one is a line the file did
+        // not have before the edit.
+        if text.is_empty() {
+            tags.remove(element_id);
+        } else {
+            tags.insert(element_id.to_string(), text);
+        }
+        return Ok(());
+    }
 
     if let Some(node) = network.nodes.iter_mut().find(|n| n.base.id == element_id) {
         return match (&mut node.kind, key) {
@@ -480,6 +542,65 @@ mod tests {
             .into_iter()
             .find(|r| r.key == key)
             .unwrap_or_else(|| panic!("{id} has no {key} row"))
+    }
+
+    /// A tag is not on the element — it is a table beside the model,
+    /// keyed by id, and the node and link tables are separate. So the
+    /// write has to find which of the two the id is in before it can
+    /// store anything, and a read that looked in one only would show
+    /// every link untagged.
+    #[test]
+    fn a_tag_is_read_and_written_for_a_node_and_for_a_link() {
+        let mut net = sample_network();
+        for id in ["J1", "P1"] {
+            assert_eq!(
+                row(&net, id, "tag").text.as_deref(),
+                Some(""),
+                "{id} offers no tag to type into"
+            );
+            set_attribute(&mut net, id, "tag", &serde_json::json!("Zone A")).expect("tag");
+            assert_eq!(row(&net, id, "tag").text.as_deref(), Some("Zone A"));
+        }
+        assert_eq!(net.node_tags.get("J1").map(String::as_str), Some("Zone A"));
+        assert_eq!(net.link_tags.get("P1").map(String::as_str), Some("Zone A"));
+
+        // Emptied is removed, not stored blank: the writer emits a line
+        // per entry, and a blank one is a line the file did not have.
+        set_attribute(&mut net, "J1", "tag", &serde_json::json!("")).expect("clear");
+        assert!(!net.node_tags.contains_key("J1"));
+        assert_eq!(row(&net, "J1", "tag").text.as_deref(), Some(""));
+
+        assert!(set_attribute(&mut net, "NOPE", "tag", &serde_json::json!("x")).is_err());
+    }
+
+    /// A line's ends travel beside the columns, never as one of them —
+    /// the frontend reads `ends` and `positions` from the same two
+    /// fields whichever engine answered, so a kind that publishes the
+    /// wrong one of the pair shows a table with no way to reconnect.
+    #[test]
+    fn a_line_reports_its_ends_and_a_point_reports_a_position() {
+        let net = sample_network();
+
+        let pipes = kind_elements(&net, "pipe");
+        assert_eq!(pipes.ends.len(), pipes.ids.len());
+        assert!(pipes.positions.is_empty(), "a line is not at a place");
+        let p = pipes.ids.iter().position(|id| id == "P1").expect("P1");
+        let link = net.links.iter().find(|l| l.base.id == "P1").expect("P1");
+        let name = |index: usize| {
+            net.nodes
+                .iter()
+                .find(|n| n.base.index == index)
+                .map(|n| n.base.id.clone())
+                .expect("an end names a node")
+        };
+        assert_eq!(
+            pipes.ends[p],
+            [name(link.base.from_node), name(link.base.to_node)]
+        );
+
+        let junctions = kind_elements(&net, "junction");
+        assert!(junctions.ends.is_empty(), "a point runs between nothing");
+        assert_eq!(junctions.positions.len(), junctions.ids.len());
     }
 
     /// The trap this module's header is about: two of the quantities
