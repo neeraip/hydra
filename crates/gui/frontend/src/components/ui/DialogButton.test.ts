@@ -23,17 +23,12 @@ const MODALS = join(__dirname, "..", "modals");
 /**
  * Dialogs that still draw their own action buttons.
  *
- * Each is a conversion nobody has done yet, not a dialog with a reason
- * to differ. Removing one from this list is the whole job; adding one
- * is the thing this test exists to stop.
+ * Empty, and meant to stay that way. It is kept rather than deleted
+ * because the alternative to a named exemption is an untested one: a
+ * dialog that genuinely must differ should appear here with a comment
+ * saying why, not quietly stop being checked.
  */
-const NOT_YET_CONVERTED = new Set([
-  "CreateLinkModal.tsx",
-  "DeleteProjectModal.tsx",
-  "ImportArchiveWizard.tsx",
-  "RunModal.tsx",
-  "SimSettingsModal.tsx",
-]);
+const NOT_YET_CONVERTED = new Set<string>([]);
 
 /**
  * The words a dialog's action button says.

@@ -26,6 +26,7 @@ import {
   useEngines,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
+import { DialogButton } from "../ui/DialogButton";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import { PrimaryButton } from "../ui/PrimaryButton";
 import {
@@ -353,24 +354,7 @@ export function ImportArchiveWizard({
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          {!done && (
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: "6px 14px",
-                fontSize: "var(--text-md)",
-                fontWeight: 500,
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-          )}
+          {!done && <DialogButton onClick={onClose}>Cancel</DialogButton>}
           {done ? (
             <PrimaryButton onClick={() => onDone(createdCount)}>
               Done

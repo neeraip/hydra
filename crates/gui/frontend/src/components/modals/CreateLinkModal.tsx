@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { inpIdError } from "../../inpId";
 import { formatQtyRaw, useUnitSystem } from "../../units";
+import { DialogActions, DialogButton } from "../ui/DialogButton";
 
 interface Props {
   open: boolean;
@@ -284,31 +285,18 @@ export function CreateLinkModal({
         </div>
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            className="tool-btn"
-            onClick={onCancel}
-            disabled={submitting}
-            style={{ fontSize: "var(--text-md)" }}
-          >
+        <DialogActions>
+          <DialogButton onClick={onCancel} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="tool-btn"
+          </DialogButton>
+          <DialogButton
+            intent="primary"
             disabled={!canSubmit}
             onClick={handleSubmit}
-            style={{
-              fontSize: "var(--text-md)",
-              background: canSubmit ? "var(--accent)" : undefined,
-              color: canSubmit ? "var(--accent-fg)" : undefined,
-              opacity: canSubmit ? 1 : 0.5,
-            }}
           >
             {submitting ? "Adding…" : "Add"}
-          </button>
-        </div>
+          </DialogButton>
+        </DialogActions>
       </div>
     </div>
   );

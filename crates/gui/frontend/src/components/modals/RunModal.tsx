@@ -18,6 +18,7 @@ import {
   primaryModifierLabel,
   primaryModifierPressed,
 } from "../../shortcuts";
+import { DialogButton } from "../ui/DialogButton";
 import { EngineGlyph } from "../ui/EngineGlyph";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import {
@@ -584,34 +585,7 @@ export function RunModal() {
               </span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={closeRunModal}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--text-secondary)",
-              borderRadius: 5,
-              padding: "7px 14px",
-              fontSize: "var(--text-md)",
-              cursor: "pointer",
-              fontFamily: "var(--font-ui)",
-              transition:
-                "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--nav-hover)";
-              e.currentTarget.style.borderColor = "var(--border-hover)";
-              e.currentTarget.style.color = "var(--text-primary)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "var(--border)";
-              e.currentTarget.style.color = "var(--text-secondary)";
-            }}
-          >
-            Cancel
-          </button>
+          <DialogButton onClick={closeRunModal}>Cancel</DialogButton>
           <button
             type="button"
             onClick={runSimulation}

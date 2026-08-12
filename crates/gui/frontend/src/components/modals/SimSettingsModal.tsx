@@ -23,6 +23,7 @@ import {
   TextInput,
   TimeInput,
 } from "../editors/SimulationSettings/FormControls";
+import { DialogButton } from "../ui/DialogButton";
 import { EngineGlyph } from "../ui/EngineGlyph";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
@@ -311,87 +312,30 @@ export function SimSettingsModal() {
               ? "Saving rewrites every scenario and marks results stale."
               : ""}
           </div>
-          <button
-            type="button"
-            onClick={closeSimSettingsModal}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border)",
-              transition:
-                "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-              color: "var(--text-secondary)",
-              borderRadius: 5,
-              padding: "7px 14px",
-              fontSize: "var(--text-md)",
-              cursor: "pointer",
-              fontFamily: "var(--font-ui)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--nav-hover)";
-              e.currentTarget.style.borderColor = "var(--border-hover)";
-              e.currentTarget.style.color = "var(--text-primary)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "var(--border)";
-              e.currentTarget.style.color = "var(--text-secondary)";
-            }}
-          >
+          <DialogButton onClick={closeSimSettingsModal}>
             {components.settingsEditable ? "Cancel" : "Close"}
-          </button>
+          </DialogButton>
           {components.settingsEditable && (
-            <button
-              type="button"
+            <DialogButton
+              intent="primary"
               onClick={save}
               disabled={saving || !dirty}
               aria-label="Save simulation settings"
-              onMouseEnter={(e) => {
-                if (!saving && dirty) {
-                  e.currentTarget.style.filter = "brightness(1.12)";
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.filter = "";
-              }}
               data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
-              style={{
-                background:
-                  !saving && dirty
-                    ? "var(--engine-accent, var(--accent))"
-                    : "var(--bg-card)",
-                border: `1px solid ${
-                  !saving && dirty
-                    ? "var(--engine-accent, var(--accent))"
-                    : "var(--border)"
-                }`,
-                color:
-                  !saving && dirty
-                    ? "var(--accent-fg)"
-                    : "var(--text-disabled)",
-                borderRadius: 5,
-                padding: "7px 16px",
-                fontSize: "var(--text-md)",
-                fontWeight: 600,
-                cursor: !saving && dirty ? "pointer" : "not-allowed",
-                transition: "filter var(--t-fast)",
-                opacity: !saving && dirty ? 1 : 0.6,
-                fontFamily: "var(--font-ui)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              }}
+              // The engine's own accent rather than the app's: this
+              // dialog is about one engine's settings and is tinted for
+              // it throughout.
+              style={
+                !saving && dirty
+                  ? {
+                      background: "var(--engine-accent, var(--accent))",
+                      borderColor: "var(--engine-accent, var(--accent))",
+                    }
+                  : undefined
+              }
             >
               {saving ? "Saving…" : "Save"}
-              <span
-                style={{
-                  fontSize: "var(--text-xs)",
-                  opacity: 0.85,
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                {saveHint}
-              </span>
-            </button>
+            </DialogButton>
           )}
         </div>
       </div>
