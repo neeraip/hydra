@@ -28,7 +28,7 @@ use hydra::{LinkKind, NodeKind};
 
 use super::element_attrs::{rows_from_schema, ElementAttributeDto};
 use super::network_dto::{M3S_TO_LPS, M_TO_MM};
-use super::uds_attrs::AttrValue;
+use super::uds_attrs::{AttrValue, KindColumnDto, KindElementsDto};
 
 /// The §4.4 property rows for one water-distribution element.
 ///
@@ -66,55 +66,66 @@ fn extract(
     network: &hydra::Network,
     element_id: &str,
 ) -> Option<(&'static str, HashMap<&'static str, AttrValue>)> {
+    if let Some(node) = network.nodes.iter().find(|n| n.base.id == element_id) {
+        return Some(node_values(node));
+    }
+    network
+        .links
+        .iter()
+        .find(|l| l.base.id == element_id)
+        .map(link_values)
+}
+
+fn node_values(node: &hydra::Node) -> (&'static str, HashMap<&'static str, AttrValue>) {
     use AttrValue::{Number, Text};
     let mut m: HashMap<&'static str, AttrValue> = HashMap::new();
-
-    if let Some(node) = network.nodes.iter().find(|n| n.base.id == element_id) {
-        return Some(match &node.kind {
-            NodeKind::Junction(j) => {
-                m.insert("elevation", Number(node.base.elevation));
-                m.insert(
-                    "baseDemand",
-                    Number(j.demands.iter().map(|d| d.base_demand).sum::<f64>() * M3S_TO_LPS),
-                );
-                if let Some(p) = j.demands.first().and_then(|d| d.pattern.clone()) {
-                    m.insert("demandPattern", Text(p));
-                }
-                ("junction", m)
+    match &node.kind {
+        NodeKind::Junction(j) => {
+            m.insert("elevation", Number(node.base.elevation));
+            m.insert(
+                "baseDemand",
+                Number(j.demands.iter().map(|d| d.base_demand).sum::<f64>() * M3S_TO_LPS),
+            );
+            if let Some(p) = j.demands.first().and_then(|d| d.pattern.clone()) {
+                m.insert("demandPattern", Text(p));
             }
-            NodeKind::Reservoir(r) => {
-                // A reservoir's elevation *is* its head: it is a fixed
-                // grade, and the model stores that grade in the base
-                // elevation every node has.
-                m.insert("head", Number(node.base.elevation));
-                if let Some(p) = r.head_pattern.clone() {
-                    m.insert("headPattern", Text(p));
-                }
-                ("reservoir", m)
+            ("junction", m)
+        }
+        NodeKind::Reservoir(r) => {
+            // A reservoir's elevation *is* its head: it is a fixed
+            // grade, and the model stores that grade in the base
+            // elevation every node has.
+            m.insert("head", Number(node.base.elevation));
+            if let Some(p) = r.head_pattern.clone() {
+                m.insert("headPattern", Text(p));
             }
-            NodeKind::Tank(t) => {
-                // The bottom, not the stored value. A tank's base
-                // elevation is its bottom *plus* its minimum level — the
-                // minimum piezometric head — and the schema publishes the
-                // bottom, because that is the number on the drawing and
-                // the one the patch path takes.
-                m.insert("elevation", Number(node.base.elevation - t.min_level));
-                m.insert("initLevel", Number(t.initial_level));
-                m.insert("minLevel", Number(t.min_level));
-                m.insert("maxLevel", Number(t.max_level));
-                m.insert("diameter", Number(t.diameter * M_TO_MM));
-                m.insert("minVolume", Number(t.min_volume));
-                if let Some(c) = t.volume_curve.clone() {
-                    m.insert("volumeCurve", Text(c));
-                }
-                m.insert("overflow", yes_no(t.overflow));
-                ("tank", m)
+            ("reservoir", m)
+        }
+        NodeKind::Tank(t) => {
+            // The bottom, not the stored value. A tank's base
+            // elevation is its bottom *plus* its minimum level — the
+            // minimum piezometric head — and the schema publishes the
+            // bottom, because that is the number on the drawing and
+            // the one the patch path takes.
+            m.insert("elevation", Number(node.base.elevation - t.min_level));
+            m.insert("initLevel", Number(t.initial_level));
+            m.insert("minLevel", Number(t.min_level));
+            m.insert("maxLevel", Number(t.max_level));
+            m.insert("diameter", Number(t.diameter * M_TO_MM));
+            m.insert("minVolume", Number(t.min_volume));
+            if let Some(c) = t.volume_curve.clone() {
+                m.insert("volumeCurve", Text(c));
             }
-        });
+            m.insert("overflow", yes_no(t.overflow));
+            ("tank", m)
+        }
     }
+}
 
-    let link = network.links.iter().find(|l| l.base.id == element_id)?;
-    Some(match &link.kind {
+fn link_values(link: &hydra::Link) -> (&'static str, HashMap<&'static str, AttrValue>) {
+    use AttrValue::{Number, Text};
+    let mut m: HashMap<&'static str, AttrValue> = HashMap::new();
+    match &link.kind {
         LinkKind::Pipe(p) => {
             m.insert("length", Number(p.length));
             m.insert("diameter", Number(p.diameter * M_TO_MM));
@@ -163,7 +174,78 @@ fn extract(
             m.insert("minorLoss", Number(v.minor_loss));
             ("valve", m)
         }
-    })
+    }
+}
+
+/// Every element of one kind, with its §4.4 attribute columns and — for
+/// a class that is somewhere — its positions.
+///
+/// The same shape the drainage engine serves, so one table renders
+/// either. Its own values come from the same per-element builders the
+/// inspector reads, so a column and a property row cannot disagree.
+pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElementsDto {
+    let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> = Vec::new();
+    for node in &network.nodes {
+        let (k, values) = node_values(node);
+        if k == kind {
+            rows.push((node.base.id.clone(), values));
+        }
+    }
+    for link in &network.links {
+        let (k, values) = link_values(link);
+        if k == kind {
+            rows.push((link.base.id.clone(), values));
+        }
+    }
+
+    let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    let columns = hydra::descriptors::attribute_schema(kind)
+        .into_iter()
+        .map(|attr| {
+            let values = rows
+                .iter()
+                .map(|(_, m)| match m.get(attr.key.as_str()) {
+                    Some(AttrValue::Number(n)) => serde_json::json!(n),
+                    Some(AttrValue::Text(t)) => serde_json::json!(t),
+                    None => serde_json::Value::Null,
+                })
+                .collect();
+            KindColumnDto {
+                editable: attr.editable,
+                key: attr.key,
+                label: attr.label,
+                quantity: attr
+                    .quantity
+                    .as_deref()
+                    .and_then(super::results::wds_quantity),
+                values,
+            }
+        })
+        .collect();
+
+    // Only the classes that are somewhere. A link's position is its two
+    // ends, which the table shows as its own columns.
+    let spatial = hydra::descriptors::ELEMENT_KINDS
+        .iter()
+        .find(|k| k.id == kind)
+        .is_some_and(|k| {
+            matches!(
+                k.class,
+                hydra::common::ElementClass::Point | hydra::common::ElementClass::Region
+            )
+        });
+    let positions = if spatial {
+        ids.iter()
+            .map(|id| network.coordinates.get(id).map(|&(x, y)| [x, y]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    KindElementsDto {
+        ids,
+        columns,
+        positions,
+    }
 }
 
 /// The inverses of the two factors the read applies. Named here rather
@@ -614,5 +696,85 @@ mod write_tests {
         let mut net = model();
         assert!(set_attribute(&mut net, "P1", "length", &serde_json::json!("wide")).is_err());
         assert!(set_attribute(&mut net, "P1", "checkValve", &serde_json::json!(3)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+    use crate::commands::test_fixtures::TEST_INP;
+
+    fn model() -> hydra::Network {
+        hydra::io::parse(TEST_INP.as_bytes()).expect("the fixture parses")
+    }
+
+    /// A column and a property row are two views of one value, built by
+    /// the same per-element function — so a table and an inspector
+    /// showing different numbers for the same element is not something
+    /// this can do. That was never true while the table read a binary
+    /// snapshot and the inspector read nothing at all.
+    #[test]
+    fn a_column_agrees_with_the_property_row_beside_it() {
+        let net = model();
+        for kind in ["junction", "reservoir", "tank", "pipe"] {
+            let table = kind_elements(&net, kind);
+            for (row, id) in table.ids.iter().enumerate() {
+                let rows = element_attributes(&net, id).expect("attributes");
+                for column in &table.columns {
+                    let Some(attr) = rows.iter().find(|r| r.key == column.key) else {
+                        // The element carries no value for this key, so
+                        // the table serves a null cell — the §4.5.1
+                        // distinction, and nothing to compare.
+                        assert!(table.columns.iter().any(|c| c.key == column.key));
+                        continue;
+                    };
+                    if let Some(n) = attr.number {
+                        let cell = column.values[row].as_f64().unwrap_or(f64::NAN);
+                        assert!(
+                            (cell - n).abs() < 1e-9,
+                            "{kind}.{} reads {n} as a row and {cell} as a cell",
+                            column.key
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_located_kind_carries_its_positions() {
+        let net = model();
+        let junctions = kind_elements(&net, "junction");
+        assert_eq!(junctions.ids, vec!["J1"]);
+        assert_eq!(junctions.positions, vec![Some([1.0, 2.0])]);
+        // A pipe is somewhere only in the sense that its ends are.
+        assert!(kind_elements(&net, "pipe").positions.is_empty());
+    }
+
+    #[test]
+    fn a_kind_the_model_has_none_of_is_empty_rather_than_absent() {
+        let net = model();
+        let pumps = kind_elements(&net, "pump");
+        assert!(pumps.ids.is_empty());
+        // The columns are still published, so a table can draw its
+        // headings before any element exists — the same reason the
+        // catalog is model-free.
+        assert!(!pumps.columns.is_empty(), "a pump kind still has columns");
+    }
+
+    #[test]
+    fn the_columns_are_the_schemas_in_its_order() {
+        let net = model();
+        assert_eq!(
+            kind_elements(&net, "pipe")
+                .columns
+                .iter()
+                .map(|c| c.key.as_str())
+                .collect::<Vec<_>>(),
+            hydra::descriptors::attribute_schema("pipe")
+                .iter()
+                .map(|a| a.key.as_str())
+                .collect::<Vec<_>>(),
+        );
     }
 }

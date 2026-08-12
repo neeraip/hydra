@@ -260,6 +260,17 @@ pub struct KindElementsDto {
     pub positions: Vec<Option<[f64; 2]>>,
 }
 
+impl KindElementsDto {
+    /// No elements — what a kind the engine does not publish looks like.
+    pub(crate) fn empty() -> Self {
+        KindElementsDto {
+            ids: Vec::new(),
+            columns: Vec::new(),
+            positions: Vec::new(),
+        }
+    }
+}
+
 /// The elements of one kind with their declared properties.
 ///
 /// The per-element command answers "what is this thing?"; a table needs
@@ -307,6 +318,12 @@ pub fn list_element_attributes(engine: String, kind: String) -> Vec<AttributeInf
 }
 
 #[tauri::command(async)]
+/// Every element of one kind, with its columns and positions, from
+/// whichever engine holds the model.
+///
+/// Empty for a kind the engine does not publish, and for an engine this
+/// build cannot open — never an error, because a table asking for a
+/// kind that is not there wants to draw nothing rather than a failure.
 pub fn get_kind_elements(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -316,16 +333,22 @@ pub fn get_kind_elements(
 ) -> Result<KindElementsDto, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let empty = KindElementsDto {
-        ids: Vec::new(),
-        columns: Vec::new(),
-        positions: Vec::new(),
-    };
-    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
-        return Ok(empty);
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let net =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            Ok(kind_elements(&net, &kind))
+        }
+        "wds" => {
+            let guard = state.0.lock();
+            Ok(guard
+                .wds_network()
+                .map_or_else(KindElementsDto::empty, |net| {
+                    super::wds_attrs::kind_elements(net, &kind)
+                }))
+        }
+        _ => Ok(KindElementsDto::empty()),
     }
-    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(kind_elements(&net, &kind))
 }
 
 /// The contents of one collection element — the points, factors or
@@ -577,14 +600,31 @@ pub fn get_kind_counts(
 ) -> Result<HashMap<String, usize>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
-        return Ok(HashMap::new());
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let net =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            Ok(hydra::uds::descriptors::ELEMENT_KINDS
+                .iter()
+                .map(|k| (k.id.to_string(), kind_elements(&net, k.id).ids.len()))
+                .collect())
+        }
+        "wds" => {
+            let guard = state.0.lock();
+            Ok(guard.wds_network().map_or_else(HashMap::new, |net| {
+                hydra::descriptors::ELEMENT_KINDS
+                    .iter()
+                    .map(|k| {
+                        (
+                            k.id.to_string(),
+                            super::wds_attrs::kind_elements(net, k.id).ids.len(),
+                        )
+                    })
+                    .collect()
+            }))
+        }
+        _ => Ok(HashMap::new()),
     }
-    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(hydra::uds::descriptors::ELEMENT_KINDS
-        .iter()
-        .map(|k| (k.id.to_string(), kind_elements(&net, k.id).ids.len()))
-        .collect())
 }
 
 /// Rows for a collection kind: the model's non-spatial tables (§4.1
