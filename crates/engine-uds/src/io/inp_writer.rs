@@ -229,7 +229,10 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_options(network, &u, &mut out);
     write_vertices(network, &u, &mut out);
     write_links(network, &u, &mut out);
+    write_transects(network, &u, &mut out);
+    write_streets(network, &u, &mut out);
     write_xsections(network, &mut out);
+    write_losses(network, &u, &mut out);
     write_curves(network, &u, &mut out);
     write_tables(network, &u, &mut out);
     write_timeseries(network, &mut out);
@@ -936,6 +939,125 @@ fn outlet_rating(
 
 // ── Curves, series and patterns ─────────────────────────────────────────
 
+/// `[TRANSECTS]`, whose survey the model holds with the file's station
+/// multiplier and elevation offset already applied.
+///
+/// Those two are written back as identity rather than recovered: the
+/// stations they scaled are what the model has, and a multiplier is a
+/// convenience for entering a survey, not a property of one. Writing
+/// them as 1 and 0 against the scaled stations reproduces the same
+/// survey, which is §14.13.2's contract.
+///
+/// The section is line-oriented rather than columnar — an `NC` roughness
+/// line, an `X1` header, then `GR` elevation-station pairs — so it is
+/// written directly instead of through the column builder.
+fn write_transects(network: &Network, u: &Units, out: &mut String) {
+    if network.transects.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "\n[TRANSECTS]");
+    for t in &network.transects {
+        let _ = writeln!(
+            out,
+            "NC {} {} {}",
+            num(t.n_left),
+            num(t.n_right),
+            num(t.n_channel)
+        );
+        // Station count, bank stations, two unused columns, the meander
+        // factor, then the identity multiplier and offset.
+        let _ = writeln!(
+            out,
+            "X1 {} {} {} {} 0 0 {} 1 0",
+            id(&t.id),
+            t.stations.len(),
+            num(u.len(t.x_left)),
+            num(u.len(t.x_right)),
+            num(t.meander_factor)
+        );
+        // Elevation first, then station — the predecessor's order, and
+        // the order the model stores the pair in.
+        for chunk in t.stations.chunks(3) {
+            let mut line = String::from("GR");
+            for (elev, station) in chunk {
+                let _ = write!(line, " {} {}", num(u.len(*elev)), num(u.len(*station)));
+            }
+            let _ = writeln!(out, "{line}");
+        }
+    }
+}
+
+/// `[STREETS]`, whose two slopes the model holds as fractions and the
+/// file carries as percentages.
+fn write_streets(network: &Network, u: &Units, out: &mut String) {
+    let mut rows = Rows::new(
+        "[STREETS]",
+        &[
+            "Name", "Tcrown", "Hcurb", "Sx", "nRoad", "a", "W", "Sides", "Tback", "Sback", "nBack",
+        ],
+    );
+    for st in &network.streets {
+        rows.push([
+            id(&st.id),
+            num(u.len(st.crown_width)),
+            num(u.len(st.curb_height)),
+            num(st.cross_slope * 100.0),
+            num(st.roughness),
+            num(u.len(st.gutter_depression)),
+            num(u.len(st.gutter_width)),
+            st.sides.to_string(),
+            num(u.len(st.backing_width)),
+            num(st.backing_slope * 100.0),
+            num(st.backing_roughness),
+        ]);
+    }
+    rows.write(out);
+}
+
+/// `[LOSSES]`, which carries a conduit's local-loss coefficients, its
+/// flap gate and its bed seepage — properties of a channel that live in
+/// their own section rather than beside its geometry.
+///
+/// A conduit with none of them is omitted: every field defaults to zero
+/// or off, so a row of zeroes says exactly what silence says (§14.13.4).
+fn write_losses(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::LinkKind as K;
+    let mut rows = Rows::new(
+        "[LOSSES]",
+        &["Link", "Kentry", "Kexit", "Kavg", "FlapGate", "Seepage"],
+    );
+    for l in &network.links {
+        let K::Channel {
+            loss_inlet,
+            loss_outlet,
+            loss_avg,
+            flap_gate,
+            seepage_rate,
+            ..
+        } = &l.kind
+        else {
+            continue;
+        };
+        if *loss_inlet == 0.0
+            && *loss_outlet == 0.0
+            && *loss_avg == 0.0
+            && !*flap_gate
+            && *seepage_rate == 0.0
+        {
+            continue;
+        }
+        rows.push([
+            id(&l.id),
+            num(*loss_inlet),
+            num(*loss_outlet),
+            num(*loss_avg),
+            yes_no(*flap_gate),
+            num(u.rate(*seepage_rate)),
+        ]);
+    }
+    rows.write(out);
+}
+
 /// A link kind's position in the export's section order, so anything
 /// listing links across kinds can match it.
 fn link_kind_rank(kind: &crate::model::LinkKind) -> u8 {
@@ -1275,15 +1397,28 @@ W1  S1  S2  TRANSVERSE  0.5  3.33  NO  2  1.5
 C1  J1  J2  200  0.013  0.1  0.2  0.5  9
 C2  J2  S1  150  0.015  0    0    0    0
 C3  S2  O1  120  0.014  0    0    0    0
+C4  J1  J2  90   0.02   0    0    0    0
 
 [PUMPS]
 P1  S1  S2  PC1  OFF  1.2  0.4
+
+[LOSSES]
+C1  0.5  0.8  0.1  YES  0.25
+
+[TRANSECTS]
+NC 0.03 0.04 0.02
+X1 T1 5 12 28 0 0 1.4 2 1
+GR 10 0  8 8  6 16  8 24  10 32
+
+[STREETS]
+ST1  20  0.5  2  0.016  2  4  1  10  4  0.02
 
 [XSECTIONS]
 C1  CIRCULAR   1.5  0  0  0  2
 C2  RECT_OPEN  2    3  0  0  1
 C3  CIRCULAR   1    0  0  0  1
 W1  RECT_OPEN  2    4  0  0  1
+C4  IRREGULAR  T1
 
 [CURVES]
 SC1  STORAGE  0  100  2  400  6  900
@@ -1354,6 +1489,8 @@ RC1  RATING   0  0    1  3.5  2  9
         // Curves carry a different conversion per role, so they are
         // compared as a body rather than trusted to the link and node
         // comparisons that merely reference them.
+        assert_eq!(a.transects, b.transects, "transects\n{text}");
+        assert_eq!(a.streets, b.streets, "streets\n{text}");
         assert_eq!(a.curves.len(), b.curves.len(), "curve count\n{text}");
         for x in &a.curves {
             let y = b
