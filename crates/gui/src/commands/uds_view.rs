@@ -123,7 +123,7 @@ pub(crate) fn parse_xy_lines<'a>(
         })
 }
 
-fn vertex_kind(kind: &VertexKind) -> &'static str {
+pub(crate) fn vertex_kind_id(kind: &VertexKind) -> &'static str {
     match kind {
         VertexKind::Junction { .. } => "junction",
         VertexKind::Outfall { .. } => "outfall",
@@ -132,7 +132,7 @@ fn vertex_kind(kind: &VertexKind) -> &'static str {
     }
 }
 
-fn link_kind(kind: &LinkKind) -> &'static str {
+pub(crate) fn link_kind_id(kind: &LinkKind) -> &'static str {
     match kind {
         LinkKind::Channel { .. } => "conduit",
         LinkKind::Pump { .. } => "pump",
@@ -255,7 +255,7 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
         if let Some(&(x, y)) = coords.get(v.id.as_str()) {
             point_index.insert(v.id.as_str(), points.len() as i32);
             points.push(ViewPoint {
-                kind: vertex_kind(&v.kind),
+                kind: vertex_kind_id(&v.kind),
                 id: v.id.clone(),
                 x,
                 y,
@@ -280,7 +280,7 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
             continue;
         }
         polylines.push(ViewPolyline {
-            kind: link_kind(&l.kind),
+            kind: link_kind_id(&l.kind),
             id: l.id.clone(),
             from,
             to,

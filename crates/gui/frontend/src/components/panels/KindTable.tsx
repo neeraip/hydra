@@ -270,7 +270,13 @@ export function KindTable({
     return out;
   }, [elements.columns, referenceIds]);
 
-  const placed = elements.positions.length === elements.ids.length;
+  // An empty kind has no positions and no ids, and 0 === 0 would put X
+  // and Y on a table of curves. Unreachable today — an empty kind
+  // returns before the table is drawn — but the derivation should be
+  // true on its own terms.
+  const placed =
+    elements.ids.length > 0 &&
+    elements.positions.length === elements.ids.length;
   const hasActions = !!(onReveal || onRename || onDelete);
   const columnCount =
     elements.columns.length + 1 + (placed ? 2 : 0) + (hasActions ? 1 : 0);

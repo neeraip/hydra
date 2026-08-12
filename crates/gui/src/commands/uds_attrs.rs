@@ -626,24 +626,13 @@ pub fn get_kind_counts(
         "uds" => {
             let net =
                 uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-            Ok(hydra::uds::descriptors::ELEMENT_KINDS
-                .iter()
-                .map(|k| (k.id.to_string(), kind_elements(&net, k.id).ids.len()))
-                .collect())
+            Ok(kind_counts(&net))
         }
         "wds" => {
             let guard = state.0.lock();
-            Ok(guard.wds_network().map_or_else(HashMap::new, |net| {
-                hydra::descriptors::ELEMENT_KINDS
-                    .iter()
-                    .map(|k| {
-                        (
-                            k.id.to_string(),
-                            super::wds_attrs::kind_elements(net, k.id).ids.len(),
-                        )
-                    })
-                    .collect()
-            }))
+            Ok(guard
+                .wds_network()
+                .map_or_else(HashMap::new, super::wds_attrs::kind_counts))
         }
         _ => Ok(HashMap::new()),
     }
@@ -661,6 +650,39 @@ fn collection_rows(
 ) -> Option<Vec<(String, HashMap<&'static str, AttrValue>)>> {
     use AttrValue::{Number, Text};
     let rows = match kind {
+        // Rain gages had no arm at all, so the rail showed a Rain gages
+        // entry reading zero and its table was always empty — for every
+        // drainage model, since the day the rail was built. It was
+        // invisible because the count came from this same function: the
+        // number agreed with the table, and both were wrong.
+        "raingage" => net
+            .gages
+            .iter()
+            .map(|g| {
+                let mut m = HashMap::new();
+                m.insert("format", Text(format!("{:?}", g.form).to_uppercase()));
+                // Seconds in the model; a recording interval is read as
+                // a clock time, which is how the file writes it too.
+                let minutes = (g.interval / 60.0).round() as i64;
+                m.insert(
+                    "interval",
+                    Text(format!("{}:{:02}", minutes / 60, minutes % 60)),
+                );
+                m.insert(
+                    "source",
+                    Text(match &g.source {
+                        hydra::uds::model::GageSource::Series { series } => net
+                            .timeseries
+                            .get(*series)
+                            .map_or_else(|| "Time series".to_string(), |t| t.id.clone()),
+                        hydra::uds::model::GageSource::File { file, station, .. } => {
+                            format!("{file} ({station})")
+                        }
+                    }),
+                );
+                (g.id.clone(), m)
+            })
+            .collect(),
         "pollutant" => net
             .constituents
             .iter()
@@ -897,6 +919,51 @@ fn collection_rows(
         _ => return None,
     };
     Some(rows)
+}
+
+/// How many elements of each kind the model holds.
+///
+/// Counted by classifying each element rather than by building one
+/// kind's table per kind and measuring it: the rail asks this before
+/// anything is shown, and the table path builds a value map per element
+/// — which was one pass over every element for every kind in the
+/// catalog, and this catalog has twenty-four.
+pub fn kind_counts(net: &Network) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = hydra::uds::descriptors::ELEMENT_KINDS
+        .iter()
+        .map(|k| (k.id.to_string(), 0))
+        .collect();
+    let mut bump = |kind: &str| *counts.entry(kind.to_string()).or_default() += 1;
+    for v in &net.vertices {
+        bump(super::uds_view::vertex_kind_id(&v.kind));
+    }
+    for l in &net.links {
+        bump(super::uds_view::link_kind_id(&l.kind));
+    }
+    for _ in &net.parcels {
+        bump("subcatchment");
+    }
+    // The collections are listed rather than walked: each is its own
+    // vector, and the counts are their lengths.
+    for (kind, n) in [
+        ("raingage", net.gages.len()),
+        ("pollutant", net.constituents.len()),
+        ("curve", net.curves.len()),
+        ("timeseries", net.timeseries.len()),
+        ("pattern", net.patterns.len()),
+        ("rule", net.controls.rules.len()),
+        ("landuse", net.land_uses.len()),
+        ("aquifer", net.aquifers.len()),
+        ("snowpack", net.snowpacks.len()),
+        ("hydrograph", net.unit_hydrographs.len()),
+        ("lidcontrol", net.lid_controls.len()),
+        ("transect", net.transects.len()),
+        ("street", net.streets.len()),
+        ("inlet", net.inlets.len()),
+    ] {
+        counts.insert(kind.to_string(), n);
+    }
+    counts
 }
 
 /// Build one kind's table: ids in model order, and one column per §4.4
@@ -1199,6 +1266,48 @@ mod tests {
             .find(|c| c.key == "points")
             .expect("points column");
         assert_eq!(points.values[0], serde_json::Value::Null);
+    }
+
+    /// The rail's number and the table's rows are two answers to one
+    /// question, and they are now computed by two different functions —
+    /// one classifying elements, one building them — because building
+    /// every element's values to count them was one pass over the whole
+    /// model per kind, and this catalog has twenty-four.
+    ///
+    /// Two answers is the arrangement that drifts, so they are checked
+    /// against each other for every kind the catalog declares.
+    #[test]
+    fn the_counts_agree_with_the_tables_they_count() {
+        // A model with something of several classes: vertices, links,
+        // a parcel and a couple of collections.
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                     [JUNCTIONS]\nJ1 100 4\nJ2 90 4\n\
+                     [OUTFALLS]\nO1 80 FREE NO\n\
+                     [CONDUITS]\nC1 J1 J2 400 0.013 0 0\nC2 J2 O1 300 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\
+                     [SUBCATCHMENTS]\nS1 RG1 J1 5 40 500 0.5 0\n\
+                     [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+                     [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
+                     [CURVES]\nCV1 STORAGE 0 0\n\
+                     [TIMESERIES]\nTS1 0:00 0.1\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let counts = kind_counts(&net);
+        let mut nonzero = 0;
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let rows = kind_elements(&net, kind.id).ids.len();
+            assert_eq!(
+                counts.get(kind.id).copied(),
+                Some(rows),
+                "{} counted {:?} and tabled {rows}",
+                kind.id,
+                counts.get(kind.id)
+            );
+            if rows > 0 {
+                nonzero += 1;
+            }
+        }
+        assert!(nonzero >= 5, "only {nonzero} kinds were exercised");
     }
 
     /// Position travels with the table, not as a column.

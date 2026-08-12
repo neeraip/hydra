@@ -135,7 +135,11 @@ pub fn create_element(
                     diameter_of(&element)?,
                 )?,
             }
-            apply_fields(&element, |key, value| {
+            let consumed: &[&str] = match &where_ {
+                Placement::At(_, _) => &[],
+                Placement::Between(_, _) => &["length", "diameter"],
+            };
+            apply_fields(&element, consumed, |key, value| {
                 let number = value
                     .as_f64()
                     .filter(|v| v.is_finite())
@@ -167,7 +171,7 @@ pub fn create_element(
                     to,
                 )?,
             }
-            apply_fields(&element, |key, value| {
+            apply_fields(&element, &[], |key, value| {
                 super::wds_attrs::set_attribute(&mut draft, &id, key, value)
             })?;
             *network = draft;
@@ -182,11 +186,23 @@ pub fn create_element(
 /// Sorted by key, so a create that refuses one of them refuses the same
 /// one every time — a map's iteration order is not a promise, and an
 /// error that moved between runs would be read as flakiness.
+///
+/// `consumed` names the fields the engine's constructor already took, so
+/// they are not written a second time. Some of them are not attributes
+/// at all: a drainage conduit's diameter reaches its cross-section and
+/// appears in no schema, so writing it back was refused — and refused
+/// the whole create with it, which is why the drainage Add dialog could
+/// not make a conduit.
 fn apply_fields(
     element: &NewElement,
+    consumed: &[&str],
     mut write: impl FnMut(&str, &serde_json::Value) -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut keys: Vec<&String> = element.fields.keys().collect();
+    let mut keys: Vec<&String> = element
+        .fields
+        .keys()
+        .filter(|k| !consumed.contains(&k.as_str()))
+        .collect();
     keys.sort();
     for key in keys {
         write(key, &element.fields[key])?;
@@ -290,7 +306,7 @@ mod tests {
         element
             .fields
             .insert("invert".into(), serde_json::json!(87.5));
-        apply_fields(&element, |key, value| {
+        apply_fields(&element, &[], |key, value| {
             let n = value.as_f64().expect("a number");
             super::super::uds_attrs::set_attribute(&mut net, "J2", key, n)
         })
@@ -319,7 +335,7 @@ mod tests {
         element
             .fields
             .insert("shape".into(), serde_json::json!(1.0));
-        let err = apply_fields(&element, |key, value| {
+        let err = apply_fields(&element, &[], |key, value| {
             let n = value.as_f64().expect("a number");
             super::super::uds_attrs::set_attribute(&mut net, "J2", key, n)
         })
@@ -337,7 +353,7 @@ mod tests {
             element.fields.insert(key.into(), serde_json::json!(1.0));
         }
         let mut seen = Vec::new();
-        apply_fields(&element, |key, _| {
+        apply_fields(&element, &[], |key, _| {
             seen.push(key.to_string());
             Ok(())
         })
@@ -359,5 +375,106 @@ mod tests {
             .fields
             .insert("diameter".into(), serde_json::json!(0.0));
         assert!(diameter_of(&element).is_err(), "zero is not a diameter");
+    }
+
+    /// The whole create, as the dialog sends it — which is the only way
+    /// this defect shows. `length` and `diameter` reach the engine's
+    /// constructor because a conduit cannot be built without them, and
+    /// they were then applied a second time as attribute writes. A
+    /// conduit publishes no `diameter` attribute, so the second pass
+    /// refused it and took the create down with it: the drainage Add
+    /// dialog could not make a conduit at all.
+    #[test]
+    fn a_conduit_is_created_from_the_fields_the_dialog_sends() {
+        let mut net = uds_model();
+        let mut element = new("conduit", "C2");
+        element.from_id = Some("J1".into());
+        element.to_id = Some("O1".into());
+        element
+            .fields
+            .insert("length".into(), serde_json::json!(55.0));
+        element
+            .fields
+            .insert("diameter".into(), serde_json::json!(0.45));
+
+        let where_ = placement(&element, ElementClass::Polyline).expect("ends");
+        let Placement::Between(from, to) = &where_ else {
+            panic!("a polyline is placed between its ends");
+        };
+        super::super::uds_create::create_uds_link(
+            &mut net,
+            &element.kind,
+            &element.id,
+            from,
+            to,
+            length_of(&element).expect("a length"),
+            diameter_of(&element).expect("a diameter"),
+        )
+        .expect("create");
+        apply_fields(&element, &["length", "diameter"], |key, value| {
+            let n = value.as_f64().expect("a number");
+            super::super::uds_attrs::set_attribute(&mut net, &element.id, key, n)
+        })
+        .expect("the fields the constructor already consumed must not be rewritten");
+
+        let link = net.links.iter().find(|l| l.id == "C2").expect("C2");
+        let hydra::uds::model::LinkKind::Channel { length, .. } = link.kind else {
+            panic!("not a channel");
+        };
+        assert!((length - 55.0).abs() < 1e-9);
+    }
+
+    /// The other engine's whole create, for the kind whose fields are
+    /// most entangled: a tank's published elevation is its bottom while
+    /// the model stores bottom plus minimum level, and both its
+    /// elevation and its minimum level move that stored value. The
+    /// fields arrive in sorted order, so elevation is written before
+    /// minLevel — and the result has to be the tank the dialog
+    /// described either way.
+    #[test]
+    fn a_tank_is_created_from_the_fields_the_dialog_sends() {
+        let mut net =
+            hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).expect("parse");
+        let mut element = new("tank", "T2");
+        element.position = Some([5.0, 6.0]);
+        for (key, value) in [
+            ("elevation", 40.0),
+            ("minLevel", 2.0),
+            ("maxLevel", 12.0),
+            ("initLevel", 4.0),
+            ("diameter", 20_000.0),
+        ] {
+            element.fields.insert(key.into(), serde_json::json!(value));
+        }
+
+        super::super::mutations::create_node_in_network(
+            &mut net, "tank", "T2", 5.0, 6.0, None, None, None, None,
+        )
+        .expect("create");
+        apply_fields(&element, &[], |key, value| {
+            super::super::wds_attrs::set_attribute(&mut net, "T2", key, value)
+        })
+        .expect("fields");
+
+        let rows = super::super::wds_attrs::element_attributes(&net, "T2").expect("rows");
+        let read = |key: &str| {
+            rows.iter()
+                .find(|r| r.key == key)
+                .and_then(|r| r.number)
+                .unwrap_or_else(|| panic!("no {key}"))
+        };
+        assert!((read("elevation") - 40.0).abs() < 1e-9, "bottom moved");
+        assert!((read("minLevel") - 2.0).abs() < 1e-9);
+        assert!((read("maxLevel") - 12.0).abs() < 1e-9);
+        assert!((read("diameter") - 20_000.0).abs() < 1e-6);
+        // And the stored value is the bottom plus the minimum, which is
+        // the invariant the two setters have to preserve between them.
+        let stored = net
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "T2")
+            .map(|n| n.base.elevation)
+            .expect("T2");
+        assert!((stored - 42.0).abs() < 1e-9, "stored elevation is {stored}");
     }
 }

@@ -177,6 +177,43 @@ fn link_values(link: &hydra::Link) -> (&'static str, HashMap<&'static str, AttrV
     }
 }
 
+/// Which kind an element is, without building its values.
+///
+/// Counting the elements of every kind is a page-load question — the
+/// Editor's rail asks it before anything is shown — and answering it
+/// through `kind_elements` built a value map per element per kind: ten
+/// passes over ninety thousand elements to produce ten numbers.
+fn node_kind_id(node: &hydra::Node) -> &'static str {
+    match &node.kind {
+        NodeKind::Junction(_) => "junction",
+        NodeKind::Reservoir(_) => "reservoir",
+        NodeKind::Tank(_) => "tank",
+    }
+}
+
+fn link_kind_id(link: &hydra::Link) -> &'static str {
+    match &link.kind {
+        LinkKind::Pipe(_) => "pipe",
+        LinkKind::Pump(_) => "pump",
+        LinkKind::Valve(_) => "valve",
+    }
+}
+
+/// How many elements of each kind the model holds.
+pub(crate) fn kind_counts(network: &hydra::Network) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = hydra::descriptors::ELEMENT_KINDS
+        .iter()
+        .map(|k| (k.id.to_string(), 0))
+        .collect();
+    for node in &network.nodes {
+        *counts.entry(node_kind_id(node).to_string()).or_default() += 1;
+    }
+    for link in &network.links {
+        *counts.entry(link_kind_id(link).to_string()).or_default() += 1;
+    }
+    counts
+}
+
 /// Every element of one kind, with its §4.4 attribute columns and — for
 /// a class that is somewhere — its positions.
 ///
@@ -184,17 +221,17 @@ fn link_values(link: &hydra::Link) -> (&'static str, HashMap<&'static str, AttrV
 /// either. Its own values come from the same per-element builders the
 /// inspector reads, so a column and a property row cannot disagree.
 pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElementsDto {
+    // Classified before its values are built, so an element of another
+    // kind costs a match rather than a map.
     let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> = Vec::new();
     for node in &network.nodes {
-        let (k, values) = node_values(node);
-        if k == kind {
-            rows.push((node.base.id.clone(), values));
+        if node_kind_id(node) == kind {
+            rows.push((node.base.id.clone(), node_values(node).1));
         }
     }
     for link in &network.links {
-        let (k, values) = link_values(link);
-        if k == kind {
-            rows.push((link.base.id.clone(), values));
+        if link_kind_id(link) == kind {
+            rows.push((link.base.id.clone(), link_values(link).1));
         }
     }
 
@@ -778,5 +815,27 @@ mod table_tests {
                 .map(|a| a.key.as_str())
                 .collect::<Vec<_>>(),
         );
+    }
+
+    /// The rail's number and the table's rows are two answers to one
+    /// question, computed by two different functions since counting
+    /// stopped building every element to measure it. Two answers is the
+    /// arrangement that drifts.
+    #[test]
+    fn the_counts_agree_with_the_tables_they_count() {
+        let net = model();
+        let counts = kind_counts(&net);
+        for kind in hydra::descriptors::ELEMENT_KINDS {
+            assert_eq!(
+                counts.get(kind.id).copied(),
+                Some(kind_elements(&net, kind.id).ids.len()),
+                "{} disagrees",
+                kind.id
+            );
+        }
+        // The fixture has some of each spatial kind, so the check is not
+        // three zeroes agreeing with three zeroes.
+        assert_eq!(counts.get("junction").copied(), Some(1));
+        assert_eq!(counts.get("pipe").copied(), Some(2));
     }
 }
