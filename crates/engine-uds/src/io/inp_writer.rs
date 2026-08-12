@@ -80,6 +80,14 @@ impl Units {
     fn weir(&self, v: f64) -> f64 {
         v / self.weir_coeff
     }
+    /// m² → acres | hectares, the unit a parcel's area is entered in.
+    fn land(&self, v: f64) -> f64 {
+        if self.us {
+            v / 4_046.856_422_4
+        } else {
+            v / 10_000.0
+        }
+    }
     /// m³/s → the file's flow unit.
     fn flow(&self, v: f64) -> f64 {
         v / self.flow
@@ -229,6 +237,7 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_options(network, &u, &mut out);
     write_vertices(network, &u, &mut out);
     write_links(network, &u, &mut out);
+    write_hydrology(network, &u, &mut out);
     write_transects(network, &u, &mut out);
     write_streets(network, &u, &mut out);
     write_xsections(network, &mut out);
@@ -939,6 +948,170 @@ fn outlet_rating(
 
 // ── Curves, series and patterns ─────────────────────────────────────────
 
+/// The hydrology sections that describe a surface: its gages, its
+/// parcels, their sub-areas and their infiltration.
+fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
+    use crate::model::{GageSource, Infiltration as I, ParcelOutlet, RainFileUnit, RainForm};
+
+    let mut gages = Rows::new(
+        "[RAINGAGES]",
+        &["Name", "Format", "Interval", "SCF", "Source"],
+    );
+    for g in &network.gages {
+        let mut row = vec![
+            id(&g.id),
+            match g.form {
+                RainForm::Intensity => "INTENSITY",
+                RainForm::Volume => "VOLUME",
+                RainForm::Cumulative => "CUMULATIVE",
+            }
+            .to_string(),
+            // Written as a clock, not as decimal hours: the reader takes
+            // either, and a bare number is the form §14.13.3 keeps out.
+            hms(g.interval),
+            num(g.catch_factor),
+        ];
+        match &g.source {
+            GageSource::Series { series } => {
+                row.push("TIMESERIES".into());
+                row.push(id(&network.timeseries[*series].id));
+            }
+            GageSource::File {
+                file,
+                station,
+                unit,
+            } => {
+                row.push("FILE".into());
+                row.push(id(file));
+                row.push(id(station));
+                // The record's own unit is optional and defaults to the
+                // model's, so it is written only when the file declared
+                // one (§14.13.4).
+                if let Some(unit) = unit {
+                    row.push(
+                        match unit {
+                            RainFileUnit::Inches => "IN",
+                            RainFileUnit::Millimetres => "MM",
+                        }
+                        .to_string(),
+                    );
+                }
+            }
+        }
+        gages.rows.push(row);
+    }
+    gages.write(out);
+
+    let mut parcels = Rows::new(
+        "[SUBCATCHMENTS]",
+        &[
+            "Name", "RainGage", "Outlet", "Area", "%Imperv", "Width", "%Slope", "CurbLen",
+            "SnowPack",
+        ],
+    );
+    let mut subareas = Rows::new(
+        "[SUBAREAS]",
+        &[
+            "Subcatch",
+            "N-Imperv",
+            "N-Perv",
+            "S-Imperv",
+            "S-Perv",
+            "PctZero",
+            "RouteTo",
+            "PctRouted",
+        ],
+    );
+    let mut infiltration = Rows::new(
+        "[INFILTRATION]",
+        &["Subcatch", "Param1", "Param2", "Param3", "Param4", "Param5"],
+    );
+    for p in &network.parcels {
+        parcels.push([
+            id(&p.id),
+            id(&network.gages[p.gage].id),
+            match p.outlet {
+                ParcelOutlet::Vertex(v) => id(&network.vertices[v].id),
+                ParcelOutlet::Parcel(q) => id(&network.parcels[q].id),
+            },
+            num(u.land(p.area)),
+            num(p.frac_imperv * 100.0),
+            num(u.len(p.width)),
+            num(p.slope * 100.0),
+            num(u.len(p.curb_length)),
+            p.snowpack
+                .map_or(String::new(), |s| id(&network.snowpacks[s].id)),
+        ]);
+        if let Some(sa) = &p.subareas {
+            subareas.push([
+                id(&p.id),
+                num(sa.n_imperv),
+                num(sa.n_perv),
+                num(u.depth(sa.dstore_imperv)),
+                num(u.depth(sa.dstore_perv)),
+                num(sa.frac_zero_store * 100.0),
+                match sa.routing {
+                    crate::model::SubareaRouting::Outlet => "OUTLET",
+                    crate::model::SubareaRouting::Impervious => "IMPERVIOUS",
+                    crate::model::SubareaRouting::Pervious => "PERVIOUS",
+                }
+                .to_string(),
+                num(sa.frac_routed * 100.0),
+            ]);
+        }
+        // The relation's own parameters, and the model word naming which
+        // relation they belong to — a parcel may override the global
+        // selection, so the word is written rather than inferred from it.
+        if let Some(infil) = &p.infiltration {
+            let row = match infil {
+                I::Horton {
+                    f0,
+                    f_min,
+                    decay,
+                    dry_time,
+                    f_max,
+                } => [
+                    num(u.rate(*f0)),
+                    num(u.rate(*f_min)),
+                    num(decay * 3600.0),
+                    num(dry_time / 86_400.0),
+                    num(u.depth(*f_max)),
+                ],
+                I::GreenAmpt {
+                    suction,
+                    conductivity,
+                    initial_deficit,
+                } => [
+                    num(u.depth(*suction)),
+                    num(u.rate(*conductivity)),
+                    num(*initial_deficit),
+                    String::new(),
+                    String::new(),
+                ],
+                // The middle column is read past rather than read: the
+                // relation takes a curve number and a drying time, and
+                // the reader still expects three.
+                I::CurveNumber {
+                    curve_number,
+                    dry_time,
+                } => [
+                    num(*curve_number),
+                    "0".into(),
+                    num(dry_time / 86_400.0),
+                    String::new(),
+                    String::new(),
+                ],
+            };
+            let mut fields = vec![id(&p.id)];
+            fields.extend(row.into_iter().filter(|f| !f.is_empty()));
+            infiltration.rows.push(fields);
+        }
+    }
+    parcels.write(out);
+    subareas.write(out);
+    infiltration.write(out);
+}
+
 /// `[TRANSECTS]`, whose survey the model holds with the file's station
 /// multiplier and elevation offset already applied.
 ///
@@ -1402,6 +1575,21 @@ C4  J1  J2  90   0.02   0    0    0    0
 [PUMPS]
 P1  S1  S2  PC1  OFF  1.2  0.4
 
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RS1
+
+[SUBCATCHMENTS]
+SUB1  G1  J1  4.5  35  400  1.2  120
+SUB2  G1  SUB1  2.0  80  250  0.8  0
+
+[SUBAREAS]
+SUB1  0.015  0.24  0.06  0.2  20  PERVIOUS  40
+SUB2  0.012  0.10  0.05  0.1  100  OUTLET
+
+[INFILTRATION]
+SUB1  3.5  0.6  4.14  6  1.2
+SUB2  3.0  0.5  4.14  7
+
 [LOSSES]
 C1  0.5  0.8  0.1  YES  0.25
 
@@ -1424,6 +1612,11 @@ C4  IRREGULAR  T1
 SC1  STORAGE  0  100  2  400  6  900
 PC1  PUMP3    0  8    5  6    10 2
 RC1  RATING   0  0    1  3.5  2  9
+
+[TIMESERIES]
+RS1  0:00  0.4
+RS1  1:00  0.9
+RS1  2:00  0
 ";
         let (a, da) = crate::io::objects::parse_network(inp);
         assert!(da.iter().all(|d| !d.kind.is_error()), "{da:?}");
@@ -1489,6 +1682,8 @@ RC1  RATING   0  0    1  3.5  2  9
         // Curves carry a different conversion per role, so they are
         // compared as a body rather than trusted to the link and node
         // comparisons that merely reference them.
+        assert_eq!(a.gages, b.gages, "gages\n{text}");
+        assert_eq!(a.parcels, b.parcels, "parcels\n{text}");
         assert_eq!(a.transects, b.transects, "transects\n{text}");
         assert_eq!(a.streets, b.streets, "streets\n{text}");
         assert_eq!(a.curves.len(), b.curves.len(), "curve count\n{text}");
