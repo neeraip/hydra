@@ -28,7 +28,8 @@
 //! junctions, outfalls, and the conduits between them.
 
 use hydra::uds::model::{
-    CrossSection, Link, LinkKind, Network, Offset, OutfallStage, Vertex, VertexKind, XsectShape,
+    CrossSection, DividerRule, Link, LinkKind, Network, Offset, OutfallStage, Vertex, VertexKind,
+    XsectShape,
 };
 
 /// The Manning roughness a new conduit gets: concrete pipe, the value
@@ -124,6 +125,22 @@ pub(crate) fn create_uds_vertex(
             stage: OutfallStage::Free,
             flap_gate: false,
             route_to_parcel: None,
+        },
+        "divider" => VertexKind::Divider {
+            // Nothing invented, which is why this kind is creatable at
+            // all. Under the one routing form this engine solves a
+            // divider is an ordinary junction (§7.5) and the rule is
+            // never read — it travels with the model for the import
+            // record. `None` is what the file writes as `*`, and the
+            // overflow rule is the one that takes no parameters, so a
+            // new divider diverts nothing until it is told where to.
+            diverted_link: None,
+            rule: DividerRule::Overflow,
+            // A junction's defaults, because that is what this is.
+            max_depth: 0.0,
+            init_depth: 0.0,
+            surcharge_depth: 0.0,
+            ponded_area: 0.0,
         },
         // Every other kind was refused above, by the catalog. This arm
         // is reached only by a kind that is creatable and has no
@@ -348,11 +365,12 @@ O1 100 0
     #[test]
     fn a_kind_that_would_need_an_invented_value_is_refused_by_name() {
         let mut net = model();
-        for (kind, expect) in [("storage", "stage-area"), ("divider", "diverted")] {
-            let err =
-                create_uds_vertex(&mut net, kind, "X", 0.0, 0.0, 90.0).expect_err("should refuse");
-            assert!(err.contains(expect), "unhelpful for {kind}: {err}");
-        }
+        // A divider used to be here too, and is not: its rule is never
+        // read (§7.5), so nothing about a new one has to be invented —
+        // which the test below asserts instead.
+        let err =
+            create_uds_vertex(&mut net, "storage", "X", 0.0, 0.0, 90.0).expect_err("should refuse");
+        assert!(err.contains("stage-area"), "unhelpful for storage: {err}");
         for (kind, expect) in [
             ("pump", "characteristic curve"),
             ("outlet", "rating"),
@@ -381,6 +399,49 @@ O1 100 0
             "got {}",
             xs.geom_user[0]
         );
+    }
+
+    /// The refusal this kind used to carry said a divider "needs the
+    /// link its diverted flow leaves by". It does not: `*` is legal
+    /// input, and under the one routing form this engine solves a
+    /// divider is an ordinary junction whose rule is carried for the
+    /// import record and never evaluated (§7.5). So the refusal was
+    /// reading the file format as if the solver used it.
+    #[test]
+    fn a_divider_is_created_as_the_junction_this_engine_treats_it_as() {
+        let mut net = model();
+        create_uds_vertex(&mut net, "divider", "D1", 50.0, 25.0, 95.0).expect("divider");
+        let made = net.vertices.iter().find(|v| v.id == "D1").expect("D1");
+        assert!(matches!(
+            made.kind,
+            VertexKind::Divider {
+                diverted_link: None,
+                rule: DividerRule::Overflow,
+                ..
+            }
+        ));
+
+        // And it survives the writer, which is what makes it an element
+        // the user has added rather than one that vanishes on save. The
+        // diverted link writes as `*`, the shape the reader takes back
+        // as "none named".
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        assert!(matches!(
+            again
+                .vertices
+                .iter()
+                .find(|v| v.id == "D1")
+                .map(|v| &v.kind),
+            Some(VertexKind::Divider {
+                diverted_link: None,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -53,8 +53,14 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Control),
         badge: "FD",
-        creatable: false,
-        not_creatable_because: Some("a divider needs the link its diverted flow leaves by"),
+        // Creatable, despite the file format making it look otherwise:
+        // under the one routing form this engine solves, a divider *is*
+        // an ordinary junction (§7.5), and its split rule is carried for
+        // the import record rather than evaluated. So a new one needs
+        // nothing invented — no diverted link is what `*` means, and the
+        // overflow rule takes no parameters.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "storage",
