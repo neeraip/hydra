@@ -35,8 +35,22 @@ interface NetworkVersionCtx {
   /** Scenario IDs (or null for base model) whose network was edited after the last run. */
   /** Mark a scenario's results as stale because its network was edited. */
   markEdited: (projectId: string, scenarioId: string | null) => void;
-  /** Clear the stale flag after a successful simulation run for that scenario. */
-  clearEdited: (projectId: string, scenarioId: string | null) => void;
+  /**
+   * Clear the stale flag after a successful run for that scenario.
+   *
+   * `runStartedAt` is when the run that is clearing it began, in epoch
+   * seconds. An edit made *while* a run was in flight is not answered by
+   * that run — the solver read the model before it happened — so the
+   * flag survives. Without this, a value-only edit during a long run
+   * left results that looked current and described the model as it was
+   * before, and the topology digest cannot see it because changing a
+   * diameter changes no topology.
+   */
+  clearEdited: (
+    projectId: string,
+    scenarioId: string | null,
+    runStartedAt?: number | null,
+  ) => void;
   /** Whether that target has edits since its last run. */
   isEdited: (projectId: string | null, scenarioId: string | null) => boolean;
 }
@@ -98,9 +112,12 @@ export function editedKey(
 
 export function NetworkVersionProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState(0);
-  const [editedTargets, setEditedTargets] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  // When each target was edited, in epoch seconds — not merely *that* it
+  // was. A run only answers the edits that preceded it, and the answer to
+  // "may I clear this" is a comparison of two times.
+  const [editedTargets, setEditedTargets] = useState<
+    ReadonlyMap<string, number>
+  >(new Map());
 
   // Coalesce bumps arriving in the same tick into a single version increment
   // (see makeCoalescedScheduler). useMemo keeps the callback identity stable
@@ -138,10 +155,14 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
   const markEdited = useCallback(
     (projectId: string, scenarioId: string | null) => {
       const key = editedKey(projectId, scenarioId);
+      // The *first* edit since the last run is the one whose time
+      // matters: a later one is no less answered by a run that started
+      // before either. Keeping the earliest also makes the comparison
+      // stable while someone types.
       setEditedTargets((prev) => {
         if (prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.add(key);
+        const next = new Map(prev);
+        next.set(key, Math.floor(Date.now() / 1000));
         return next;
       });
     },
@@ -149,11 +170,17 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
   );
 
   const clearEdited = useCallback(
-    (projectId: string, scenarioId: string | null) => {
+    (
+      projectId: string,
+      scenarioId: string | null,
+      runStartedAt?: number | null,
+    ) => {
       const key = editedKey(projectId, scenarioId);
       setEditedTargets((prev) => {
-        if (!prev.has(key)) return prev;
-        const next = new Set(prev);
+        const editedAt = prev.get(key);
+        if (editedAt === undefined) return prev;
+        if (!runSupersedesEdit(editedAt, runStartedAt)) return prev;
+        const next = new Map(prev);
         next.delete(key);
         return next;
       });
@@ -183,4 +210,30 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
 
 export function useNetworkVersion() {
   return useContext(Ctx);
+}
+
+/**
+ * Whether a finished run answers an edit, so its stale marker can go.
+ *
+ * A run reads the model when it starts. An edit made while it was in
+ * flight is not in the results it produced, so the run does not answer
+ * it and the marker has to survive — otherwise a value-only edit during
+ * a long run leaves results that look current and describe the model as
+ * it was. The topology digest cannot cover this: changing a diameter
+ * changes no topology, so that check sees nothing and the marker was the
+ * only signal.
+ *
+ * An edit in the same second as the start counts as *after* it. The two
+ * clocks are both epoch seconds and a second is coarse enough to
+ * straddle, so the tie goes to warning rather than to silence.
+ *
+ * A run with no start time — cancelled before it began, or an item from
+ * an older queue — answers nothing.
+ */
+export function runSupersedesEdit(
+  editedAt: number,
+  runStartedAt: number | null | undefined,
+): boolean {
+  if (runStartedAt == null) return false;
+  return editedAt < runStartedAt;
 }

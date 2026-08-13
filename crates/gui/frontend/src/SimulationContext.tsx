@@ -729,7 +729,12 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // Clear the stale-results flag for every scenario that just completed
         // successfully.
         for (const item of items) {
-          if (item.status === "done") clearEdited(projectId, item.targetId);
+          // Only the edits this run actually answered. One made while
+          // it was in flight is not in its results, and clearing the
+          // marker for it left them looking current.
+          if (item.status === "done") {
+            clearEdited(projectId, item.targetId, item.startedAt);
+          }
         }
 
         // The queue is the authority on completion, and for a fast run its
