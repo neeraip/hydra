@@ -90,6 +90,18 @@ pub struct ElementKind {
     pub role: Option<ElementRole>,
     /// One- or two-character glyph for dense UI (markers, chips).
     pub badge: &'static str,
+    /// The heading this kind is listed under (spec §4.2.1), or `None`
+    /// for one the engine places under no heading.
+    ///
+    /// The engine's own word rather than a class: §4.1's classes say how
+    /// an application must *draw* a thing, and that is not what a
+    /// modeller calls it. A drainage engineer says "nodes" and "links",
+    /// not "points" and "polylines".
+    ///
+    /// Presentation only. Nothing may depend on it, and an application
+    /// that ignores it renders a flat list and is correct.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<&'static str>,
     /// Whether elements of this kind may be created (spec §4.5.3).
     ///
     /// Advisory, like [`AttributeDescriptor::editable`]: creation is the
@@ -181,6 +193,26 @@ mod tests {
         );
     }
 
+    /// A group is optional, and absent means the application draws no
+    /// heading — not an empty one. The field leaves the wire entirely so
+    /// a consumer cannot tell "no group" from "a group called nothing".
+    #[test]
+    fn a_kind_in_no_group_carries_no_group_field() {
+        let kind = ElementKind {
+            id: "k",
+            label: "Kind",
+            label_plural: "Kinds",
+            class: ElementClass::Collection,
+            role: None,
+            badge: "K",
+            group: None,
+            creatable: false,
+            not_creatable_because: None,
+        };
+        let json = serde_json::to_value(kind).unwrap();
+        assert!(json.get("group").is_none(), "{json}");
+    }
+
     #[test]
     fn kind_descriptor_serialises_camel_case() {
         let kind = ElementKind {
@@ -190,6 +222,7 @@ mod tests {
             class: ElementClass::Point,
             role: Some(ElementRole::Boundary),
             badge: "K",
+            group: Some("Kinds"),
             creatable: false,
             not_creatable_because: Some("a kind needs something only its engine knows"),
         };
@@ -198,6 +231,7 @@ mod tests {
         assert_eq!(json["class"], "point");
         assert_eq!(json["role"], "boundary");
         assert_eq!(json["creatable"], false);
+        assert_eq!(json["group"], "Kinds");
         assert_eq!(
             json["notCreatableBecause"],
             "a kind needs something only its engine knows"

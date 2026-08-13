@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.12 — 2026-08-12** (v1.1 added opaque per-block options
+Status: **v1.13 — 2026-08-13** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -25,7 +25,9 @@ attribute naming more than one — a subcatchment's outlet — could be
 described at all, §4.5.1.1; v1.12 added attached records, §4.5.2.3, for
 the rows an element carries that have no identity of their own — a
 junction's demand categories, a vertex's dry-weather inflows — which
-attributes could only flatten and elements could only misname).
+attributes could only flatten and elements could only misname; v1.13 let
+a kind say what heading it is listed under, §4.2.1, so a catalog of
+two dozen is a list a reader can find anything in).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -514,6 +516,7 @@ conduit, subcatchment, rain gage — as an ordered catalog of descriptors:
 | `class` | The kind's element class (§4.1) | One of the four classes. |
 | `role` | What the kind does in the network (§4.3) | One of the three roles, or absent. |
 | `badge` | Short glyph for dense UI (markers, chips) | One or two characters, engine-authored. |
+| `group` | What this kind is listed under (§4.2.1) | Plain text, engine-authored; absent for a kind the engine does not place in one. |
 
 The catalog is static and model-free, like the block catalog (§3.2): an
 application must be able to build its chrome — tables, filters, layer
@@ -526,6 +529,37 @@ This layer requires only that the pair (kind id, element id) is unique
 within a model; whether identifiers are additionally unique across kinds
 (as they are within one engine's node family) is the engine's own rule,
 expressed through its validation, not through this contract.
+
+#### 4.2.1 Groups
+
+A catalog of twenty-four kinds is a list nobody reads. `group` is the
+engine's own name for the heading a kind belongs under, so an application
+listing them can break the list up without knowing what any of them are.
+
+**It is the engine's word, not a class.** §4.1's classes say how an
+application must *draw* a thing — a marker, a line, a polygon — and that
+is not what a modeller calls it. A drainage engineer says "nodes" and
+"links"; presenting them as "points" and "polylines" would put a
+rendering vocabulary in front of a reader who has no reason to hold it.
+So a group is plain engine-authored text, exactly as `label` is, and an
+engine names its groups in its own domain's terms.
+
+It also lets two engines differ where they genuinely do. One engine's
+non-spatial kinds may divide into patterns and controls; another's into
+rainfall, water quality, ground conditions and street drainage. Neither
+has to adopt the other's shape, and this layer never learns either.
+
+**Grouping is presentation, not structure.** Nothing here may depend on
+it: it carries no meaning for simulation, validation, or what an element
+*is*. An application free to ignore it renders a flat list and is
+correct, which is why the field is optional and why a kind may belong to
+no group at all.
+
+The catalog's order stands. A group is a name attached to kinds that are
+already adjacent in it, not an instruction to gather kinds that are not —
+so an application draws a heading wherever the group changes, and never
+reorders to bring a group together. An engine that wants its kinds
+grouped puts them in that order.
 
 ### 4.3 Element roles
 
