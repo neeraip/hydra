@@ -38,6 +38,7 @@ import {
   useReferenceIds,
 } from "../../../hooks";
 import {
+  useCollectionContentsWrite,
   useElementAttributeWrite,
   useElementEndsWrite,
 } from "../../../hooks/useAttributeWrite";
@@ -281,11 +282,25 @@ export function ElementsView() {
   // would select an unrelated element on the map.
   const spatial = activeClass !== "collection";
   const containerId = spatial ? null : openContainer;
-  const detail = useCollectionDetail(
+  const { detail, refetch: refetchDetail } = useCollectionDetail(
     project?.id,
     activeScenarioId,
     kind,
     containerId,
+  );
+
+  // A container's contents are their own operation too (§4.5.2.2): a
+  // curve's points are a table whose length is part of what is being
+  // authored, which no attribute key could address.
+  const writeContents = useCollectionContentsWrite();
+  const onWriteContents = useCallback(
+    (rows: number[][]) =>
+      kind && containerId
+        ? writeContents(kind, containerId, rows, detail.rows).then(
+            refetchDetail,
+          )
+        : Promise.resolve(),
+    [writeContents, refetchDetail, kind, containerId, detail.rows],
   );
   const selectedId =
     activeClass === "collection"
@@ -402,7 +417,11 @@ export function ElementsView() {
             revealToken={revealToken || undefined}
           />
           {containerId && (
-            <CollectionDetail detail={detail} elementId={containerId} />
+            <CollectionDetail
+              detail={detail}
+              elementId={containerId}
+              onWrite={onWriteContents}
+            />
           )}
         </div>
       )}

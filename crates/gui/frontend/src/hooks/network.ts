@@ -1343,6 +1343,33 @@ export async function setElementAttribute(
 }
 
 /**
+ * Replace one collection element's contents (hydra-common §4.5.2.2).
+ *
+ * The whole table every time, because the rows are ordered and
+ * interdependent — a curve's abscissae must ascend, a pattern's
+ * multipliers are a cycle whose length is its period. One write is one
+ * validation, and its inverse is the table that was there.
+ *
+ * Numbers go in the unit each column declared on the way out.
+ *
+ * Throws what the engine refused, so a caller can say why and restore
+ * what the table was showing.
+ */
+export async function setCollectionContents(
+  projectId: string,
+  kind: string,
+  elementId: string,
+  rows: number[][],
+): Promise<void> {
+  await invoke<void>("set_collection_contents", {
+    projectId,
+    kind,
+    elementId,
+    rows,
+  });
+}
+
+/**
  * Point one line at two other elements (hydra-common §4.5.2.1).
  *
  * Both ends every time, even to change one: it makes the operation
@@ -1557,6 +1584,10 @@ export interface CollectionDetail {
   quantities: (GenericQuantity | null)[];
   rows: number[][];
   lines: string[];
+  /** Whether a write of these contents may be offered (hydra-common
+   * §4.5.2.2). Advisory — the write is the authority — and false for
+   * contents that are language rather than a table of numbers. */
+  editable: boolean;
 }
 
 const EMPTY_DETAIL: CollectionDetail = {
@@ -1564,6 +1595,7 @@ const EMPTY_DETAIL: CollectionDetail = {
   quantities: [],
   rows: [],
   lines: [],
+  editable: false,
 };
 
 export async function getCollectionDetail(
@@ -1585,8 +1617,16 @@ export function useCollectionDetail(
   scenarioId: string | null | undefined,
   kind: string | null,
   id: string | null,
-): CollectionDetail {
+): { detail: CollectionDetail; refetch: () => void } {
   const [detail, setDetail] = useState<CollectionDetail>(EMPTY_DETAIL);
+  // The contents redraw from a refetch rather than from what was typed:
+  // the backend is the one that knows what the table became — it may
+  // have converted, and it may have refused — and a table showing the
+  // entered numbers while the model holds others lies until reload.
+  const refetch = useCallback(() => {
+    if (!projectId || !kind || !id) return;
+    void getCollectionDetail(projectId, scenarioId, kind, id).then(setDetail);
+  }, [projectId, scenarioId, kind, id]);
   useEffect(() => {
     if (!projectId || !kind || !id) {
       setDetail(EMPTY_DETAIL);
@@ -1600,7 +1640,7 @@ export function useCollectionDetail(
       cancelled = true;
     };
   }, [projectId, scenarioId, kind, id]);
-  return detail;
+  return { detail, refetch };
 }
 
 /** How many elements each declared kind holds, keyed by kind id. */

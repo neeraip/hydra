@@ -381,6 +381,34 @@ describe("inverseOp", () => {
     ).toBeNull();
   });
 
+  it("puts a whole table back, which is why the write takes one", () => {
+    // A sequence of per-row operations could not be reversed without
+    // replaying each one, and half of them are illegal on their own —
+    // a curve with a point inserted before it is sorted into place.
+    expect(
+      inverseOp(
+        { op: "contents", kind: "curve", id: "C1", rows: [[0, 1]] },
+        {
+          rows: [
+            [0, 50],
+            [5, 0],
+          ],
+        },
+      ),
+    ).toEqual({
+      op: "contents",
+      kind: "curve",
+      id: "C1",
+      rows: [
+        [0, 50],
+        [5, 0],
+      ],
+    });
+    expect(
+      inverseOp({ op: "contents", kind: "curve", id: "C1", rows: [[0, 1]] }),
+    ).toBeNull();
+  });
+
   it("inverts a rename by renaming back", () => {
     expect(
       inverseOp({ op: "rename", kind: "junction", from: "J1", to: "J2" }),

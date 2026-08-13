@@ -1,7 +1,11 @@
 import { useCallback } from "react";
 import { useAppState } from "../AppContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
-import { setElementAttribute, setElementEnds } from "./network";
+import {
+  setCollectionContents,
+  setElementAttribute,
+  setElementEnds,
+} from "./network";
 import { saveProjectOnDisk } from "./projects";
 import { pushUndoEntry, stackKey } from "./undoStack";
 
@@ -122,6 +126,55 @@ export function useElementEndsWrite(): (
             ],
           },
           redo: { ops: [{ op: "reconnect", id: elementId, fromId, toId }] },
+        });
+      }
+      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      markEdited(activeProjectId, activeScenarioId);
+    },
+    [activeProjectId, activeScenarioId, markEdited, showToast],
+  );
+}
+
+/**
+ * The same flow for a collection element's contents (§4.5.2.2).
+ *
+ * A third hook rather than a branch inside the others, for the same
+ * reason there are two already: none of the three has to ask which of
+ * them it is doing. What surrounds the write is identical — persist,
+ * mark the results stale, capture the inverse.
+ *
+ * `previous` is the table the panel was showing, and it is the whole
+ * inverse: the write replaces every row, so restoring it needs nothing
+ * read back.
+ */
+export function useCollectionContentsWrite(): (
+  kind: string,
+  elementId: string,
+  rows: number[][],
+  previous?: number[][],
+) => Promise<void> {
+  const { activeProjectId, activeScenarioId, showToast } = useAppState();
+  const { markEdited } = useNetworkVersion();
+
+  return useCallback(
+    async (kind, elementId, rows, previous) => {
+      if (!activeProjectId) return;
+      try {
+        await setCollectionContents(activeProjectId, kind, elementId, rows);
+      } catch (err) {
+        // Rethrown without a toast: the panel shows the reason beside
+        // the table it is about, and "a curve's first column has to
+        // increase" says nothing useful floating in a corner.
+        showToast(typeof err === "string" ? err : String(err), "error");
+        throw err;
+      }
+      if (previous) {
+        pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
+          label: `Edited ${elementId}`,
+          undo: {
+            ops: [{ op: "contents", kind, id: elementId, rows: previous }],
+          },
+          redo: { ops: [{ op: "contents", kind, id: elementId, rows }] },
         });
       }
       await saveProjectOnDisk(activeProjectId, activeScenarioId);

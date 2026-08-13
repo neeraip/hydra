@@ -911,6 +911,17 @@ pub(crate) struct CurveAxis {
 }
 
 impl CurveAxis {
+    /// What this axis measures — the column heading a table shows.
+    pub(crate) fn label(&self) -> &'static str {
+        self.label
+    }
+
+    /// The §5 quantity key this axis carries, or `None` where its purpose
+    /// is unknown and no unit interpretation may be imposed.
+    pub(crate) fn quantity(&self) -> Option<&'static str> {
+        self.quantity
+    }
+
     /// Internal SI → this axis's display unit. Callers going the other way
     /// divide by it.
     pub(crate) fn scale(&self) -> f64 {

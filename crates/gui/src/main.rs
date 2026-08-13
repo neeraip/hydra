@@ -134,6 +134,7 @@ fn main() {
             commands::create_link,
             commands::create_element,
             commands::set_element_ends,
+            commands::set_collection_contents,
             commands::create_curve,
             commands::update_curve_points,
             commands::delete_curve,

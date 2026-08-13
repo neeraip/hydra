@@ -416,6 +416,15 @@ pub struct CollectionDetailDto {
     pub rows: Vec<Vec<f64>>,
     /// Verbatim lines, for containers whose content is language.
     pub lines: Vec<String>,
+    /// Whether a write of these contents may be offered (§4.5.2.2).
+    ///
+    /// Advisory, like every other editability flag here — the write is
+    /// the authority. It exists because the two shapes are not equally
+    /// writable: rows are numbers under headings the engine named, while
+    /// lines are a language, and taking those back means parsing them
+    /// with the engine's own reader. Serving the text to be read is
+    /// worth doing whether or not it can be rewritten.
+    pub editable: bool,
 }
 
 /// The contents of one collection element, or an empty detail when the
@@ -431,11 +440,22 @@ pub fn get_collection_detail(
 ) -> Result<CollectionDetailDto, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
-        return Ok(CollectionDetailDto::default());
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let net =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            Ok(collection_detail(&net, &kind, &id))
+        }
+        "wds" => {
+            let guard = state.0.lock();
+            Ok(guard
+                .wds_network()
+                .map_or_else(CollectionDetailDto::default, |net| {
+                    super::wds_attrs::collection_detail(net, &kind, &id)
+                }))
+        }
+        _ => Ok(CollectionDetailDto::default()),
     }
-    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(collection_detail(&net, &kind, &id))
 }
 
 /// Pure form of [`get_collection_detail`].
@@ -449,6 +469,9 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 .collect(),
             rows,
             lines: Vec::new(),
+            // Every tabular container is a table of numbers under
+            // engine-named headings, which is the shape the write takes.
+            editable: true,
         }
     };
     /// What a curve's two columns *are* depends on what the curve is for
@@ -567,6 +590,9 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                             columns: Vec::new(),
                             quantities: Vec::new(),
                             rows: Vec::new(),
+                            // Dated readings render as text, and text is
+                            // not what the row write takes.
+                            editable: false,
                             lines: pts
                                 .iter()
                                 .map(|p| match &p.time {
@@ -619,6 +645,10 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 columns: Vec::new(),
                 quantities: Vec::new(),
                 rows: Vec::new(),
+                // A rule is language. Taking it back means parsing it
+                // with the engine's own reader, which this path does not
+                // reach — so it is served to be read and not rewritten.
+                editable: false,
                 lines: r.lines.clone(),
             })
             .unwrap_or_default(),

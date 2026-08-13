@@ -28,7 +28,7 @@ use hydra::{LinkKind, NodeKind};
 
 use super::element_attrs::{rows_from_schema, ElementAttributeDto};
 use super::network_dto::{M3S_TO_LPS, M_TO_MM};
-use super::uds_attrs::{AttrValue, KindColumnDto, KindElementsDto};
+use super::uds_attrs::{AttrValue, CollectionDetailDto, KindColumnDto, KindElementsDto};
 
 /// The §4.4 property rows for one water-distribution element.
 ///
@@ -320,6 +320,73 @@ pub(crate) fn kind_elements(network: &hydra::Network, kind: &str) -> KindElement
         columns,
         positions,
         ends,
+    }
+}
+
+/// The contents of one collection element (§4.5.2.2).
+///
+/// This engine had none: the shared Editor lists its curves and patterns
+/// from the catalog and opened a blank panel for every one of them,
+/// because the only implementation of this was the drainage engine's.
+/// The rail said a model had 14 curves and no surface could show one.
+///
+/// Numbers leave in the unit each column declares, which for a curve is
+/// whatever its purpose implies — a volume curve is levels and volumes,
+/// a pump curve flows and heads. `curve_axes` is the single authority
+/// for that in both directions, so a read and a write cannot drift.
+pub(crate) fn collection_detail(
+    network: &hydra::Network,
+    kind: &str,
+    id: &str,
+) -> CollectionDetailDto {
+    match kind {
+        "curve" => network
+            .curves
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| {
+                let axes = super::network_dto::curve_axes(c.kind);
+                CollectionDetailDto {
+                    columns: axes.iter().map(|a| a.label().to_string()).collect(),
+                    quantities: axes
+                        .iter()
+                        .map(|a| a.quantity().and_then(super::results::wds_quantity))
+                        .collect(),
+                    rows: c
+                        .points
+                        .iter()
+                        .map(|p| vec![p.x * axes[0].scale(), p.y * axes[1].scale()])
+                        .collect(),
+                    lines: Vec::new(),
+                    editable: true,
+                }
+            })
+            .unwrap_or_default(),
+        "pattern" => network
+            .patterns
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| CollectionDetailDto {
+                columns: vec!["Interval".to_string(), "Factor".to_string()],
+                quantities: vec![None, None],
+                rows: p
+                    .factors
+                    .iter()
+                    .enumerate()
+                    // 1-based: a modeller counts hour 1, not hour 0. The
+                    // same convention the drainage engine's patterns use,
+                    // so one table reads the same under either.
+                    .map(|(i, f)| vec![(i + 1) as f64, *f])
+                    .collect(),
+                lines: Vec::new(),
+                editable: true,
+            })
+            .unwrap_or_default(),
+        // Controls and rules are language, and this path has no way to
+        // parse them back — the reader that can is the model reader.
+        // Served to be read, not rewritten (§4.5.2.2).
+        "control" | "rule" => CollectionDetailDto::default(),
+        _ => CollectionDetailDto::default(),
     }
 }
 

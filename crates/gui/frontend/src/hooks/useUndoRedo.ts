@@ -26,6 +26,7 @@ import {
   patchElements,
   patchNodePosition,
   renameElement,
+  setCollectionContents,
   setElementAttribute,
   setElementEnds,
 } from "./network";
@@ -164,6 +165,8 @@ async function applyOp(op: ElementOp, projectId: string): Promise<void> {
       return renameElement(op.kind, op.from, op.to);
     case "reconnect":
       return setElementEnds(projectId, op.id, op.fromId, op.toId);
+    case "contents":
+      return setCollectionContents(projectId, op.kind, op.id, op.rows);
     case "create":
       return createElement(projectId, op.element);
     case "remove":
