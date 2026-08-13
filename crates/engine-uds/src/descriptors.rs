@@ -261,8 +261,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Sn",
         creatable: false,
         not_creatable_because: Some(
-            "a snow pack is three surfaces of melt parameters, none of them \
-             editable yet",
+            "a snow pack of no surfaces melts nothing and is written as no lines \
+             at all, so a new one would vanish at the next save",
         ),
     },
     ElementKind {

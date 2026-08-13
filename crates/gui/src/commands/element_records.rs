@@ -258,6 +258,19 @@ const DWF_SLOTS: [(&str, &str); 4] = [
     ("pattern4", "Weekend"),
 ];
 
+/// The three surfaces a pack may carry, in the order the file writes
+/// them, each with the accessor that reaches it.
+///
+/// One table rather than three matching lists: the read walks it, the
+/// write walks it, and a surface added to one and not the other would be
+/// a row that reads and cannot be written back.
+type SnowSurfaceOf = fn(&hydra::uds::model::Snowpack) -> &Option<hydra::uds::model::SnowSurface>;
+const SNOW_SURFACES: [(&str, SnowSurfaceOf); 3] = [
+    ("Plowable", |p| &p.plowable),
+    ("Impervious", |p| &p.impervious),
+    ("Pervious", |p| &p.pervious),
+];
+
 /// The three surfaces of a snow pack (§4.5.2.3).
 ///
 /// The parameter set that fits this shape best, and the reason it needed
@@ -274,7 +287,23 @@ fn snowpack_records(net: &hydra::uds::model::Network, id: &str) -> Option<Record
         .snowpacks
         .iter()
         .find(|p| p.id.eq_ignore_ascii_case(id))?;
-    let mut columns = vec![column("surface", "Surface", text())];
+    let mut columns = vec![column(
+        "surface",
+        "Surface",
+        // Which of the three, chosen rather than typed: there are
+        // exactly three and they are not interchangeable, so a free
+        // field would let a pack have two pervious surfaces.
+        OptionKind::Choice {
+            default: None,
+            items: SNOW_SURFACES
+                .iter()
+                .map(|(v, _)| hydra::common::ChoiceItem {
+                    value: (*v).to_string(),
+                    label: (*v).to_string(),
+                })
+                .collect(),
+        },
+    )];
     for (key, label, quantity) in [
         ("dhMin", "Minimum melt", None),
         ("dhMax", "Maximum melt", None),
@@ -311,18 +340,11 @@ fn snowpack_records(net: &hydra::uds::model::Network, id: &str) -> Option<Record
         key: "surfaces".to_string(),
         label: "Snow surfaces".to_string(),
         columns,
-        rows: [
-            ("Plowable", pack.plowable.as_ref()),
-            ("Impervious", pack.impervious.as_ref()),
-            ("Pervious", pack.pervious.as_ref()),
-        ]
-        .into_iter()
-        .filter_map(|(name, s)| s.map(|s| row(name, s)))
-        .collect(),
-        // Read-only for now: writing one means deciding what an absent
-        // surface becomes when a row is added, and the three are not
-        // interchangeable. Served so a pack can be read at all (§4.5.2.3).
-        editable: false,
+        rows: SNOW_SURFACES
+            .iter()
+            .filter_map(|(name, which)| which(pack).as_ref().map(|s| row(name, s)))
+            .collect(),
+        editable: true,
     })
 }
 
@@ -387,18 +409,94 @@ pub(crate) fn uds_records(net: &hydra::uds::model::Network, element_id: &str) ->
 }
 
 pub(crate) fn set_uds_records(
-    _net: &mut hydra::uds::model::Network,
-    _element_id: &str,
+    net: &mut hydra::uds::model::Network,
+    element_id: &str,
     set: &str,
-    _rows: &[Vec<serde_json::Value>],
+    rows: &[Vec<serde_json::Value>],
 ) -> Result<(), String> {
-    Err(format!("'{set}' cannot be edited here yet"))
+    if set != "surfaces" {
+        return Err(format!("'{set}' cannot be edited here yet"));
+    }
+    let pack = net
+        .snowpacks
+        .iter()
+        .position(|p| p.id.eq_ignore_ascii_case(element_id))
+        .ok_or_else(|| format!("no snow pack '{element_id}'"))?;
+
+    // Parsed whole before anything is assigned, so a refusal on the
+    // third row leaves the first two where they were.
+    let mut parsed: Vec<(usize, hydra::uds::model::SnowSurface)> = Vec::new();
+    for row in rows {
+        if row.len() != 8 {
+            return Err(wrong_width(row.len(), 8));
+        }
+        let name = row[0].as_str().unwrap_or("").trim();
+        let at = SNOW_SURFACES
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("'{name}' is not one of this pack's surfaces"))?;
+        if parsed.iter().any(|(other, _)| *other == at) {
+            return Err(format!("a pack has one {name} surface, not two"));
+        }
+        // The plowable surface is always fully covered, so it carries no
+        // depth at which cover becomes complete — a value there would
+        // describe a surface that goes bare, which that one cannot.
+        let full_cover_depth = match &row[7] {
+            serde_json::Value::Null => None,
+            v => {
+                if at == 0 {
+                    return Err("a plowable surface is always fully covered".into());
+                }
+                Some(
+                    v.as_f64()
+                        .filter(|d| d.is_finite())
+                        .ok_or_else(|| "a depth at full cover has to be a number".to_string())?,
+                )
+            }
+        };
+        parsed.push((
+            at,
+            hydra::uds::model::SnowSurface {
+                dh_min: cell_number(row, 1, "a minimum melt coefficient")?,
+                dh_max: cell_number(row, 2, "a maximum melt coefficient")?,
+                t_base: cell_number(row, 3, "a base temperature")?,
+                fw_frac: cell_number(row, 4, "a free-water capacity")?,
+                init_depth: cell_number(row, 5, "an initial depth")?,
+                init_free_water: cell_number(row, 6, "an initial free water")?,
+                full_cover_depth,
+            },
+        ));
+    }
+
+    // A surface the write did not mention is one the pack no longer has,
+    // which is how a record is removed: the set is replaced whole.
+    let pack = &mut net.snowpacks[pack];
+    pack.plowable = None;
+    pack.impervious = None;
+    pack.pervious = None;
+    for (at, surface) in parsed {
+        match at {
+            0 => pack.plowable = Some(surface),
+            1 => pack.impervious = Some(surface),
+            _ => pack.pervious = Some(surface),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::test_fixtures::TEST_INP;
+
+    fn pack_model() -> hydra::uds::model::Network {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [SNOWPACKS]\n\
+                     SP1 PLOWABLE 0.001 0.002 0.0 0.1 0.0 0.0 0.0\n\
+                     SP1 IMPERVIOUS 0.001 0.002 0.0 0.1 0.0 0.0 0.5\n";
+        hydra::uds::io::objects::parse_network(model).0
+    }
 
     fn wds_model() -> hydra::Network {
         hydra::io::parse(TEST_INP.as_bytes()).expect("fixture")
@@ -564,6 +662,65 @@ mod tests {
         assert!(set.rows[1].last().expect("a cell").is_f64());
 
         assert!(uds_records(&net, "NOPE").is_empty());
+    }
+
+    /// The first sub-record write, and the shape §4.5.2.3 promised: a
+    /// set is replaced whole, so adding a surface is writing a row more
+    /// and removing one is writing a row fewer.
+    #[test]
+    fn a_snow_pack_takes_a_surface_added_and_loses_one_left_out() {
+        let mut net = pack_model();
+        let rows = uds_records(&net, "SP1")[0].rows.clone();
+        assert_eq!(rows.len(), 2);
+
+        // A third surface, added by writing the set with a row more.
+        let mut with_pervious = rows.clone();
+        with_pervious.push(vec![
+            serde_json::json!("Pervious"),
+            serde_json::json!(0.002),
+            serde_json::json!(0.004),
+            serde_json::json!(0.0),
+            serde_json::json!(0.1),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!(0.25),
+        ]);
+        set_uds_records(&mut net, "SP1", "surfaces", &with_pervious).expect("add");
+        assert_eq!(uds_records(&net, "SP1")[0].rows.len(), 3);
+        assert!(net.snowpacks[0].pervious.is_some());
+
+        // And one left out is one the pack no longer has.
+        set_uds_records(&mut net, "SP1", "surfaces", &with_pervious[..1]).expect("drop");
+        assert!(net.snowpacks[0].impervious.is_none());
+        assert!(net.snowpacks[0].plowable.is_some());
+    }
+
+    /// The rules only the whole set can be judged for, which is why the
+    /// write takes all of it.
+    #[test]
+    fn a_pack_cannot_have_two_of_one_surface_or_a_bare_plowable_one() {
+        let mut net = pack_model();
+        let rows = uds_records(&net, "SP1")[0].rows.clone();
+        let before = net.snowpacks[0].clone();
+
+        let mut twice = rows.clone();
+        twice.push(rows[0].clone());
+        let err = set_uds_records(&mut net, "SP1", "surfaces", &twice).expect_err("two plowable");
+        assert!(err.contains("not two"), "{err}");
+
+        // The plowable surface is always fully covered, so a depth at
+        // which cover becomes complete describes something it cannot do.
+        let mut bare = rows.clone();
+        bare[0][7] = serde_json::json!(0.3);
+        let err = set_uds_records(&mut net, "SP1", "surfaces", &bare).expect_err("a bare plow");
+        assert!(err.contains("fully covered"), "{err}");
+
+        assert!(
+            set_uds_records(&mut net, "SP1", "surfaces", &[vec![serde_json::json!("X")]]).is_err()
+        );
+        // Nothing moved through any of it: the set is parsed whole
+        // before a single surface is assigned.
+        assert_eq!(net.snowpacks[0], before);
     }
 
     /// An element that carries no records of a kind reports none rather
