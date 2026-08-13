@@ -50,6 +50,7 @@ import {
   EditorStatusBar,
 } from "../EditorShell";
 import { CollectionDetail } from "./CollectionDetail";
+import { ElementRecordsPanel } from "./ElementRecordsPanel";
 import { railHeadings } from "./railGroups";
 
 export function ElementsView() {
@@ -416,6 +417,14 @@ export function ElementsView() {
               elementId={containerId}
               onWrite={onWriteContents}
             />
+          )}
+          {/* The records the selected element carries (§4.5.2.3), in the
+              same slot a container's contents use — a junction's demand
+              categories showed in the canvas inspector and nowhere here,
+              which is the same value giving two answers depending on
+              which surface you asked. */}
+          {spatial && selectedId && (
+            <ElementRecordsPanel elementId={selectedId} />
           )}
         </div>
       )}
