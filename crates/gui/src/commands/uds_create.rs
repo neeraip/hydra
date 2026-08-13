@@ -54,10 +54,35 @@ const DEFAULT_DIAMETER_M: f64 = 0.3;
 /// Vertices, links and parcels share one namespace here, as they do for
 /// renaming: the reader registers them in one table, so a duplicate
 /// across classes is a duplicate.
-fn taken(net: &Network, id: &str) -> bool {
-    net.vertices.iter().any(|v| v.id.eq_ignore_ascii_case(id))
-        || net.links.iter().any(|l| l.id.eq_ignore_ascii_case(id))
-        || net.parcels.iter().any(|p| p.id.eq_ignore_ascii_case(id))
+pub(crate) fn taken(net: &Network, id: &str) -> bool {
+    macro_rules! any_named {
+        ($($list:expr),+ $(,)?) => {
+            $($list.iter().any(|x| x.id.eq_ignore_ascii_case(id)))||+
+        };
+    }
+    any_named!(
+        net.vertices,
+        net.links,
+        net.parcels,
+        // The containers too. Without them a curve could be created
+        // beside another of the same name: the reader registers every
+        // object in one table, so a duplicate across kinds is a
+        // duplicate, and two curves called ST1 are a model whose storage
+        // units point at whichever the reader saw last.
+        net.curves,
+        net.patterns,
+        net.timeseries,
+        net.constituents,
+        net.land_uses,
+        net.aquifers,
+        net.snowpacks,
+        net.unit_hydrographs,
+        net.lid_controls,
+        net.transects,
+        net.streets,
+        net.inlets,
+        net.gages,
+    )
 }
 
 /// Why this kind cannot be created, in the engine's own words.
@@ -1467,6 +1492,23 @@ O1 100 0
                 "{id} did not survive"
             );
         }
+    }
+
+    /// One namespace for everything the reader registers, containers
+    /// included. Without them in the check a curve could be created
+    /// beside another of the same name, and a model with two curves
+    /// called ST1 has storage units pointing at whichever the reader saw
+    /// last.
+    #[test]
+    fn a_container_name_already_in_use_is_refused() {
+        let mut net = gaged_model();
+        create_uds_curve(&mut net, "C9", "STORAGE").expect("curve");
+        assert!(create_uds_curve(&mut net, "C9", "RATING").is_err());
+        assert!(create_uds_curve(&mut net, "c9", "RATING").is_err(), "§14.2");
+        // And across kinds, since they share the one table.
+        assert!(create_uds_container(&mut net, "pattern", "C9").is_err());
+        assert!(create_uds_vertex(&mut net, "junction", "C9", 0.0, 0.0, 9.0).is_err());
+        assert_eq!(net.curves.iter().filter(|c| c.id == "C9").count(), 1);
     }
 
     #[test]

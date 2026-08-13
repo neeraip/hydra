@@ -116,7 +116,23 @@ impl Shift {
 /// Fails without touching the model when something would be left needing
 /// a choice — the message names what, so the caller can say so.
 pub(crate) fn delete_uds_element(net: &mut Network, id: &str) -> Result<Removed, String> {
-    let (class, index) = locate(net, id).ok_or_else(|| format!("element '{id}' not found"))?;
+    let Some((class, index)) = locate(net, id) else {
+        // A container answers to the name and cannot be removed yet, and
+        // saying "not found" about a thing plainly on the screen is the
+        // worst of the two wrong answers. Every one of them is referenced
+        // by *index* — a storage unit points at curve 3 — so removing one
+        // moves every reference past it across a dozen index spaces, and
+        // a removal that got that wrong would silently repoint a model at
+        // the wrong curve rather than fail.
+        return Err(if super::uds_create::taken(net, id) {
+            format!(
+                "'{id}' can be renamed and edited but not removed yet — \
+                 the model refers to it by position"
+            )
+        } else {
+            format!("element '{id}' not found")
+        });
+    };
     match class {
         "vertex" => delete_vertex(net, index),
         "link" => delete_link(net, index),
@@ -412,6 +428,25 @@ fn shift_selection(selection: &mut hydra::uds::model::ReportSelection, shift: &S
 
 #[cfg(test)]
 mod tests {
+
+    /// A container answers to its name and cannot be removed yet, so the
+    /// refusal says that rather than "not found" — which is the worst of
+    /// the two wrong answers about a thing plainly on the screen.
+    #[test]
+    fn removing_a_container_refuses_by_naming_the_limit() {
+        let (mut net, _) = parse_network(FULL);
+        net.curves.push(hydra::uds::model::Curve {
+            id: "CURVE9".into(),
+            kind: hydra::uds::model::CurveKind::Storage,
+            points: vec![(0.0, 0.0), (1.0, 1.0)],
+        });
+        let err = delete_uds_element(&mut net, "CURVE9").expect_err("not yet");
+        assert!(!err.contains("not found"), "{err}");
+        assert!(err.contains("by position"), "{err}");
+        // And a name nothing answers to still says so.
+        let err = delete_uds_element(&mut net, "NOPE").expect_err("absent");
+        assert!(err.contains("not found"), "{err}");
+    }
     use super::*;
     use hydra::uds::io::inp_writer::write_inp;
     use hydra::uds::io::objects::parse_network;

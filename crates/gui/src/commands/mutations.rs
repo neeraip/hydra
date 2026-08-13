@@ -490,6 +490,41 @@ where
 /// retained control-rule text. Its `[REPORT]` selections need nothing —
 /// they hold indices, not names — which is worth stating because the
 /// water-distribution engine's hold names and do.
+/// Rename a drainage container — a curve, a pattern, a time series.
+///
+/// Returns whether one answered to the old name. They are referenced by
+/// index throughout the model, so nothing else has to move: what a
+/// rename costs a vertex — display lines, control rules — a container
+/// does not pay.
+fn rename_uds_container(net: &mut hydra::uds::model::Network, old_id: &str, new_id: &str) -> bool {
+    macro_rules! rename_in {
+        ($($list:expr),+ $(,)?) => {
+            $(
+                if let Some(it) = $list.iter_mut().find(|x| x.id.eq_ignore_ascii_case(old_id)) {
+                    it.id = new_id.to_string();
+                    return true;
+                }
+            )+
+        };
+    }
+    rename_in!(
+        net.curves,
+        net.patterns,
+        net.timeseries,
+        net.constituents,
+        net.land_uses,
+        net.aquifers,
+        net.snowpacks,
+        net.unit_hydrographs,
+        net.lid_controls,
+        net.transects,
+        net.streets,
+        net.inlets,
+        net.gages,
+    );
+    false
+}
+
 fn rename_uds_element(
     net: &mut hydra::uds::model::Network,
     old_id: &str,
@@ -498,19 +533,10 @@ fn rename_uds_element(
     if new_id == old_id {
         return Ok(());
     }
-    // Vertices, links and parcels share one namespace here: the reader
-    // registers them in one table, so a duplicate across kinds is a
-    // duplicate.
-    let taken = net
-        .vertices
-        .iter()
-        .any(|v| v.id.eq_ignore_ascii_case(new_id))
-        || net.links.iter().any(|l| l.id.eq_ignore_ascii_case(new_id))
-        || net
-            .parcels
-            .iter()
-            .any(|p| p.id.eq_ignore_ascii_case(new_id));
-    if taken {
+    // One namespace for everything the reader registers, containers
+    // included — the same check a create makes, so the two cannot come
+    // to disagree about what a duplicate is.
+    if super::uds_create::taken(net, new_id) {
         return Err(format!("ID '{new_id}' is already in use"));
     }
     let found = if let Some(v) = net
@@ -537,6 +563,12 @@ fn rename_uds_element(
     } else {
         false
     };
+    // The collection kinds. Every one of them is referenced by *index*
+    // rather than by name — a storage unit points at curve 3, not at
+    // "ST1" — so a rename is the id and nothing else. That is the whole
+    // difference from a vertex, whose name appears in the display
+    // sections and in control rules.
+    let found = found || rename_uds_container(net, old_id, new_id);
     if !found {
         return Err(format!("element '{old_id}' not found"));
     }

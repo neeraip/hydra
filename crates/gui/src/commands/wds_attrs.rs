@@ -611,6 +611,60 @@ mod tests {
             .unwrap_or_else(|| panic!("{id} has no {key} row"))
     }
 
+    /// The invariant drainage has had since its inspector could offer an
+    /// input: an attribute that does not read as editable must be one
+    /// the setter refuses, and one that does must be one it takes.
+    ///
+    /// Water distribution never had it. The flag and the setter live in
+    /// two files, and nothing but this pairs them — which is exactly how
+    /// an inlet's fields were marked editable with no setter behind them.
+    #[test]
+    fn the_editable_flag_and_the_setter_agree() {
+        let sample = |kind: &str| -> Option<&'static str> {
+            match kind {
+                "junction" => Some("J1"),
+                "reservoir" => Some("R1"),
+                "tank" => Some("T1"),
+                "pipe" => Some("P1"),
+                _ => None,
+            }
+        };
+        let mut checked = 0;
+        for kind in hydra::descriptors::ELEMENT_KINDS {
+            let Some(id) = sample(kind.id) else { continue };
+            for attr in hydra::descriptors::attribute_schema(kind.id) {
+                let mut net = sample_network();
+                // A value of the shape the attribute declares, so a
+                // refusal cannot come from the value being wrong rather
+                // than the key being unwritable.
+                let value = match &attr.kind {
+                    hydra::common::OptionKind::Number { .. }
+                    | hydra::common::OptionKind::Integer { .. } => serde_json::json!(1.0),
+                    hydra::common::OptionKind::Boolean { .. } => serde_json::json!("Yes"),
+                    hydra::common::OptionKind::Choice { items, .. } => {
+                        serde_json::json!(items
+                            .first()
+                            .map(|i| i.value.clone())
+                            .unwrap_or_default())
+                    }
+                    _ => serde_json::json!(""),
+                };
+                let took = set_attribute(&mut net, id, &attr.key, &value).is_ok();
+                assert_eq!(
+                    took,
+                    attr.editable,
+                    "{}.{} reads as editable={} and the setter {}",
+                    kind.id,
+                    attr.key,
+                    attr.editable,
+                    if took { "took it" } else { "refused" }
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no attribute was exercised");
+    }
+
     /// A tag is not on the element — it is a table beside the model,
     /// keyed by id, and the node and link tables are separate. So the
     /// write has to find which of the two the id is in before it can
