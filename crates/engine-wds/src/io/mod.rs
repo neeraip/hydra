@@ -20,7 +20,7 @@ pub mod rpt_writer;
 pub mod units;
 
 pub use digest::compute_network_digest;
-pub use inp_writer::write_inp;
+pub use inp_writer::{control_statements, rule_statements, write_inp};
 
 use std::fmt;
 

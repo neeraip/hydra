@@ -287,17 +287,53 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             rw("setting", "Setting", num(), None),
             rw("minorLoss", "Minor loss", num(), None),
         ],
+        // The collection kinds. Their substance is their contents
+        // (§4.5.2.2), so what a row can say is what the thing *is* and
+        // how big — which is the whole reason to say anything: a list of
+        // fourteen curve ids and no more tells a reader nothing about
+        // any of them, and opening each one in turn is how they were
+        // meant to find the storage curve.
+        //
+        // Read-only, every one. None is a stored value a modeller sets;
+        // each is derived from the contents or from what points at them,
+        // and offering an input for a derived number invites editing the
+        // shadow instead of the thing.
+        "curve" => vec![
+            // Decided by what references it — a curve becomes a pump
+            // head curve by a pump naming it, not by being declared one.
+            // So it is shown and not offered: the way to change it is to
+            // point something else at the curve.
+            attr("curveType", "Type", text(), None),
+            attr("points", "Points", num(), None),
+        ],
+        "pattern" => vec![attr("factors", "Multipliers", num(), None)],
+        "control" => vec![
+            // Which link it acts on, so a reader scanning forty controls
+            // can see the ones that touch a pipe without opening each.
+            attr("link", "Link", text(), None),
+            attr(
+                "enabled",
+                "Enabled",
+                OptionKind::Boolean { default: None },
+                None,
+            ),
+        ],
+        "rule" => vec![
+            attr("priority", "Priority", num(), None),
+            attr("clauses", "Clauses", num(), None),
+        ],
         _ => Vec::new(),
     }
 }
 
 /// A read-only attribute: shown, never offered for editing.
 ///
-/// Unused today — every attribute this engine publishes is a stored
-/// model value, so every one is [`rw`]. It exists because the
-/// distinction is the schema's to draw and a derived attribute would
-/// need it, not because nothing is read-only by accident.
-#[allow(dead_code)]
+/// Every attribute a *spatial* kind publishes is a stored model value,
+/// so every one of those is [`rw`]. The collection kinds are where this
+/// earns its place: what a curve or a rule can say in a table cell is
+/// derived — a point count, a clause count, the type a curve acquired by
+/// being referenced — and offering an input for a derived number invites
+/// editing the shadow instead of the thing that casts it.
 fn attr(key: &str, label: &str, kind: OptionKind, quantity: Option<&str>) -> AttributeDescriptor {
     descriptor(key, label, kind, quantity, false)
 }
@@ -571,31 +607,49 @@ mod tests {
         }
     }
 
-    /// Everything this engine publishes is a stored model value, so
-    /// everything it publishes is editable.
+    /// A spatial kind publishes stored model values, so everything it
+    /// publishes is editable. A collection publishes derived ones, so
+    /// none of what it publishes is.
     ///
-    /// Asserted rather than assumed, because the reverse — an attribute
-    /// added for display only — is the case that needs the flag, and it
-    /// would arrive silently. This engine's editable set includes
-    /// references and choices, not only numbers: a demand pattern and a
-    /// valve type are both edited in its tables today, which is why the
-    /// contract does not restrict editability to numbers even though the
-    /// drainage engine's write happens to.
+    /// Asserted rather than assumed, because either half arriving
+    /// silently is a defect. A spatial attribute that became read-only
+    /// would take an editable value off the screen with no notice; a
+    /// collection attribute that became editable would offer an input for
+    /// a point count, and a modeller who typed in it would be editing the
+    /// shadow rather than the contents that cast it.
+    ///
+    /// This engine's editable set includes references and choices, not
+    /// only numbers: a demand pattern and a valve type are both edited in
+    /// its tables today, which is why the contract does not restrict
+    /// editability to numbers even though the drainage engine's write
+    /// happens to.
     #[test]
-    fn every_published_attribute_is_a_value_the_user_may_set() {
-        let mut seen = 0;
+    fn a_stored_value_is_editable_and_a_derived_one_is_not() {
+        let mut stored = 0;
+        let mut derived = 0;
         for kind in ELEMENT_KINDS {
+            let collection = kind.class == ElementClass::Collection;
             for a in attribute_schema(kind.id) {
-                assert!(
+                assert_eq!(
                     a.editable,
-                    "{}.{} is published but not editable — if that is deliberate, \
-                     say why here",
-                    kind.id, a.key
+                    !collection,
+                    "{}.{} is {} — if that is deliberate, say why here",
+                    kind.id,
+                    a.key,
+                    if a.editable { "editable" } else { "read-only" }
                 );
-                seen += 1;
+                if collection {
+                    derived += 1;
+                } else {
+                    stored += 1;
+                }
             }
         }
-        assert!(seen > 20, "only {seen} attributes were checked");
+        assert!(stored > 20, "only {stored} stored attributes were checked");
+        assert!(
+            derived > 4,
+            "only {derived} derived attributes were checked"
+        );
     }
 
     /// Role is the engine's judgement, not a lookup — see the drainage
@@ -771,14 +825,41 @@ mod tests {
         }
     }
 
+    /// Every kind publishes something.
+    ///
+    /// The collections published nothing, which was invisible while they
+    /// were not listed anywhere. Once they were, their tables showed a
+    /// column of ids and no more — and fourteen curve ids tell a reader
+    /// nothing about any of them, so finding the storage curve meant
+    /// opening each in turn.
+    ///
+    /// What a collection can say is derived, because its substance is its
+    /// contents (§4.5.2.2) rather than a row of values. A count and a
+    /// purpose are still worth saying.
     #[test]
-    fn spatial_kinds_have_schemas_and_collections_do_not() {
+    fn every_kind_publishes_something_to_show() {
         for kind in ELEMENT_KINDS {
-            let schema = attribute_schema(kind.id);
-            match kind.class {
-                ElementClass::Collection => assert!(schema.is_empty(), "{}", kind.id),
-                _ => assert!(!schema.is_empty(), "{} has no schema", kind.id),
-            }
+            assert!(
+                !attribute_schema(kind.id).is_empty(),
+                "{} has no schema, so its table is a column of ids",
+                kind.id
+            );
+        }
+    }
+
+    /// A collection is not taggable: `[TAGS]` has no grammar for one, so
+    /// the tag every spatial kind carries is absent here rather than
+    /// published and unwritable.
+    #[test]
+    fn only_a_spatial_kind_carries_a_tag() {
+        for kind in ELEMENT_KINDS {
+            let tagged = attribute_schema(kind.id).iter().any(|a| a.key == "tag");
+            assert_eq!(
+                tagged,
+                kind.class != ElementClass::Collection,
+                "{} disagrees about carrying a tag",
+                kind.id
+            );
         }
     }
 }

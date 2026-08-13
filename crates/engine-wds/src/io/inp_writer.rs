@@ -45,15 +45,8 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         }
         v
     };
-    let link_id: Vec<&str> = {
-        let mut v = vec![""; network.links.len() + 1];
-        for l in &network.links {
-            if l.base.index < v.len() {
-                v[l.base.index] = &l.base.id;
-            }
-        }
-        v
-    };
+    // The link table that stood beside it is built by `id_tables` now,
+    // for the two sections that were the only things reading it.
 
     // ── [TITLE] ──────────────────────────────────────────────────────────────
     if !network.title.is_empty() {
@@ -459,76 +452,14 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     // ── [CONTROLS] ───────────────────────────────────────────────────────────
     if !network.controls.is_empty() {
         out.push_str("[CONTROLS]\n");
-        for ctrl in &network.controls {
-            let link_id_str = link_id.get(ctrl.link).copied().unwrap_or("?");
-            // Action part.
-            let action_str = match (ctrl.action_status, ctrl.action_setting) {
-                (Some(LinkStatus::Open), _) => "OPEN".to_string(),
-                (Some(LinkStatus::Closed), _) => "CLOSED".to_string(),
-                (_, Some(s)) => {
-                    // Setting: reverse valve conversion if applicable.
-                    let link_setting_user =
-                        if let Some(link) = network.links.get(ctrl.link.saturating_sub(1)) {
-                            if let LinkKind::Valve(ref v) = link.kind {
-                                match v.valve_type {
-                                    ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
-                                        s * ucf.pressure
-                                    }
-                                    ValveType::Fcv => s * ucf.flow,
-                                    _ => s,
-                                }
-                            } else {
-                                s // pump speed — dimensionless
-                            }
-                        } else {
-                            s
-                        };
-                    format!("{:.4}", link_setting_user)
-                }
-                _ => continue,
-            };
-
-            let trigger_str = match ctrl.trigger_type {
-                TriggerType::Timer => {
-                    let secs = ctrl.trigger_time.unwrap_or(0.0);
-                    format!("AT TIME {}", fmt_duration_hm(secs))
-                }
-                TriggerType::TimeOfDay => {
-                    let secs = ctrl.trigger_time.unwrap_or(0.0);
-                    format!("AT CLOCKTIME {}", fmt_clocktime(secs))
-                }
-                TriggerType::HiLevel | TriggerType::LowLevel => {
-                    let node_idx = ctrl.trigger_node.unwrap_or(0);
-                    let node_id_str = node_id.get(node_idx).copied().unwrap_or("?");
-                    let dir = if ctrl.trigger_type == TriggerType::HiLevel {
-                        "ABOVE"
-                    } else {
-                        "BELOW"
-                    };
-                    let grade_internal = ctrl.trigger_grade.unwrap_or(0.0);
-                    // Convert back to user units.
-                    let grade_user =
-                        if let Some(node) = network.nodes.get(node_idx.saturating_sub(1)) {
-                            match &node.kind {
-                                NodeKind::Tank(ref t) => {
-                                    let bottom = node.base.elevation - t.min_level;
-                                    (grade_internal - bottom) * ucf.elev
-                                }
-                                _ => (grade_internal - node.base.elevation) * ucf.pressure,
-                            }
-                        } else {
-                            grade_internal
-                        };
-                    format!("IF NODE {} {} {:.4}", node_id_str, dir, grade_user)
-                }
-            };
-
-            let suffix = if ctrl.enabled { "" } else { " DISABLED" };
-            let _ = writeln!(
-                out,
-                " LINK {} {} {}{}",
-                link_id_str, action_str, trigger_str, suffix
-            );
+        for statement in control_statements(network) {
+            // Empty means the section has no grammar for that control,
+            // which is a control to leave out rather than one to write
+            // blank. `control_statements` keeps the slot so its caller
+            // can still say *which* control that was.
+            if !statement.is_empty() {
+                let _ = writeln!(out, " {statement}");
+            }
         }
         out.push('\n');
     }
@@ -536,58 +467,13 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     // ── [RULES] ──────────────────────────────────────────────────────────────
     if !network.rules.is_empty() {
         out.push_str("[RULES]\n");
-        for (ri, rule) in network.rules.iter().enumerate() {
+        for (ri, clauses) in rule_statements(network).into_iter().enumerate() {
+            // The header is the writer's own: the reader keeps no name
+            // for a rule, so one is numbered from its position here and
+            // is not part of the rule itself.
             let _ = writeln!(out, " RULE R{}", ri + 1);
-            for (pi, prem) in rule.premises.iter().enumerate() {
-                let connective = if pi == 0 {
-                    "IF"
-                } else {
-                    match prem.connective {
-                        Some(LogicOp::And) | None => "AND",
-                        Some(LogicOp::Or) => "OR",
-                    }
-                };
-                let obj_str = match prem.object {
-                    PremiseObject::Node(idx) => {
-                        let nid = node_id.get(idx).copied().unwrap_or("?");
-                        format!("NODE {}", nid)
-                    }
-                    PremiseObject::Link(idx) => {
-                        let lid = link_id.get(idx).copied().unwrap_or("?");
-                        format!("LINK {}", lid)
-                    }
-                    PremiseObject::Clock => "SYSTEM".to_string(),
-                };
-                let attr_str = premise_attr_str(prem.attribute);
-                let op_str = premise_op_str(prem.operator);
-                // TIME/CLOCKTIME premise values are stored in seconds and must
-                // be written as H:MM(:SS) literals — the reader parses a bare
-                // number as HOURS, which would multiply the value by 3600 on
-                // every save/load cycle (spec §4.3).
-                let value_str = match prem.attribute {
-                    PremiseAttribute::Time | PremiseAttribute::ClockTime => {
-                        fmt_duration_hm(prem.value)
-                    }
-                    _ => format!("{:.4}", convert_premise_value(prem, &ucf)),
-                };
-                let _ = writeln!(
-                    out,
-                    " {} {} {} {} {}",
-                    connective, obj_str, attr_str, op_str, value_str
-                );
-            }
-            for action in &rule.then_actions {
-                let lid = link_id.get(action.link).copied().unwrap_or("?");
-                let val = rule_action_str(&action.value, action.link, &network.links, &ucf);
-                let _ = writeln!(out, " THEN LINK {} {}", lid, val);
-            }
-            for action in &rule.else_actions {
-                let lid = link_id.get(action.link).copied().unwrap_or("?");
-                let val = rule_action_str(&action.value, action.link, &network.links, &ucf);
-                let _ = writeln!(out, " ELSE LINK {} {}", lid, val);
-            }
-            if rule.priority != 0.0 {
-                let _ = writeln!(out, " PRIORITY {:.4}", rule.priority);
+            for clause in clauses {
+                let _ = writeln!(out, " {clause}");
             }
             out.push('\n');
         }
@@ -1200,6 +1086,191 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     out.push_str("[END]\n");
     out.into_bytes()
+}
+
+// ── Controls and rules, as statements ─────────────────────────────────────────
+//
+// Both sections are language rather than columns, so the only faithful
+// rendering of one is the one the writer emits. They are published here
+// so a caller that wants to *show* a control has the writer's answer
+// instead of a second one: a display that formatted its own would be a
+// second implementation of the valve-setting and grade conversions, and
+// those are exactly where the mistakes live.
+
+/// The 1-based index → id lookup the two sections need.
+///
+/// Built once per call rather than per statement: a model may hold
+/// thousands of controls, and rebuilding the table inside the loop would
+/// make writing them quadratic in the size of the network.
+fn id_tables(network: &Network) -> (Vec<&str>, Vec<&str>) {
+    let mut nodes = vec![""; network.nodes.len() + 1]; // index 0 unused
+    for n in &network.nodes {
+        if n.base.index < nodes.len() {
+            nodes[n.base.index] = &n.base.id;
+        }
+    }
+    let mut links = vec![""; network.links.len() + 1];
+    for l in &network.links {
+        if l.base.index < links.len() {
+            links[l.base.index] = &l.base.id;
+        }
+    }
+    (nodes, links)
+}
+
+/// Every simple control as its `[CONTROLS]` statement, without the
+/// leading space the section indents by.
+///
+/// **Aligned with `network.controls` by position.** A control naming
+/// neither a status nor a setting is a statement the section has no
+/// grammar for, and yields an empty string rather than being dropped —
+/// so index `i` is control `i` whatever the model holds. The writer
+/// skips the empties; a caller showing one control needs to know which
+/// control it is looking at.
+pub fn control_statements(network: &Network) -> Vec<String> {
+    let ucf = make_ucf(network.options.flow_units, network.options.specific_gravity);
+    let (node_id, link_id) = id_tables(network);
+    network
+        .controls
+        .iter()
+        .map(|ctrl| {
+            let link_id_str = link_id.get(ctrl.link).copied().unwrap_or("?");
+            // Action part.
+            let action_str = match (ctrl.action_status, ctrl.action_setting) {
+                (Some(LinkStatus::Open), _) => "OPEN".to_string(),
+                (Some(LinkStatus::Closed), _) => "CLOSED".to_string(),
+                (_, Some(s)) => {
+                    // Setting: reverse valve conversion if applicable.
+                    let link_setting_user =
+                        if let Some(link) = network.links.get(ctrl.link.saturating_sub(1)) {
+                            if let LinkKind::Valve(ref v) = link.kind {
+                                match v.valve_type {
+                                    ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
+                                        s * ucf.pressure
+                                    }
+                                    ValveType::Fcv => s * ucf.flow,
+                                    _ => s,
+                                }
+                            } else {
+                                s // pump speed — dimensionless
+                            }
+                        } else {
+                            s
+                        };
+                    format!("{:.4}", link_setting_user)
+                }
+                _ => return String::new(),
+            };
+
+            let trigger_str = match ctrl.trigger_type {
+                TriggerType::Timer => {
+                    let secs = ctrl.trigger_time.unwrap_or(0.0);
+                    format!("AT TIME {}", fmt_duration_hm(secs))
+                }
+                TriggerType::TimeOfDay => {
+                    let secs = ctrl.trigger_time.unwrap_or(0.0);
+                    format!("AT CLOCKTIME {}", fmt_clocktime(secs))
+                }
+                TriggerType::HiLevel | TriggerType::LowLevel => {
+                    let node_idx = ctrl.trigger_node.unwrap_or(0);
+                    let node_id_str = node_id.get(node_idx).copied().unwrap_or("?");
+                    let dir = if ctrl.trigger_type == TriggerType::HiLevel {
+                        "ABOVE"
+                    } else {
+                        "BELOW"
+                    };
+                    let grade_internal = ctrl.trigger_grade.unwrap_or(0.0);
+                    // Convert back to user units.
+                    let grade_user =
+                        if let Some(node) = network.nodes.get(node_idx.saturating_sub(1)) {
+                            match &node.kind {
+                                NodeKind::Tank(ref t) => {
+                                    let bottom = node.base.elevation - t.min_level;
+                                    (grade_internal - bottom) * ucf.elev
+                                }
+                                _ => (grade_internal - node.base.elevation) * ucf.pressure,
+                            }
+                        } else {
+                            grade_internal
+                        };
+                    format!("IF NODE {} {} {:.4}", node_id_str, dir, grade_user)
+                }
+            };
+
+            let suffix = if ctrl.enabled { "" } else { " DISABLED" };
+            format!("LINK {link_id_str} {action_str} {trigger_str}{suffix}")
+        })
+        .collect()
+}
+
+/// Every rule as its `[RULES]` clause lines, without the `RULE` header
+/// and without the leading space the section indents by.
+///
+/// Aligned with `network.rules` by position. The header is left out
+/// because it is not part of the rule: the reader keeps no name, so the
+/// writer numbers one from its position and a display is free to say
+/// where it sits in its own words.
+pub fn rule_statements(network: &Network) -> Vec<Vec<String>> {
+    let ucf = make_ucf(network.options.flow_units, network.options.specific_gravity);
+    let (node_id, link_id) = id_tables(network);
+    network
+        .rules
+        .iter()
+        .map(|rule| {
+            let mut clauses = Vec::new();
+            for (pi, prem) in rule.premises.iter().enumerate() {
+                let connective = if pi == 0 {
+                    "IF"
+                } else {
+                    match prem.connective {
+                        Some(LogicOp::And) | None => "AND",
+                        Some(LogicOp::Or) => "OR",
+                    }
+                };
+                let obj_str = match prem.object {
+                    PremiseObject::Node(idx) => {
+                        let nid = node_id.get(idx).copied().unwrap_or("?");
+                        format!("NODE {}", nid)
+                    }
+                    PremiseObject::Link(idx) => {
+                        let lid = link_id.get(idx).copied().unwrap_or("?");
+                        format!("LINK {}", lid)
+                    }
+                    PremiseObject::Clock => "SYSTEM".to_string(),
+                };
+                let attr_str = premise_attr_str(prem.attribute);
+                let op_str = premise_op_str(prem.operator);
+                // TIME/CLOCKTIME premise values are stored in seconds and must
+                // be written as H:MM(:SS) literals — the reader parses a bare
+                // number as HOURS, which would multiply the value by 3600 on
+                // every save/load cycle (spec §4.3).
+                let value_str = match prem.attribute {
+                    PremiseAttribute::Time | PremiseAttribute::ClockTime => {
+                        fmt_duration_hm(prem.value)
+                    }
+                    _ => format!("{:.4}", convert_premise_value(prem, &ucf)),
+                };
+                clauses.push(format!(
+                    "{} {} {} {} {}",
+                    connective, obj_str, attr_str, op_str, value_str
+                ));
+            }
+            for action in &rule.then_actions {
+                let lid = link_id.get(action.link).copied().unwrap_or("?");
+                let val = rule_action_str(&action.value, action.link, &network.links, &ucf);
+                clauses.push(format!("THEN LINK {} {}", lid, val));
+            }
+            for action in &rule.else_actions {
+                let lid = link_id.get(action.link).copied().unwrap_or("?");
+                let val = rule_action_str(&action.value, action.link, &network.links, &ucf);
+                clauses.push(format!("ELSE LINK {} {}", lid, val));
+            }
+            if rule.priority != 0.0 {
+                clauses.push(format!("PRIORITY {:.4}", rule.priority));
+            }
+            clauses
+        })
+        .collect()
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────

@@ -175,8 +175,8 @@ pub use hydra_engine_wds::{
 /// hence its narrower [`io::ReadError`] failure type.
 pub mod io {
     pub use hydra_engine_wds::io::{
-        compute_network_digest, out_reader, out_writer, parse, parse_tolerant, rpt_writer, units,
-        write_inp, ParseError, ReadError,
+        compute_network_digest, control_statements, out_reader, out_writer, parse, parse_tolerant,
+        rpt_writer, rule_statements, units, write_inp, ParseError, ReadError,
     };
 }
 
