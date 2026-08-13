@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.11 — 2026-08-12** (v1.1 added opaque per-block options
+Status: **v1.12 — 2026-08-12** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -22,7 +22,10 @@ two ends became editable state like a position, §4.5.2.1, a collection's
 contents gained the section that had left every curve countable and
 unopenable, §4.5.2.2, and `references` widened to a list of kinds so an
 attribute naming more than one — a subcatchment's outlet — could be
-described at all, §4.5.1.1).
+described at all, §4.5.1.1; v1.12 added attached records, §4.5.2.3, for
+the rows an element carries that have no identity of their own — a
+junction's demand categories, a vertex's dry-weather inflows — which
+attributes could only flatten and elements could only misname).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -795,6 +798,80 @@ says so, or the write refuses.
 Everything *else* about a collection element is already described: it is
 named, created and removed like any other element (§4.5.1, §4.5.3,
 §4.5.4). Only its contents needed a section.
+
+#### 4.5.2.3 Attached records
+
+An element may carry **records**: rows of engine-described values that
+belong to it and have no identity of their own.
+
+A water-distribution junction's demand categories are this. So are a
+drainage vertex's dry-weather inflows, its external inflows, its
+treatment expressions, and a subcatchment's land-cover fractions. Each is
+a row keyed by what it is *about* — a constituent, a land use, a demand
+category's name — rather than by an id, and each element may carry
+several.
+
+Nothing else in this contract can hold them, and the two attempts to
+make something else hold them both fail in the same way:
+
+- **As attributes (§4.5.1).** An attribute is one value under one label,
+  so several rows must be flattened into one. That is not hypothetical:
+  an engine publishing a junction's demand as a single number is
+  publishing the *sum* of its categories, and one pattern reference is
+  the *first* category's. Reading is then lossy and writing is
+  impossible — a total cannot be distributed back over categories nobody
+  described — so the write refuses, and an element with more than one
+  record becomes uneditable while looking ordinary.
+- **As elements (§4.1).** An element is identified by an id, unique
+  within its class. These rows have no name. Giving them a synthetic one
+  makes an identifier that means two things — the row's position and the
+  thing it is about — which drift apart the moment a row is removed.
+
+##### The shape
+
+An element carries zero or more **record sets**, each a small table:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `key` | Stable machine identifier for the set | Engine's own; persisted by applications, so it never changes meaning once released. |
+| `label` | What the set is called | Engine-authored; an application never names it. |
+| `columns` | What each row holds | Described exactly as a kind's attributes are (§4.4, §4.5.1, §4.5.1.1): a label, a value shape, a quantity where numeric, referenced kinds where the value names another element. |
+| `rows` | The records themselves, in the engine's order | Each row one value per column, in column order. |
+
+**Columns are described the way attributes are, deliberately.** A
+record's cells are the same kinds of value an attribute holds — a number
+with a unit, a choice, a reference to a pattern — so describing them
+twice would let the two descriptions disagree, and an application would
+need two renderers for one thing. This is the reuse the section is built
+on: a surface that can already draw an attribute row can draw a record
+table without learning anything new.
+
+It is also what §4.5.2.2 could not do. Contents are numbers under
+headings, and a record's cells are not all numbers: a dry-weather
+inflow's four pattern slots are references, and a treatment expression
+is text. The two sections stay separate because they describe different
+relationships, not merely different types — contents are what an element
+*is* (a curve is its points), records are what an element *has* (a
+junction has demands).
+
+##### Writing
+
+A write replaces a whole set, for the reasons §4.5.2.2 gives and one
+more of its own: a set is validated together. Two dry-weather inflows
+for the same constituent are not two records but a contradiction, and
+only the whole set can be judged for that. Adding and removing a record
+is therefore writing the set with a row more or a row fewer, and the
+inverse of any of it is the set that was there.
+
+Rows are addressed by position within their set and by nothing else.
+Position is not an identity — it is where the row currently sits — so a
+write that reorders rows is legitimate, and an engine is free to return
+them in a different order than it was given if its own storage has one.
+
+**An engine serves what it can describe and accepts what it can take.**
+A set served read-only is not a failure: showing a modeller the four
+treatment expressions attached to a node is worth doing whether or not
+this contract can yet rewrite them.
 
 #### 4.5.3 Creation
 
