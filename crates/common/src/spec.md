@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.13 — 2026-08-13** (v1.1 added opaque per-block options
+Status: **v1.14 — 2026-08-13** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -27,7 +27,11 @@ the rows an element carries that have no identity of their own — a
 junction's demand categories, a vertex's dry-weather inflows — which
 attributes could only flatten and elements could only misname; v1.13 let
 a kind say what heading it is listed under, §4.2.1, so a catalog of
-two dozen is a list a reader can find anything in).
+two dozen is a list a reader can find anything in; v1.14 let empty
+contents carry a note saying why they are empty, §4.5.2.2, separating an
+element that has no contents from one whose contents are held outside the
+model — which a consumer had been telling apart by guessing, and getting
+wrong for six kinds).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -828,6 +832,28 @@ rewrite it is telling the truth.
 An application therefore offers an edit where the write accepts one, and
 learns which by the same means it learns anything else here: the engine
 says so, or the write refuses.
+
+**Empty is two different answers, and the engine says which.** Contents
+that come back empty may mean the element has none — a pollutant is its
+attributes and nothing further — or that they are real and held somewhere
+this contract cannot reach, as a time series read from a file beside the
+model. The two are identical on the wire and read very differently to a
+person: one is a kind with nothing below its row, the other is a thing
+whose values exist and are elsewhere.
+
+So empty contents may carry a **note**: one sentence, in the engine's own
+words, saying why there is nothing. A note is served only where there is
+something to say. Empty contents *without* one mean the element simply
+has no contents, and a consumer draws nothing at all rather than an empty
+frame — a bordered panel holding a heading and no content reads as a
+surface that failed to load, which is the opposite of what it means.
+
+The note is engine-authored text, like the reason a kind cannot be
+created (§4.5.3), and for the same reason: the alternative is a consumer
+that works out what an empty result means from which kind it asked for,
+and a consumer holding a list of kinds is what §1 exists to prevent. A
+note is never served alongside contents — it explains an absence, and an
+absence that has content is not one.
 
 Everything *else* about a collection element is already described: it is
 named, created and removed like any other element (§4.5.1, §4.5.3,
