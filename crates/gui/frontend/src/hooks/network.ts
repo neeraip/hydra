@@ -739,60 +739,6 @@ export async function createLink(
   await invoke<void>("create_link", { kind, id, fromId, toId });
 }
 
-/** Create a new pump-head curve with default two-point data. */
-export async function createCurve(id: string): Promise<void> {
-  await invoke<void>("create_curve", { id });
-}
-
-/**
- * Replace all points of an existing curve. `xs`/`ys` must be in the same
- * display units returned by `useCurves()` (flow L/s and head m for pump-head
- * curves) and have equal length.
- */
-export async function updateCurvePoints(
-  id: string,
-  xs: number[],
-  ys: number[],
-): Promise<void> {
-  await invoke<void>("update_curve_points", { id, xs, ys });
-}
-
-/**
- * Delete a curve. Rejects if any pump, valve, or tank still references it —
- * the caller should surface the returned error and let the user detach it
- * first.
- */
-export async function deleteCurve(id: string): Promise<void> {
-  await invoke<void>("delete_curve", { id });
-}
-
-/** Create a new time pattern with 24 flat hourly multipliers (all 1.0). */
-export async function createPattern(id: string): Promise<void> {
-  await invoke<void>("create_pattern", { id });
-}
-
-/** Replace all multipliers of an existing time pattern. */
-export async function updatePatternMultipliers(
-  id: string,
-  multipliers: number[],
-): Promise<void> {
-  await invoke<void>("update_pattern_multipliers", { id, multipliers });
-}
-
-/**
- * Rename a time pattern, cascading the new ID to every junction demand,
- * reservoir/tank head pattern, pump speed/price pattern, and the network's
- * global default/energy-price pattern that referenced it. Applied
- * immediately (not staged in the Network Editor draft) since it's a single
- * atomic, low-risk operation.
- */
-export async function renamePattern(
-  oldId: string,
-  newId: string,
-): Promise<void> {
-  await invoke<void>("rename_pattern", { oldId, newId });
-}
-
 /**
  * Rename a node or link, cascading the new ID to its coordinates/vertices,
  * tags, and (for nodes) the quality trace node. `kind` is one of
@@ -806,25 +752,6 @@ export async function renameElement(
   newId: string,
 ): Promise<void> {
   await invoke<void>("rename_element", { kind, oldId, newId });
-}
-
-/**
- * Rename a curve, cascading the new ID to every pump head/efficiency curve,
- * GPV valve curve, and tank volume curve that referenced it. Applied
- * immediately; rejects if `newId` is empty, unsafe, or already a curve ID.
- */
-export async function renameCurve(oldId: string, newId: string): Promise<void> {
-  await invoke<void>("rename_curve", { oldId, newId });
-}
-
-/**
- * Delete a time pattern. Rejects if any junction demand, reservoir/tank head
- * pattern, pump speed/price pattern, or the global default/energy-price
- * pattern still references it — the caller should surface the returned
- * error and let the user detach it first.
- */
-export async function deletePattern(id: string): Promise<void> {
-  await invoke<void>("delete_pattern", { id });
 }
 
 export interface PatchItem {
@@ -1164,29 +1091,6 @@ export function useControls(version = 0): SimpleControlDto[] {
 
 export function useRules(version = 0): RuleDto[] {
   return useVersionedRows<RuleDto>("get_rules", version);
-}
-
-export async function createControl(control: SimpleControlDto): Promise<void> {
-  await invoke<void>("create_control", { control });
-}
-export async function updateControl(
-  index: number,
-  control: SimpleControlDto,
-): Promise<void> {
-  await invoke<void>("update_control", { index, control });
-}
-export async function deleteControl(index: number): Promise<void> {
-  await invoke<void>("delete_control", { index });
-}
-
-export async function createRule(rule: RuleDto): Promise<void> {
-  await invoke<void>("create_rule", { rule });
-}
-export async function updateRule(index: number, rule: RuleDto): Promise<void> {
-  await invoke<void>("update_rule", { index, rule });
-}
-export async function deleteRule(index: number): Promise<void> {
-  await invoke<void>("delete_rule", { index });
 }
 
 /** Return the loaded network's `[TITLE]` lines (empty outside Tauri or when

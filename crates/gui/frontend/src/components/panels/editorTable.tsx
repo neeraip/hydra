@@ -11,10 +11,6 @@
 // four pixels shorter, fainter separators, no hover, a sort mark on every
 // column, and every row mounted at once. One home, so the next table has
 // somewhere to come from.
-//
-// What stays behind in `TablePrimitives` is the water-distribution
-// editor's *cells* — they carry staged-draft machinery (pending markers,
-// discard generations) that only an editor with a Save button has.
 
 import {
   ChevronDownIcon,
@@ -71,29 +67,27 @@ export const EDITOR_TD: React.CSSProperties = {
 };
 
 /**
- * A body row's own styling: selected, or staged, or neither.
+ * A body row's own styling: selected, or not.
  *
  * Selection is a filled row with an accent bar down its left edge, not an
  * outline — an outline reads as a focus ring, and the row is a place you
  * are rather than a control you have focused.
+ *
+ * It used to have a third state, an amber tint for a row with staged
+ * edits. Nothing stages any more: an edit is part of the model when the
+ * operation returns (hydra-common §4.5.5), so there is no moment at
+ * which a row is changed and not yet saved.
  */
 export function editorRowStyle({
   selected,
-  pending,
   clickable,
 }: {
   selected: boolean;
-  /** Has unsaved staged edits. Editors without a Save button never set it. */
-  pending?: boolean;
   clickable?: boolean;
 }): React.CSSProperties {
   return {
     cursor: clickable ? "pointer" : undefined,
-    background: selected
-      ? "var(--accent-dim)"
-      : pending
-        ? "rgba(220, 160, 40, 0.05)"
-        : undefined,
+    background: selected ? "var(--accent-dim)" : undefined,
     borderLeft: selected ? "2px solid var(--accent)" : "2px solid transparent",
   };
 }

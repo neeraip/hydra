@@ -611,33 +611,6 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
     Some(summary)
 }
 
-/// Clone one collection out of the cached `NetworkDto` under the state lock,
-/// returning an empty vec when no network is loaded. Shared by the read-only
-/// `get_patterns` / `get_curves` / `get_controls` / `get_rules` commands.
-fn cloned_from_dto<T: Clone>(
-    state: &NetworkState,
-    get: impl FnOnce(&NetworkDto) -> &[T],
-) -> Vec<T> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => get(dto).to_vec(),
-        NetworkStateInner::LoadedUds { .. } | NetworkStateInner::Empty => vec![],
-    }
-}
-
-/// Return the patterns of the currently loaded network, or an empty list.
-#[tauri::command(async)]
-/// Return demand/head patterns for the loaded network.
-pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
-    cloned_from_dto(&state, |dto| &dto.patterns)
-}
-
-/// Return the curves of the currently loaded network, or an empty list.
-#[tauri::command(async)]
-/// Return pump/GPV/volume curves for the loaded network.
-pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
-    cloned_from_dto(&state, |dto| &dto.curves)
-}
-
 #[tauri::command(async)]
 /// Return the loaded network's `[TITLE]` lines (empty when no network is
 /// loaded or the model has no title).
@@ -1070,18 +1043,6 @@ pub(crate) fn link_setting_internal_to_display(link: &hydra::Link, internal: f64
     }
 }
 
-/// Inverse of [`link_setting_internal_to_display`].
-pub(crate) fn link_setting_display_to_internal(link: &hydra::Link, display: f64) -> f64 {
-    match &link.kind {
-        hydra::LinkKind::Valve(v) => match v.valve_type {
-            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => display,
-            hydra::ValveType::Fcv => display / M3S_TO_LPS,
-            _ => display,
-        },
-        _ => display,
-    }
-}
-
 /// Convert a HiLevel/LowLevel trigger grade from internal absolute hydraulic
 /// grade (m) to the display threshold shown to the user: level above bottom
 /// (m) for tanks, pressure-equivalent head (m) for junctions/reservoirs.
@@ -1096,31 +1057,11 @@ pub(crate) fn node_grade_internal_to_display(node: &hydra::Node, internal_grade:
     }
 }
 
-/// Inverse of [`node_grade_internal_to_display`].
-pub(crate) fn node_grade_display_to_internal(node: &hydra::Node, display: f64) -> f64 {
-    match &node.kind {
-        hydra::NodeKind::Tank(t) => {
-            let bottom = node.base.elevation - t.min_level;
-            display + bottom
-        }
-        _ => display + node.base.elevation,
-    }
-}
-
 fn link_status_to_str(status: hydra::LinkStatus) -> Option<&'static str> {
     match status {
         hydra::LinkStatus::Open => Some("open"),
         hydra::LinkStatus::Closed => Some("closed"),
         hydra::LinkStatus::Active => Some("active"),
-        _ => None,
-    }
-}
-
-fn link_status_from_str(s: &str) -> Option<hydra::LinkStatus> {
-    match s {
-        "open" => Some(hydra::LinkStatus::Open),
-        "closed" => Some(hydra::LinkStatus::Closed),
-        "active" => Some(hydra::LinkStatus::Active),
         _ => None,
     }
 }
@@ -1185,24 +1126,6 @@ fn premise_attribute_to_str(a: hydra::PremiseAttribute) -> &'static str {
     }
 }
 
-fn premise_attribute_from_str(s: &str) -> Result<hydra::PremiseAttribute, String> {
-    Ok(match s {
-        "head" => hydra::PremiseAttribute::Head,
-        "pressure" => hydra::PremiseAttribute::Pressure,
-        "demand" => hydra::PremiseAttribute::Demand,
-        "level" => hydra::PremiseAttribute::Level,
-        "flow" => hydra::PremiseAttribute::Flow,
-        "status" => hydra::PremiseAttribute::Status,
-        "setting" => hydra::PremiseAttribute::Setting,
-        "power" => hydra::PremiseAttribute::Power,
-        "fillTime" => hydra::PremiseAttribute::FillTime,
-        "drainTime" => hydra::PremiseAttribute::DrainTime,
-        "clockTime" => hydra::PremiseAttribute::ClockTime,
-        "time" => hydra::PremiseAttribute::Time,
-        other => return Err(format!("unknown premise attribute '{other}'")),
-    })
-}
-
 fn premise_operator_to_str(o: hydra::PremiseOperator) -> &'static str {
     match o {
         hydra::PremiseOperator::Eq => "eq",
@@ -1212,18 +1135,6 @@ fn premise_operator_to_str(o: hydra::PremiseOperator) -> &'static str {
         hydra::PremiseOperator::Le => "le",
         hydra::PremiseOperator::Ge => "ge",
     }
-}
-
-fn premise_operator_from_str(s: &str) -> Result<hydra::PremiseOperator, String> {
-    Ok(match s {
-        "eq" => hydra::PremiseOperator::Eq,
-        "neq" => hydra::PremiseOperator::Neq,
-        "lt" => hydra::PremiseOperator::Lt,
-        "gt" => hydra::PremiseOperator::Gt,
-        "le" => hydra::PremiseOperator::Le,
-        "ge" => hydra::PremiseOperator::Ge,
-        other => return Err(format!("unknown premise operator '{other}'")),
-    })
 }
 
 /// Convert a premise/action threshold from internal units to display units,
@@ -1244,30 +1155,6 @@ fn premise_value_internal_to_display(
             if let PremiseObject::Link(idx) = object {
                 if let Some(link) = network.links.get(idx.saturating_sub(1)) {
                     return link_setting_internal_to_display(link, value);
-                }
-            }
-            value
-        }
-        _ => value,
-    }
-}
-
-/// Inverse of [`premise_value_internal_to_display`].
-fn premise_value_display_to_internal(
-    attribute: hydra::PremiseAttribute,
-    object: hydra::PremiseObject,
-    value: f64,
-    network: &hydra::Network,
-) -> f64 {
-    use hydra::{PremiseAttribute, PremiseObject};
-    match attribute {
-        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => value,
-        PremiseAttribute::Demand | PremiseAttribute::Flow => value / M3S_TO_LPS,
-        PremiseAttribute::FillTime | PremiseAttribute::DrainTime => value * 3600.0,
-        PremiseAttribute::Setting => {
-            if let PremiseObject::Link(idx) = object {
-                if let Some(link) = network.links.get(idx.saturating_sub(1)) {
-                    return link_setting_display_to_internal(link, value);
                 }
             }
             value
@@ -1362,208 +1249,6 @@ fn rule_to_dto(index: usize, rule: &hydra::Rule, network: &hydra::Network) -> Ru
 }
 
 // ── Controls & rules ──────────────────────────────────────────────────────────
-
-fn resolve_node_id(network: &hydra::Network, id: &str) -> Result<usize, String> {
-    network
-        .nodes
-        .iter()
-        .position(|n| n.base.id == id)
-        .map(|p| p + 1)
-        .ok_or_else(|| format!("node '{}' not found", id))
-}
-
-fn resolve_link_id(network: &hydra::Network, id: &str) -> Result<usize, String> {
-    network
-        .links
-        .iter()
-        .position(|l| l.base.id == id)
-        .map(|p| p + 1)
-        .ok_or_else(|| format!("link '{}' not found", id))
-}
-
-pub(crate) fn control_from_dto(
-    dto: &ControlDto,
-    network: &hydra::Network,
-) -> Result<hydra::SimpleControl, String> {
-    let link_idx = resolve_link_id(network, &dto.link_id)?;
-    let link = &network.links[link_idx - 1];
-
-    let action_status = dto
-        .action_status
-        .as_deref()
-        .map(|s| link_status_from_str(s).ok_or_else(|| format!("invalid action status '{}'", s)))
-        .transpose()?;
-    let action_setting = dto
-        .action_setting
-        .map(|v| link_setting_display_to_internal(link, v));
-    if action_status.is_none() && action_setting.is_none() {
-        return Err("control must set an action status or setting".into());
-    }
-
-    let (trigger_type, trigger_time, trigger_node, trigger_grade) = match dto.trigger_kind.as_str()
-    {
-        "timer" => (
-            hydra::TriggerType::Timer,
-            Some(
-                dto.trigger_seconds
-                    .ok_or("timer trigger requires trigger_seconds")?,
-            ),
-            None,
-            None,
-        ),
-        "clocktime" => (
-            hydra::TriggerType::TimeOfDay,
-            Some(
-                dto.trigger_seconds
-                    .ok_or("clocktime trigger requires trigger_seconds")?,
-            ),
-            None,
-            None,
-        ),
-        "hiLevel" | "loLevel" => {
-            let node_id = dto
-                .trigger_node_id
-                .as_deref()
-                .ok_or("node-level trigger requires trigger_node_id")?;
-            let node_idx = resolve_node_id(network, node_id)?;
-            let node = &network.nodes[node_idx - 1];
-            let value = dto
-                .trigger_value
-                .ok_or("node-level trigger requires trigger_value")?;
-            let kind = if dto.trigger_kind == "hiLevel" {
-                hydra::TriggerType::HiLevel
-            } else {
-                hydra::TriggerType::LowLevel
-            };
-            (
-                kind,
-                None,
-                Some(node_idx),
-                Some(node_grade_display_to_internal(node, value)),
-            )
-        }
-        other => return Err(format!("unknown trigger kind '{}'", other)),
-    };
-
-    Ok(hydra::SimpleControl {
-        link: link_idx,
-        trigger_type,
-        trigger_time,
-        trigger_node,
-        trigger_grade,
-        action_status,
-        action_setting,
-        enabled: dto.enabled,
-    })
-}
-
-fn premise_from_dto(
-    dto: &RulePremiseDto,
-    network: &hydra::Network,
-) -> Result<hydra::Premise, String> {
-    let object = match dto.object.as_str() {
-        "node" => {
-            let id = dto
-                .node_id
-                .as_deref()
-                .ok_or("node premise requires node_id")?;
-            hydra::PremiseObject::Node(resolve_node_id(network, id)?)
-        }
-        "link" => {
-            let id = dto
-                .link_id
-                .as_deref()
-                .ok_or("link premise requires link_id")?;
-            hydra::PremiseObject::Link(resolve_link_id(network, id)?)
-        }
-        "clock" => hydra::PremiseObject::Clock,
-        other => return Err(format!("unknown premise object '{}'", other)),
-    };
-    let attribute = premise_attribute_from_str(&dto.attribute)?;
-    let operator = premise_operator_from_str(&dto.operator)?;
-    let value = if attribute == hydra::PremiseAttribute::Status {
-        match dto.status_value.as_deref() {
-            Some("open") => 1.0,
-            Some("active") => 2.0,
-            _ => 0.0,
-        }
-    } else {
-        premise_value_display_to_internal(attribute, object, dto.value, network)
-    };
-    let connective = match dto.connective.as_deref() {
-        Some("and") => Some(hydra::LogicOp::And),
-        Some("or") => Some(hydra::LogicOp::Or),
-        _ => None,
-    };
-    Ok(hydra::Premise {
-        object,
-        attribute,
-        operator,
-        value,
-        connective,
-    })
-}
-
-fn rule_action_from_dto(
-    dto: &RuleActionDto,
-    network: &hydra::Network,
-) -> Result<hydra::RuleAction, String> {
-    let link_idx = resolve_link_id(network, &dto.link_id)?;
-    let link = &network.links[link_idx - 1];
-    let value = match (&dto.status, dto.setting) {
-        (Some(s), _) => hydra::ActionValue::Status(
-            link_status_from_str(s).ok_or_else(|| format!("invalid action status '{}'", s))?,
-        ),
-        (None, Some(v)) => hydra::ActionValue::Setting(link_setting_display_to_internal(link, v)),
-        (None, None) => return Err("rule action must set a status or setting".into()),
-    };
-    Ok(hydra::RuleAction {
-        link: link_idx,
-        value,
-    })
-}
-
-pub(crate) fn rule_from_dto(
-    dto: &RuleDto,
-    network: &hydra::Network,
-) -> Result<hydra::Rule, String> {
-    if dto.premises.is_empty() {
-        return Err("rule must have at least one premise".into());
-    }
-    let premises = dto
-        .premises
-        .iter()
-        .map(|p| premise_from_dto(p, network))
-        .collect::<Result<Vec<_>, _>>()?;
-    let then_actions = dto
-        .then_actions
-        .iter()
-        .map(|a| rule_action_from_dto(a, network))
-        .collect::<Result<Vec<_>, _>>()?;
-    let else_actions = dto
-        .else_actions
-        .iter()
-        .map(|a| rule_action_from_dto(a, network))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(hydra::Rule {
-        priority: dto.priority,
-        premises,
-        then_actions,
-        else_actions,
-    })
-}
-
-/// Return the simple controls (`[CONTROLS]`) of the loaded network, or an empty list.
-#[tauri::command(async)]
-pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
-    cloned_from_dto(&state, |dto| &dto.controls)
-}
-
-/// Return the rule-based controls (`[RULES]`) of the loaded network, or an empty list.
-#[tauri::command(async)]
-pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
-    cloned_from_dto(&state, |dto| &dto.rules)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1770,77 +1455,6 @@ Duration  0
     }
 
     // ── display-unit conversions ──────────────────────────────────────────
-
-    fn valve_link(vt: hydra::ValveType) -> hydra::Link {
-        hydra::Link {
-            base: hydra::LinkBase {
-                id: "V1".into(),
-                index: 1,
-                from_node: 1,
-                to_node: 2,
-                initial_status: hydra::LinkStatus::Open,
-                initial_setting: None,
-            },
-            kind: hydra::LinkKind::Valve(hydra::Valve {
-                valve_type: vt,
-                diameter: 1.0,
-                minor_loss: 0.0,
-                curve: None,
-            }),
-        }
-    }
-
-    #[test]
-    fn link_setting_conversion_round_trips_per_valve_type() {
-        // Expectations are written as literals, not as `internal * FACTOR`.
-        // Phrasing them in terms of the conversion constant is how this test
-        // passed while every value it checked was wrong: it asserted that the
-        // code agreed with itself.
-        for (vt, internal, display) in [
-            // A pressure/head setting is already metres internally.
-            (hydra::ValveType::Prv, 100.0, 100.0),
-            (hydra::ValveType::Psv, 50.0, 50.0),
-            (hydra::ValveType::Pbv, 25.0, 25.0),
-            // A flow setting is m³/s internally, L/s on the wire.
-            (hydra::ValveType::Fcv, 2.0, 2000.0),
-            (hydra::ValveType::Tcv, 7.5, 7.5), // dimensionless: identity
-        ] {
-            let link = valve_link(vt);
-            let d = link_setting_internal_to_display(&link, internal);
-            assert!((d - display).abs() < 1e-9, "{vt:?} to display");
-            let back = link_setting_display_to_internal(&link, d);
-            assert!((back - internal).abs() < 1e-9, "{vt:?} round-trip");
-        }
-        // Non-valve links: identity in both directions.
-        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
-        let pipe = network.links.iter().find(|l| l.base.id == "P1").unwrap();
-        assert_eq!(link_setting_internal_to_display(pipe, 3.5), 3.5);
-        assert_eq!(link_setting_display_to_internal(pipe, 3.5), 3.5);
-    }
-
-    #[test]
-    fn node_grade_conversion_round_trips_for_tank_and_junction() {
-        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
-        for id in ["T1", "J1", "R1"] {
-            let node = network.nodes.iter().find(|n| n.base.id == id).unwrap();
-            let internal = node.base.elevation + 12.0;
-            let display = node_grade_internal_to_display(node, internal);
-            let back = node_grade_display_to_internal(node, display);
-            assert!((back - internal).abs() < 1e-9, "{id} round-trip");
-        }
-        // Tank display value is the level above the tank *bottom* in metres.
-        let tank = network.nodes.iter().find(|n| n.base.id == "T1").unwrap();
-        let hydra::NodeKind::Tank(t) = &tank.kind else {
-            unreachable!("T1 is a tank");
-        };
-        let bottom = tank.base.elevation - t.min_level;
-        let display = node_grade_internal_to_display(tank, bottom + 10.0);
-        assert!((display - 10.0).abs() < 1e-9, "10 m above bottom is 10 m");
-        // Junction display value is head above the node elevation in metres.
-        let j1 = network.nodes.iter().find(|n| n.base.id == "J1").unwrap();
-        let display = node_grade_internal_to_display(j1, j1.base.elevation + 10.0);
-        assert!((display - 10.0).abs() < 1e-9, "10 m of head is 10 m");
-    }
 
     // ── INP parse-error summarisation ─────────────────────────────────────
 
@@ -2113,7 +1727,6 @@ Duration  0
 #[cfg(test)]
 mod curve_axis_boundary {
     use super::*;
-    use crate::commands::mutations::curve_points_display_to_internal;
 
     fn axes_of(kind: hydra::CurveKind) -> [CurveAxisDto; 2] {
         let [x, y] = curve_axes(kind);
@@ -2235,26 +1848,6 @@ mod curve_axis_boundary {
             assert_eq!(row.axes[0].label, x.dto().label);
             assert_eq!(row.axes[1].label, y.dto().label);
         }
-    }
-
-    /// The one fact still stated on both sides of the IPC boundary: a
-    /// curve created in the GUI is a pump-head curve, so the editor stages
-    /// the add with `role: "pump-head"` and looks its axes up under that
-    /// key. If `create_curve` ever makes something else, the staged add
-    /// would render under the wrong axes until it was saved.
-    ///
-    /// The frontend half is `stagedCurveRole` in `CurveEditor.tsx`.
-    #[test]
-    fn a_created_curve_is_the_kind_the_editor_stages_it_as() {
-        let mut network =
-            hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).unwrap();
-        crate::commands::mutations::create_curve_in_network(&mut network, "NEW1").unwrap();
-        let created = network.curves.iter().find(|c| c.id == "NEW1").unwrap();
-        assert_eq!(
-            curve_kind_id(created.kind),
-            "pump-head",
-            "the editor stages new curves as pump-head; keep the two in step"
-        );
     }
 
     /// Engines whose curves this GUI does not edit publish none, and must
@@ -2386,9 +1979,29 @@ Duration  0
             Generic,
         ] {
             let [ax, ay] = curve_axes(kind);
-            let xs: Vec<f64> = internal_x.iter().map(|v| v * ax.scale()).collect();
-            let ys: Vec<f64> = internal_y.iter().map(|v| v * ay.scale()).collect();
-            let back = curve_points_display_to_internal(kind, &xs, &ys);
+            // Through the live write, which is the collection-contents
+            // one now — the staged editor's own converter went with the
+            // editor, and this is the pairing that has to hold.
+            let mut network = hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes())
+                .expect("fixture");
+            network.curves.push(hydra::Curve {
+                id: "CX".into(),
+                kind,
+                points: Vec::new(),
+            });
+            let rows: Vec<Vec<f64>> = internal_x
+                .iter()
+                .zip(internal_y.iter())
+                .map(|(x, y)| vec![x * ax.scale(), y * ay.scale()])
+                .collect();
+            crate::commands::collection_contents::set_wds_contents(
+                &mut network,
+                "curve",
+                "CX",
+                &rows,
+            )
+            .expect("the write takes its own read back");
+            let back = &network.curves.last().expect("CX").points;
             for (i, p) in back.iter().enumerate() {
                 assert!(
                     (p.x - internal_x[i]).abs() < 1e-12,

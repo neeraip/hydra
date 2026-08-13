@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { usePatterns } from "../../../hooks";
 import { Sparkline } from "../../../pages/project/AnalysisPanel/charts";
-import { downsampleMinMax } from "../../editors/patternDownsample";
+import { downsampleMinMax } from "./patternDownsample";
 
 /**
  * Points beyond which the profile is downsampled.

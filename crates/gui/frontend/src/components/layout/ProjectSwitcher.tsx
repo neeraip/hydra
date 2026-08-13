@@ -4,15 +4,8 @@ import {
   PencilIcon,
 } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  getDraftDirtyCount,
-  saveDraftsViaGuard,
-  useActiveProject,
-  useAppState,
-} from "../../AppContext";
+import { useActiveProject, useAppState } from "../../AppContext";
 import { type Project, renameProjectOnDisk, useProjects } from "../../hooks";
-import { formatIpcError } from "../../hooks/ipc";
-import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProjectSwitcher — the breadcrumb's project segment.
@@ -53,13 +46,6 @@ export function ProjectSwitcher() {
   const [filter, setFilter] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
-  // Project id awaiting the unsaved-edits guard, with the dirty count captured
-  // at the moment of the switch attempt so the message stays stable.
-  const [pendingSwitch, setPendingSwitch] = useState<{
-    id: string;
-    name: string;
-    dirtyCount: number;
-  } | null>(null);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -126,15 +112,10 @@ export function ProjectSwitcher() {
     }
   }
 
-  // ── Switch (guarded) ────────────────────────────────────────────────────────
+  // ── Switch ──────────────────────────────────────────────────────────────────
   function attemptSwitch(target: Project) {
     if (target.id === activeProjectId) {
       closeDropdown();
-      return;
-    }
-    const dirty = getDraftDirtyCount();
-    if (dirty > 0) {
-      setPendingSwitch({ id: target.id, name: target.name, dirtyCount: dirty });
       return;
     }
     doSwitch(target.id);
@@ -151,22 +132,6 @@ export function ProjectSwitcher() {
     setOpen(false);
     setRenaming(false);
     setFilter("");
-    setPendingSwitch(null);
-  }
-
-  async function saveThenSwitch() {
-    const pending = pendingSwitch;
-    if (!pending) return;
-    const result = await saveDraftsViaGuard();
-    if (result && result.failed > 0) {
-      showToast(
-        `Could not save all changes: ${result.errors[0] ? formatIpcError(result.errors[0]) : `${result.failed} failed`}`,
-        "error",
-      );
-      setPendingSwitch(null);
-      return;
-    }
-    doSwitch(pending.id);
   }
 
   return (
@@ -434,121 +399,6 @@ export function ProjectSwitcher() {
             )}
           </div>
         </div>
-      )}
-
-      {/* Unsaved-edits guard */}
-      {pendingSwitch && (
-        <ModalBackdrop
-          onDismiss={() => setPendingSwitch(null)}
-          zIndex={300}
-          style={{ animation: "fadeIn 120ms ease-out" }}
-        >
-          <div
-            {...stopBackdropEvents}
-            style={{
-              width: "100%",
-              maxWidth: 420,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border-hover)",
-              borderRadius: 12,
-              boxShadow: "var(--shadow-3)",
-              overflow: "hidden",
-              fontFamily: "var(--font-ui)",
-              animation: "scaleIn 160ms ease-out",
-            }}
-          >
-            <div style={{ padding: "18px 20px" }}>
-              <div
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  color: "var(--text-primary)",
-                  marginBottom: 6,
-                }}
-              >
-                Unsaved changes
-              </div>
-              <div
-                style={{
-                  fontSize: "var(--text-lg)",
-                  color: "var(--text-secondary)",
-                  lineHeight: 1.5,
-                }}
-              >
-                You have {pendingSwitch.dirtyCount} unsaved editor change
-                {pendingSwitch.dirtyCount !== 1 ? "s" : ""}. Switching to{" "}
-                <strong style={{ color: "var(--text-primary)" }}>
-                  {pendingSwitch.name}
-                </strong>{" "}
-                will discard them unless you save first.
-              </div>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: 10,
-                padding: "12px 20px",
-                borderTop: "1px solid var(--border)",
-                background: "rgba(0,0,0,0.18)",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setPendingSwitch(null)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                  color: "var(--text-secondary)",
-                  borderRadius: 5,
-                  padding: "7px 14px",
-                  fontSize: "var(--text-md)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-ui)",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const id = pendingSwitch.id;
-                  setPendingSwitch(null);
-                  doSwitch(id);
-                }}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                  color: "var(--status-error, #ef4444)",
-                  borderRadius: 5,
-                  padding: "7px 14px",
-                  fontSize: "var(--text-md)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-ui)",
-                }}
-              >
-                Discard & switch
-              </button>
-              <button
-                type="button"
-                onClick={saveThenSwitch}
-                style={{
-                  background: "var(--accent)",
-                  border: "1px solid var(--accent)",
-                  color: "var(--accent-fg)",
-                  borderRadius: 5,
-                  padding: "7px 14px",
-                  fontSize: "var(--text-md)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "var(--font-ui)",
-                }}
-              >
-                Save & switch
-              </button>
-            </div>
-          </div>
-        </ModalBackdrop>
       )}
     </div>
   );

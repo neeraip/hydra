@@ -168,7 +168,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: None,
         badge: "Cv",
         creatable: false,
-        not_creatable_because: Some("a curve is its list of points, authored in the curve editor"),
+        not_creatable_because: Some("a curve is its list of points, and a new one would have none"),
     },
     ElementKind {
         id: "timeseries",
@@ -179,7 +179,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Ts",
         creatable: false,
         not_creatable_because: Some(
-            "a time series is its list of values, authored in its own editor",
+            "a time series is its list of values, and a new one would have none",
         ),
     },
     ElementKind {
@@ -191,7 +191,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Pa",
         creatable: false,
         not_creatable_because: Some(
-            "a pattern is its list of multipliers, authored in the pattern editor",
+            "a pattern is its list of multipliers, and a new one would have none",
         ),
     },
     ElementKind {
@@ -203,7 +203,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Ru",
         creatable: false,
         not_creatable_because: Some(
-            "a rule is a statement about the network, authored in the controls editor",
+            "a rule is a statement about the network, which has to be written out",
         ),
     },
     ElementKind {

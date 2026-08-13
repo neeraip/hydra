@@ -1,4 +1,3 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createContext,
   type ReactNode,
@@ -20,7 +19,7 @@ import {
   useEngines,
   useProject,
 } from "./hooks";
-import { formatIpcError, isTauri, onIpcError } from "./hooks/ipc";
+import { formatIpcError, onIpcError } from "./hooks/ipc";
 import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { startPerfSpan } from "./perfTrace";
@@ -251,60 +250,6 @@ const IPC_TOAST_DEDUPE_MS = 5000;
 /** Maximum number of simultaneously visible toasts (newest wins). */
 const MAX_TOASTS = 4;
 
-// ── Draft guard seam ────────────────────────────────────────────────────────
-//
-// DraftContext lives *below* AppProvider (it is mounted by NetworkEditor and
-// itself consumes useAppState), so AppContext cannot read it through a hook —
-// and importing DraftContext here would create a module cycle. Instead
-// DraftContext registers a tiny imperative API at mount time; navigation
-// handlers and the window-close guard read it on demand.
-
-export interface DraftGuard {
-  /** Total staged (unsaved) editor changes right now. */
-  getDirtyCount: () => number;
-  /** Save every staged change — same path as the editor save bar. */
-  saveAll: () => Promise<{ applied: number; failed: number; errors: string[] }>;
-}
-
-let draftGuard: DraftGuard | null = null;
-
-/** Called by DraftProvider on mount; returns an unregister function. */
-export function registerDraftGuard(guard: DraftGuard): () => void {
-  draftGuard = guard;
-  return () => {
-    if (draftGuard === guard) draftGuard = null;
-  };
-}
-
-/** Current staged editor change count (0 when no editor draft exists). */
-export function getDraftDirtyCount(): number {
-  return draftGuard?.getDirtyCount() ?? 0;
-}
-
-/** Save staged editor drafts via the registered guard (no-op without one). */
-export function saveDraftsViaGuard(): Promise<{
-  applied: number;
-  failed: number;
-  errors: string[];
-}> | null {
-  return draftGuard ? draftGuard.saveAll() : null;
-}
-
-/**
- * Ask the user to confirm leaving/closing with unsaved editor drafts.
- * Returns `true` when navigation may proceed. Some webviews don't implement
- * `window.confirm` (it returns `undefined`); only an explicit `false` blocks
- * the action so navigation/close can never be wedged.
- */
-function confirmDiscardDrafts(verb: string): boolean {
-  const n = getDraftDirtyCount();
-  if (n === 0) return true;
-  const res = window.confirm(
-    `You have ${n} unsaved editor change${n === 1 ? "" : "s"}. ${verb} anyway and discard ${n === 1 ? "it" : "them"}?`,
-  );
-  return res !== false;
-}
-
 const STORAGE_THEME = "hydra2-theme";
 /**
  * One key, not one per project.
@@ -469,46 +414,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(STORAGE_LAST_PROJECT);
     }
   }, [s.page, s.activeProjectId]);
-
-  // Tauri window-close guard: prompt when editor drafts are dirty. Outside a
-  // Tauri shell (plain vite dev server) this effect is a no-op.
-  //
-  // Registering this listener makes the webview solely responsible for
-  // closing the window. Tauri's Rust side prevents the close as soon as *any*
-  // JS listener for the event exists, and its API wrapper only calls
-  // `window.destroy()` when the handler leaves `preventDefault` unset — which
-  // also means `core:window:allow-destroy` must stay in the app's capability
-  // set (it is not part of `core:window:default`). Without it `destroy()` is
-  // denied and the window cannot be closed at all.
-  useEffect(() => {
-    if (!isTauri()) return;
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    getCurrentWindow()
-      .onCloseRequested((event) => {
-        // Fail open. A throw here would skip `destroy()` and wedge the window
-        // shut for the rest of the session — the user's only way out being to
-        // kill the process. Losing staged edits is the lesser harm.
-        try {
-          if (!confirmDiscardDrafts("Close")) event.preventDefault();
-        } catch (err) {
-          console.warn("[app] close guard failed; allowing close:", err);
-        }
-      })
-      .then((fn) => {
-        // StrictMode double-mount: dispose a late-resolving listener instead
-        // of leaking it.
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch((err) => {
-        console.warn("[app] failed to register close guard:", err);
-      });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
 
   useEffect(() => {
     const resolved =
@@ -688,15 +593,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   ]);
 
   const setPage = useCallback((page: Page) => {
-    // Guard: leaving the project page discards any staged editor drafts
-    // (DraftProvider unmounts with the editor). Confirm before proceeding.
-    if (
-      sRef.current.page === "project" &&
-      page !== "project" &&
-      !confirmDiscardDrafts("Leave")
-    ) {
-      return;
-    }
     setS((prev) => {
       // Leaving the project view must always clear project-scoped state,
       // regardless of which call site triggered the navigation. Enforced
@@ -907,7 +803,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // refuses a save whose target does not own the loaded network, and this
     // stops the user reaching that state by accident in the first place.
     if (sRef.current.activeScenarioId === id) return;
-    if (!confirmDiscardDrafts("Switch scenario")) return;
     setS((prev) => ({ ...prev, activeScenarioId: id }));
   }, []);
 
@@ -922,21 +817,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Move the nav cursor by ±1 and restore that history location (no-op at
    *  either end of the stack). */
   const navBy = useCallback((delta: -1 | 1) => {
-    // Same unsaved-drafts guard as setPage, applied to back/forward
-    // navigation that would leave the project page.
-    {
-      const cur = sRef.current;
-      const targetCursor = cur.navCursor + delta;
-      if (targetCursor < 0 || targetCursor >= cur.navHistory.length) return;
-      const target = cur.navHistory[targetCursor];
-      if (
-        cur.page === "project" &&
-        target.page !== "project" &&
-        !confirmDiscardDrafts("Leave")
-      ) {
-        return;
-      }
-    }
     setS((prev) => {
       const newCursor = prev.navCursor + delta;
       if (newCursor < 0 || newCursor >= prev.navHistory.length) return prev;

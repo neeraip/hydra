@@ -268,8 +268,36 @@ mod tests {
         let err = creatable_class("uds", "storage").expect_err("should refuse");
         assert!(err.contains("stage-area"), "unhelpful: {err}");
         let err = creatable_class("wds", "curve").expect_err("should refuse");
-        assert!(err.contains("curve editor"), "unhelpful: {err}");
+        assert!(err.contains("list of points"), "unhelpful: {err}");
         assert!(creatable_class("uds", "junction").is_ok());
+    }
+
+    /// A refusal says what a new one would *lack*, never where to go
+    /// instead.
+    ///
+    /// Five of them named the curve, pattern and controls editors. Those
+    /// screens were deleted when their work moved onto the editing
+    /// contract, and the sentences kept pointing at them — the same
+    /// staleness as any other copy naming a screen, except this copy is
+    /// engine data and outlives whatever application read it.
+    #[test]
+    fn no_refusal_sends_the_reader_to_a_screen() {
+        let catalogs: [&[hydra::common::ElementKind]; 2] = [
+            hydra::descriptors::ELEMENT_KINDS,
+            hydra::uds::descriptors::ELEMENT_KINDS,
+        ];
+        for kinds in catalogs {
+            for kind in kinds {
+                let Some(why) = kind.not_creatable_because else {
+                    continue;
+                };
+                assert!(
+                    !why.contains("editor"),
+                    "{}'s refusal names a screen: {why:?}",
+                    kind.id
+                );
+            }
+        }
     }
 
     /// The class says what a new one needs: somewhere to be, or two ends.

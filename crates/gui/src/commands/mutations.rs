@@ -6,9 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::network_dto::{
-    control_from_dto, curve_axes, format_read_error, link_to_dto, network_to_dto, node_to_dto,
-    rule_from_dto, ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto,
-    RuleDto, M3S_TO_LPS, M_TO_MM,
+    format_read_error, link_to_dto, network_to_dto, node_to_dto, LinkDto, NetworkDto, NetworkState,
+    NetworkStateInner, NodeDto, M3S_TO_LPS, M_TO_MM,
 };
 use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
@@ -1001,6 +1000,19 @@ fn delete_element_from_network(
                 (r != id).then(|| r.to_string())
             });
         }
+        // The collection kinds. They reach the same command as a
+        // junction does because the Editor's row actions are generic —
+        // it offers delete for whatever kind it is showing, and a curve
+        // that answered "unknown element kind" to its own table's
+        // button was the seam left by the editor that used to own them.
+        "curve" => {
+            delete_curve_from_network(network, id)?;
+            return Ok(Vec::new());
+        }
+        "pattern" => {
+            delete_pattern_from_network(network, id)?;
+            return Ok(Vec::new());
+        }
         other => return Err(format!("unknown element kind '{}'", other)),
     }
     // Only a node cascades; a link takes nothing with it.
@@ -1157,6 +1169,12 @@ fn rename_element_in_network(
                 Some(if id == old_id { new_id } else { id }.to_string())
             });
         }
+        // Both cascade their new id to every reference rather than
+        // refusing, because a rename has exactly one correct repair
+        // (§4.5.4) — unlike a delete, where which reference to clear is
+        // the modeller's choice.
+        "curve" => return rename_curve_in_network(network, old_id, new_id),
+        "pattern" => return rename_pattern_in_network(network, old_id, new_id),
         other => return Err(format!("unknown element kind '{other}'")),
     }
     Ok(())
@@ -1423,48 +1441,6 @@ pub(crate) fn create_link_in_network(
     Ok(())
 }
 
-/// Create a new pump-head curve with default two-point data.
-///
-/// `id` must be unique within the network. The default points span
-/// (0 L/s, 50 m) → (5 L/s, 0 m) in display units, converted to the
-/// engine's internal SI (m³/s, m) for storage.
-#[tauri::command(async)]
-pub fn create_curve(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        create_curve_in_network(network, &id)
-    })
-}
-
-/// The kind and default points a newly created curve gets — factored out of
-/// the command so a test can assert the kind without a Tauri handle. The
-/// editor stages new curves under this kind's id to look their axes up.
-pub(crate) fn create_curve_in_network(
-    network: &mut hydra::Network,
-    id: &str,
-) -> Result<(), String> {
-    let id = validate_inp_id(id, "curve")?;
-    if network.curves.iter().any(|c| c.id == id) {
-        return Err(format!("curve '{}' already exists", id));
-    }
-    // Default: two-point pump-head curve spanning ~(0 L/s, 50 m) to (5 L/s, 0 m)
-    network.curves.push(hydra::Curve {
-        id: id.clone(),
-        kind: hydra::CurveKind::PumpHead,
-        points: vec![
-            hydra::CurvePoint { x: 0.0, y: 50.0 },
-            hydra::CurvePoint {
-                x: 5.0 / M3S_TO_LPS,
-                y: 0.0,
-            },
-        ],
-    });
-    Ok(())
-}
-
 /// Ids of the elements that reference `curve_id`, in node-then-link order.
 ///
 /// Every place a curve can be named, in one list, because the two callers
@@ -1502,29 +1478,37 @@ fn curve_references(network: &hydra::Network, curve_id: &str) -> Vec<String> {
 /// head-curve, valve-curve, or volume-curve respectively) — the reference
 /// must be cleared first so the network never ends up with a dangling curve
 /// ID that would fail to parse on the next INP round-trip.
-#[tauri::command(async)]
-pub fn delete_curve(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        if !network.curves.iter().any(|c| c.id == id) {
-            return Err(format!("curve '{}' not found", id));
-        }
+fn delete_curve_from_network(network: &mut hydra::Network, id: &str) -> Result<(), String> {
+    if !network.curves.iter().any(|c| c.id == id) {
+        return Err(format!("curve '{id}' not found"));
+    }
+    let referenced_by = curve_references(network, id);
+    if !referenced_by.is_empty() {
+        return Err(format!(
+            "curve '{}' is still attached to {}; detach it first",
+            id,
+            referenced_by.join(", ")
+        ));
+    }
+    network.curves.retain(|c| c.id != id);
+    Ok(())
+}
 
-        let referenced_by = curve_references(network, &id);
-        if !referenced_by.is_empty() {
-            return Err(format!(
-                "curve '{}' is still attached to {}; detach it first",
-                id,
-                referenced_by.join(", ")
-            ));
-        }
-
-        network.curves.retain(|c| c.id != id);
-        Ok(())
-    })
+/// Delete a pattern, refusing while anything still reads it.
+fn delete_pattern_from_network(network: &mut hydra::Network, id: &str) -> Result<(), String> {
+    if !network.patterns.iter().any(|p| p.id == id) {
+        return Err(format!("pattern '{id}' not found"));
+    }
+    let referenced_by = pattern_references(network, id);
+    if !referenced_by.is_empty() {
+        return Err(format!(
+            "pattern '{}' is still attached to {}; detach it first",
+            id,
+            referenced_by.join(", ")
+        ));
+    }
+    network.patterns.retain(|p| p.id != id);
+    Ok(())
 }
 
 /// Rename a curve in place, cascading the new ID to every reference. See
@@ -1579,124 +1563,6 @@ fn rename_curve_in_network(
     Ok(())
 }
 
-/// Rename a curve, cascading the new ID to every reference: pump head and
-/// efficiency curves, GPV valve curves, and tank volume curves.
-///
-/// `new_id` must be non-empty, contain no whitespace/`;`/quotes, and be unique
-/// among curves (curves have their own ID namespace). Fails without mutating
-/// anything on any violation. Renaming to the current ID is a no-op success.
-#[tauri::command(async)]
-pub fn rename_curve(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    old_id: String,
-    new_id: String,
-) -> Result<(), String> {
-    let new_id = validate_inp_id(&new_id, "curve")?;
-    mutate_structural(&app, &state, |network| {
-        rename_curve_in_network(network, &old_id, &new_id)
-    })
-}
-
-/// Convert curve points from the display units used by `get_curves` back to
-/// the engine's internal SI storage units.
-///
-/// Reads the same [`curve_axes`] table `network_to_dto` scales outbound
-/// with, and divides by exactly what that multiplied — so the two cannot
-/// drift as the table gains kinds, which is the whole reason the axes are
-/// declared in one place rather than as a pair of matching `if`s.
-pub(crate) fn curve_points_display_to_internal(
-    kind: hydra::CurveKind,
-    xs: &[f64],
-    ys: &[f64],
-) -> Vec<hydra::CurvePoint> {
-    let [ax, ay] = curve_axes(kind);
-    xs.iter()
-        .zip(ys.iter())
-        .map(|(&x, &y)| hydra::CurvePoint {
-            x: x / ax.scale(),
-            y: y / ay.scale(),
-        })
-        .collect()
-}
-
-/// Replace all points of an existing curve.
-///
-/// `xs`/`ys` must be in the same display units returned by `get_curves`
-/// (flow L/s and head m for pump-head curves; raw pass-through units for all
-/// other curve kinds) and have equal length. Pump-head curves require at
-/// least 2 points.
-#[tauri::command(async)]
-pub fn update_curve_points(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-    xs: Vec<f64>,
-    ys: Vec<f64>,
-) -> Result<(), String> {
-    if xs.len() != ys.len() {
-        return Err("mismatched point array lengths".into());
-    }
-    mutate_structural(&app, &state, |network| {
-        let curve = network
-            .curves
-            .iter_mut()
-            .find(|c| c.id == id)
-            .ok_or_else(|| format!("curve '{}' not found", id))?;
-        if curve.kind == hydra::CurveKind::PumpHead && xs.len() < 2 {
-            return Err("pump-head curves require at least 2 points".into());
-        }
-        curve.points = curve_points_display_to_internal(curve.kind, &xs, &ys);
-        Ok(())
-    })
-}
-
-/// Create a new time pattern with flat multipliers (all 1.0) at 24 hourly steps.
-///
-/// `id` must be unique within the network.
-#[tauri::command(async)]
-pub fn create_pattern(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        let id = validate_inp_id(&id, "pattern")?;
-        if network.patterns.iter().any(|p| p.id == id) {
-            return Err(format!("pattern '{}' already exists", id));
-        }
-        network.patterns.push(hydra::Pattern {
-            id: id.clone(),
-            factors: vec![1.0; 24],
-        });
-        Ok(())
-    })
-}
-
-/// Replace all multipliers of an existing time pattern.
-///
-/// `multipliers` must have at least one entry.
-#[tauri::command(async)]
-pub fn update_pattern_multipliers(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-    multipliers: Vec<f64>,
-) -> Result<(), String> {
-    if multipliers.is_empty() {
-        return Err("pattern must have at least one multiplier".into());
-    }
-    mutate_structural(&app, &state, |network| {
-        let pattern = network
-            .patterns
-            .iter_mut()
-            .find(|p| p.id == id)
-            .ok_or_else(|| format!("pattern '{}' not found", id))?;
-        pattern.factors = multipliers;
-        Ok(())
-    })
-}
-
 /// Rename a time pattern, cascading the new ID to every reference:
 /// junction demand categories, reservoir/tank head patterns, pump
 /// speed/price patterns, and the network's global default/energy-price
@@ -1704,236 +1570,106 @@ pub fn update_pattern_multipliers(
 ///
 /// Fails without mutating anything if `new_id` is empty or already in use
 /// by another pattern.
-#[tauri::command(async)]
-pub fn rename_pattern(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    old_id: String,
-    new_id: String,
+fn rename_pattern_in_network(
+    network: &mut hydra::Network,
+    old_id: &str,
+    new_id: &str,
 ) -> Result<(), String> {
-    let trimmed = validate_inp_id(&new_id, "pattern")?;
-    mutate_structural(&app, &state, |network| {
-        if !network.patterns.iter().any(|p| p.id == old_id) {
-            return Err(format!("pattern '{}' not found", old_id));
+    if !network.patterns.iter().any(|p| p.id == old_id) {
+        return Err(format!("pattern '{old_id}' not found"));
+    }
+    if new_id == old_id {
+        return Ok(());
+    }
+    if network.patterns.iter().any(|p| p.id == new_id) {
+        return Err(format!("pattern '{new_id}' already exists"));
+    }
+    let trimmed = new_id.to_string();
+    for p in network.patterns.iter_mut() {
+        if p.id == old_id {
+            p.id = trimmed.clone();
         }
-        if trimmed != old_id && network.patterns.iter().any(|p| p.id == trimmed) {
-            return Err(format!("pattern '{}' already exists", trimmed));
-        }
-
-        for p in network.patterns.iter_mut() {
-            if p.id == old_id {
-                p.id = trimmed.clone();
-            }
-        }
-        for n in network.nodes.iter_mut() {
-            match &mut n.kind {
-                hydra::NodeKind::Junction(j) => {
-                    for d in j.demands.iter_mut() {
-                        if d.pattern.as_deref() == Some(old_id.as_str()) {
-                            d.pattern = Some(trimmed.clone());
-                        }
+    }
+    for n in network.nodes.iter_mut() {
+        match &mut n.kind {
+            hydra::NodeKind::Junction(j) => {
+                for d in j.demands.iter_mut() {
+                    if d.pattern.as_deref() == Some(old_id) {
+                        d.pattern = Some(trimmed.clone());
                     }
                 }
-                hydra::NodeKind::Reservoir(r) => {
-                    if r.head_pattern.as_deref() == Some(old_id.as_str()) {
-                        r.head_pattern = Some(trimmed.clone());
-                    }
-                }
-                // Tanks carry no pattern references (head patterns are
-                // reservoir-only).
-                hydra::NodeKind::Tank(_) => {}
             }
-        }
-        for l in network.links.iter_mut() {
-            if let hydra::LinkKind::Pump(p) = &mut l.kind {
-                if p.speed_pattern.as_deref() == Some(old_id.as_str()) {
-                    p.speed_pattern = Some(trimmed.clone());
-                }
-                if p.price_pattern.as_deref() == Some(old_id.as_str()) {
-                    p.price_pattern = Some(trimmed.clone());
+            hydra::NodeKind::Reservoir(r) => {
+                if r.head_pattern.as_deref() == Some(old_id) {
+                    r.head_pattern = Some(trimmed.clone());
                 }
             }
+            hydra::NodeKind::Tank(_) => {}
         }
-        if network.options.default_pattern.as_deref() == Some(old_id.as_str()) {
-            network.options.default_pattern = Some(trimmed.clone());
+    }
+    for l in network.links.iter_mut() {
+        if let hydra::LinkKind::Pump(p) = &mut l.kind {
+            if p.speed_pattern.as_deref() == Some(old_id) {
+                p.speed_pattern = Some(trimmed.clone());
+            }
+            if p.price_pattern.as_deref() == Some(old_id) {
+                p.price_pattern = Some(trimmed.clone());
+            }
         }
-        if network.options.energy_price_pattern.as_deref() == Some(old_id.as_str()) {
-            network.options.energy_price_pattern = Some(trimmed.clone());
-        }
-        Ok(())
-    })
+    }
+    if network.options.default_pattern.as_deref() == Some(old_id) {
+        network.options.default_pattern = Some(trimmed.clone());
+    }
+    if network.options.energy_price_pattern.as_deref() == Some(old_id) {
+        network.options.energy_price_pattern = Some(trimmed);
+    }
+    Ok(())
 }
 
-/// Delete a time pattern from the network.
+/// Everything that still reads a pattern, by name.
 ///
-/// Fails if any junction demand, reservoir head pattern, quality-source
-/// pattern, pump speed/price pattern, or the global default/energy-price
-/// pattern (from `[OPTIONS]`) still references it — the reference must be
-/// cleared first so the network never ends up with a dangling pattern ID that
-/// would fail to parse on the next INP round-trip.
-#[tauri::command(async)]
-pub fn delete_pattern(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        if !network.patterns.iter().any(|p| p.id == id) {
-            return Err(format!("pattern '{}' not found", id));
-        }
-
-        let mut referenced_by: Vec<String> = Vec::new();
-        for n in &network.nodes {
-            match &n.kind {
-                hydra::NodeKind::Junction(j) => {
-                    if j.demands
-                        .iter()
-                        .any(|d| d.pattern.as_deref() == Some(id.as_str()))
-                    {
-                        referenced_by.push(n.base.id.clone());
-                    }
-                }
-                hydra::NodeKind::Reservoir(r) => {
-                    if r.head_pattern.as_deref() == Some(id.as_str()) {
-                        referenced_by.push(n.base.id.clone());
-                    }
-                }
-                // Tanks carry no pattern references (head patterns are
-                // reservoir-only).
-                hydra::NodeKind::Tank(_) => {}
-            }
-            if n.source
-                .as_ref()
-                .is_some_and(|s| s.pattern.as_deref() == Some(id.as_str()))
-            {
-                referenced_by.push(format!("{} (quality source)", n.base.id));
-            }
-        }
-        for l in &network.links {
-            if let hydra::LinkKind::Pump(p) = &l.kind {
-                if p.speed_pattern.as_deref() == Some(id.as_str())
-                    || p.price_pattern.as_deref() == Some(id.as_str())
-                {
-                    referenced_by.push(l.base.id.clone());
+/// The counterpart of `curve_references`, and the reason a delete refuses
+/// rather than cascades: a dangling pattern id fails to parse on the next
+/// round trip, and which reference to clear is the modeller's choice.
+fn pattern_references(network: &hydra::Network, id: &str) -> Vec<String> {
+    let mut referenced_by: Vec<String> = Vec::new();
+    for n in &network.nodes {
+        match &n.kind {
+            hydra::NodeKind::Junction(j) => {
+                if j.demands.iter().any(|d| d.pattern.as_deref() == Some(id)) {
+                    referenced_by.push(n.base.id.clone());
                 }
             }
+            hydra::NodeKind::Reservoir(r) => {
+                if r.head_pattern.as_deref() == Some(id) {
+                    referenced_by.push(n.base.id.clone());
+                }
+            }
+            // Tanks carry no pattern references (head patterns are
+            // reservoir-only).
+            hydra::NodeKind::Tank(_) => {}
         }
-        if network.options.default_pattern.as_deref() == Some(id.as_str()) {
-            referenced_by.push("global default pattern (Options)".into());
+        if n.source
+            .as_ref()
+            .is_some_and(|s| s.pattern.as_deref() == Some(id))
+        {
+            referenced_by.push(format!("{} (quality source)", n.base.id));
         }
-        if network.options.energy_price_pattern.as_deref() == Some(id.as_str()) {
-            referenced_by.push("global energy price pattern (Options)".into());
+    }
+    for l in &network.links {
+        if let hydra::LinkKind::Pump(p) = &l.kind {
+            if p.speed_pattern.as_deref() == Some(id) || p.price_pattern.as_deref() == Some(id) {
+                referenced_by.push(l.base.id.clone());
+            }
         }
-        if !referenced_by.is_empty() {
-            return Err(format!(
-                "pattern '{}' is still attached to {}; detach it first",
-                id,
-                referenced_by.join(", ")
-            ));
-        }
-
-        network.patterns.retain(|p| p.id != id);
-        Ok(())
-    })
-}
-
-/// Append a new simple control to the network.
-#[tauri::command(async)]
-pub fn create_control(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    control: ControlDto,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        let ctrl = control_from_dto(&control, network)?;
-        network.controls.push(ctrl);
-        Ok(())
-    })
-}
-
-/// Replace the simple control at `index` (position in `get_controls()`'s
-/// response array).
-#[tauri::command(async)]
-pub fn update_control(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    index: usize,
-    control: ControlDto,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        let ctrl = control_from_dto(&control, network)?;
-        let slot = network
-            .controls
-            .get_mut(index)
-            .ok_or_else(|| format!("control index {} out of range", index))?;
-        *slot = ctrl;
-        Ok(())
-    })
-}
-
-/// Delete the simple control at `index`.
-#[tauri::command(async)]
-pub fn delete_control(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    index: usize,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        if index >= network.controls.len() {
-            return Err(format!("control index {} out of range", index));
-        }
-        network.controls.remove(index);
-        Ok(())
-    })
-}
-
-/// Append a new rule-based control to the network.
-#[tauri::command(async)]
-pub fn create_rule(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    rule: RuleDto,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        let r = rule_from_dto(&rule, network)?;
-        network.rules.push(r);
-        Ok(())
-    })
-}
-
-/// Replace the rule at `index` (position in `get_rules()`'s response array).
-#[tauri::command(async)]
-pub fn update_rule(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    index: usize,
-    rule: RuleDto,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        let r = rule_from_dto(&rule, network)?;
-        let slot = network
-            .rules
-            .get_mut(index)
-            .ok_or_else(|| format!("rule index {} out of range", index))?;
-        *slot = r;
-        Ok(())
-    })
-}
-
-/// Delete the rule at `index`.
-#[tauri::command(async)]
-pub fn delete_rule(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    index: usize,
-) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
-        if index >= network.rules.len() {
-            return Err(format!("rule index {} out of range", index));
-        }
-        network.rules.remove(index);
-        Ok(())
-    })
+    }
+    if network.options.default_pattern.as_deref() == Some(id) {
+        referenced_by.push("global default pattern (Options)".into());
+    }
+    if network.options.energy_price_pattern.as_deref() == Some(id) {
+        referenced_by.push("global energy price pattern (Options)".into());
+    }
+    referenced_by
 }
 
 /// A single patch entry passed to `preview_patches`.
@@ -2311,6 +2047,38 @@ mod tests {
             (link.from_id, link.to_id),
             (rebuilt.from_id.clone(), rebuilt.to_id.clone())
         );
+    }
+
+    /// The Editor's row actions are generic: it offers rename and delete
+    /// for whatever kind its table is showing. Curves and patterns are
+    /// kinds like any other, and they reached a match that answered
+    /// "unknown element kind" — the seam left by the editor that used to
+    /// own them, which had its own commands for exactly these two.
+    #[test]
+    fn a_curve_and_a_pattern_rename_and_delete_through_the_generic_path() {
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).expect("fixture");
+        network.curves.push(hydra::Curve {
+            id: "C1".into(),
+            kind: hydra::CurveKind::Generic,
+            points: vec![
+                hydra::CurvePoint { x: 0.0, y: 1.0 },
+                hydra::CurvePoint { x: 1.0, y: 2.0 },
+            ],
+        });
+        network.patterns.push(hydra::Pattern {
+            id: "P1".into(),
+            factors: vec![1.0, 1.2],
+        });
+
+        rename_element_in_network(&mut network, "curve", "C1", "C2").expect("rename curve");
+        assert_eq!(network.curves.last().expect("curve").id, "C2");
+        rename_element_in_network(&mut network, "pattern", "P1", "P2").expect("rename pattern");
+        assert_eq!(network.patterns.last().expect("pattern").id, "P2");
+
+        delete_element_from_network(&mut network, "curve", "C2").expect("delete curve");
+        assert!(network.curves.iter().all(|c| c.id != "C2"));
+        delete_element_from_network(&mut network, "pattern", "P2").expect("delete pattern");
+        assert!(network.patterns.iter().all(|p| p.id != "P2"));
     }
 
     /// Every way a curve can be referenced must block its deletion.
@@ -2843,46 +2611,6 @@ Duration  0
     #[test]
     fn create_link_unknown_kind_errors() {
         assert!(default_link_kind("widget").is_err());
-    }
-
-    // ── curve unit round-trip (get_curves ↔ update_curve_points) ──────────
-
-    #[test]
-    fn pump_head_curve_display_round_trip_is_value_stable() {
-        // Internal points (m³/s, m) → DTO display units (L/s, m) via
-        // network_to_dto's conversion, then back through the
-        // update_curve_points conversion. The same scale is used in both
-        // directions, so the round-trip must be stable.
-        //
-        // Stability is all this test can prove. It passed unchanged while
-        // both directions were wrong by 28× — which is why the absolute
-        // values live in `network_dto`'s `unit_boundary` tests instead.
-        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
-        let internal = vec![
-            hydra::CurvePoint { x: 0.0, y: 164.0 },
-            hydra::CurvePoint { x: 0.177, y: 82.0 },
-            hydra::CurvePoint { x: 0.354, y: 0.0 },
-        ];
-        network.curves.push(hydra::Curve {
-            id: "C1".into(),
-            kind: hydra::CurveKind::PumpHead,
-            points: internal.clone(),
-        });
-
-        let dto = network_to_dto(&network);
-        let curve = dto.curves.iter().find(|c| c.id == "C1").unwrap();
-        let back = curve_points_display_to_internal(hydra::CurveKind::PumpHead, &curve.x, &curve.y);
-
-        assert_eq!(back.len(), internal.len());
-        for (b, i) in back.iter().zip(internal.iter()) {
-            assert!((b.x - i.x).abs() < 1e-12, "x drifted: {} -> {}", i.x, b.x);
-            assert!((b.y - i.y).abs() < 1e-12, "y drifted: {} -> {}", i.y, b.y);
-        }
-
-        // Non-pump-head kinds pass through untouched.
-        let raw = curve_points_display_to_internal(hydra::CurveKind::Generic, &[1.5], &[2.5]);
-        assert_eq!(raw[0].x, 1.5);
-        assert_eq!(raw[0].y, 2.5);
     }
 
     // ── pipe status patch validation ──────────────────────────────────────

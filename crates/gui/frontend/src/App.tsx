@@ -1,10 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import {
-  getDraftDirtyCount,
-  type Page,
-  saveDraftsViaGuard,
-  useAppState,
-} from "./AppContext";
+import { type Page, useAppState } from "./AppContext";
 import { registerCustomCrsDefinitions } from "./canvas/coords";
 import { useCanvasSelection } from "./canvas/selection-context";
 import { ActivityBar } from "./components/layout/ActivityBar";
@@ -261,11 +256,11 @@ export function App() {
         if (e.shiftKey) redo();
         else undo();
       }
-      // ⌘S / Ctrl-S — save staged editor drafts. preventDefault always on
-      // the project page so the browser save dialog can never appear.
+      // ⌘S / Ctrl-S — swallowed on the project page so the browser save
+      // dialog can never appear. There is nothing to save: an edit is part
+      // of the model when the operation returns (hydra-common §4.5.5).
       if (primary && key === "s" && page === "project") {
         e.preventDefault();
-        if (getDraftDirtyCount() > 0) void saveDraftsViaGuard();
       }
       // ⌘F / Ctrl-F — focus the Projects page search input.
       if (primary && key === "f" && page === "projects") {

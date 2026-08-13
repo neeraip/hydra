@@ -38,7 +38,6 @@ export {
 } from "../types";
 export * from "./basemapProviders";
 export * from "./criteria";
-export * from "./editors";
 export {
   type ElementAttributeInfo,
   type ElementClass,

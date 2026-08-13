@@ -1,13 +1,7 @@
 import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  getDraftDirtyCount,
-  saveDraftsViaGuard,
-  useActiveProject,
-  useAppState,
-  useSimulation,
-} from "../../AppContext";
+import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { engineComponents } from "../../engine/registry";
 import { buildResultsGeoJson } from "../../export/resultsGeoJson";
@@ -273,7 +267,6 @@ export function CommandPalette() {
   const findShortcut = formatPrimaryShortcut("F");
   const undoShortcut = formatPrimaryShortcut("Z");
   const redoShortcut = formatShortcut([modifier, shiftModifierLabel(), "Z"]);
-  const saveShortcut = formatPrimaryShortcut("S");
   const toggleLayoutShortcut = formatPrimaryShortcut("M");
   const zoomInShortcut = formatPrimaryShortcut("=");
   const zoomOutShortcut = formatPrimaryShortcut("-");
@@ -421,14 +414,6 @@ export function CommandPalette() {
           category: "Actions",
           shortcut: redoShortcut,
           action: "redo",
-        },
-        {
-          id: "a-save",
-          label: "Save changes",
-          description: "Write staged editor changes to the model",
-          category: "Actions",
-          shortcut: saveShortcut,
-          action: "save-changes",
         },
         {
           id: "a4",
@@ -595,7 +580,6 @@ export function CommandPalette() {
     runShortcut,
     undoShortcut,
     redoShortcut,
-    saveShortcut,
     toggleLayoutShortcut,
     zoomInShortcut,
     zoomOutShortcut,
@@ -836,12 +820,6 @@ export function CommandPalette() {
           break;
         case "redo":
           redo();
-          break;
-        case "save-changes":
-          // Same guard the shortcut uses: saving nothing would toast a
-          // success for work that was never staged.
-          if (getDraftDirtyCount() > 0) void saveDraftsViaGuard();
-          else showToast("No unsaved changes", "info");
           break;
         case "shortcut-card":
           toggleShortcutCard();
