@@ -8,7 +8,7 @@ import {
   setElementEnds,
   setElementRecords,
 } from "./network";
-import { saveProjectOnDisk } from "./projects";
+import { persistOrSay } from "./projects";
 import { pushUndoEntry, stackKey } from "./undoStack";
 
 /**
@@ -80,7 +80,7 @@ export function useElementAttributeWrite(): (
           redo: { ops: [{ op: "set", id: elementId, key, value, kind }] },
         });
       }
-      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      await persistOrSay(activeProjectId, activeScenarioId, showToast);
       markEdited(activeProjectId, activeScenarioId);
     },
     [activeProjectId, activeScenarioId, markEdited, showToast],
@@ -139,7 +139,7 @@ export function useElementEndsWrite(): (
           redo: { ops: [{ op: "reconnect", id: elementId, fromId, toId }] },
         });
       }
-      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      await persistOrSay(activeProjectId, activeScenarioId, showToast);
       markEdited(activeProjectId, activeScenarioId);
     },
     [activeProjectId, activeScenarioId, markEdited, showToast],
@@ -189,7 +189,7 @@ export function useCollectionContentsWrite(): (
           redo: { ops: [{ op: "contents", kind, id: elementId, rows }] },
         });
       }
-      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      await persistOrSay(activeProjectId, activeScenarioId, showToast);
       markEdited(activeProjectId, activeScenarioId);
     },
     [activeProjectId, activeScenarioId, markEdited, showToast],
@@ -238,7 +238,7 @@ export function useElementRecordsWrite(): (
           redo: { ops: [{ op: "records", id: elementId, set, rows, kind }] },
         });
       }
-      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      await persistOrSay(activeProjectId, activeScenarioId, showToast);
       markEdited(activeProjectId, activeScenarioId);
     },
     [activeProjectId, activeScenarioId, markEdited, showToast],

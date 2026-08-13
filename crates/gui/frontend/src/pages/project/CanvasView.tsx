@@ -59,9 +59,9 @@ import {
   getPeriodResults,
   type PeriodResults,
   patchNodePosition,
+  persistOrSay,
   type Removed,
   resultsPath,
-  saveProjectOnDisk,
   useElementKinds,
   useInletCouplings,
   useLinks,
@@ -2133,7 +2133,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       if (entry) {
         pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), entry);
       }
-      await saveProjectOnDisk(project.id, activeScenarioId);
+      await persistOrSay(project.id, activeScenarioId, showToast);
       markEdited(project.id, activeScenarioId);
       // No bumpNetwork(): the backend emits `network-changed`, which already
       // bumps the version — a manual bump doubled the full-snapshot refetch.
@@ -2183,7 +2183,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // expect, so they are said rather than discovered.
     const summary = deletionSummary(removed);
     if (summary) showToast(summary, "info");
-    await saveProjectOnDisk(project.id, activeScenarioId);
+    await persistOrSay(project.id, activeScenarioId, showToast);
     markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
   }, [
@@ -2270,12 +2270,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       setPendingCreateNode(null);
       setPendingCreateLink(null);
       clearStacks(stackKey(project.id, activeScenarioId ?? null));
-      await saveProjectOnDisk(project.id, activeScenarioId);
+      await persistOrSay(project.id, activeScenarioId, showToast);
       markEdited(project.id, activeScenarioId);
       if (kind === "conduit") selectLink(id);
       else selectNode(id);
     },
-    [project, activeScenarioId, markEdited, selectNode, selectLink],
+    [project, activeScenarioId, markEdited, selectNode, selectLink, showToast],
   );
 
   // The click that opened the create dialog, in the model's own

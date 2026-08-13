@@ -5,7 +5,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { UnitSystem } from "../units";
-import { invoke, tryInvoke, tryInvokeOr } from "./ipc";
+import {
+  invoke,
+  isTauri,
+  tryInvoke,
+  tryInvokeOr,
+  tryInvokeResult,
+} from "./ipc";
 
 // ── Project types ────────────────────────────────────────────────────────────
 //
@@ -396,20 +402,45 @@ export async function deleteCustomCrsDef(
   return await tryInvoke<CustomCrsDef[]>("delete_custom_crs", { epsg });
 }
 
+/** What became of a save. */
+export type SaveOutcome =
+  /** Written. */
+  | "saved"
+  /** Nothing to write — a draft project with no model attached yet. */
+  | "nothing-to-save"
+  /** The command failed. The edit is in the model and not on disk. */
+  | "failed";
+
 /**
- * Persist the in-memory network (INP bytes held in `NetworkState`) back into
- * the project bundle on disk. Returns `true` when written, `false` when there
- * is no loaded network (draft project with no INP attached yet).
+ * Persist the in-memory network (INP bytes held in `NetworkState`) back
+ * into the project bundle on disk.
+ *
+ * Three answers, because there were three and it returned two. It used
+ * to hand back `false` for a draft project with no model *and* for a
+ * save that failed — a disk that is full, a file another program is
+ * holding — and it reached that second case through `tryInvokeOr`, which
+ * is documented for read-only fetches with a natural empty value and
+ * swallows the error on the way past.
+ *
+ * Every caller ignored the answer, so a failed save was silent. That is
+ * the exact outcome the write flow exists to prevent: an edit that lives
+ * only in memory is lost when the app closes, and the user has no way to
+ * know that. Making the two cases tellable apart is what lets a caller
+ * say so.
  */
 export async function saveProjectOnDisk(
   id: string,
   scenarioId?: string | null,
-): Promise<boolean> {
-  return tryInvokeOr<boolean>(
-    "save_project",
-    { id, scenarioId: scenarioId ?? null },
-    false,
-  );
+): Promise<SaveOutcome> {
+  // Outside Tauri there is no disk to write to and no edit to lose:
+  // nothing is loaded, so this is the empty case rather than a failure.
+  if (!isTauri()) return "nothing-to-save";
+  const wrote = await tryInvokeResult<boolean>("save_project", {
+    id,
+    scenarioId: scenarioId ?? null,
+  });
+  if (!wrote.ok) return "failed";
+  return wrote.value ? "saved" : "nothing-to-save";
 }
 
 // ── App versions ──────────────────────────────────────────────────────────
@@ -429,4 +460,35 @@ export async function getVersions(): Promise<Versions> {
     app: "0.0.0",
     platform: "unknown",
   });
+}
+
+/**
+ * What a reader is told when the model changed and the file did not.
+ *
+ * It says which of the two happened, because they are different and the
+ * difference is the whole point: the edit is real and it is in memory,
+ * and closing the app now loses it.
+ */
+export const SAVE_FAILED_MESSAGE =
+  "That change is in the model but could not be written to disk — it will be lost if the app closes.";
+
+/**
+ * Persist after an edit, and say so when it could not.
+ *
+ * Every write path called `saveProjectOnDisk` and dropped the answer, so
+ * a failed save was silent — which is precisely the failure the write
+ * flow was built to prevent. One function so the sentence is written
+ * once and every surface says the same thing.
+ */
+export async function persistOrSay(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  showToast: (
+    message: string,
+    type?: "info" | "success" | "warn" | "error",
+  ) => void,
+): Promise<void> {
+  if ((await saveProjectOnDisk(projectId, scenarioId)) === "failed") {
+    showToast(SAVE_FAILED_MESSAGE, "error");
+  }
 }

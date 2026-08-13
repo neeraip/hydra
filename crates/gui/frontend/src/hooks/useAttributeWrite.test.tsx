@@ -25,8 +25,12 @@ const setElementAttribute = vi.fn(
     _kind?: string,
   ) => Promise.resolve(),
 );
-const saveProjectOnDisk = vi.fn((_id: string, _scenarioId?: string | null) =>
-  Promise.resolve(true),
+const persistOrSay = vi.fn(
+  (
+    _id: string,
+    _scenarioId?: string | null,
+    _toast?: (m: string, t?: string) => void,
+  ) => Promise.resolve(),
 );
 const markEdited = vi.fn();
 const showToast = vi.fn();
@@ -41,8 +45,11 @@ vi.mock("./network", () => ({
   ) => setElementAttribute(project, id, key, value, kind),
 }));
 vi.mock("./projects", () => ({
-  saveProjectOnDisk: (id: string, scenarioId?: string | null) =>
-    saveProjectOnDisk(id, scenarioId),
+  persistOrSay: (
+    id: string,
+    scenarioId?: string | null,
+    toast?: (m: string, t?: string) => void,
+  ) => persistOrSay(id, scenarioId, toast),
 }));
 vi.mock("./NetworkVersionContext", () => ({
   useNetworkVersion: () => ({ markEdited }),
@@ -77,7 +84,7 @@ function harness() {
 
 beforeEach(() => {
   setElementAttribute.mockClear();
-  saveProjectOnDisk.mockClear();
+  persistOrSay.mockClear();
   markEdited.mockClear();
   showToast.mockClear();
   setElementAttribute.mockImplementation(() => Promise.resolve());
@@ -98,7 +105,7 @@ describe("useElementAttributeWrite", () => {
       12.5,
       undefined,
     );
-    expect(saveProjectOnDisk).toHaveBeenCalledWith("p1", "s1");
+    expect(persistOrSay).toHaveBeenCalledWith("p1", "s1", showToast);
     expect(markEdited).toHaveBeenCalledWith("p1", "s1");
   });
 
@@ -111,9 +118,9 @@ describe("useElementAttributeWrite", () => {
       order.push("set");
       return Promise.resolve();
     });
-    saveProjectOnDisk.mockImplementation(() => {
+    persistOrSay.mockImplementation(() => {
       order.push("save");
-      return Promise.resolve(true);
+      return Promise.resolve();
     });
     const write = harness();
     await act(async () => {
@@ -154,7 +161,7 @@ describe("useElementAttributeWrite", () => {
       "error",
     );
     // Nothing was written, so nothing is saved and no result is stale.
-    expect(saveProjectOnDisk).not.toHaveBeenCalled();
+    expect(persistOrSay).not.toHaveBeenCalled();
     expect(markEdited).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useAppState } from "../AppContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
 import { renameElement } from "./network";
-import { saveProjectOnDisk } from "./projects";
+import { persistOrSay } from "./projects";
 import { clearStacks, pushUndoEntry, stackKey } from "./undoStack";
 
 /**
@@ -52,7 +52,7 @@ export function useElementRename(): (
             undo: { ops: [{ op: "rename", kind, from: newId, to: oldId }] },
             redo: { ops: [{ op: "rename", kind, from: oldId, to: newId }] },
           });
-          await saveProjectOnDisk(activeProjectId, activeScenarioId);
+          await persistOrSay(activeProjectId, activeScenarioId, showToast);
           markEdited(activeProjectId, activeScenarioId);
         }
         showToast(

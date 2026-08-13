@@ -31,7 +31,7 @@ import {
   setElementEnds,
   setElementRecords,
 } from "./network";
-import { saveProjectOnDisk } from "./projects";
+import { persistOrSay } from "./projects";
 import {
   type EditSet,
   type ElementOp,
@@ -132,7 +132,11 @@ export function useUndoRedo(): { undo: () => void; redo: () => void } {
         if (mutated) {
           // Persist whatever was applied (partial failures included) so the
           // on-disk INP matches in-memory state, like every commit path.
-          await saveProjectOnDisk(activeProjectId, activeScenarioId ?? null);
+          await persistOrSay(
+            activeProjectId,
+            activeScenarioId ?? null,
+            showToast,
+          );
           markEdited(activeProjectId, activeScenarioId ?? null);
         }
         busyRef.current = false;
