@@ -1096,6 +1096,8 @@ C3 D1 J3 200 0.013 0 0 0 0
 C4 J3 O1 150 0.013 0 0 0 0
 GUT1 J1 J3 120 0.016 0 0 0 0
 SEW1 SEW O2 100 0.013 0 0 0 0
+[OUTLETS]
+OL1 J2 J3 0 TABULAR/DEPTH RC1 NO
 [XSECTIONS]
 C1 CIRCULAR 1.5 0 0 0
 C2 CIRCULAR 1.5 0 0 0
@@ -1140,8 +1142,10 @@ S2 GRF 1 200 8 0 0 0
 [INFLOWS]
 J2 FLOW TS1 FLOW 1.0
 J3 FLOW TS1 FLOW 1.0
+[PATTERNS]
+DW1 HOURLY 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
 [DWF]
-J2 FLOW 0.02
+J2 FLOW 0.02 DW1
 J3 FLOW 0.01
 [HYDROGRAPHS]
 UH1 RG1
@@ -1152,6 +1156,9 @@ J3 UH1 100
 [TREATMENT]
 J2 TSS R = 0.9
 J3 TSS R = 0.5
+[CURVES]
+RC1 RATING 0 0
+RC1 1 5
 [TIMESERIES]
 TS1 0:00 1.0
 TS1 1:00 2.0
@@ -1190,9 +1197,15 @@ S2 10 20
     /// asserting that a delete produces some plausible model, it is
     /// asserting it produces *the model that never had the element*.
     fn model_without(ids: &[&str]) -> String {
+        without(FULL, ids)
+    }
+
+    /// `src` with every line naming one of `ids` taken out — the model
+    /// that never had them.
+    fn without(src: &str, ids: &[&str]) -> String {
         let names = |token: &str| ids.iter().any(|id| token.eq_ignore_ascii_case(id));
         let mut out = String::new();
-        for line in FULL.lines() {
+        for line in src.lines() {
             let mut tokens = line.split_whitespace();
             let Some(first) = tokens.next() else {
                 out.push('\n');
@@ -1210,6 +1223,115 @@ S2 10 20
             out.push('\n');
         }
         out
+    }
+
+    /// The reference model with an unreferenced entry added at the
+    /// *front* of every collection it holds.
+    ///
+    /// At the front deliberately. A spare added at the end shifts
+    /// nothing when it goes, so a removal that moved no reference at all
+    /// would pass — the test would be measuring the fixture. Put first,
+    /// every existing reference into that collection has to move down by
+    /// one, and a holder nobody found stays behind pointing at its
+    /// neighbour.
+    fn with_spares() -> String {
+        let spares = [
+            ("[TIMESERIES]", "SPARETS 0:00 5.0"),
+            ("[RAINGAGES]", "SPAREGAGE INTENSITY 1:00 1.0 TIMESERIES TS1"),
+            ("[STREETS]", "SPAREST 20 0.5 2 0.016 0.1 2 1 10 4 0.02"),
+            ("[INLETS]", "SPARECB GRATE 2 2 P_BAR-50"),
+            (
+                "[AQUIFERS]",
+                "SPAREAQ 0.5 0.15 0.30 0.5 10 15 0.35 14 0.002 0 10 0.30",
+            ),
+            ("[POLLUTANTS]", "SPAREPOL MG/L 0 0 0 0 NO"),
+            ("[HYDROGRAPHS]", "SPAREUH RG1"),
+            ("[LID_CONTROLS]", "SPAREGR GR"),
+            (
+                "[SNOWPACKS]",
+                "SPARESP PLOWABLE 0.001 0.003 32 0.10 0 0 0.5",
+            ),
+            (
+                "[PATTERNS]",
+                "SPAREPAT HOURLY 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1",
+            ),
+            ("[CURVES]", "SPARECV RATING 0 0"),
+        ];
+        let mut out = String::new();
+        for line in FULL.lines() {
+            out.push_str(line);
+            out.push('\n');
+            if let Some((_, extra)) = spares.iter().find(|(h, _)| *h == line.trim()) {
+                out.push_str(extra);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Removing a container leaves the model that never had it.
+    ///
+    /// The strongest check available, and the one the focused tests
+    /// cannot make: a reference the shift missed still resolves, still
+    /// writes and still runs — it has merely come to name its neighbour.
+    /// Writing the model out and comparing it against a twin parsed from
+    /// source without the entry catches exactly that, because the writer
+    /// resolves every index back to a name.
+    ///
+    /// So this is the test that would fail if the map in `refs_into` is
+    /// incomplete, which is the one thing the map cannot check about
+    /// itself. Verified by removing a holder and watching it fail.
+    ///
+    /// Eleven of the thirteen collections. Transects and land uses are
+    /// absent because this comparison works by striking out every line
+    /// whose *first token* is the id, and neither names itself that way
+    /// on every line — a transect's identifier sits on its `X1` line and
+    /// nowhere else, and a coverage names the parcel first. Their
+    /// holders are covered by the refusal tests rather than by a twin.
+    #[test]
+    fn removing_a_container_leaves_the_model_that_never_had_it() {
+        let source = with_spares();
+        let (base, diags) = parse_network(&source);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "the spared fixture does not parse: {diags:?}"
+        );
+
+        for spare in [
+            "SPARETS",
+            "SPAREGAGE",
+            "SPAREST",
+            "SPARECB",
+            "SPAREAQ",
+            "SPAREPOL",
+            "SPAREUH",
+            "SPAREGR",
+            "SPARESP",
+            "SPAREPAT",
+            "SPARECV",
+        ] {
+            // It really is in there, and really is first — otherwise the
+            // removal shifts nothing and the comparison is vacuous.
+            assert!(
+                container_at(&base, spare).is_some_and(|(_, i)| i == 0),
+                "{spare} is not the first entry of its collection"
+            );
+
+            let mut net = base.clone();
+            delete_uds_element(&mut net, spare)
+                .unwrap_or_else(|e| panic!("{spare} is attached to nothing, but: {e}"));
+
+            let (twin, diags) = parse_network(&without(&source, &[spare]));
+            assert!(
+                !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+                "the twin without {spare} does not parse: {diags:?}"
+            );
+            assert_eq!(
+                write_inp(&net).expect("write after delete"),
+                write_inp(&twin).expect("write the twin"),
+                "deleting {spare} did not produce the model that never had it",
+            );
+        }
     }
 
     /// The fixture is only as good as what it actually contains: a
@@ -1234,6 +1356,20 @@ S2 10 20
             ("inlet usage", net.inlet_usage.len()),
             ("lid usage", net.lid_usage.len()),
             ("snowpacks", net.snowpacks.len()),
+            // The collections beside the network. Each is removed by the
+            // same shift, and a collection the fixture leaves empty is a
+            // shift the twin comparison is never asked to check — which
+            // looks exactly like one that passed.
+            ("gages", net.gages.len()),
+            ("timeseries", net.timeseries.len()),
+            ("constituents", net.constituents.len()),
+            ("aquifers", net.aquifers.len()),
+            ("unit hydrographs", net.unit_hydrographs.len()),
+            ("lid controls", net.lid_controls.len()),
+            ("streets", net.streets.len()),
+            ("inlets", net.inlets.len()),
+            ("curves", net.curves.len()),
+            ("patterns", net.patterns.len()),
         ] {
             assert!(n > 0, "the fixture has no {what}");
         }
@@ -1299,7 +1435,9 @@ S2 10 20
         // `also` is what cascades with the element, which the twin model
         // must therefore be missing too.
         for (id, also) in [
-            ("J2", vec!["C1"]),
+            // J2 now carries an outlet as well as a conduit, and both
+            // go with it.
+            ("J2", vec!["C1", "OL1"]),
             ("C2", vec![]),
             // S3 rather than S1 or S2: both of those are referred to by
             // something and refuse (asserted separately).
