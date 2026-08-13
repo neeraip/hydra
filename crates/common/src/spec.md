@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.10 — 2026-08-09** (v1.1 added opaque per-block options
+Status: **v1.11 — 2026-08-12** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -17,7 +17,12 @@ contract, §7, moving Evolution to §8; v1.10 joined the two: a `banded`
 variable now names the criterion its thresholds come from, §6.1, and a
 criterion says what each of its regions means, §7.2 — without which a
 threshold scale could only be offered to variables an application
-recognised by name).
+recognised by name; v1.11 completed the editing contract: a polyline's
+two ends became editable state like a position, §4.5.2.1, a collection's
+contents gained the section that had left every curve countable and
+unopenable, §4.5.2.2, and `references` widened to a list of kinds so an
+attribute naming more than one — a subcatchment's outlet — could be
+described at all, §4.5.1.1).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -721,6 +726,75 @@ follow from what a polyline *is*:
 Everything else is the engine's: which kinds may be an end, whether a
 particular one may be reconnected at all, and what a reconnection costs
 in its file.
+
+#### 4.5.2.2 Contents
+
+An element of the `collection` class (§4.1) has **contents**, and they are
+editable through this contract.
+
+A curve is its points, a pattern its multipliers, a time series its
+values, a control its language. None of that is an attribute: an
+attribute is one value under one label, and these are a table or a block
+of text whose *length* is part of what the modeller is authoring. §4.5.1
+cannot describe them, and an engine with no way to say what they are is
+an engine whose curves an application can count and never open.
+
+**Contents take one of two shapes**, and an engine declares which by
+which one it serves:
+
+| Shape | What it is | Example |
+|---|---|---|
+| Rows | A table of numbers under engine-authored column headings, each column declaring its §5 quantity or none | A curve's points, a pattern's multipliers |
+| Lines | Text, kept as written | A control rule |
+
+Two shapes rather than one per kind, because a consumer that must know
+which kind it asked for is a consumer with a list of kinds in it — and a
+list of kinds is what §1 warns against. It renders whichever shape it
+was given.
+
+**Column headings are the engine's and are fixed.** What a curve's two
+columns *are* depends on what the curve is for: a storage curve relates
+depth to surface area, a rating curve head to discharge. Only the engine
+knows, so only the engine names them — and an application may not add,
+remove or reorder columns, because a table whose shape the reader can
+change is no longer the thing the engine described.
+
+**A write replaces the whole contents.** Not a row inserted, a row
+removed, a cell set:
+
+- The rows are *ordered and interdependent*. A curve's abscissae must
+  ascend, a pattern's multipliers are a cycle whose length is its period.
+  A per-row operation would have to be valid mid-sequence, and half of
+  the useful edits are not — inserting a point before sorting it into
+  place makes a curve that is briefly illegal.
+- One write is one validation. An engine judges the contents it is being
+  given, as a whole, once, and either takes them or refuses them.
+- Its inverse is the contents that were there, which is what an
+  application building undo (§4.5.5) needs and cannot assemble from a
+  sequence of row operations that each individually refused.
+
+Numbers cross this boundary in the units their column declares, the same
+rule §4.5.1 applies to an attribute — the engine states the quantity, the
+application converts for display and converts back, and no engine learns
+what the reader chose to see.
+
+**Serving contents does not promise to accept them.** The write is the
+authority here as everywhere in §4.5, and the two shapes are not equally
+writable in practice: rows are numbers under headings the engine already
+named, while lines are a *language*, and taking them back means parsing
+that language into whatever the engine holds. That parser is the
+engine's, it is the same one that reads the model file, and an engine
+that has not exposed it refuses — serving the text so it can be read is
+worth doing on its own, and a surface that shows the rule and declines to
+rewrite it is telling the truth.
+
+An application therefore offers an edit where the write accepts one, and
+learns which by the same means it learns anything else here: the engine
+says so, or the write refuses.
+
+Everything *else* about a collection element is already described: it is
+named, created and removed like any other element (§4.5.1, §4.5.3,
+§4.5.4). Only its contents needed a section.
 
 #### 4.5.3 Creation
 
