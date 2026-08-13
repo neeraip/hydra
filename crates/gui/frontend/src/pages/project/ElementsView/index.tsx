@@ -426,6 +426,8 @@ export function ElementsView() {
           // or which two elements to run it between.
           position={null}
           klass={activeClass}
+          // The table already said which kind it is showing.
+          kind={kind ?? undefined}
           onCreated={(_kind, id) => {
             setAdding(false);
             refetch();

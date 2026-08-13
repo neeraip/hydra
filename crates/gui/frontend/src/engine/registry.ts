@@ -109,6 +109,15 @@ export interface CreateNodeModalProps {
    * means.
    */
   klass?: "point" | "region" | "polyline" | "collection";
+  /**
+   * The kind to open on, when the caller was already looking at one.
+   *
+   * A table pressing Add has already said which kind it is showing, and
+   * a dialog that offered the first of the class instead would be
+   * answering a question nobody asked. Absent — a click on empty map —
+   * and the first is right, because nothing else has been said.
+   */
+  kind?: string;
   /** The ends, when a drawn line already named them. Absent and the
    * dialog asks, which is how a link is added from a table. */
   fromNodeId?: string;

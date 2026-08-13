@@ -36,6 +36,7 @@ export function CreateElementModal({
   suggestId,
   position,
   klass = "point",
+  kind: preferKind,
   fromNodeId,
   toNodeId,
   spanLength,
@@ -172,18 +173,27 @@ export function CreateElementModal({
     return at;
   }, [fields]);
 
-  const first = kinds[0]?.value ?? "";
+  // The kind the caller was looking at, when it is one this dialog is
+  // offering. Pressing Add on the weirs table and being handed a conduit
+  // is the dialog answering a question nobody asked — the table already
+  // said which kind, and the first of the class is only the right answer
+  // when nothing else has been said.
+  const opensOn = useMemo(
+    () =>
+      kinds.find((k) => k.value === preferKind)?.value ?? kinds[0]?.value ?? "",
+    [kinds, preferKind],
+  );
   useEffect(() => {
     if (!open) return;
-    setKind(first);
-    setId(first ? suggestId(first) : "");
+    setKind(opensOn);
+    setId(opensOn ? suggestId(opensOn) : "");
     setEdited(false);
     setValues({});
     setTypedAt([0, 0]);
     setTypedFrom(fromNodeId ?? "");
     setTypedTo(toNodeId ?? "");
     setNamed({});
-  }, [open, first, suggestId, fromNodeId, toNodeId]);
+  }, [open, opensOn, suggestId, fromNodeId, toNodeId]);
 
   return (
     <CreateElementDialog

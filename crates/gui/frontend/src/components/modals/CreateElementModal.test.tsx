@@ -64,6 +64,14 @@ const KINDS = [
     badge: "P",
     creatable: true,
   },
+  {
+    id: "pump",
+    label: "Pump",
+    labelPlural: "Pumps",
+    class: "polyline",
+    badge: "PU",
+    creatable: true,
+  },
 ];
 
 const NUMBER = { type: "number", default: null, min: null, max: null };
@@ -103,6 +111,7 @@ const SCHEMA: Record<string, unknown[]> = {
     },
   ],
   pipe: [{ key: "length", label: "Length", editable: true, kind: NUMBER }],
+  pump: [{ key: "power", label: "Power", editable: true, kind: NUMBER }],
 };
 
 vi.mock("../../AppContext", () => ({
@@ -157,6 +166,30 @@ describe("CreateElementModal", () => {
     // Text and choices keep the engine's defaults and are changed
     // afterwards in the table, where they have their proper editors.
     expect(screen.queryByLabelText("Demand pattern")).toBeNull();
+  });
+
+  it("opens on the kind the caller was looking at", () => {
+    // Pressing Add on the weirs table and being handed a conduit is the
+    // dialog answering a question nobody asked.
+    // A pump is not the first polyline in this catalog — a pipe is — so
+    // the assertion fails if the dialog falls back to the first.
+    render(<CreateElementModal {...props} klass="polyline" kind="pump" />);
+    expect(screen.getByLabelText("Power")).toBeDefined();
+    expect(screen.queryByLabelText("Length")).toBeNull();
+  });
+
+  it("opens on the first when nobody said which", () => {
+    // A click on empty map has said nothing, so the first of the class
+    // is the right answer.
+    render(<CreateElementModal {...props} />);
+    expect(screen.getByLabelText("Elevation")).toBeDefined();
+  });
+
+  it("ignores a kind of another class", () => {
+    // The class decides what the dialog is offering; a stale kind from
+    // another table must not select nothing at all.
+    render(<CreateElementModal {...props} klass="polyline" kind="junction" />);
+    expect(screen.getByLabelText("Length")).toBeDefined();
   });
 
   it("asks the next kind's fields when the kind changes", () => {
