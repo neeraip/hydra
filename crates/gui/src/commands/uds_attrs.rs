@@ -1786,6 +1786,14 @@ pub(crate) fn set_attribute(
     // rather than holding a number, and the model stores it as an index
     // into one of two arrays — which of the two is what the name
     // decides.
+    // A gage's record and a pump's curve: both name an object the model
+    // holds as an index, so both are matched on the key before any kind.
+    if key == "source" {
+        return set_gage_source(net, element_id, value.as_str().unwrap_or("").trim());
+    }
+    if key == "curve" {
+        return set_pump_curve(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "raingage" {
         return set_parcel_gage(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -1949,6 +1957,46 @@ fn set_link_attribute(
         }
         _ => return Err(unwritable(key)),
     }
+    Ok(())
+}
+
+/// Point a rain gage at the time series it reads.
+///
+/// Only a series: a gage may instead read an external file, and swapping
+/// one for the other means supplying a file name and a station, which is
+/// two values rather than a reference. That refuses rather than half
+/// happening.
+fn set_gage_source(net: &mut Network, id: &str, series_id: &str) -> Result<(), String> {
+    let series = net
+        .timeseries
+        .iter()
+        .position(|t| t.id.eq_ignore_ascii_case(series_id))
+        .ok_or_else(|| format!("'{series_id}' is not a time series in this model"))?;
+    let gage = net
+        .gages
+        .iter_mut()
+        .find(|g| g.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    gage.source = hydra::uds::model::GageSource::Series { series };
+    Ok(())
+}
+
+/// Point a pump at its characteristic curve.
+fn set_pump_curve(net: &mut Network, id: &str, curve_id: &str) -> Result<(), String> {
+    let found = net
+        .curves
+        .iter()
+        .position(|c| c.id.eq_ignore_ascii_case(curve_id))
+        .ok_or_else(|| format!("'{curve_id}' is not a curve in this model"))?;
+    let link = net
+        .links
+        .iter_mut()
+        .find(|l| l.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let hydra::uds::model::LinkKind::Pump { curve, .. } = &mut link.kind else {
+        return Err(format!("'{id}' is not a pump"));
+    };
+    *curve = Some(found);
     Ok(())
 }
 

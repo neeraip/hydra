@@ -82,8 +82,11 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: None,
         badge: "RG",
-        creatable: false,
-        not_creatable_because: Some("a rain gage needs a rainfall series or file to read"),
+        // Creatable since the catalog says which kind its source names:
+        // a form can ask for the series, which is the thing that had to
+        // exist first.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "conduit",
@@ -102,8 +105,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "PU",
-        creatable: false,
-        not_creatable_because: Some("a pump needs a characteristic curve"),
+        // Creatable for the same reason: its curve is a declared
+        // reference now, so it is asked for rather than invented.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "orifice",
@@ -460,7 +465,11 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
         "raingage" => vec![
             attr("format", "Data format", text(), None),
             attr("interval", "Recording interval", text(), None),
-            attr("source", "Data source", text(), None),
+            // The record it reads. Writable and declared as a reference,
+            // which is what lets a gage be created at all: it names a
+            // series that has to exist first, and nothing could ask for
+            // one until this said which kind it names.
+            rw("source", "Data source", text(), None),
         ],
         "conduit" => vec![
             rw("length", "Length", num(), Some("length")),
@@ -469,7 +478,7 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("maxDepth", "Full depth", num(), Some("depth")),
         ],
         "pump" => vec![
-            attr("curve", "Pump curve", text(), None),
+            rw("curve", "Pump curve", text(), None),
             attr(
                 "initStatus",
                 "Initial status",
@@ -700,6 +709,11 @@ fn descriptor(
 fn referenced_kinds(key: &str) -> Vec<String> {
     match key {
         "raingage" => vec!["raingage".to_string()],
+        // A gage reads a time series; a pump follows a curve. Both name
+        // something that has to exist first, which is why declaring the
+        // kind is what makes the kind creatable.
+        "source" => vec!["timeseries".to_string()],
+        "curve" => vec!["curve".to_string()],
         // Every kind of conveyance node, *and* another subcatchment:
         // runoff either enters the network or cascades overland. This is
         // the attribute §4.5.1.1 was widened for — one kind id could not

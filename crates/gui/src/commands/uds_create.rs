@@ -293,6 +293,89 @@ pub(crate) fn create_uds_storage(
     Ok(())
 }
 
+/// Add a rain gage reading a time series.
+///
+/// The series has to exist, which is what the refusal this replaces was
+/// about — and now that the catalog declares which kind the source names,
+/// a form can ask for one rather than the kind being unreachable.
+pub(crate) fn create_uds_gage(net: &mut Network, id: &str, series_id: &str) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("raingage") {
+        return Err(refuse_kind("raingage"));
+    }
+    let series = net
+        .timeseries
+        .iter()
+        .position(|t| t.id.eq_ignore_ascii_case(series_id))
+        .ok_or_else(|| format!("'{series_id}' is not a time series in this model"))?;
+    net.gages.push(hydra::uds::model::Gage {
+        id: id.to_string(),
+        // Intensity at an hourly interval, which is how a rainfall
+        // record is most often written and what the series it reads
+        // will be interpreted as. Both are ordinary values the modeller
+        // changes; neither decides what any number *means* the way a
+        // curve's role does.
+        form: hydra::uds::model::RainForm::Intensity,
+        interval: 3600.0,
+        catch_factor: 1.0,
+        source: hydra::uds::model::GageSource::Series { series },
+    });
+    Ok(())
+}
+
+/// Add a pump following a characteristic curve.
+pub(crate) fn create_uds_pump(
+    net: &mut Network,
+    id: &str,
+    from_id: &str,
+    to_id: &str,
+    curve_id: &str,
+) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("pump") {
+        return Err(refuse_kind("pump"));
+    }
+    let find = |name: &str| {
+        net.vertices
+            .iter()
+            .position(|v| v.id.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("'{name}' is not a node in this model"))
+    };
+    let from = find(from_id)?;
+    let to = find(to_id)?;
+    if from == to {
+        return Err("a link needs two different ends".into());
+    }
+    let curve = net
+        .curves
+        .iter()
+        .position(|c| c.id.eq_ignore_ascii_case(curve_id))
+        .ok_or_else(|| format!("'{curve_id}' is not a curve in this model"))?;
+    net.links.push(Link {
+        id: id.to_string(),
+        from,
+        to,
+        kind: LinkKind::Pump {
+            curve: Some(curve),
+            // Running at the start, and no shutoff band — a pump whose
+            // depths are both zero runs whenever the wet well has
+            // anything in it, which is what a pump with nothing said
+            // about its controls does.
+            initial_on: true,
+            startup_depth: 0.0,
+            shutoff_depth: 0.0,
+        },
+        // A pump is not a conduit: it has no cross-section, and the
+        // writer emits none for it.
+        cross_section: None,
+    });
+    Ok(())
+}
+
 /// Add a street section.
 ///
 /// Every dimension is the caller's: a crown width, a curb height and a
@@ -758,17 +841,16 @@ O1 100 0
         // depth and area are asked for rather than invented. Both are
         // asserted by their own tests below.
         //
-        // A rain gage is the point kind still refused, and it refuses
-        // for the reason the others do not: it names a series or a file
-        // that has to exist first.
-        let err = create_uds_vertex(&mut net, "raingage", "X", 0.0, 0.0, 90.0)
+        // Storage, the divider and the rain gage all used to be here and
+        // are not: what each needs is now asked for rather than invented,
+        // and each has its own test below.
+        // The one link kind still refused, and it refuses on principle
+        // rather than for want of plumbing: a rating's coefficient sets
+        // how much flow the outlet passes, and no value for that is more
+        // defensible than another.
+        let err = create_uds_link(&mut net, "outlet", "X", "J1", "O1", 10.0, Some(0.3))
             .expect_err("should refuse");
-        assert!(err.contains("rainfall"), "unhelpful for raingage: {err}");
-        for (kind, expect) in [("pump", "characteristic curve"), ("outlet", "rating")] {
-            let err = create_uds_link(&mut net, kind, "X", "J1", "O1", 10.0, Some(0.3))
-                .expect_err("should refuse");
-            assert!(err.contains(expect), "unhelpful for {kind}: {err}");
-        }
+        assert!(err.contains("rating"), "unhelpful for outlet: {err}");
     }
 
     /// A conduit added from a table names its two ends and nothing about
@@ -1029,6 +1111,43 @@ O1 100 0
         );
         assert!(again.streets.iter().any(|s| s.id == "ST9"));
         assert!(again.transects.iter().any(|t| t.id == "TR9"));
+    }
+
+    /// The two kinds whose blocker was a referent, reached by the same
+    /// path the subcatchment took: the catalog says which kind the
+    /// reference names, so a form can ask for one.
+    #[test]
+    fn a_gage_and_a_pump_are_created_from_what_they_name() {
+        let mut net = gaged_model();
+        create_uds_gage(&mut net, "RG2", "TS1").expect("gage");
+        let made = net.gages.iter().find(|g| g.id == "RG2").expect("RG2");
+        assert!(matches!(
+            made.source,
+            hydra::uds::model::GageSource::Series { .. }
+        ));
+        // The series has to exist — that was the whole refusal.
+        assert!(create_uds_gage(&mut net, "RG3", "NOPE").is_err());
+
+        net.curves.push(hydra::uds::model::Curve {
+            id: "PC1".into(),
+            kind: hydra::uds::model::CurveKind::Pump4,
+            points: vec![(0.0, 0.0), (1.0, 0.05)],
+        });
+        create_uds_pump(&mut net, "PU1", "J1", "O1", "PC1").expect("pump");
+        let pump = net.links.iter().find(|l| l.id == "PU1").expect("PU1");
+        assert!(matches!(pump.kind, LinkKind::Pump { curve: Some(_), .. }));
+        // A pump is not a conduit and carries no cross-section.
+        assert!(pump.cross_section.is_none());
+        assert!(create_uds_pump(&mut net, "PU2", "J1", "O1", "NOPE").is_err());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        assert!(again.gages.iter().any(|g| g.id == "RG2"));
+        assert!(again.links.iter().any(|l| l.id == "PU1"));
     }
 
     #[test]

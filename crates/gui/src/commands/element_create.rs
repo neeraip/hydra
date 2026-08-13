@@ -129,6 +129,14 @@ pub fn create_element(
                         &required_text(&element, "outlet")?,
                     )?;
                 }
+                Placement::At(x, y) if element.kind == "raingage" => {
+                    super::uds_create::create_uds_gage(
+                        &mut draft,
+                        &id,
+                        &required_text(&element, "source")?,
+                    )?;
+                    super::uds_view::set_display_point(&mut draft, "[SYMBOLS]", &id, *x, *y);
+                }
                 Placement::At(x, y) if element.kind == "storage" => {
                     // A prismatic tank: the one storage shape a pair of
                     // numbers can describe, and both are the caller's
@@ -169,6 +177,15 @@ pub fn create_element(
                 Placement::Nowhere => {
                     super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
                 }
+                Placement::Between(from, to) if element.kind == "pump" => {
+                    super::uds_create::create_uds_pump(
+                        &mut draft,
+                        &id,
+                        from,
+                        to,
+                        &required_text(&element, "curve")?,
+                    )?;
+                }
                 Placement::Between(from, to) if element.kind != "conduit" => {
                     // An opening rather than a channel. Its two
                     // dimensions come from the caller, because neither an
@@ -201,11 +218,13 @@ pub fn create_element(
             }
             let consumed: &[&str] = match &where_ {
                 Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
+                Placement::At(_, _) if element.kind == "raingage" => &["source"],
                 Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
                 Placement::Nowhere if element.kind == "street" => {
                     &["crownWidth", "curbHeight", "crossSlope"]
                 }
                 Placement::At(_, _) | Placement::Nowhere => &[],
+                Placement::Between(_, _) if element.kind == "pump" => &["curve"],
                 Placement::Between(_, _) if element.kind == "orifice" => &["height", "width"],
                 Placement::Between(_, _) if element.kind == "weir" => {
                     &["crestHeight", "crestLength"]
