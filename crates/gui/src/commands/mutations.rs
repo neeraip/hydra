@@ -3100,6 +3100,85 @@ Duration  0
         assert!(rename_curve_in_network(&mut network, "NOPE", "X").is_err());
     }
 
+    /// One of every distribution kind, arranged so no removal is refused
+    /// for the model's own sake.
+    ///
+    /// The controls act on `P9`, which hangs between two junctions
+    /// nothing else here touches. Point them at `P1` instead and
+    /// deleting `J1` refuses — correctly, because a node takes its links
+    /// with it and one of them is spoken for — and the test would then
+    /// be measuring the fixture rather than the removal path.
+    const DELETABLE_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+J2  12  0
+J8  14  2
+J9  15  2
+[RESERVOIRS]
+R1  100
+[TANKS]
+T1  50  10  5  20  40  0
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P8  J1  J8  600   8   100  0  Open
+P9  J8  J9  400   8   100  0  Open
+[PUMPS]
+PU1  J1  T1  POWER 10
+[VALVES]
+V1  J1  J2  12  PRV  50  0
+[PATTERNS]
+PAT1  1.0  1.2
+[CURVES]
+CV1  0  100
+CV1  1  90
+[CONTROLS]
+ LINK P9 CLOSED AT TIME 5
+[RULES]
+ RULE R1
+ IF SYSTEM TIME > 4
+ THEN LINK P9 STATUS IS CLOSED
+[COORDINATES]
+J1  1.0  2.0
+J2  1.5  2.0
+J8  3.0  3.0
+J9  3.5  3.0
+R1  0.0  0.0
+T1  2.0  2.0
+[OPTIONS]
+Units  GPM
+[TIMES]
+Duration  0
+[END]
+";
+
+    /// Every distribution kind the Editor offers Delete on removes.
+    ///
+    /// Unlike the drainage engine, this one has no kind that cannot: its
+    /// containers are referenced by name, so removing one is a removal
+    /// and a reference check rather than a shift through a dozen index
+    /// spaces. Pinned because the Editor offers the button on every row
+    /// of every kind, and the answer being "all of them" is a fact worth
+    /// noticing if it stops being true.
+    #[test]
+    fn every_distribution_kind_can_be_deleted() {
+        let net = hydra::io::parse(DELETABLE_INP.as_bytes()).expect("fixture");
+        let mut checked = 0;
+        for kind in hydra::descriptors::ELEMENT_KINDS {
+            let Some(id) = crate::commands::wds_attrs::kind_elements(&net, kind.id)
+                .ids
+                .first()
+                .cloned()
+            else {
+                panic!("the fixture has no {}, so nothing was checked", kind.id);
+            };
+            let mut draft = net.clone();
+            delete_element_from_network(&mut draft, kind.id, &id)
+                .unwrap_or_else(|e| panic!("{} '{id}' cannot be deleted: {e}", kind.id));
+            checked += 1;
+        }
+        assert_eq!(checked, hydra::descriptors::ELEMENT_KINDS.len());
+    }
+
     // ── controls and rules: removable, and not renameable ─────────────────
 
     /// A control is removed by the position it is listed at.

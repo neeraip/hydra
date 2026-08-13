@@ -821,6 +821,89 @@ mod tests {
     /// Water distribution never had it. The flag and the setter live in
     /// two files, and nothing but this pairs them — which is exactly how
     /// an inlet's fields were marked editable with no setter behind them.
+    /// Every editable value can be changed, and put back.
+    ///
+    /// The second half is what an application leans on and nothing was
+    /// asserting: undo works by writing the value that was there before,
+    /// so an attribute whose write is not invertible is one the history
+    /// cannot restore. A write that clamps, converts asymmetrically, or
+    /// touches a second field passes "set it and read it back" and fails
+    /// here — a tank publishes its *bottom* while the model stores the
+    /// minimum piezometric head, which is exactly the shape that would.
+    ///
+    /// The sample comes from the model rather than from a list written
+    /// here, so adding a kind to the fixture extends the check by
+    /// itself.
+    #[test]
+    fn every_editable_value_can_be_changed_and_put_back() {
+        let value_of = |net: &hydra::Network, kind: &str, id: &str, key: &str| -> f64 {
+            element_attributes(net, Some(kind), id)
+                .unwrap_or_else(|| panic!("{id} has no attributes"))
+                .into_iter()
+                .find(|r| r.key == key)
+                .unwrap_or_else(|| panic!("{id} has no {key} row"))
+                .number
+                .expect("a number")
+        };
+        let net = sample_network();
+        let mut checked = 0;
+        for kind in hydra::descriptors::ELEMENT_KINDS {
+            let Some(id) = kind_elements(&net, kind.id).ids.first().cloned() else {
+                continue;
+            };
+            let Some(rows) = element_attributes(&net, Some(kind.id), &id) else {
+                continue;
+            };
+            for row in rows.into_iter().filter(|r| r.editable) {
+                let Some(before) = row.number else { continue };
+                let changed = if before.abs() < 1e-9 {
+                    1.0
+                } else {
+                    before * 1.5
+                };
+
+                let mut draft = sample_network();
+                set_attribute(
+                    &mut draft,
+                    Some(kind.id),
+                    &id,
+                    &row.key,
+                    &serde_json::json!(changed),
+                )
+                .unwrap_or_else(|e| panic!("{}.{} refused the edit: {e}", kind.id, row.key));
+                let now = value_of(&draft, kind.id, &id, &row.key);
+                assert!(
+                    (now - changed).abs() < 1e-6,
+                    "{}.{} was set to {changed} and reads {now}",
+                    kind.id,
+                    row.key
+                );
+
+                // The undo: the same write, with what was there before.
+                set_attribute(
+                    &mut draft,
+                    Some(kind.id),
+                    &id,
+                    &row.key,
+                    &serde_json::json!(before),
+                )
+                .unwrap_or_else(|e| panic!("{}.{} refused the undo: {e}", kind.id, row.key));
+                let back = value_of(&draft, kind.id, &id, &row.key);
+                assert!(
+                    (back - before).abs() < 1e-6,
+                    "{}.{} started at {before}, was set to {changed}, and came back {back}",
+                    kind.id,
+                    row.key
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 8,
+            "only {checked} editable values were exercised"
+        );
+    }
+
     #[test]
     fn the_editable_flag_and_the_setter_agree() {
         let sample = |kind: &str| -> Option<&'static str> {

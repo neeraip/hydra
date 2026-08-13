@@ -527,43 +527,72 @@ mod tests {
          [CURVES]\nPC1 PUMP4 0 10\nPC1 1 8\n\
          [TIMESERIES]\nTS1 0:00 0.0\nTS1 1:00 0.5\n";
 
-    /// What the Add dialog would collect for a kind, as the dialog
-    /// collects it: the fields the engine declared it could not default.
+    /// What the Add dialog can collect for a kind — built the way the
+    /// dialog builds it, from the engine's own schema.
     ///
-    /// Keyed by engine as well as by kind, because a kind id names a kind
-    /// only within its engine — both engines have a pump, and only the
-    /// drainage one is created by naming a curve. Keying on the id alone
-    /// fed the distribution pump the drainage pump's answer, which its
-    /// write refused.
-    fn dialog_answers(engine: &str, kind: &str) -> HashMap<String, serde_json::Value> {
-        use serde_json::json;
-        if engine == "wds" {
-            // Every distribution constructor takes its values as ordinary
-            // attribute writes, so its dialog asks for none up front.
-            return HashMap::new();
-        }
-        let answers: &[(&str, serde_json::Value)] = &match kind {
-            "storage" => vec![("maxDepth", json!(3.0)), ("surfaceArea", json!(20.0))],
-            "subcatchment" => vec![("raingage", json!("RG1")), ("outlet", json!("J1"))],
-            "raingage" => vec![("source", json!("TS1"))],
-            "curve" => vec![("curveType", json!("STORAGE"))],
-            "inlet" => vec![("grateLength", json!(0.6)), ("grateWidth", json!(0.4))],
-            "street" => vec![
-                ("crownWidth", json!(10.0)),
-                ("curbHeight", json!(0.15)),
-                ("crossSlope", json!(0.02)),
-            ],
-            "conduit" => vec![("length", json!(120.0)), ("diameter", json!(0.5))],
-            "pump" => vec![("curve", json!("PC1"))],
-            "orifice" => vec![("height", json!(0.5)), ("width", json!(0.5))],
-            "weir" => vec![("crestHeight", json!(0.3)), ("crestLength", json!(1.2))],
-            "outlet" => vec![("ratingCoeff", json!(1.5)), ("ratingExponent", json!(0.5))],
-            _ => vec![],
+    /// Read from the catalog rather than written out here, because the
+    /// question this answers is whether the *dialog* can make the kind.
+    /// A hand-written answer map proves only that the constructor works
+    /// when handed the right keys; it says nothing about whether any
+    /// surface can supply them. A required key that is not an editable
+    /// attribute of its kind is a key the form has no field for, and the
+    /// Add button would refuse every time it was pressed.
+    ///
+    /// The shapes are the ones the dialog offers: numbers, integers,
+    /// choices, yes/no, and the text attributes that name another
+    /// element. Free text is not offered — a create has nothing to say
+    /// about a tag — so a constructor requiring one would fail here,
+    /// which is the point.
+    fn dialog_answers(
+        engine: &str,
+        kind: &str,
+        id_of_kind: &dyn Fn(&str) -> Option<String>,
+    ) -> HashMap<String, serde_json::Value> {
+        use hydra::common::OptionKind as K;
+        let schema = match engine {
+            "wds" => hydra::descriptors::attribute_schema(kind),
+            _ => hydra::uds::descriptors::attribute_schema(kind),
         };
-        answers
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), v.clone()))
-            .collect()
+        let mut out = HashMap::new();
+        for attr in schema {
+            if !attr.editable {
+                continue;
+            }
+            // A reference is asked for whatever its value shape says,
+            // because naming another element is what makes half of the
+            // drainage kinds creatable at all.
+            if !attr.references.is_empty() {
+                if let Some(id) = attr.references.iter().find_map(|k| id_of_kind(k)) {
+                    out.insert(attr.key.clone(), serde_json::json!(id));
+                }
+                continue;
+            }
+            let value = match &attr.kind {
+                // The engine's own opening value where it declared one,
+                // and otherwise a plain positive number: every dimension
+                // a constructor takes has to be more than nothing, and
+                // which number it is does not matter here.
+                K::Number { default, .. } => serde_json::json!(default.unwrap_or(1.0)),
+                K::Integer { default, .. } => serde_json::json!(default.unwrap_or(1)),
+                K::Boolean { default } => {
+                    serde_json::json!(if default.unwrap_or(false) {
+                        "Yes"
+                    } else {
+                        "No"
+                    })
+                }
+                K::Choice { default, items } => match default
+                    .clone()
+                    .or_else(|| items.first().map(|i| i.value.clone()))
+                {
+                    Some(v) => serde_json::json!(v),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            out.insert(attr.key.clone(), value);
+        }
+        out
     }
 
     /// Every kind the catalog says can be created is created — against a
@@ -590,6 +619,23 @@ mod tests {
         let wds =
             hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).expect("fixture");
 
+        // An existing element of a kind, for the reference fields. The
+        // fixtures carry one of everything the schemas name; a `None`
+        // here means the kind can only be created after something else
+        // is, which the failure says out loud rather than skipping.
+        let uds_ids = |k: &str| {
+            super::super::uds_attrs::kind_elements(&uds, k)
+                .ids
+                .first()
+                .cloned()
+        };
+        let wds_ids = |k: &str| {
+            super::super::wds_attrs::kind_elements(&wds, k)
+                .ids
+                .first()
+                .cloned()
+        };
+
         for (engine, catalog) in [
             ("wds", hydra::descriptors::ELEMENT_KINDS),
             ("uds", hydra::uds::descriptors::ELEMENT_KINDS),
@@ -611,7 +657,9 @@ mod tests {
                 };
                 element.from_id = Some(from.into());
                 element.to_id = Some(to.into());
-                element.fields = dialog_answers(engine, kind.id);
+                let ids: &dyn Fn(&str) -> Option<String> =
+                    if engine == "wds" { &wds_ids } else { &uds_ids };
+                element.fields = dialog_answers(engine, kind.id, ids);
 
                 let where_ = placement(&element, class)
                     .unwrap_or_else(|e| panic!("{engine}.{} cannot be placed: {e}", kind.id));

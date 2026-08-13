@@ -2451,6 +2451,84 @@ RS1  0:00  0.4
             .expect("a number")
     }
 
+    /// Every editable value can be changed, and put back.
+    ///
+    /// Two claims in one, because the second is the one an application
+    /// leans on and nothing was asserting: undo works by writing the
+    /// value that was there before, so an attribute whose write is not
+    /// invertible is an attribute the history cannot restore. A write
+    /// that clamps, converts asymmetrically, or has a side effect on a
+    /// second field would pass "set it and read it back" and fail here.
+    ///
+    /// The sample comes from the model rather than from a list written
+    /// here. A hand-written one covers the kinds someone remembered, and
+    /// that is how an inlet came to publish four editable fields with no
+    /// setter behind any of them — the list named four kinds and the
+    /// inlet was not one of them. Adding a kind to the fixture now
+    /// extends the check by itself.
+    #[test]
+    fn every_editable_value_can_be_changed_and_put_back() {
+        let net = model();
+        let mut checked = 0;
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let Some(id) = kind_elements(&net, kind.id).ids.first().cloned() else {
+                continue;
+            };
+            let Some(rows) = element_attributes(&net, &id) else {
+                continue;
+            };
+            for row in rows.into_iter().filter(|r| r.editable) {
+                // Only the rows carrying a number: a reference and a
+                // choice are restored by the same write, and their
+                // round trip is asserted where the values live.
+                let Some(before) = row.number else { continue };
+                let changed = if before.abs() < 1e-9 {
+                    1.0
+                } else {
+                    before * 1.5
+                };
+
+                let mut draft = model();
+                set_attribute(&mut draft, &id, &row.key, &serde_json::json!(changed))
+                    .unwrap_or_else(|e| panic!("{}.{} refused the edit: {e}", kind.id, row.key));
+                let now = read_key(&draft, &id, &row.key);
+                assert!(
+                    (now - changed).abs() < 1e-6,
+                    "{}.{} was set to {changed} and reads {now}",
+                    kind.id,
+                    row.key
+                );
+
+                // The undo: the same write, with what was there before.
+                set_attribute(&mut draft, &id, &row.key, &serde_json::json!(before))
+                    .unwrap_or_else(|e| panic!("{}.{} refused the undo: {e}", kind.id, row.key));
+                let back = read_key(&draft, &id, &row.key);
+                assert!(
+                    (back - before).abs() < 1e-6,
+                    "{}.{} started at {before}, was set to {changed}, and came back {back}",
+                    kind.id,
+                    row.key
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 10,
+            "only {checked} editable values were exercised"
+        );
+    }
+
+    /// One attribute's number, by its schema key.
+    fn read_key(net: &Network, id: &str, key: &str) -> f64 {
+        element_attributes(net, id)
+            .unwrap_or_else(|| panic!("{id} has no attributes"))
+            .into_iter()
+            .find(|r| r.key == key)
+            .unwrap_or_else(|| panic!("{id} has no {key} row"))
+            .number
+            .expect("a number")
+    }
+
     /// Setting a value and reading it back is the only check that catches
     /// a conversion applied on one side and not the other — which is
     /// exactly what went wrong first: an area is served in hectares and a

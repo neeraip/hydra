@@ -429,6 +429,97 @@ fn shift_selection(selection: &mut hydra::uds::model::ReportSelection, shift: &S
 #[cfg(test)]
 mod tests {
 
+    /// Every kind the Editor offers Delete on either deletes, or says
+    /// why not in words about the model.
+    ///
+    /// The button is offered on every row of every kind, because the
+    /// Editor's row actions are generic — it does not know which kinds
+    /// the removal path has arms for. So the promise this holds is not
+    /// "everything can be removed", which is not true yet; it is that
+    /// pressing it never answers with something about the code. "Not
+    /// found" and "unknown element kind" are both statements about a
+    /// thing plainly on the screen, and both read as a bug rather than
+    /// as a limit.
+    ///
+    /// It also counts the two populations, so neither can quietly
+    /// change: a kind that stops being removable, or a refusal that
+    /// starts, fails here rather than in someone's hands.
+    #[test]
+    fn every_kind_either_deletes_or_says_why_not() {
+        let (net, _) = parse_network(FULL);
+        let mut removable = Vec::new();
+        let mut refused = Vec::new();
+
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let Some(id) = crate::commands::uds_attrs::kind_elements(&net, kind.id)
+                .ids
+                .first()
+                .cloned()
+            else {
+                continue;
+            };
+            let mut draft = net.clone();
+            match delete_uds_element(&mut draft, &id) {
+                Ok(_) => removable.push(kind.id),
+                Err(e) => {
+                    // The two answers that describe the program rather
+                    // than the model.
+                    assert!(
+                        !e.contains("not found") && !e.contains("unknown"),
+                        "{} refuses with {e:?}, which reads as the element being missing",
+                        kind.id
+                    );
+                    refused.push((kind.id, e));
+                }
+            }
+        }
+
+        // Three outcomes, and only two of them are about the model.
+        //
+        // A spatial element goes. A subcatchment draining into another
+        // refuses for a reason the modeller can act on — that is a
+        // statement about the network, not a limit. The containers
+        // refuse because removing one is not built: the model refers to
+        // each by position, so a removal that got the shift wrong would
+        // repoint the model at the wrong curve rather than fail, and
+        // failing is the better of the two until it is right.
+        assert_eq!(
+            removable,
+            vec!["junction", "outfall", "divider", "conduit"],
+            "the set of removable kinds changed"
+        );
+
+        let unbuilt: Vec<&str> = refused
+            .iter()
+            .filter(|(_, e)| e.contains("not removed yet"))
+            .map(|(k, _)| *k)
+            .collect();
+        assert_eq!(
+            unbuilt,
+            vec![
+                "raingage",
+                "timeseries",
+                "hydrograph",
+                "pollutant",
+                "aquifer",
+                "snowpack",
+                "lidcontrol",
+                "street",
+                "inlet",
+            ],
+            "the set of kinds that cannot yet be removed changed"
+        );
+
+        // The rest refused for a reason about the network itself, which
+        // is a refusal a modeller can do something about.
+        let by_the_model: Vec<&str> = refused
+            .iter()
+            .filter(|(_, e)| !e.contains("not removed yet"))
+            .map(|(k, _)| *k)
+            .collect();
+        assert_eq!(by_the_model, vec!["subcatchment"]);
+    }
+
     /// A container answers to its name and cannot be removed yet, so the
     /// refusal says that rather than "not found" — which is the worst of
     /// the two wrong answers about a thing plainly on the screen.
