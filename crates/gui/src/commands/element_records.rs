@@ -258,6 +258,87 @@ const DWF_SLOTS: [(&str, &str); 4] = [
     ("pattern4", "Weekend"),
 ];
 
+/// The three duration classes a month's response may be given for, in
+/// the order the file writes them.
+const UH_TERMS: [&str; 3] = ["Short", "Medium", "Long"];
+
+/// The months, by the names a reader uses rather than by an index.
+const UH_MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// The responses of a unit hydrograph group (§4.5.2.3).
+///
+/// Twelve months by three duration classes, any of the thirty-six
+/// present or absent — which the catalog could only ever publish as how
+/// many were defined. A row per response the file actually carries, so a
+/// group given one January response shows one row rather than
+/// thirty-six, most of them zeros that would read as real answers.
+///
+/// Read-only: a write means deciding what an absent month becomes, and
+/// unlike a snow pack's three surfaces there are thirty-six slots and no
+/// natural order for a reader to add them in. Served so a group can be
+/// read at all, which is what §4.5.2.3 allows.
+fn hydrograph_records(net: &hydra::uds::model::Network, id: &str) -> Option<RecordSetDto> {
+    let group = net
+        .unit_hydrographs
+        .iter()
+        .find(|g| g.id.eq_ignore_ascii_case(id))?;
+    let mut columns = vec![
+        column("month", "Month", text()),
+        column("term", "Duration", text()),
+    ];
+    for (key, label, quantity) in [
+        ("r", "Rainfall fraction", None),
+        ("tPeak", "Time to peak", Some("time")),
+        ("k", "Recession ratio", None),
+        ("iaMax", "Initial abstraction", Some("depth")),
+        ("iaInit", "Initial abstraction used", Some("depth")),
+        ("iaRecovery", "Abstraction recovery", Some("depth")),
+    ] {
+        columns.push(RecordColumnDto {
+            quantity: quantity.and_then(super::uds_results::quantity_descriptor),
+            ..column(key, label, number())
+        });
+    }
+    let mut rows = Vec::new();
+    for (m, month) in UH_MONTHS.iter().enumerate() {
+        for (t, term) in UH_TERMS.iter().enumerate() {
+            let Some(r) = group.months[m][t].as_ref() else {
+                continue;
+            };
+            rows.push(vec![
+                serde_json::json!(month),
+                serde_json::json!(term),
+                serde_json::json!(r.r),
+                serde_json::json!(r.t_peak),
+                serde_json::json!(r.k),
+                serde_json::json!(r.ia_max),
+                serde_json::json!(r.ia_init),
+                serde_json::json!(r.ia_recovery),
+            ]);
+        }
+    }
+    Some(RecordSetDto {
+        key: "responses".to_string(),
+        label: "Monthly responses".to_string(),
+        columns,
+        rows,
+        editable: false,
+    })
+}
+
 /// The three surfaces a pack may carry, in the order the file writes
 /// them, each with the accessor that reaches it.
 ///
@@ -359,7 +440,10 @@ pub(crate) fn uds_records(net: &hydra::uds::model::Network, element_id: &str) ->
         .iter()
         .position(|v| v.id.eq_ignore_ascii_case(element_id))
     else {
-        return snowpack_records(net, element_id).into_iter().collect();
+        return snowpack_records(net, element_id)
+            .or_else(|| hydrograph_records(net, element_id))
+            .into_iter()
+            .collect();
     };
     let mut columns = vec![
         column("constituent", "Constituent", text()),
@@ -721,6 +805,39 @@ mod tests {
         // Nothing moved through any of it: the set is parsed whole
         // before a single surface is assigned.
         assert_eq!(net.snowpacks[0], before);
+    }
+
+    /// Thirty-six slots, any of them present or absent, which the
+    /// catalog could only publish as how many were defined. A row per
+    /// response the file carries — not thirty-six with most of them
+    /// zeros, which would read as real answers.
+    #[test]
+    fn a_unit_hydrograph_reports_a_row_per_response_it_has() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [RAINGAGES]\nG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                     [TIMESERIES]\nTS1 0:00 0.0\nTS1 1:00 0.0\n\
+                     [HYDROGRAPHS]\n\
+                     UH1  G1\n\
+                     UH1  JUL  MEDIUM  0.05  4.0  2.0  0.1  0  0.5\n";
+        let (net, diags) = hydra::uds::io::objects::parse_network(model);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}"
+        );
+
+        let sets = uds_records(&net, "UH1");
+        let set = sets.first().expect("a responses set");
+        assert_eq!(set.key, "responses");
+        assert_eq!(set.rows.len(), 1, "one response was defined");
+        assert_eq!(set.rows[0][0].as_str(), Some("July"));
+        assert_eq!(set.rows[0][1].as_str(), Some("Medium"));
+        // Named rather than indexed: a reader should not have to know
+        // that month 6 is July or that class 1 is the medium-term one.
+        assert!(set.columns[0].label == "Month" && set.columns[1].label == "Duration");
+        // Read-only, and the reason is in the module: thirty-six slots
+        // with no natural order to add them in.
+        assert!(!set.editable);
     }
 
     /// An element that carries no records of a kind reports none rather
