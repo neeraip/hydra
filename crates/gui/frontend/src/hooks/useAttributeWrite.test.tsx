@@ -17,8 +17,13 @@ import { useElementAttributeWrite } from "./useAttributeWrite";
  */
 
 const setElementAttribute = vi.fn(
-  (_project: string, _id: string, _key: string, _value: number | string) =>
-    Promise.resolve(),
+  (
+    _project: string,
+    _id: string,
+    _key: string,
+    _value: number | string,
+    _kind?: string,
+  ) => Promise.resolve(),
 );
 const saveProjectOnDisk = vi.fn((_id: string, _scenarioId?: string | null) =>
   Promise.resolve(true),
@@ -32,7 +37,8 @@ vi.mock("./network", () => ({
     id: string,
     key: string,
     value: number | string,
-  ) => setElementAttribute(project, id, key, value),
+    kind?: string,
+  ) => setElementAttribute(project, id, key, value, kind),
 }));
 vi.mock("./projects", () => ({
   saveProjectOnDisk: (id: string, scenarioId?: string | null) =>
@@ -50,8 +56,15 @@ vi.mock("../AppContext", () => ({
 }));
 
 function harness() {
-  const calls: Array<(id: string, key: string, v: number) => Promise<void>> =
-    [];
+  const calls: Array<
+    (
+      id: string,
+      key: string,
+      v: number | string,
+      previous?: number | string,
+      kind?: string,
+    ) => Promise<void>
+  > = [];
   function Probe() {
     calls.push(useElementAttributeWrite());
     return null;
@@ -83,6 +96,7 @@ describe("useElementAttributeWrite", () => {
       "J1",
       "invert",
       12.5,
+      undefined,
     );
     expect(saveProjectOnDisk).toHaveBeenCalledWith("p1", "s1");
     expect(markEdited).toHaveBeenCalledWith("p1", "s1");
@@ -106,6 +120,25 @@ describe("useElementAttributeWrite", () => {
       await write("J1", "invert", 12.5);
     });
     expect(order).toEqual(["set", "save"]);
+  });
+
+  it("carries the kind, which is half the address in one engine", async () => {
+    // A water-distribution id names an element only within its family:
+    // a junction `10` and a pipe `10` are two elements, and EPANET keeps
+    // the namespaces apart deliberately. A write with only the id used to
+    // resolve to whichever the lookup reached first, so a tag typed on
+    // the pipe landed on the junction and reported success.
+    const write = harness();
+    await act(async () => {
+      await write("10", "tag", "Main", undefined, "pipe");
+    });
+    expect(setElementAttribute).toHaveBeenCalledWith(
+      "p1",
+      "10",
+      "tag",
+      "Main",
+      "pipe",
+    );
   });
 
   it("reports a refused write and lets the caller restore the field", async () => {

@@ -28,6 +28,7 @@ import {
   useElementAttributes,
   useReferenceIds,
 } from "../../../hooks";
+import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementAttributeWrite } from "../../../hooks/useAttributeWrite";
 import { useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
@@ -41,6 +42,26 @@ import { RecordSets, useElementRecords } from "./RecordSets";
 /** Rows already fetched, so re-selecting an element does not go blank
  * while the same answer is fetched again. */
 const detailCache = new Map<string, ElementAttribute[]>();
+/** Which version of the model the entries above describe. */
+let cachedVersion = -1;
+
+/**
+ * The cache, emptied when the model has moved on.
+ *
+ * One generation at a time rather than one entry per element per
+ * version: a cached answer from before an edit describes a model that no
+ * longer exists, so keeping it costs memory to store something that must
+ * never be read. Putting the version in the key would have been the
+ * smaller change and would have grown the map without bound across a
+ * long editing session.
+ */
+function cacheAt(version: number): Map<string, ElementAttribute[]> {
+  if (version !== cachedVersion) {
+    detailCache.clear();
+    cachedVersion = version;
+  }
+  return detailCache;
+}
 
 /**
  * A element's §4.4 property rows, and how much space to leave for them.
@@ -62,14 +83,27 @@ export function useElementDetails(
   rows: ElementAttribute[] | null;
   schema: ElementAttributeInfo[];
   elementId: string;
+  /** Passed straight back out so a caller spreading this into
+   * `PropertiesSection` addresses its writes the same way this hook
+   * addressed its read. */
+  kind?: string;
   onEdited: () => void;
 } {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
   const schema = useElementAttributes(project?.engine, kind);
-  const key = `${project?.id ?? ""}\u0000${activeScenarioId ?? ""}\u0000${elementId}`;
+  // The model's version is part of the cache key, not merely a refetch
+  // trigger. The cache exists so re-selecting an element is instant, and
+  // an entry from before an undo is an answer about a model that no
+  // longer exists — re-running the fetch while still reading that entry
+  // would have changed nothing.
+  const { version } = useNetworkVersion();
+  // The kind is part of the key, because it is part of the address: a
+  // water-distribution junction `10` and pipe `10` are two elements, and
+  // one cache entry for both served whichever was selected first.
+  const key = `${project?.id ?? ""}\u0000${activeScenarioId ?? ""}\u0000${kind ?? ""}\u0000${elementId}`;
   const [rows, setRows] = useState<ElementAttribute[] | null>(
-    () => detailCache.get(key) ?? null,
+    () => cacheAt(version).get(key) ?? null,
   );
   // After a write, fetch what the model now holds and replace the cached
   // answer. Refetching directly rather than through a counter that only
@@ -77,29 +111,33 @@ export function useElementDetails(
   // element is instant, not so an edit is invisible.
   const onEdited = useCallback(() => {
     if (!project?.id) return;
-    getElementDetails(project.id, activeScenarioId, elementId).then((r) => {
-      if (r) detailCache.set(key, r);
-      setRows(r);
-    });
-  }, [project?.id, activeScenarioId, elementId, key]);
+    getElementDetails(project.id, activeScenarioId, elementId, kind).then(
+      (r) => {
+        if (r) cacheAt(version).set(key, r);
+        setRows(r);
+      },
+    );
+  }, [project?.id, activeScenarioId, elementId, kind, key, version]);
   useEffect(() => {
     if (!project?.id) return;
-    const cached = detailCache.get(key);
+    const cached = cacheAt(version).get(key);
     if (cached) {
       setRows(cached);
       return;
     }
     setRows(null);
     let cancelled = false;
-    getElementDetails(project.id, activeScenarioId, elementId).then((r) => {
-      if (r) detailCache.set(key, r);
-      if (!cancelled) setRows(r);
-    });
+    getElementDetails(project.id, activeScenarioId, elementId, kind).then(
+      (r) => {
+        if (r) cacheAt(version).set(key, r);
+        if (!cancelled) setRows(r);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [project?.id, activeScenarioId, elementId, key]);
-  return { rows, schema, elementId, onEdited };
+  }, [project?.id, activeScenarioId, elementId, kind, key, version]);
+  return { rows, schema, elementId, kind, onEdited };
 }
 
 /** Properties section: §4 schema rows in the wds table presentation. */
@@ -107,6 +145,7 @@ export function PropertiesSection({
   rows,
   schema = [],
   elementId,
+  kind,
   onEdited,
   children,
 }: {
@@ -116,6 +155,11 @@ export function PropertiesSection({
   /** The element these rows belong to. Absent = the section reads only,
    * which is what a caller with no element to address should get. */
   elementId?: string;
+  /** Which kind that element is. Half of its address in water
+   * distribution, where a junction `10` and a pipe `10` are two
+   * elements — so a write without it is refused rather than applied to
+   * whichever the lookup reaches first. */
+  kind?: string;
   /** Called after a successful write, so the caller can refetch. */
   onEdited?: () => void;
   /** Extra rows appended inside the table — a preview, a shortcut, a
@@ -204,6 +248,7 @@ export function PropertiesSection({
                 attr={r}
                 sys={sys}
                 elementId={elementId}
+                kind={kind}
                 listId={
                   lists.some((l) => l.key === r.key)
                     ? `${listPrefix}-${r.key}`
@@ -226,16 +271,29 @@ export function PropertiesSection({
           categories sit under its properties because that is where a
           reader looks for them, and because the attribute rows above can
           only ever show their sum (§4.5.2.3). */}
-      {elementId && <ElementRecords elementId={elementId} />}
+      {elementId && <ElementRecords elementId={elementId} kind={kind} />}
     </>
   );
 }
 
 /** The record sets attached to this element, fetched here so a caller
  *  passing rows does not also have to know about them. */
-function ElementRecords({ elementId }: { elementId: string }) {
-  const { sets, refetch } = useElementRecords(elementId);
-  return <RecordSets elementId={elementId} sets={sets} onEdited={refetch} />;
+function ElementRecords({
+  elementId,
+  kind,
+}: {
+  elementId: string;
+  kind?: string;
+}) {
+  const { sets, refetch } = useElementRecords(elementId, kind);
+  return (
+    <RecordSets
+      elementId={elementId}
+      kind={kind}
+      sets={sets}
+      onEdited={refetch}
+    />
+  );
 }
 
 /**
@@ -255,12 +313,16 @@ function AttrRow({
   attr,
   sys,
   elementId,
+  kind,
   listId,
   onEdited,
 }: {
   attr: ElementAttribute;
   sys: "si" | "us";
   elementId: string;
+  /** Which kind the element is — half of its address here, see
+   * `PropertiesSection`. */
+  kind?: string;
   /** The datalist of ids this row may name, when it is a reference. */
   listId?: string;
   onEdited?: () => void;
@@ -311,8 +373,8 @@ function AttrRow({
           listId={listId}
           onCommit={(next) =>
             // The value the row was showing is what an undo restores.
-            write(elementId, attr.key, next, shown ?? undefined).then(() =>
-              onEdited?.(),
+            write(elementId, attr.key, next, shown ?? undefined, kind).then(
+              () => onEdited?.(),
             )
           }
         />

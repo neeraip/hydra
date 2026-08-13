@@ -25,6 +25,7 @@ import {
   type RecordSet,
   useReferenceIds,
 } from "../../../hooks";
+import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementRecordsWrite } from "../../../hooks/useAttributeWrite";
 import { useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
@@ -39,12 +40,22 @@ import { ActionIcon, offerDatalist } from "../editorTable";
  * every other surface here refetches: the engine is what knows what the
  * set became — it may have converted, reordered, or refused.
  */
-export function useElementRecords(elementId: string): {
+export function useElementRecords(
+  elementId: string,
+  /** Which kind the id belongs to. Every water-distribution record set
+   * hangs off a node, so without this a pipe `10` was served junction
+   * `10`'s demand categories — and that set is editable. */
+  kind?: string,
+): {
   sets: RecordSet[];
   refetch: () => void;
 } {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
+  // Keyed on the model's version as well: this panel refetches after its
+  // own write, and an undo is a change it did not make — so the records
+  // it drew went on being the ones that had just been put back.
+  const { version } = useNetworkVersion();
   const [sets, setSets] = useState<RecordSet[]>([]);
   // Fetched directly rather than through a counter that exists only to
   // re-run the effect — the same choice `useElementDetails` makes, and
@@ -52,17 +63,18 @@ export function useElementRecords(elementId: string): {
   // one, and the next person removes it.
   const refetch = useCallback(() => {
     if (!project?.id || !elementId) return;
-    void getElementRecords(project.id, activeScenarioId, elementId).then(
+    void getElementRecords(project.id, activeScenarioId, elementId, kind).then(
       setSets,
     );
-  }, [project?.id, activeScenarioId, elementId]);
+  }, [project?.id, activeScenarioId, elementId, kind]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the version is the intentional refetch trigger
   useEffect(() => {
     if (!project?.id || !elementId) {
       setSets([]);
       return;
     }
     let cancelled = false;
-    void getElementRecords(project.id, activeScenarioId, elementId).then(
+    void getElementRecords(project.id, activeScenarioId, elementId, kind).then(
       (r) => {
         if (!cancelled) setSets(r);
       },
@@ -70,27 +82,54 @@ export function useElementRecords(elementId: string): {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, activeScenarioId, elementId]);
+  }, [project?.id, activeScenarioId, elementId, kind, version]);
   return { sets, refetch };
+}
+
+/**
+ * The sets worth drawing: the ones that hold something, plus the empty
+ * ones that can be added to.
+ *
+ * An empty set is not always nothing. A junction with no demand
+ * categories still shows its table, because the row of headings and the
+ * add button are how the first category is entered. A drainage node's
+ * dry weather inflows are served read-only, so an empty one has nothing
+ * to read and no way to get anything — and it drew a heading and a row
+ * of column names under every node in every drainage model, which reads
+ * as a panel that failed to load rather than as an element that has no
+ * inflows.
+ *
+ * Keyed on `editable` rather than on the set's name, so it stays true of
+ * whatever a future engine attaches: what decides it is whether the
+ * empty table is an offer.
+ */
+export function shownRecordSets(sets: RecordSet[]): RecordSet[] {
+  return sets.filter((set) => set.rows.length > 0 || set.editable);
 }
 
 export function RecordSets({
   elementId,
+  kind,
   sets,
   onEdited,
 }: {
   elementId: string;
+  /** Which kind the element is — half its address, see
+   * {@link useElementRecords}. */
+  kind?: string;
   sets: RecordSet[];
   /** Called after a successful write, so the caller can refetch. */
   onEdited?: () => void;
 }) {
-  if (sets.length === 0) return null;
+  const shown = shownRecordSets(sets);
+  if (shown.length === 0) return null;
   return (
     <>
-      {sets.map((set) => (
+      {shown.map((set) => (
         <RecordTable
           key={set.key}
           elementId={elementId}
+          kind={kind}
           set={set}
           onEdited={onEdited}
         />
@@ -101,10 +140,12 @@ export function RecordSets({
 
 function RecordTable({
   elementId,
+  kind,
   set,
   onEdited,
 }: {
   elementId: string;
+  kind?: string;
   set: RecordSet;
   onEdited?: () => void;
 }) {
@@ -140,7 +181,7 @@ function RecordTable({
 
   const send = (rows: RecordSet["rows"]) => {
     setRefused(null);
-    return write(elementId, set.key, rows, set.rows)
+    return write(elementId, set.key, rows, set.rows, kind)
       .then(() => onEdited?.())
       .catch((e: unknown) => {
         setRefused(typeof e === "string" ? e : String(e));

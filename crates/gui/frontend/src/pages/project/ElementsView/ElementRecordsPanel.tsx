@@ -12,12 +12,24 @@
 
 import {
   RecordSets,
+  shownRecordSets,
   useElementRecords,
 } from "../../../components/panels/ElementInspector/RecordSets";
 
-export function ElementRecordsPanel({ elementId }: { elementId: string }) {
-  const { sets, refetch } = useElementRecords(elementId);
-  if (sets.length === 0) return null;
+export function ElementRecordsPanel({
+  elementId,
+  kind,
+}: {
+  elementId: string;
+  /** Which kind the tab is showing — half the element's address in
+   * water distribution. */
+  kind?: string;
+}) {
+  const { sets, refetch } = useElementRecords(elementId, kind);
+  // The same question the table below asks, asked here too: the strip is
+  // a bordered box with a background, so it has to be absent rather than
+  // empty when its one child would draw nothing.
+  if (shownRecordSets(sets).length === 0) return null;
   return (
     <div
       style={{
@@ -29,7 +41,12 @@ export function ElementRecordsPanel({ elementId }: { elementId: string }) {
         flexShrink: 0,
       }}
     >
-      <RecordSets elementId={elementId} sets={sets} onEdited={refetch} />
+      <RecordSets
+        elementId={elementId}
+        kind={kind}
+        sets={sets}
+        onEdited={refetch}
+      />
     </div>
   );
 }

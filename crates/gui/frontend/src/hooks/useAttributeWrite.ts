@@ -47,15 +47,20 @@ export function useElementAttributeWrite(): (
    * and the edit is not captured — an inverse nobody can supply is
    * better absent than guessed. */
   previous?: number | string,
+  /** Which kind the id belongs to. An id is a whole address in the
+   * drainage engine and half of one in water distribution, where a
+   * junction `10` and a pipe `10` are two elements — so a caller that
+   * knows says which, and the undo carries it too. */
+  kind?: string,
 ) => Promise<void> {
   const { activeProjectId, activeScenarioId, showToast } = useAppState();
   const { markEdited } = useNetworkVersion();
 
   return useCallback(
-    async (elementId, key, value, previous) => {
+    async (elementId, key, value, previous, kind) => {
       if (!activeProjectId) return;
       try {
-        await setElementAttribute(activeProjectId, elementId, key, value);
+        await setElementAttribute(activeProjectId, elementId, key, value, kind);
       } catch (err) {
         showToast(
           typeof err === "string"
@@ -68,10 +73,11 @@ export function useElementAttributeWrite(): (
       if (previous != null) {
         pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
           label: `Changed ${key} on ${elementId}`,
+          subject: kind ? { kind, id: elementId } : undefined,
           undo: {
-            ops: [{ op: "set", id: elementId, key, value: previous }],
+            ops: [{ op: "set", id: elementId, key, value: previous, kind }],
           },
-          redo: { ops: [{ op: "set", id: elementId, key, value }] },
+          redo: { ops: [{ op: "set", id: elementId, key, value, kind }] },
         });
       }
       await saveProjectOnDisk(activeProjectId, activeScenarioId);
@@ -98,12 +104,14 @@ export function useElementEndsWrite(): (
   fromId: string,
   toId: string,
   previous?: readonly [string, string],
+  /** Which kind the element is, so the history can show its badge. */
+  kind?: string,
 ) => Promise<void> {
   const { activeProjectId, activeScenarioId, showToast } = useAppState();
   const { markEdited } = useNetworkVersion();
 
   return useCallback(
-    async (elementId, fromId, toId, previous) => {
+    async (elementId, fromId, toId, previous, kind) => {
       if (!activeProjectId) return;
       try {
         await setElementEnds(activeProjectId, elementId, fromId, toId);
@@ -117,6 +125,7 @@ export function useElementEndsWrite(): (
       if (previous) {
         pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
           label: `Reconnected ${elementId}`,
+          subject: kind ? { kind, id: elementId } : undefined,
           undo: {
             ops: [
               {
@@ -173,6 +182,7 @@ export function useCollectionContentsWrite(): (
       if (previous) {
         pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
           label: `Edited ${elementId}`,
+          subject: { kind, id: elementId },
           undo: {
             ops: [{ op: "contents", kind, id: elementId, rows: previous }],
           },
@@ -201,15 +211,19 @@ export function useElementRecordsWrite(): (
   set: string,
   rows: RecordSet["rows"],
   previous?: RecordSet["rows"],
+  /** Which kind the id belongs to — half its address in water
+   * distribution, where every record set hangs off a node and a pipe may
+   * share a junction's id. Carried into the undo for the same reason. */
+  kind?: string,
 ) => Promise<void> {
   const { activeProjectId, activeScenarioId, showToast } = useAppState();
   const { markEdited } = useNetworkVersion();
 
   return useCallback(
-    async (elementId, set, rows, previous) => {
+    async (elementId, set, rows, previous, kind) => {
       if (!activeProjectId) return;
       try {
-        await setElementRecords(activeProjectId, elementId, set, rows);
+        await setElementRecords(activeProjectId, elementId, set, rows, kind);
       } catch (err) {
         showToast(typeof err === "string" ? err : String(err), "error");
         throw err;
@@ -217,10 +231,11 @@ export function useElementRecordsWrite(): (
       if (previous) {
         pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
           label: `Edited ${elementId}`,
+          subject: kind ? { kind, id: elementId } : undefined,
           undo: {
-            ops: [{ op: "records", id: elementId, set, rows: previous }],
+            ops: [{ op: "records", id: elementId, set, rows: previous, kind }],
           },
-          redo: { ops: [{ op: "records", id: elementId, set, rows }] },
+          redo: { ops: [{ op: "records", id: elementId, set, rows, kind }] },
         });
       }
       await saveProjectOnDisk(activeProjectId, activeScenarioId);

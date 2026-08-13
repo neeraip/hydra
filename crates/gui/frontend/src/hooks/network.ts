@@ -1237,12 +1237,17 @@ export async function setElementAttribute(
   elementId: string,
   key: string,
   value: number | string,
+  /** Which kind the id belongs to — see {@link getElementDetails}. A
+   * write to an ambiguous id without one is refused rather than applied
+   * to whichever element the lookup reached first. */
+  kind?: string,
 ): Promise<void> {
   await invoke<void>("set_element_attribute", {
     projectId,
     elementId,
     key,
     value,
+    kind: kind ?? null,
   });
 }
 
@@ -1281,10 +1286,19 @@ export async function getElementRecords(
   projectId: string,
   scenarioId: string | null | undefined,
   elementId: string,
+  /** Which kind the id belongs to — see {@link getElementDetails}. Every
+   * water-distribution record set hangs off a node, so without this a
+   * pipe `10` was served junction `10`'s demand categories. */
+  kind?: string,
 ): Promise<RecordSet[]> {
   return tryInvokeOr<RecordSet[]>(
     "get_element_records",
-    { projectId, scenarioId: scenarioId ?? null, elementId },
+    {
+      projectId,
+      scenarioId: scenarioId ?? null,
+      elementId,
+      kind: kind ?? null,
+    },
     [],
   );
 }
@@ -1302,12 +1316,17 @@ export async function setElementRecords(
   elementId: string,
   set: string,
   rows: Array<Array<number | string | null>>,
+  /** Which kind the id belongs to — see {@link getElementRecords}. A
+   * write to an ambiguous id without one is refused rather than applied
+   * to whichever element the lookup reaches first. */
+  kind?: string,
 ): Promise<void> {
   await invoke<void>("set_element_records", {
     projectId,
     elementId,
     set,
     rows,
+    kind: kind ?? null,
   });
 }
 
@@ -1378,10 +1397,26 @@ export async function getElementDetails(
   projectId: string,
   scenarioId: string | null | undefined,
   elementId: string,
+  /**
+   * Which kind the id belongs to, where the caller knows.
+   *
+   * An id is usually a whole address and is not always one: water
+   * distribution keeps nodes and links in separate namespaces, so a
+   * junction `10` and a pipe `10` are two elements. Without this, the
+   * pipe's row showed the junction's properties. Omitted for an id
+   * nothing ambiguous can reach; an ambiguous one then answers null
+   * rather than guessing.
+   */
+  kind?: string,
 ): Promise<ElementAttribute[] | null> {
   return tryInvokeOr<ElementAttribute[] | null>(
     "get_element_details",
-    { projectId, scenarioId: scenarioId ?? null, elementId },
+    {
+      projectId,
+      scenarioId: scenarioId ?? null,
+      elementId,
+      kind: kind ?? null,
+    },
     null,
   );
 }
@@ -1557,6 +1592,19 @@ export interface CollectionDetail {
    * §4.5.2.2). Advisory — the write is the authority — and false for
    * contents that are language rather than a table of numbers. */
   editable: boolean;
+  /**
+   * Why there is nothing, when there is nothing (hydra-common §4.5.2.2).
+   *
+   * Empty contents are two different answers, and only the engine can
+   * tell them apart: a pollutant has no contents, while an external time
+   * series' values are real and held in a file beside the model. Absent
+   * means the element has none, and the panel is not drawn.
+   *
+   * This sentence used to be written here, and so was shown under every
+   * kind whose contents were empty for any reason — telling readers that
+   * a pollutant's contents lived in a file that does not exist.
+   */
+  note?: string;
 }
 
 const EMPTY_DETAIL: CollectionDetail = {
@@ -1588,6 +1636,10 @@ export function useCollectionDetail(
   id: string | null,
 ): { detail: CollectionDetail; refetch: () => void } {
   const [detail, setDetail] = useState<CollectionDetail>(EMPTY_DETAIL);
+  // Keyed on the version too, for the reason the per-kind table is: an
+  // undo changes the contents and this panel made no write to refetch
+  // after, so it kept showing the points that had just been put back.
+  const { version } = useNetworkVersion();
   // The contents redraw from a refetch rather than from what was typed:
   // the backend is the one that knows what the table became — it may
   // have converted, and it may have refused — and a table showing the
@@ -1596,6 +1648,7 @@ export function useCollectionDetail(
     if (!projectId || !kind || !id) return;
     void getCollectionDetail(projectId, scenarioId, kind, id).then(setDetail);
   }, [projectId, scenarioId, kind, id]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the version is the intentional refetch trigger
   useEffect(() => {
     if (!projectId || !kind || !id) {
       setDetail(EMPTY_DETAIL);
@@ -1608,7 +1661,7 @@ export function useCollectionDetail(
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, kind, id]);
+  }, [projectId, scenarioId, kind, id, version]);
   return { detail, refetch };
 }
 
@@ -1636,6 +1689,12 @@ export function useKindCounts(
   scenarioId: string | null | undefined,
 ): Record<string, number> {
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Keyed on the model's version, so a change made anywhere reaches the
+  // rail. Every editing surface refetches after its own write, which
+  // hid the gap: an undo is a change nothing on screen made, and the
+  // numbers went on describing the model as it was.
+  const { version } = useNetworkVersion();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the version is the intentional refetch trigger
   useEffect(() => {
     if (!projectId) {
       setCounts({});
@@ -1648,7 +1707,7 @@ export function useKindCounts(
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId]);
+  }, [projectId, scenarioId, version]);
   return counts;
 }
 
@@ -1706,6 +1765,14 @@ export function useKindElements(
   kind: string | null,
 ): { elements: KindElements; refetch: () => void } {
   const [elements, setElements] = useState<KindElements>(EMPTY_KIND_ELEMENTS);
+  // Keyed on the model's version as well as on what is being shown. The
+  // explicit `refetch` covers a write this table made; the version covers
+  // a change it did not — an undo, a redo, anything reaching the model
+  // from somewhere else. Without it the table went on showing the value
+  // that had just been undone, and reloading the project was the only
+  // way to find out it had been.
+  const { version } = useNetworkVersion();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the version is the intentional refetch trigger
   const load = useCallback(() => {
     if (!projectId || !kind) {
       setElements(EMPTY_KIND_ELEMENTS);
@@ -1718,7 +1785,7 @@ export function useKindElements(
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, kind]);
+  }, [projectId, scenarioId, kind, version]);
   useEffect(load, [load]);
   return { elements, refetch: load };
 }

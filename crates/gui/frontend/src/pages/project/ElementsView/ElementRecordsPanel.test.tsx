@@ -27,12 +27,16 @@ const DEMANDS: RecordSet = {
 
 const sets = vi.fn<() => RecordSet[]>(() => [DEMANDS]);
 
-vi.mock("../../../components/panels/ElementInspector/RecordSets", () => ({
-  RecordSets: ({ sets: s }: { sets: RecordSet[] }) => (
-    <div>{s.map((set) => set.label).join(", ")}</div>
-  ),
-  useElementRecords: () => ({ sets: sets(), refetch: () => {} }),
-}));
+vi.mock(
+  "../../../components/panels/ElementInspector/RecordSets",
+  async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
+    RecordSets: ({ sets: s }: { sets: RecordSet[] }) => (
+      <div>{s.map((set) => set.label).join(", ")}</div>
+    ),
+    useElementRecords: () => ({ sets: sets(), refetch: () => {} }),
+  }),
+);
 
 describe("ElementRecordsPanel", () => {
   it("shows the sets the element carries", () => {
@@ -45,6 +49,19 @@ describe("ElementRecordsPanel", () => {
     // something failing to load, and most elements carry no records.
     sets.mockReturnValueOnce([]);
     const { container } = render(<ElementRecordsPanel elementId="P1" />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("draws nothing for a set that is empty and cannot be added to", () => {
+    // A drainage node's dry weather inflows are served for every node,
+    // holding nothing for most of them and read-only for all of them. The
+    // strip counted the *sets* rather than what they would draw, so it
+    // opened under every node in every drainage model and showed a
+    // heading with a row of column names and nothing beneath.
+    sets.mockReturnValueOnce([
+      { ...DEMANDS, label: "Dry weather inflow", rows: [], editable: false },
+    ]);
+    const { container } = render(<ElementRecordsPanel elementId="J2" />);
     expect(container.firstChild).toBeNull();
   });
 });

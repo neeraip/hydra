@@ -14,7 +14,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RecordSet } from "../../../hooks";
-import { RecordSets } from "./RecordSets";
+import { RecordSets, shownRecordSets } from "./RecordSets";
 
 const NUMBER = { type: "number", default: null, min: null, max: null } as const;
 const TEXT = { type: "text", default: null } as const;
@@ -49,6 +49,7 @@ const write = vi.fn<
     set: string,
     rows: RecordSet["rows"],
     previous?: RecordSet["rows"],
+    kind?: string,
   ) => Promise<void>
 >(() => Promise.resolve());
 
@@ -67,7 +68,7 @@ vi.mock("../../../hooks/useAttributeWrite", () => ({
 vi.mock("../../../units", () => ({ useUnitSystem: () => "si" }));
 
 function renderSet(set: RecordSet = DEMANDS) {
-  return render(<RecordSets elementId="J1" sets={[set]} />);
+  return render(<RecordSets elementId="J1" kind="junction" sets={[set]} />);
 }
 
 describe("RecordSets", () => {
@@ -126,6 +127,11 @@ describe("RecordSets", () => {
         [4, "", ""],
       ],
       DEMANDS.rows,
+      // The kind travels with the write: a water-distribution id names an
+      // element only within its family, and every record set here hangs
+      // off a node, so a pipe sharing a junction's id used to be served
+      // — and to write — the junction's categories.
+      "junction",
     );
   });
 
@@ -159,5 +165,31 @@ describe("RecordSets", () => {
   it("draws nothing for an element with no records", () => {
     const { container } = render(<RecordSets elementId="J1" sets={[]} />);
     expect(container.querySelector("table")).toBeNull();
+  });
+
+  // An empty set is not always nothing, and which it is depends on
+  // whether the empty table is an offer.
+  describe("shownRecordSets", () => {
+    it("keeps an empty set that can be added to", () => {
+      // A junction with no demand categories: the headings and the add
+      // button are how the first one is entered.
+      const empty = { ...DEMANDS, rows: [] };
+      expect(shownRecordSets([empty])).toEqual([empty]);
+    });
+
+    it("drops an empty set that cannot", () => {
+      // A drainage node's dry weather inflows, which are served
+      // read-only. This drew a heading and a row of column names under
+      // every node in every drainage model, with nothing beneath them —
+      // which reads as a panel that failed to load.
+      expect(
+        shownRecordSets([{ ...DEMANDS, rows: [], editable: false }]),
+      ).toEqual([]);
+    });
+
+    it("keeps a read-only set that holds something", () => {
+      const readable = { ...DEMANDS, editable: false };
+      expect(shownRecordSets([readable])).toEqual([readable]);
+    });
   });
 });

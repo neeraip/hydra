@@ -90,7 +90,18 @@ export type RecreateSpec =
  */
 export type ElementOp =
   | { op: "move"; id: string; x: number; y: number }
-  | { op: "set"; id: string; key: string; value: number | string }
+  // `kind` addresses the element together with its id, where the caller
+  // knows it. A water-distribution id names an element only within its
+  // family — junction `10` and pipe `10` are two elements — so an undo
+  // that carried only the id would be refused, or worse, applied to the
+  // other one.
+  | {
+      op: "set";
+      id: string;
+      key: string;
+      value: number | string;
+      kind?: string;
+    }
   | { op: "rename"; kind: string; from: string; to: string }
   | { op: "reconnect"; id: string; fromId: string; toId: string }
   | { op: "contents"; kind: string; id: string; rows: number[][] }
@@ -99,6 +110,8 @@ export type ElementOp =
       id: string;
       set: string;
       rows: Array<Array<number | string | null>>;
+      /** See the `set` op — an id is half an address in one engine. */
+      kind?: string;
     }
   | { op: "create"; element: NewElement }
   | { op: "remove"; kind: string; id: string };
@@ -138,7 +151,13 @@ export function inverseOp(
     case "set":
       return before?.value == null
         ? null
-        : { op: "set", id: op.id, key: op.key, value: before.value };
+        : {
+            op: "set",
+            id: op.id,
+            key: op.key,
+            value: before.value,
+            kind: op.kind,
+          };
     case "rename":
       return { op: "rename", kind: op.kind, from: op.to, to: op.from };
     case "records":
@@ -147,7 +166,13 @@ export function inverseOp(
       // what an undo restores.
       return before?.records == null
         ? null
-        : { op: "records", id: op.id, set: op.set, rows: before.records };
+        : {
+            op: "records",
+            id: op.id,
+            set: op.set,
+            rows: before.records,
+            kind: op.kind,
+          };
     case "contents":
       // The whole table is its own inverse with the previous rows in it,
       // which is the reason the write takes all of them: a sequence of
@@ -185,8 +210,55 @@ export interface EditSet {
 
 export interface UndoEntry {
   label: string;
+  /**
+   * Which element the entry is about, where the capturing surface knows.
+   *
+   * Carried as data rather than folded into `label` because a history
+   * that says "Changed invert on 9" has named half an element: an id is
+   * unique only within its class, so a junction `9` and a conduit `9`
+   * are two different things that share a name. A reader deciding
+   * whether to undo needs the kind, and the interface shows a kind with
+   * its glyph rather than in words.
+   */
+  subject?: { kind: string; id: string };
   undo: EditSet;
   redo: EditSet;
+}
+
+/**
+ * A move, both ways.
+ *
+ * `null` when there is nowhere to go back to — a caller that could not
+ * read the position before the patch has no inverse to offer, and an
+ * entry that cannot be reversed is better absent than captured and
+ * refused later.
+ *
+ * Here rather than at either call site because a move happens on two
+ * surfaces: dragged on the canvas, typed into the Editor's X and Y
+ * columns. It is one operation, and being undoable on one and not the
+ * other is a difference a reader discovers by losing work — which is how
+ * the Editor's shipped.
+ *
+ * Expressed in the contract's own vocabulary, so the entry is applied by
+ * the same command that made the change and works for whichever engine
+ * holds the model. It used to travel as water-distribution field
+ * patches, which a drainage model accepted into the history and refused
+ * on apply.
+ */
+export function moveEntry(
+  id: string,
+  before: readonly [number, number] | null | undefined,
+  x: number,
+  y: number,
+  kind?: string,
+): UndoEntry | null {
+  if (!before) return null;
+  return {
+    label: `Moved ${id}`,
+    subject: kind ? { kind, id } : undefined,
+    undo: { ops: [{ op: "move", id, x: before[0], y: before[1] }] },
+    redo: { ops: [{ op: "move", id, x, y }] },
+  };
 }
 
 export interface UndoStacks {

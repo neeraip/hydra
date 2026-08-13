@@ -48,6 +48,7 @@ export function useElementRename(): (
           // entry on an otherwise empty stack rather than nothing.
           pushUndoEntry(key, {
             label: `Renamed ${oldId} → ${newId}`,
+            subject: { kind, id: newId },
             undo: { ops: [{ op: "rename", kind, from: newId, to: oldId }] },
             redo: { ops: [{ op: "rename", kind, from: oldId, to: newId }] },
           });

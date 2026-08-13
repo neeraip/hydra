@@ -161,7 +161,7 @@ async function applyOp(op: ElementOp, projectId: string): Promise<void> {
     case "move":
       return patchNodePosition(op.id, op.x, op.y);
     case "set":
-      return setElementAttribute(projectId, op.id, op.key, op.value);
+      return setElementAttribute(projectId, op.id, op.key, op.value, op.kind);
     case "rename":
       return renameElement(op.kind, op.from, op.to);
     case "reconnect":
@@ -169,7 +169,7 @@ async function applyOp(op: ElementOp, projectId: string): Promise<void> {
     case "contents":
       return setCollectionContents(projectId, op.kind, op.id, op.rows);
     case "records":
-      return setElementRecords(projectId, op.id, op.set, op.rows);
+      return setElementRecords(projectId, op.id, op.set, op.rows, op.kind);
     case "create":
       return createElement(projectId, op.element);
     case "remove":

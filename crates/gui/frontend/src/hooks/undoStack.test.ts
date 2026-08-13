@@ -12,6 +12,7 @@ import {
   inverseFieldPatch,
   inverseOp,
   MAX_UNDO_ENTRIES,
+  moveEntry,
   pushRedoEntry,
   pushUndoEntry,
   recreateSpecForLink,
@@ -451,5 +452,27 @@ describe("inverseOp", () => {
     // that silently gave back less than it removed would be worse than
     // none, so a removal clears the history instead.
     expect(inverseOp({ op: "remove", kind: "junction", id: "J1" })).toBeNull();
+  });
+});
+
+describe("moveEntry", () => {
+  // A move happens on two surfaces: dragged on the canvas, typed into
+  // the Editor's X and Y columns. The canvas captured one and the Editor
+  // captured nothing, so the same operation was undoable depending on
+  // where you did it — a difference a reader finds by losing work.
+  it("goes both ways, in the contract's own vocabulary", () => {
+    expect(moveEntry("J1", [1, 2], 5, 6)).toEqual({
+      label: "Moved J1",
+      undo: { ops: [{ op: "move", id: "J1", x: 1, y: 2 }] },
+      redo: { ops: [{ op: "move", id: "J1", x: 5, y: 6 }] },
+    });
+  });
+
+  it("captures nothing when there is nowhere to go back to", () => {
+    // A caller that could not read the position before the patch has no
+    // inverse to offer, and an entry that cannot be reversed is better
+    // absent than captured and refused when it is applied.
+    expect(moveEntry("J1", null, 5, 6)).toBeNull();
+    expect(moveEntry("J1", undefined, 5, 6)).toBeNull();
   });
 });

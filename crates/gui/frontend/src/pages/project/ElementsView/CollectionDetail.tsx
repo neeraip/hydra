@@ -32,6 +32,31 @@ import {
 } from "../../../hooks";
 import { useUnitSystem } from "../../../units";
 
+/**
+ * Whether the panel has anything to draw.
+ *
+ * Not every collection kind has contents. A pollutant, a land use and an
+ * aquifer are their attributes and nothing further, and a LID control's
+ * layers cannot be read yet. All six reached this panel and it drew
+ * itself anyway, under a sentence written for one other case entirely —
+ * "this entry's contents are held outside the model file", which is true
+ * of an external time series and false of every one of them.
+ *
+ * So the engine says why an empty result is empty (§4.5.2.2) and this
+ * asks whether there is anything: rows, lines, a note, or an empty table
+ * that can be added to. The last is the reason the records panel keeps
+ * an empty editable set — the headings and the add button are how the
+ * first row is entered, so that table is an offer rather than a blank.
+ */
+export function hasContentsToShow(detail: Detail, canWrite: boolean): boolean {
+  return (
+    detail.rows.length > 0 ||
+    detail.lines.length > 0 ||
+    !!detail.note ||
+    (canWrite && detail.editable)
+  );
+}
+
 export function CollectionDetail({
   detail,
   elementId,
@@ -53,13 +78,23 @@ export function CollectionDetail({
   // to increase" belongs beside the column it is about.
   const [refused, setRefused] = useState<string | null>(null);
 
+  // Handled here and not rethrown. Every caller is an event handler that
+  // drops the promise, so rethrowing reached nobody and surfaced as an
+  // unhandled rejection — which failed the whole suite while every test
+  // in it passed. Showing the reason beside the table *is* what handling
+  // a refusal means here, the same shape `RecordSets` uses.
   const send = (rows: number[][]) => {
     setRefused(null);
     return Promise.resolve(onWrite?.(rows)).catch((e: unknown) => {
       setRefused(typeof e === "string" ? e : String(e));
-      throw e;
     });
   };
+
+  // Absent rather than empty, for the reason the records strip below is:
+  // both are bordered boxes with their own background, so one holding
+  // only a heading reads as something that failed rather than as a kind
+  // with no contents.
+  if (!hasContentsToShow(detail, !!onWrite)) return null;
 
   return (
     <div
@@ -242,9 +277,11 @@ export function CollectionDetail({
           </pre>
         )}
 
-        {/* An external time series' contents live in a file the engine
-            never reads, so "nothing to show" is an answer, not a failure. */}
-        {!hasTable && !hasLines && (
+        {/* The engine's sentence, not ours. It used to be written here,
+            which meant one case's explanation was shown for every empty
+            result — an external series' values really are held in a file
+            beside the model, and a pollutant's really are nowhere. */}
+        {!hasTable && !hasLines && detail.note && (
           <div
             style={{
               padding: "10px 12px",
@@ -252,8 +289,7 @@ export function CollectionDetail({
               color: "var(--text-tertiary)",
             }}
           >
-            Nothing to show — this entry's contents are held outside the model
-            file.
+            {detail.note}
           </div>
         )}
       </div>
