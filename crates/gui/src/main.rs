@@ -131,6 +131,8 @@ fn main() {
             commands::create_element,
             commands::set_element_ends,
             commands::set_collection_contents,
+            commands::get_element_records,
+            commands::set_element_records,
             commands::preview_patches,
             commands::get_versions,
             commands::get_license_info,

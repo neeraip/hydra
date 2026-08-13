@@ -35,6 +35,7 @@ import { AttributeField } from "../attributeField";
 import { cellEditor } from "../cellEditor";
 import { offerDatalist } from "../editorTable";
 import { PropRow } from "./primitives";
+import { RecordSets, useElementRecords } from "./RecordSets";
 
 /** Fetch the engine-described attribute rows for one element. */
 /** Rows already fetched, so re-selecting an element does not go blank
@@ -221,8 +222,20 @@ export function PropertiesSection({
           {children}
         </tbody>
       </table>
+      {/* What the element *has*, after what it *is*. A junction's demand
+          categories sit under its properties because that is where a
+          reader looks for them, and because the attribute rows above can
+          only ever show their sum (§4.5.2.3). */}
+      {elementId && <ElementRecords elementId={elementId} />}
     </>
   );
+}
+
+/** The record sets attached to this element, fetched here so a caller
+ *  passing rows does not also have to know about them. */
+function ElementRecords({ elementId }: { elementId: string }) {
+  const { sets, refetch } = useElementRecords(elementId);
+  return <RecordSets elementId={elementId} sets={sets} onEdited={refetch} />;
 }
 
 /**

@@ -29,6 +29,7 @@ import {
   setCollectionContents,
   setElementAttribute,
   setElementEnds,
+  setElementRecords,
 } from "./network";
 import { saveProjectOnDisk } from "./projects";
 import {
@@ -167,6 +168,8 @@ async function applyOp(op: ElementOp, projectId: string): Promise<void> {
       return setElementEnds(projectId, op.id, op.fromId, op.toId);
     case "contents":
       return setCollectionContents(projectId, op.kind, op.id, op.rows);
+    case "records":
+      return setElementRecords(projectId, op.id, op.set, op.rows);
     case "create":
       return createElement(projectId, op.element);
     case "remove":

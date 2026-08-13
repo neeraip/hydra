@@ -64,6 +64,11 @@ vi.mock("../../../hooks/useAttributeWrite", () => ({
   useElementAttributeWrite: () => vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../../../units", () => ({ useUnitSystem: () => "si" }));
+// The records section fetches on its own; it has its own tests.
+vi.mock("./RecordSets", () => ({
+  RecordSets: () => null,
+  useElementRecords: () => ({ sets: [], refetch: () => {} }),
+}));
 
 describe("PropertiesSection", () => {
   it("offers a field for every kind of value the schema says is writable", () => {

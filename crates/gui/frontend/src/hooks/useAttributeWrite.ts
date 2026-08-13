@@ -2,9 +2,11 @@ import { useCallback } from "react";
 import { useAppState } from "../AppContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
 import {
+  type RecordSet,
   setCollectionContents,
   setElementAttribute,
   setElementEnds,
+  setElementRecords,
 } from "./network";
 import { saveProjectOnDisk } from "./projects";
 import { pushUndoEntry, stackKey } from "./undoStack";
@@ -175,6 +177,50 @@ export function useCollectionContentsWrite(): (
             ops: [{ op: "contents", kind, id: elementId, rows: previous }],
           },
           redo: { ops: [{ op: "contents", kind, id: elementId, rows }] },
+        });
+      }
+      await saveProjectOnDisk(activeProjectId, activeScenarioId);
+      markEdited(activeProjectId, activeScenarioId);
+    },
+    [activeProjectId, activeScenarioId, markEdited, showToast],
+  );
+}
+
+/**
+ * The same flow for a set of records attached to an element (§4.5.2.3).
+ *
+ * The fourth of these, and the last: every editable thing in the model
+ * now goes through one of them, so none can ship with only the command
+ * and none has to ask which of the four it is.
+ *
+ * `previous` is the set the panel was showing, and it is the whole
+ * inverse — the write replaces every row.
+ */
+export function useElementRecordsWrite(): (
+  elementId: string,
+  set: string,
+  rows: RecordSet["rows"],
+  previous?: RecordSet["rows"],
+) => Promise<void> {
+  const { activeProjectId, activeScenarioId, showToast } = useAppState();
+  const { markEdited } = useNetworkVersion();
+
+  return useCallback(
+    async (elementId, set, rows, previous) => {
+      if (!activeProjectId) return;
+      try {
+        await setElementRecords(activeProjectId, elementId, set, rows);
+      } catch (err) {
+        showToast(typeof err === "string" ? err : String(err), "error");
+        throw err;
+      }
+      if (previous) {
+        pushUndoEntry(stackKey(activeProjectId, activeScenarioId ?? null), {
+          label: `Edited ${elementId}`,
+          undo: {
+            ops: [{ op: "records", id: elementId, set, rows: previous }],
+          },
+          redo: { ops: [{ op: "records", id: elementId, set, rows }] },
         });
       }
       await saveProjectOnDisk(activeProjectId, activeScenarioId);

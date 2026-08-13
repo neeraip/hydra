@@ -1247,6 +1247,71 @@ export async function setElementAttribute(
 }
 
 /**
+ * One column of a record set, described exactly as an attribute is —
+ * which is what lets one renderer draw both.
+ */
+export interface RecordColumn {
+  key: string;
+  label: string;
+  kind: OptionKind;
+  quantity?: ElementAttributeQuantity;
+  references?: string[];
+}
+
+/**
+ * One set of records attached to an element (hydra-common §4.5.2.3):
+ * rows that belong to it and have no identity of their own — a
+ * junction's demand categories, a vertex's dry-weather inflows.
+ */
+export interface RecordSet {
+  /** What a write is addressed by. */
+  key: string;
+  label: string;
+  columns: RecordColumn[];
+  /** One value per column, in column order. */
+  rows: Array<Array<number | string | null>>;
+  /** Whether a write may be offered. A set served read-only is not a
+   * failure: showing what is attached is worth doing on its own. */
+  editable: boolean;
+}
+
+/** Every record set attached to one element; empty for one that carries
+ *  none, and outside Tauri. */
+export async function getElementRecords(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  elementId: string,
+): Promise<RecordSet[]> {
+  return tryInvokeOr<RecordSet[]>(
+    "get_element_records",
+    { projectId, scenarioId: scenarioId ?? null, elementId },
+    [],
+  );
+}
+
+/**
+ * Replace one record set (hydra-common §4.5.2.3).
+ *
+ * The whole set every time: adding a record is writing it with a row
+ * more. One validation pass, and the inverse is the set that was there.
+ *
+ * Throws what the engine refused, so a caller can say why.
+ */
+export async function setElementRecords(
+  projectId: string,
+  elementId: string,
+  set: string,
+  rows: Array<Array<number | string | null>>,
+): Promise<void> {
+  await invoke<void>("set_element_records", {
+    projectId,
+    elementId,
+    set,
+    rows,
+  });
+}
+
+/**
  * Replace one collection element's contents (hydra-common §4.5.2.2).
  *
  * The whole table every time, because the rows are ordered and

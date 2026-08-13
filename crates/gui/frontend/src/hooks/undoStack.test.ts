@@ -409,6 +409,27 @@ describe("inverseOp", () => {
     ).toBeNull();
   });
 
+  it("puts a whole record set back", () => {
+    // Same shape as contents, and for the same reason: the set is
+    // replaced whole, so the rows that were there are the whole of what
+    // an undo restores. A junction's demand categories cannot be undone
+    // one at a time — the total they add to is what the model holds.
+    expect(
+      inverseOp(
+        { op: "records", id: "J1", set: "demands", rows: [[4, "", ""]] },
+        { records: [[10, "P1", "Residential"]] },
+      ),
+    ).toEqual({
+      op: "records",
+      id: "J1",
+      set: "demands",
+      rows: [[10, "P1", "Residential"]],
+    });
+    expect(
+      inverseOp({ op: "records", id: "J1", set: "demands", rows: [] }),
+    ).toBeNull();
+  });
+
   it("inverts a rename by renaming back", () => {
     expect(
       inverseOp({ op: "rename", kind: "junction", from: "J1", to: "J2" }),

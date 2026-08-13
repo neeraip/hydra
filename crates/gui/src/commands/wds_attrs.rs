@@ -483,7 +483,7 @@ pub(crate) fn set_attribute(
                     n => {
                         return Err(format!(
                             "'{element_id}' has {n} demand categories; \
-                             their total cannot be set as one number"
+                             edit them in Demand categories, not as one total"
                         ));
                     }
                 }
