@@ -497,6 +497,46 @@ mod tests {
         }
     }
 
+    /// A divider's diverted link is a declared reference, so the form
+    /// asks for it and the create applies it — the kind needs no special
+    /// arm for that, because a reference supplied at creation is written
+    /// by the same path an edit uses.
+    ///
+    /// Asserted because it is easy to believe otherwise: the constructor
+    /// builds a divider pointing at nothing, and what makes the form's
+    /// answer stick is the field write that follows it.
+    #[test]
+    fn a_divider_is_created_pointing_at_the_link_the_form_named() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [OUTFALLS]\nO1 8 FREE NO\n\
+                     [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+
+        let mut element = new("divider", "D1");
+        element.position = Some([0.0, 0.0]);
+        element
+            .fields
+            .insert("divertedLink".into(), serde_json::json!("C1"));
+
+        super::super::uds_create::create_uds_vertex(&mut net, "divider", "D1", 0.0, 0.0, 9.0)
+            .expect("divider");
+        apply_fields(&element, &[], |key, value| {
+            super::super::uds_attrs::set_attribute(&mut net, "D1", key, value)
+        })
+        .expect("the form's answer reaches the model");
+
+        let made = net.vertices.iter().find(|v| v.id == "D1").expect("D1");
+        let hydra::uds::model::VertexKind::Divider { diverted_link, .. } = made.kind else {
+            panic!("D1 is not a divider");
+        };
+        assert_eq!(
+            diverted_link.and_then(|i| net.links.get(i)).map(|l| &l.id),
+            Some(&"C1".to_string())
+        );
+    }
+
     /// A refusal says what a new one would *lack*, never where to go
     /// instead.
     ///
