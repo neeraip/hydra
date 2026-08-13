@@ -180,11 +180,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Cv",
-        creatable: false,
-        not_creatable_because: Some(
-            "a curve's role decides what units its two columns are read in, \
-             and nothing here can choose one",
-        ),
+        creatable: true,
+        // Creatable since a form can ask for a choice. The role is the
+        // whole difficulty — it decides what units the two columns are
+        // read in — so it is chosen rather than defaulted, and there is
+        // nothing else a new curve needs.
+        not_creatable_because: None,
     },
     ElementKind {
         id: "timeseries",
@@ -576,7 +577,13 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "curve" => vec![
-            attr("curveType", "Type", text(), None),
+            // The role, which is the whole of what a new curve needs and
+            // the reason the kind was unreachable: it decides what units
+            // the two columns are *read* in, so no default is defensible
+            // and the choice has to be made rather than supplied.
+            rw("curveType", "Type", curve_roles(), None),
+            // A count; the points themselves are the element's contents
+            // (§4.5.2.2), edited in their own panel.
             attr("points", "Points", num(), None),
         ],
         "timeseries" => vec![
@@ -782,6 +789,37 @@ fn numd(default: f64) -> OptionKind {
         default: Some(default),
         min: None,
         max: None,
+    }
+}
+
+/// The curve roles, in the predecessor's own keywords.
+///
+/// No default: the role decides what the two columns *mean*, so a
+/// storage curve created as a rating one is not a curve set to the wrong
+/// thing — it is two numbers read in the wrong units.
+fn curve_roles() -> OptionKind {
+    OptionKind::Choice {
+        default: None,
+        items: [
+            "STORAGE",
+            "DIVERSION",
+            "TIDAL",
+            "RATING",
+            "CONTROL",
+            "SHAPE",
+            "WEIR",
+            "PUMP1",
+            "PUMP2",
+            "PUMP3",
+            "PUMP4",
+            "PUMP5",
+        ]
+        .iter()
+        .map(|v| hydra_common::ChoiceItem {
+            value: (*v).to_string(),
+            label: (*v).to_string(),
+        })
+        .collect(),
     }
 }
 

@@ -312,6 +312,37 @@ const GRATE_TYPES: [(&str, hydra::uds::model::GrateKind); 8] = {
     ]
 };
 
+/// The curve roles, in the predecessor's own keywords.
+///
+/// Beside the writer's table rather than derived from it, because a
+/// create takes a keyword and a spelling that drifted would write a role
+/// the reader cannot read back.
+const CURVE_ROLES: [(&str, hydra::uds::model::CurveKind); 12] = {
+    use hydra::uds::model::CurveKind as C;
+    [
+        ("STORAGE", C::Storage),
+        ("DIVERSION", C::Diversion),
+        ("TIDAL", C::Tidal),
+        ("RATING", C::Rating),
+        ("CONTROL", C::Control),
+        ("SHAPE", C::Shape),
+        ("WEIR", C::WeirCoeff),
+        ("PUMP1", C::Pump1),
+        ("PUMP2", C::Pump2),
+        ("PUMP3", C::Pump3),
+        ("PUMP4", C::Pump4),
+        ("PUMP5", C::Pump5),
+    ]
+};
+
+/// The `CurveKind` a keyword names, or `None` for one no reader knows.
+pub(crate) fn curve_kind(name: &str) -> Option<hydra::uds::model::CurveKind> {
+    CURVE_ROLES
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| *v)
+}
+
 /// The `GrateKind` a keyword names, or `None` for one no reader knows.
 pub(crate) fn grate_kind(name: &str) -> Option<hydra::uds::model::GrateKind> {
     GRATE_TYPES
@@ -369,6 +400,31 @@ pub(crate) fn create_uds_inlet(
         custom_curve: None,
         drop_grate: false,
         drop_curb: false,
+    });
+    Ok(())
+}
+
+/// Add a curve of a given role.
+///
+/// The role is the caller's and cannot be defaulted: it decides what
+/// units the two columns are *read* in, so a storage curve created as a
+/// rating one is not a curve set to the wrong thing, it is two numbers
+/// read in the wrong units.
+pub(crate) fn create_uds_curve(net: &mut Network, id: &str, role: &str) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("curve") {
+        return Err(refuse_kind("curve"));
+    }
+    let kind = curve_kind(role).ok_or_else(|| format!("'{role}' is not a curve role"))?;
+    net.curves.push(hydra::uds::model::Curve {
+        id: id.to_string(),
+        kind,
+        // Two points, as a curve of one is a value and every evaluation
+        // of it an extrapolation — and not none, which the writer would
+        // drop at the next save. The shape is entered afterwards.
+        points: vec![(0.0, 0.0), (1.0, 1.0)],
     });
     Ok(())
 }
@@ -581,6 +637,7 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
             });
             Ok(())
         }
+        "curve" => Err("a curve needs its role, which decides what its columns mean".into()),
         "timeseries" => {
             net.timeseries.push(hydra::uds::model::TimeSeries {
                 id: id.to_string(),
@@ -1001,14 +1058,18 @@ O1 100 0
     /// units its two columns are read in. There is a defensible default
     /// for the first and none for the second.
     #[test]
-    fn a_pattern_is_created_flat_and_a_curve_is_refused() {
+    fn a_pattern_is_created_flat_and_a_curve_needs_its_role() {
         let mut net = model();
         create_uds_container(&mut net, "pattern", "PX").expect("pattern");
         let made = net.patterns.iter().find(|p| p.id == "PX").expect("PX");
         assert_eq!(made.factors, vec![1.0; 24]);
 
+        // A curve does not go through the container path at all: its
+        // role is the whole of what it needs, and a create without one
+        // says so rather than picking a role that would change what the
+        // columns mean.
         let err = create_uds_container(&mut net, "curve", "CX").expect_err("should refuse");
-        assert!(err.contains("units"), "unhelpful: {err}");
+        assert!(err.contains("role"), "unhelpful: {err}");
 
         // And it survives the round trip, which is what makes it an
         // element the user added rather than one that vanishes on save.
@@ -1272,6 +1333,33 @@ O1 100 0
         );
         let back = again.inlets.iter().find(|i| i.id == "IN2").expect("IN2");
         assert!(back.grate.is_some() && back.curb.is_some());
+    }
+
+    /// The kind whose blocker was a choice nobody could make. A role
+    /// decides what units the two columns are *read* in, so it cannot be
+    /// defaulted — and until a form could ask for a choice, that made
+    /// the kind unreachable rather than merely awkward.
+    #[test]
+    fn a_curve_is_created_under_the_role_it_is_given() {
+        let mut net = gaged_model();
+        create_uds_curve(&mut net, "ST9", "STORAGE").expect("a storage curve");
+        let made = net.curves.iter().find(|c| c.id == "ST9").expect("ST9");
+        assert_eq!(made.kind, hydra::uds::model::CurveKind::Storage);
+        assert_eq!(made.points.len(), 2, "a curve of one point is a value");
+
+        // A role no reader knows is refused rather than written.
+        assert!(create_uds_curve(&mut net, "X", "NOPE").is_err());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        // The role has to survive the round trip, because it is the one
+        // thing that says how to read the two numbers beside it.
+        let back = again.curves.iter().find(|c| c.id == "ST9").expect("ST9");
+        assert_eq!(back.kind, hydra::uds::model::CurveKind::Storage);
     }
 
     #[test]

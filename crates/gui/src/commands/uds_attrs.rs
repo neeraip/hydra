@@ -1796,6 +1796,13 @@ pub(crate) fn set_attribute(
     }
     // A grate's family is a keyword rather than a number, so it is
     // matched here with the other textual writes.
+    // A curve's role, which is a keyword and not a number. Writable so a
+    // curve created under the wrong one can be corrected — the points
+    // stay as written, because the role says how to *read* them and
+    // reinterpreting them silently would be a second, hidden edit.
+    if key == "curveType" {
+        return set_curve_role(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "grateType" {
         return set_grate_type(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -1962,6 +1969,19 @@ fn set_link_attribute(
         }
         _ => return Err(unwritable(key)),
     }
+    Ok(())
+}
+
+/// Set a curve's role, by the predecessor's own keyword.
+fn set_curve_role(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    let kind = super::uds_create::curve_kind(name)
+        .ok_or_else(|| format!("'{name}' is not a curve role"))?;
+    let curve = net
+        .curves
+        .iter_mut()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    curve.kind = kind;
     Ok(())
 }
 

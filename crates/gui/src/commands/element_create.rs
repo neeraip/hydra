@@ -163,6 +163,13 @@ pub fn create_element(
                     // default for a vertex nobody has surveyed.
                     0.0,
                 )?,
+                Placement::Nowhere if element.kind == "curve" => {
+                    super::uds_create::create_uds_curve(
+                        &mut draft,
+                        &id,
+                        &required_text(&element, "curveType")?,
+                    )?;
+                }
                 Placement::Nowhere if element.kind == "inlet" => {
                     // Each opening is a pair, present only when it was
                     // given a size — the form offers all three and the
@@ -239,6 +246,7 @@ pub fn create_element(
                 Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
                 Placement::At(_, _) if element.kind == "raingage" => &["source"],
                 Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
+                Placement::Nowhere if element.kind == "curve" => &["curveType"],
                 Placement::Nowhere if element.kind == "inlet" => &[
                     "grateLength",
                     "grateWidth",
@@ -410,14 +418,13 @@ mod tests {
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
         let err = creatable_class("uds", "outlet").expect_err("should refuse");
         assert!(err.contains("defensible"), "unhelpful: {err}");
-        // The two engines answer differently for the same kind, and the
-        // difference is the data model's rather than the editor's: a
+        // Both engines' curves are creatable now, and the difference
+        // between them survives in what a create has to be told: a
         // water-distribution curve's purpose is inferred from what
-        // references it, so a new one needs nothing said; a drainage
-        // curve declares a role that decides what units its columns are
-        // read in, and there is no defensible one.
-        let err = creatable_class("uds", "curve").expect_err("should refuse");
-        assert!(err.contains("units"), "unhelpful: {err}");
+        // references it, so a new one needs nothing said, while a
+        // drainage curve's role decides what units its columns are read
+        // in and has to be chosen.
+        assert!(creatable_class("uds", "curve").is_ok());
         assert!(creatable_class("wds", "curve").is_ok());
         assert!(creatable_class("uds", "junction").is_ok());
     }
