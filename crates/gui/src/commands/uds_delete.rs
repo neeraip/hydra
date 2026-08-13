@@ -1102,9 +1102,17 @@ OL1 J2 J3 0 TABULAR/DEPTH RC1 NO
 C1 CIRCULAR 1.5 0 0 0
 C2 CIRCULAR 1.5 0 0 0
 C3 CIRCULAR 1.5 0 0 0
-C4 CIRCULAR 1.5 0 0 0
+C4 IRREGULAR TR1
 GUT1 STREET ST1
 SEW1 CIRCULAR 1.5 0 0 0
+[TRANSECTS]
+NC 0.02 0.02 0.016
+X1 TR1 3 0 0 0 0 0 0 0
+GR 10 0 0 5 10 10
+[LANDUSES]
+LU1 0 0 0
+[COVERAGES]
+S1 LU1 50
 [STREETS]
 ST1 20 0.5 2 0.016 0.1 2 1 10 4 0.02
 [INLETS]
@@ -1202,18 +1210,53 @@ S2 10 20
 
     /// `src` with every line naming one of `ids` taken out — the model
     /// that never had them.
+    ///
+    /// Most sections name their element in the first token, which is one
+    /// rule. Two do not, and both are elements this file can remove, so
+    /// both are handled rather than left as a hole in the check:
+    ///
+    ///  - a **transect** is named on its `X1` line and on none of the
+    ///    `GR` lines that belong to it, so striking one means dropping
+    ///    its header and every survey line until the next transect
+    ///    begins;
+    ///  - a **coverage** names its parcel first and the land use second.
     fn without(src: &str, ids: &[&str]) -> String {
         let names = |token: &str| ids.iter().any(|id| token.eq_ignore_ascii_case(id));
         let mut out = String::new();
+        let mut section = String::new();
+        // Set while the survey lines of a struck transect are going past.
+        let mut dropping_transect = false;
         for line in src.lines() {
             let mut tokens = line.split_whitespace();
             let Some(first) = tokens.next() else {
                 out.push('\n');
                 continue;
             };
+            if first.starts_with('[') {
+                section = first.to_ascii_uppercase();
+                dropping_transect = false;
+            }
+            if section == "[TRANSECTS]" {
+                match first {
+                    "X1" => dropping_transect = tokens.next().is_some_and(names),
+                    // `NC` opens a new roughness group rather than a
+                    // transect, so it ends whatever was being dropped.
+                    "NC" => dropping_transect = false,
+                    _ => {}
+                }
+                if dropping_transect {
+                    continue;
+                }
+            }
+            // A coverage is the one line that names a land use second.
+            if section == "[COVERAGES]" && tokens.next().is_some_and(names) {
+                continue;
+            }
             if names(first) {
                 continue;
             }
+            let mut tokens = line.split_whitespace();
+            let first = tokens.next().unwrap_or_default();
             if matches!(first, "NODES" | "LINKS" | "SUBCATCHMENTS") {
                 let kept: Vec<&str> = tokens.filter(|t| !names(t)).collect();
                 out.push_str(&format!("{first} {}\n", kept.join(" ")));
@@ -1256,6 +1299,14 @@ S2 10 20
                 "SPAREPAT HOURLY 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1",
             ),
             ("[CURVES]", "SPARECV RATING 0 0"),
+            ("[LANDUSES]", "SPARELU 0 0 0"),
+            // After the roughness line rather than after the header: an
+            // `X1` above its `NC` is a transect with no roughness group
+            // to belong to.
+            (
+                "NC 0.02 0.02 0.016",
+                "X1 SPARETR 2 0 0 0 0 0 0 0\nGR 5 0 0 5",
+            ),
         ];
         let mut out = String::new();
         for line in FULL.lines() {
@@ -1282,12 +1333,10 @@ S2 10 20
     /// incomplete, which is the one thing the map cannot check about
     /// itself. Verified by removing a holder and watching it fail.
     ///
-    /// Eleven of the thirteen collections. Transects and land uses are
-    /// absent because this comparison works by striking out every line
-    /// whose *first token* is the id, and neither names itself that way
-    /// on every line — a transect's identifier sits on its `X1` line and
-    /// nowhere else, and a coverage names the parcel first. Their
-    /// holders are covered by the refusal tests rather than by a twin.
+    /// All thirteen collections. Two of them cost the twin builder a
+    /// rule each, because neither names itself in the first token of
+    /// every line it owns — a transect is named on its `X1` line and on
+    /// none of its survey lines, and a coverage names its parcel first.
     #[test]
     fn removing_a_container_leaves_the_model_that_never_had_it() {
         let source = with_spares();
@@ -1309,6 +1358,8 @@ S2 10 20
             "SPARESP",
             "SPAREPAT",
             "SPARECV",
+            "SPARELU",
+            "SPARETR",
         ] {
             // It really is in there, and really is first — otherwise the
             // removal shifts nothing and the comparison is vacuous.
@@ -1370,6 +1421,8 @@ S2 10 20
             ("inlets", net.inlets.len()),
             ("curves", net.curves.len()),
             ("patterns", net.patterns.len()),
+            ("transects", net.transects.len()),
+            ("land uses", net.land_uses.len()),
         ] {
             assert!(n > 0, "the fixture has no {what}");
         }
