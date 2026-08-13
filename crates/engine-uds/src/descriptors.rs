@@ -28,6 +28,7 @@ use hydra_common::{
 pub const ELEMENT_KINDS: &[ElementKind] = &[
     ElementKind {
         id: "junction",
+        group: Some("Nodes"),
         label: "Junction",
         label_plural: "Junctions",
         class: ElementClass::Point,
@@ -38,6 +39,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "outfall",
+        group: Some("Nodes"),
         label: "Outfall",
         label_plural: "Outfalls",
         class: ElementClass::Point,
@@ -48,6 +50,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "divider",
+        group: Some("Nodes"),
         label: "Divider",
         label_plural: "Dividers",
         class: ElementClass::Point,
@@ -64,6 +67,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "storage",
+        group: Some("Nodes"),
         label: "Storage unit",
         label_plural: "Storage units",
         class: ElementClass::Point,
@@ -77,6 +81,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "raingage",
+        group: Some("Rain gages"),
         label: "Rain gage",
         label_plural: "Rain gages",
         class: ElementClass::Point,
@@ -90,6 +95,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "conduit",
+        group: Some("Links"),
         label: "Conduit",
         label_plural: "Conduits",
         class: ElementClass::Polyline,
@@ -100,6 +106,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "pump",
+        group: Some("Links"),
         label: "Pump",
         label_plural: "Pumps",
         class: ElementClass::Polyline,
@@ -112,6 +119,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "orifice",
+        group: Some("Links"),
         label: "Orifice",
         label_plural: "Orifices",
         class: ElementClass::Polyline,
@@ -124,6 +132,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "weir",
+        group: Some("Links"),
         label: "Weir",
         label_plural: "Weirs",
         class: ElementClass::Polyline,
@@ -134,6 +143,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "outlet",
+        group: Some("Links"),
         label: "Outlet",
         label_plural: "Outlets",
         class: ElementClass::Polyline,
@@ -147,6 +157,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "subcatchment",
+        group: Some("Catchments"),
         label: "Subcatchment",
         label_plural: "Subcatchments",
         class: ElementClass::Region,
@@ -160,21 +171,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         not_creatable_because: None,
     },
     ElementKind {
-        id: "pollutant",
-        label: "Pollutant",
-        label_plural: "Pollutants",
-        class: ElementClass::Collection,
-        role: None,
-        badge: "Po",
-        // Creatable, and its refusal named the wrong thing: buildup and
-        // washoff are kept on the *land uses*, not here. A new one is a
-        // constituent that exists and which nothing yet generates —
-        // every value a genuine zero.
-        creatable: true,
-        not_creatable_because: None,
-    },
-    ElementKind {
         id: "curve",
+        group: Some("Curves and patterns"),
         label: "Curve",
         label_plural: "Curves",
         class: ElementClass::Collection,
@@ -188,7 +186,22 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         not_creatable_because: None,
     },
     ElementKind {
+        id: "pattern",
+        group: Some("Curves and patterns"),
+        label: "Pattern",
+        label_plural: "Patterns",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Pa",
+        // Creatable since its multipliers became editable. Its kind
+        // decides the pattern's *length* rather than what its numbers
+        // mean, so a flat hourly one is complete rather than a guess.
+        creatable: true,
+        not_creatable_because: None,
+    },
+    ElementKind {
         id: "timeseries",
+        group: Some("Rainfall records"),
         label: "Time series",
         label_plural: "Time series",
         class: ElementClass::Collection,
@@ -202,32 +215,34 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         not_creatable_because: None,
     },
     ElementKind {
-        id: "pattern",
-        label: "Pattern",
-        label_plural: "Patterns",
+        id: "hydrograph",
+        group: Some("Rainfall records"),
+        label: "Unit hydrograph",
+        label_plural: "Unit hydrographs",
         class: ElementClass::Collection,
         role: None,
-        badge: "Pa",
-        // Creatable since its multipliers became editable. Its kind
-        // decides the pattern's *length* rather than what its numbers
-        // mean, so a flat hourly one is complete rather than a guess.
+        badge: "Uh",
+        creatable: false,
+        not_creatable_because: Some("a unit hydrograph is its per-month responses"),
+    },
+    ElementKind {
+        id: "pollutant",
+        group: Some("Water quality"),
+        label: "Pollutant",
+        label_plural: "Pollutants",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Po",
+        // Creatable, and its refusal named the wrong thing: buildup and
+        // washoff are kept on the *land uses*, not here. A new one is a
+        // constituent that exists and which nothing yet generates —
+        // every value a genuine zero.
         creatable: true,
         not_creatable_because: None,
     },
     ElementKind {
-        id: "rule",
-        label: "Control rule",
-        label_plural: "Control rules",
-        class: ElementClass::Collection,
-        role: None,
-        badge: "Ru",
-        creatable: false,
-        not_creatable_because: Some(
-            "a rule is a statement about the network, which has to be written out",
-        ),
-    },
-    ElementKind {
         id: "landuse",
+        group: Some("Water quality"),
         label: "Land use",
         label_plural: "Land uses",
         class: ElementClass::Collection,
@@ -241,6 +256,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "aquifer",
+        group: Some("Ground and climate"),
         label: "Aquifer",
         label_plural: "Aquifers",
         class: ElementClass::Collection,
@@ -254,6 +270,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "snowpack",
+        group: Some("Ground and climate"),
         label: "Snow pack",
         label_plural: "Snow packs",
         class: ElementClass::Collection,
@@ -266,17 +283,21 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         ),
     },
     ElementKind {
-        id: "hydrograph",
-        label: "Unit hydrograph",
-        label_plural: "Unit hydrographs",
+        id: "rule",
+        group: Some("Controls"),
+        label: "Control rule",
+        label_plural: "Control rules",
         class: ElementClass::Collection,
         role: None,
-        badge: "Uh",
+        badge: "Ru",
         creatable: false,
-        not_creatable_because: Some("a unit hydrograph is its per-month responses"),
+        not_creatable_because: Some(
+            "a rule is a statement about the network, which has to be written out",
+        ),
     },
     ElementKind {
         id: "lidcontrol",
+        group: Some("Runoff controls"),
         label: "LID control",
         label_plural: "LID controls",
         class: ElementClass::Collection,
@@ -287,6 +308,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "transect",
+        group: Some("Street drainage"),
         label: "Transect",
         label_plural: "Transects",
         class: ElementClass::Collection,
@@ -302,6 +324,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     // and curves, referenced by conduits rather than placed on the map.
     ElementKind {
         id: "street",
+        group: Some("Street drainage"),
         label: "Street",
         label_plural: "Streets",
         class: ElementClass::Collection,
@@ -318,6 +341,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     // property of the conduit that uses it.
     ElementKind {
         id: "inlet",
+        group: Some("Street drainage"),
         label: "Inlet design",
         label_plural: "Inlet designs",
         class: ElementClass::Collection,
@@ -1011,6 +1035,49 @@ mod tests {
     /// write actually accepts each one is asserted where the write is,
     /// by reading every editable key back after setting it — neither
     /// test would catch what the other does.
+    /// A group is a name on kinds already adjacent in the catalog, not
+    /// an instruction to gather kinds that are not (§4.2.1) — so an
+    /// application draws a heading wherever the group changes and never
+    /// reorders. A group appearing twice would draw two headings with
+    /// the same words, which reads as a duplicate rather than as two
+    /// runs of one thing.
+    #[test]
+    fn each_group_is_one_run_of_the_catalog() {
+        let mut runs: Vec<&str> = Vec::new();
+        for kind in ELEMENT_KINDS {
+            let Some(group) = kind.group else { continue };
+            if runs.last() != Some(&group) {
+                assert!(
+                    !runs.contains(&group),
+                    "'{group}' is split across the catalog"
+                );
+                runs.push(group);
+            }
+        }
+        assert!(runs.len() > 1, "no grouping to check");
+    }
+
+    /// No group spans the rule the rail draws between what is on the map
+    /// and what is not. A heading with a horizontal line through it is
+    /// two half-headings, and the reader cannot tell which one they are
+    /// under.
+    #[test]
+    fn no_group_straddles_the_spatial_divide() {
+        for kind in ELEMENT_KINDS {
+            let Some(group) = kind.group else { continue };
+            let spatial = kind.class != ElementClass::Collection;
+            for other in ELEMENT_KINDS.iter().filter(|k| k.group == Some(group)) {
+                assert_eq!(
+                    other.class != ElementClass::Collection,
+                    spatial,
+                    "'{group}' holds both {} and {}",
+                    kind.id,
+                    other.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn only_values_are_marked_editable() {
         for kind in ELEMENT_KINDS {

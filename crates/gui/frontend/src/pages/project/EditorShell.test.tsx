@@ -12,7 +12,13 @@ import {
 const sections: EditorSection[] = [
   { id: "junctions", label: "Junctions", count: 1204, kindId: "junction" },
   { id: "pipes", label: "Pipes", count: 1876, kindId: "pipe", dirtyCount: 1 },
-  { id: "patterns", label: "Patterns", count: 6, startsGroup: true },
+  {
+    id: "patterns",
+    label: "Patterns",
+    count: 6,
+    startsGroup: true,
+    groupLabel: "Patterns and curves",
+  },
 ];
 
 const renderShell = (over: Partial<Parameters<typeof EditorShell>[0]> = {}) => {
@@ -170,5 +176,20 @@ describe("EditorShell", () => {
 
   it("survives an engine that has no sections yet", () => {
     expect(() => renderShell({ sections: [] })).not.toThrow();
+  });
+
+  it("shows the engine's heading above the entry that opens a group", () => {
+    // The rail never learns what a group means — it draws the word the
+    // engine supplied, above the entry that opens it.
+    render(
+      <EditorShell
+        sections={sections}
+        activeSectionId="junctions"
+        onSelectSection={() => {}}
+      >
+        <div />
+      </EditorShell>,
+    );
+    expect(screen.getByText("Patterns and curves")).toBeDefined();
   });
 });

@@ -45,9 +45,13 @@ export interface EditorSection {
    * badge the canvas and the inspector use, so a kind has one identity
    * everywhere it appears. Absent for sections that are not a kind. */
   kindId?: string;
-  /** Starts a new group above this entry. Used to part the spatial kinds
-   * from the collections without inventing a second level of navigation. */
+  /** The heavier rule above this entry, parting the kinds that sit on
+   * the map from the ones that do not. */
   startsGroup?: boolean;
+  /** The engine's name for the group this entry opens (§4.2.1), drawn as
+   * a heading above it. Absent where this entry continues the group
+   * above, or where the engine names no groups at all. */
+  groupLabel?: string;
 }
 
 /** Amber, for staged-but-unsaved state. The one place this GUI uses colour
@@ -125,6 +129,25 @@ export function EditorShell({
                       flexShrink: 0,
                     }}
                   />
+                )}
+                {/* The engine's word for what follows. Outside the
+                    button, like the rule, so the space above a label is
+                    not part of the row's click and hover target. */}
+                {s.groupLabel && (
+                  <div
+                    style={{
+                      padding: s.startsGroup ? "0 14px 4px" : "10px 14px 4px",
+                      fontSize: "var(--text-sm)",
+                      fontWeight: 600,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      color: "var(--text-tertiary)",
+                      fontFamily: "var(--font-ui)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {s.groupLabel}
+                  </div>
                 )}
                 <button
                   type="button"

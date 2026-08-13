@@ -18,6 +18,7 @@ use hydra_common::{
 pub const ELEMENT_KINDS: &[ElementKind] = &[
     ElementKind {
         id: "junction",
+        group: Some("Nodes"),
         label: "Junction",
         label_plural: "Junctions",
         class: ElementClass::Point,
@@ -28,6 +29,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "reservoir",
+        group: Some("Nodes"),
         label: "Reservoir",
         label_plural: "Reservoirs",
         class: ElementClass::Point,
@@ -38,6 +40,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "tank",
+        group: Some("Nodes"),
         label: "Tank",
         label_plural: "Tanks",
         class: ElementClass::Point,
@@ -48,6 +51,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "pipe",
+        group: Some("Links"),
         label: "Pipe",
         label_plural: "Pipes",
         class: ElementClass::Polyline,
@@ -58,6 +62,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "pump",
+        group: Some("Links"),
         label: "Pump",
         label_plural: "Pumps",
         class: ElementClass::Polyline,
@@ -68,6 +73,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "valve",
+        group: Some("Links"),
         label: "Valve",
         label_plural: "Valves",
         class: ElementClass::Polyline,
@@ -78,6 +84,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "pattern",
+        group: Some("Patterns and curves"),
         label: "Pattern",
         label_plural: "Patterns",
         class: ElementClass::Collection,
@@ -91,6 +98,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "curve",
+        group: Some("Patterns and curves"),
         label: "Curve",
         label_plural: "Curves",
         class: ElementClass::Collection,
@@ -106,6 +114,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "control",
+        group: Some("Controls"),
         label: "Control",
         label_plural: "Controls",
         class: ElementClass::Collection,
@@ -118,6 +127,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "rule",
+        group: Some("Controls"),
         label: "Rule",
         label_plural: "Rules",
         class: ElementClass::Collection,
@@ -448,6 +458,46 @@ fn cat(value: i64, label: &str, severity: CategorySeverity) -> CategoryItem {
 
 #[cfg(test)]
 mod tests {
+    /// A group is a name on kinds already adjacent in the catalog, not
+    /// an instruction to gather kinds that are not (§4.2.1) — so an
+    /// application draws a heading wherever the group changes and never
+    /// reorders. A group appearing twice would draw two headings with
+    /// the same words.
+    #[test]
+    fn each_group_is_one_run_of_the_catalog() {
+        let mut runs: Vec<&str> = Vec::new();
+        for kind in ELEMENT_KINDS {
+            let Some(group) = kind.group else { continue };
+            if runs.last() != Some(&group) {
+                assert!(
+                    !runs.contains(&group),
+                    "'{group}' is split across the catalog"
+                );
+                runs.push(group);
+            }
+        }
+        assert!(runs.len() > 1, "no grouping to check");
+    }
+
+    /// No group spans the rule an application draws between what is on
+    /// the map and what is not. A heading with a line through it is two
+    /// half-headings, and a reader cannot tell which they are under.
+    #[test]
+    fn no_group_straddles_the_spatial_divide() {
+        for kind in ELEMENT_KINDS {
+            let Some(group) = kind.group else { continue };
+            let spatial = kind.class != ElementClass::Collection;
+            for other in ELEMENT_KINDS.iter().filter(|k| k.group == Some(group)) {
+                assert_eq!(
+                    other.class != ElementClass::Collection,
+                    spatial,
+                    "'{group}' holds both {} and {}",
+                    kind.id,
+                    other.id
+                );
+            }
+        }
+    }
 
     /// A reference names a kind, and a kind id that no catalog entry
     /// answers to is a completion list that can never be built (spec

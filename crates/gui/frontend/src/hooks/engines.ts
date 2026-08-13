@@ -176,6 +176,13 @@ export interface ElementKindInfo {
   role?: ElementRole;
   /** One- or two-character glyph for dense UI. */
   badge: string;
+  /** The heading this kind is listed under (§4.2.1), or absent for one
+   * the engine places under none.
+   *
+   * The engine's own word rather than a class: a drainage engineer says
+   * "nodes" and "links", not "points" and "polylines". Presentation
+   * only — a list that ignores it is flat and correct. */
+  group?: string;
   /** Whether elements of this kind may be created (§4.5.3). */
   creatable: boolean;
   /** What a new one would need that cannot be defaulted, in the

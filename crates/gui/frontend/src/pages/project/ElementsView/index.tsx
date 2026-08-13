@@ -50,7 +50,7 @@ import {
   EditorStatusBar,
 } from "../EditorShell";
 import { CollectionDetail } from "./CollectionDetail";
-import { railGroupBreak } from "./railGroups";
+import { railHeadings } from "./railGroups";
 
 export function ElementsView() {
   const { project } = useActiveProject();
@@ -261,16 +261,17 @@ export function ElementsView() {
   // has no geometry to highlight.
   const [openContainer, setOpenContainer] = useState<string | null>(null);
 
-  // One rule parts the kinds that sit on the map from the ones that do
-  // not, rather than a second level of navigation — the same break the
-  // wds editor draws above its collections.
-  const groupBreak = railGroupBreak(present.map((k) => k.class));
+  // Two marks, answering different questions: a rule where the kinds
+  // stop being on the map, and the engine's own heading wherever a group
+  // begins (§4.2.1). The rail never learns what any group means.
+  const headings = railHeadings(present);
   const sections: EditorSection[] = present.map((k, i) => ({
     id: k.id,
     label: k.labelPlural,
     count: k.count,
     kindId: k.id,
-    startsGroup: i === groupBreak,
+    startsGroup: headings[i].division,
+    groupLabel: headings[i].label ?? undefined,
   }));
 
   // The highlight follows whichever selection the visible class owns: a

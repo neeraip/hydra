@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { railGroupBreak } from "./railGroups";
+import { railGroupBreak, railHeadings } from "./railGroups";
 
 /**
  * Where the drainage editor's rail parts.
@@ -51,5 +51,68 @@ describe("the rail's group break", () => {
   it("marks a single break, not one per boundary", () => {
     const classes = ["point", "collection", "point", "collection"];
     expect(railGroupBreak(classes)).toBe(1);
+  });
+});
+
+/**
+ * The headings, which are the engine's word rather than the rail's.
+ *
+ * The rule and the heading answer different questions — one is derivable
+ * and the other is only the engine's to say — so they are asserted apart.
+ */
+describe("the rail's headings", () => {
+  const rail = [
+    { class: "point", group: "Nodes" },
+    { class: "point", group: "Nodes" },
+    { class: "polyline", group: "Links" },
+    { class: "collection", group: "Curves and patterns" },
+    { class: "collection", group: "Curves and patterns" },
+    { class: "collection", group: "Controls" },
+  ];
+
+  it("draws a heading only where the group changes", () => {
+    expect(railHeadings(rail).map((h) => h.label)).toEqual([
+      "Nodes",
+      null,
+      "Links",
+      "Curves and patterns",
+      null,
+      "Controls",
+    ]);
+  });
+
+  it("puts the rule where the map kinds stop, wherever the groups fall", () => {
+    // The two marks are independent: a group ends at the third entry and
+    // the rule falls at the fourth, and neither moved the other.
+    expect(railHeadings(rail).map((h) => h.division)).toEqual([
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("gives a run of one its heading", () => {
+    // A lone kind under no heading, in a rail where everything else has
+    // one, reads as an oversight rather than as a group with one member.
+    expect(
+      railHeadings([
+        { class: "point", group: "Nodes" },
+        { class: "point", group: "Rain gages" },
+        { class: "polyline", group: "Links" },
+      ]).map((h) => h.label),
+    ).toEqual(["Nodes", "Rain gages", "Links"]);
+  });
+
+  it("draws none for an engine that names no groups", () => {
+    // The field is optional, and a rail that ignores it is flat and
+    // correct — which is what a catalog written before §4.2.1 gets.
+    expect(
+      railHeadings([{ class: "point" }, { class: "collection" }]).map(
+        (h) => h.label,
+      ),
+    ).toEqual([null, null]);
   });
 });
