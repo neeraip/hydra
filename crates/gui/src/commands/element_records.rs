@@ -258,6 +258,74 @@ const DWF_SLOTS: [(&str, &str); 4] = [
     ("pattern4", "Weekend"),
 ];
 
+/// The three surfaces of a snow pack (§4.5.2.3).
+///
+/// The parameter set that fits this shape best, and the reason it needed
+/// one: a pack is three identical records — plowable, impervious,
+/// pervious — each seven melt parameters, and any of the three may be
+/// absent. The catalog could only ever publish how many were defined,
+/// which is a count of something nobody could then read.
+///
+/// The surface a row is about is its first column and is not editable:
+/// there are exactly three, they are not interchangeable, and a set that
+/// let one be renamed would let a pack have two pervious surfaces.
+fn snowpack_records(net: &hydra::uds::model::Network, id: &str) -> Option<RecordSetDto> {
+    let pack = net
+        .snowpacks
+        .iter()
+        .find(|p| p.id.eq_ignore_ascii_case(id))?;
+    let mut columns = vec![column("surface", "Surface", text())];
+    for (key, label, quantity) in [
+        ("dhMin", "Minimum melt", None),
+        ("dhMax", "Maximum melt", None),
+        ("tBase", "Base temperature", Some("temperature")),
+        ("fwFrac", "Free-water capacity", None),
+        ("initDepth", "Initial depth", Some("depth")),
+        ("initFreeWater", "Initial free water", Some("depth")),
+        ("fullCoverDepth", "Depth at full cover", Some("depth")),
+    ] {
+        columns.push(RecordColumnDto {
+            quantity: quantity.and_then(super::uds_results::quantity_descriptor),
+            ..column(key, label, number())
+        });
+    }
+    let row = |name: &str, s: &hydra::uds::model::SnowSurface| {
+        vec![
+            serde_json::json!(name),
+            serde_json::json!(s.dh_min),
+            serde_json::json!(s.dh_max),
+            serde_json::json!(s.t_base),
+            serde_json::json!(s.fw_frac),
+            serde_json::json!(s.init_depth),
+            serde_json::json!(s.init_free_water),
+            // The plowable surface is always fully covered, so it has no
+            // such depth — null rather than a zero, which would read as
+            // a surface that is bare at any depth.
+            match s.full_cover_depth {
+                Some(d) => serde_json::json!(d),
+                None => serde_json::Value::Null,
+            },
+        ]
+    };
+    Some(RecordSetDto {
+        key: "surfaces".to_string(),
+        label: "Snow surfaces".to_string(),
+        columns,
+        rows: [
+            ("Plowable", pack.plowable.as_ref()),
+            ("Impervious", pack.impervious.as_ref()),
+            ("Pervious", pack.pervious.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(name, s)| s.map(|s| row(name, s)))
+        .collect(),
+        // Read-only for now: writing one means deciding what an absent
+        // surface becomes when a row is added, and the three are not
+        // interchangeable. Served so a pack can be read at all (§4.5.2.3).
+        editable: false,
+    })
+}
+
 /// The dry-weather inflows attached to a vertex (§4.5.2.3).
 ///
 /// One row per constituent — the flow inflow, and one per pollutant — so
@@ -269,7 +337,7 @@ pub(crate) fn uds_records(net: &hydra::uds::model::Network, element_id: &str) ->
         .iter()
         .position(|v| v.id.eq_ignore_ascii_case(element_id))
     else {
-        return Vec::new();
+        return snowpack_records(net, element_id).into_iter().collect();
     };
     let mut columns = vec![
         column("constituent", "Constituent", text()),
@@ -466,6 +534,36 @@ mod tests {
 
         assert!(set_wds_records(&mut network, "J1", "nope", &[]).is_err());
         assert!(set_wds_records(&mut network, "NOPE", "demands", &[]).is_err());
+    }
+
+    /// The parameter set the record shape was needed for. A pack is
+    /// three identical surfaces, any of which may be absent, and the
+    /// catalog could only ever publish how many were defined — a count
+    /// of something nobody could then read.
+    #[test]
+    fn a_snow_pack_reports_a_row_per_surface_it_has() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [SNOWPACKS]\n\
+                     SP1 PLOWABLE 0.001 0.002 0.0 0.1 0.0 0.0 0.0\n\
+                     SP1 IMPERVIOUS 0.001 0.002 0.0 0.1 0.0 0.0 0.5\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let sets = uds_records(&net, "SP1");
+        let set = sets.first().expect("a surfaces set");
+        assert_eq!(set.key, "surfaces");
+        // Two of the three, because the file defined two — not three
+        // rows with one full of zeros.
+        assert_eq!(set.rows.len(), 2);
+        assert_eq!(set.rows[0][0].as_str(), Some("Plowable"));
+        assert_eq!(set.rows[1][0].as_str(), Some("Impervious"));
+        // The plowable surface is always fully covered, so it carries no
+        // such depth — null rather than a zero, which would read as a
+        // surface bare at any depth.
+        assert!(set.rows[0].last().expect("a cell").is_null());
+        assert!(set.rows[1].last().expect("a cell").is_f64());
+
+        assert!(uds_records(&net, "NOPE").is_empty());
     }
 
     /// An element that carries no records of a kind reports none rather
