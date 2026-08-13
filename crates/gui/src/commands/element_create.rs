@@ -203,6 +203,20 @@ pub fn create_element(
                 Placement::Nowhere => {
                     super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
                 }
+                Placement::Between(from, to) if element.kind == "outlet" => {
+                    super::uds_create::create_uds_outlet(
+                        &mut draft,
+                        &id,
+                        from,
+                        to,
+                        element
+                            .fields
+                            .get("outletCurve")
+                            .and_then(serde_json::Value::as_str),
+                        optional(&element, "ratingCoeff")
+                            .map(|c| (c, optional(&element, "ratingExponent").unwrap_or(0.5))),
+                    )?;
+                }
                 Placement::Between(from, to) if element.kind == "pump" => {
                     super::uds_create::create_uds_pump(
                         &mut draft,
@@ -260,6 +274,9 @@ pub fn create_element(
                     &["crownWidth", "curbHeight", "crossSlope"]
                 }
                 Placement::At(_, _) | Placement::Nowhere => &[],
+                Placement::Between(_, _) if element.kind == "outlet" => {
+                    &["outletCurve", "ratingCoeff", "ratingExponent"]
+                }
                 Placement::Between(_, _) if element.kind == "pump" => &["curve"],
                 Placement::Between(_, _) if element.kind == "orifice" => &["height", "width"],
                 Placement::Between(_, _) if element.kind == "weir" => {
@@ -416,8 +433,11 @@ mod tests {
     /// rather than one written here (§4.5.3).
     #[test]
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
-        let err = creatable_class("uds", "outlet").expect_err("should refuse");
-        assert!(err.contains("defensible"), "unhelpful: {err}");
+        // An aquifer is the point kind still refused, and it refuses on
+        // principle rather than for want of plumbing: its elevations
+        // would put it at datum in any model above sea level.
+        let err = creatable_class("uds", "aquifer").expect_err("should refuse");
+        assert!(err.contains("datum"), "unhelpful: {err}");
         // Both engines' curves are creatable now, and the difference
         // between them survives in what a create has to be told: a
         // water-distribution curve's purpose is inferred from what

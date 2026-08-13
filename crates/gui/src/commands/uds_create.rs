@@ -429,6 +429,79 @@ pub(crate) fn create_uds_curve(net: &mut Network, id: &str, role: &str) -> Resul
     Ok(())
 }
 
+/// Add an outlet between two existing vertices.
+///
+/// Its rating is either a tabulated curve or a power relation $Q = aH^b$,
+/// so both are offered and whichever was given decides which the outlet
+/// has — the same shape an inlet's three openings take. Neither is
+/// invented: no value for a rating coefficient is more defensible than
+/// another, which is a reason to ask for one and was never a reason to
+/// refuse the kind.
+pub(crate) fn create_uds_outlet(
+    net: &mut Network,
+    id: &str,
+    from_id: &str,
+    to_id: &str,
+    curve_id: Option<&str>,
+    functional: Option<(f64, f64)>,
+) -> Result<(), String> {
+    use hydra::uds::model::{OutletHeadBasis, OutletRating};
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("outlet") {
+        return Err(refuse_kind("outlet"));
+    }
+    let find = |name: &str| {
+        net.vertices
+            .iter()
+            .position(|v| v.id.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("'{name}' is not a node in this model"))
+    };
+    let from = find(from_id)?;
+    let to = find(to_id)?;
+    if from == to {
+        return Err("a link needs two different ends".into());
+    }
+    // The curve wins where both were given: a named relation is a
+    // statement, and two numbers left at whatever a form defaulted them
+    // to are not.
+    let rating = if let Some(name) = curve_id.filter(|n| !n.trim().is_empty()) {
+        OutletRating::Tabular {
+            curve: net
+                .curves
+                .iter()
+                .position(|c| c.id.eq_ignore_ascii_case(name.trim()))
+                .ok_or_else(|| format!("'{name}' is not a curve in this model"))?,
+        }
+    } else {
+        let (coeff, exponent) = functional
+            .ok_or_else(|| "an outlet needs a rating curve or a coefficient".to_string())?;
+        if !(coeff.is_finite() && coeff > 0.0) {
+            return Err("a rating coefficient has to be greater than zero".into());
+        }
+        if !exponent.is_finite() {
+            return Err("a rating exponent has to be a number".into());
+        }
+        OutletRating::Functional { coeff, exponent }
+    };
+    net.links.push(Link {
+        id: id.to_string(),
+        from,
+        to,
+        kind: LinkKind::Outlet {
+            offset: Offset::Depth(0.0),
+            rating,
+            // Depth above the outlet, which is what a rating is written
+            // against unless the model says otherwise.
+            head_basis: OutletHeadBasis::Depth,
+            flap_gate: false,
+        },
+        cross_section: None,
+    });
+    Ok(())
+}
+
 /// Add a rain gage reading a time series.
 ///
 /// The series has to exist, which is what the refusal this replaces was
@@ -970,26 +1043,6 @@ O1 100 0
         assert_eq!(net.vertices.len(), 2, "a refused create still added one");
     }
 
-    #[test]
-    fn a_kind_that_would_need_an_invented_value_is_refused_by_name() {
-        let mut net = model();
-        // Storage and the divider used to be here and are not: a
-        // divider's rule is never read (§7.5), and a storage unit's
-        // depth and area are asked for rather than invented. Both are
-        // asserted by their own tests below.
-        //
-        // Storage, the divider and the rain gage all used to be here and
-        // are not: what each needs is now asked for rather than invented,
-        // and each has its own test below.
-        // The one link kind still refused, and it refuses on principle
-        // rather than for want of plumbing: a rating's coefficient sets
-        // how much flow the outlet passes, and no value for that is more
-        // defensible than another.
-        let err = create_uds_link(&mut net, "outlet", "X", "J1", "O1", 10.0, Some(0.3))
-            .expect_err("should refuse");
-        assert!(err.contains("rating"), "unhelpful for outlet: {err}");
-    }
-
     /// A conduit added from a table names its two ends and nothing about
     /// its bore, because a bore is one number out of a cross-section and
     /// the rest is not editable anywhere yet. The engine supplies one
@@ -1360,6 +1413,60 @@ O1 100 0
         // thing that says how to read the two numbers beside it.
         let back = again.curves.iter().find(|c| c.id == "ST9").expect("ST9");
         assert_eq!(back.kind, hydra::uds::model::CurveKind::Storage);
+    }
+
+    /// The last kind refused for wanting a value, and the refusal was
+    /// stale by the standard the weir set: no value for a rating
+    /// coefficient is more defensible than another, which is a reason to
+    /// ask for one rather than to refuse the kind.
+    #[test]
+    fn an_outlet_is_rated_by_whichever_of_the_two_it_was_given() {
+        let mut net = gaged_model();
+        create_uds_outlet(&mut net, "OU1", "J1", "O1", None, Some((10.0, 0.5)))
+            .expect("a power relation");
+        let made = net.links.iter().find(|l| l.id == "OU1").expect("OU1");
+        assert!(matches!(
+            made.kind,
+            LinkKind::Outlet {
+                rating: hydra::uds::model::OutletRating::Functional { .. },
+                ..
+            }
+        ));
+
+        net.curves.push(hydra::uds::model::Curve {
+            id: "RC1".into(),
+            kind: hydra::uds::model::CurveKind::Rating,
+            points: vec![(0.0, 0.0), (1.0, 0.05)],
+        });
+        create_uds_outlet(&mut net, "OU2", "J1", "O1", Some("RC1"), None).expect("a curve");
+        let tabulated = net.links.iter().find(|l| l.id == "OU2").expect("OU2");
+        assert!(matches!(
+            tabulated.kind,
+            LinkKind::Outlet {
+                rating: hydra::uds::model::OutletRating::Tabular { .. },
+                ..
+            }
+        ));
+
+        // Neither given is refused: an outlet with no rating passes no
+        // flow, and that is not a state a model may hold.
+        assert!(create_uds_outlet(&mut net, "X", "J1", "O1", None, None).is_err());
+        // Nor a coefficient of nothing, nor a curve that is not there.
+        assert!(create_uds_outlet(&mut net, "X", "J1", "O1", None, Some((0.0, 0.5))).is_err());
+        assert!(create_uds_outlet(&mut net, "X", "J1", "O1", Some("NOPE"), None).is_err());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        for id in ["OU1", "OU2"] {
+            assert!(
+                again.links.iter().any(|l| l.id == id),
+                "{id} did not survive"
+            );
+        }
     }
 
     #[test]

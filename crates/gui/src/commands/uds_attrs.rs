@@ -253,6 +253,14 @@ fn link_values(
                 OutletRating::Functional { .. } => "Functional".to_string(),
             };
             m.insert("outletCurve", Text(name));
+            // Only a power relation has these two, so only one carries
+            // them — a tabulated rating has a curve instead, and a row
+            // for a coefficient it does not have would invite setting
+            // one (§4.5.1).
+            if let OutletRating::Functional { coeff, exponent } = rating {
+                m.insert("ratingCoeff", Number(*coeff));
+                m.insert("ratingExponent", Number(*exponent));
+            }
             m.insert("gated", yes_no(*flap_gate));
             "outlet"
         }
@@ -1800,6 +1808,13 @@ pub(crate) fn set_attribute(
     // curve created under the wrong one can be corrected — the points
     // stay as written, because the role says how to *read* them and
     // reinterpreting them silently would be a second, hidden edit.
+    // An outlet's rating curve, which swaps a power relation for a
+    // tabulated one. Emptying it is refused rather than clearing the
+    // rating: an outlet with no rating passes no flow and is not a
+    // state a model may hold.
+    if key == "outletCurve" {
+        return set_outlet_curve(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "curveType" {
         return set_curve_role(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -1941,6 +1956,23 @@ fn set_link_attribute(
     per_unit: f64,
 ) -> Result<(), String> {
     use hydra::uds::model::LinkKind as K;
+    // A power relation's two numbers, which only an outlet rated by one
+    // has — a tabulated rating carries a curve instead, and setting a
+    // coefficient on it would silently discard the curve.
+    if let (K::Outlet { rating, .. }, "ratingCoeff" | "ratingExponent") = (&mut link.kind, key) {
+        let hydra::uds::model::OutletRating::Functional { coeff, exponent } = rating else {
+            return Err(format!("'{}' is rated by a curve, not a relation", link.id));
+        };
+        if key == "ratingCoeff" {
+            if !(value.is_finite() && value > 0.0) {
+                return Err("a rating coefficient has to be greater than zero".into());
+            }
+            *coeff = value;
+        } else {
+            *exponent = value;
+        }
+        return Ok(());
+    }
     // The opening, which lives in the cross-section rather than on the
     // kind — so it is matched on the key before the kind, the way a tag
     // is. Both kinds that have one call it something different, which is
@@ -1969,6 +2001,25 @@ fn set_link_attribute(
         }
         _ => return Err(unwritable(key)),
     }
+    Ok(())
+}
+
+/// Point an outlet at a tabulated rating curve.
+fn set_outlet_curve(net: &mut Network, id: &str, curve_id: &str) -> Result<(), String> {
+    let found = net
+        .curves
+        .iter()
+        .position(|c| c.id.eq_ignore_ascii_case(curve_id))
+        .ok_or_else(|| format!("'{curve_id}' is not a curve in this model"))?;
+    let link = net
+        .links
+        .iter_mut()
+        .find(|l| l.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let hydra::uds::model::LinkKind::Outlet { rating, .. } = &mut link.kind else {
+        return Err(format!("'{id}' is not an outlet"));
+    };
+    *rating = hydra::uds::model::OutletRating::Tabular { curve: found };
     Ok(())
 }
 

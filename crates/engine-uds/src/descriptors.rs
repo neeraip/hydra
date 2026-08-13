@@ -135,11 +135,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "OL",
-        creatable: false,
-        not_creatable_because: Some(
-            "an outlet's rating sets how much flow it passes, and no value for that \
-             is more defensible than another",
-        ),
+        // Creatable once its rating could be asked for rather than
+        // invented. No value for a rating coefficient is more defensible
+        // than another, which is a reason to ask and was never a reason
+        // to refuse — the same correction a weir's crest height needed.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "subcatchment",
@@ -564,7 +565,15 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "outlet" => vec![
-            attr("outletCurve", "Rating curve", text(), None),
+            // A rating is either a curve or a power relation, so both are
+            // offered and whichever is given decides which the outlet
+            // has — the same shape an inlet's three openings take. Two
+            // numbers with no conventional value, asked for rather than
+            // supplied, which is what the refusal this replaced was
+            // really about.
+            rw("outletCurve", "Rating curve", text(), None),
+            rw("ratingCoeff", "Rating coefficient", num(), None),
+            rw("ratingExponent", "Rating exponent", num(), None),
             attr(
                 "gated",
                 "Flap gated",
@@ -782,6 +791,7 @@ fn referenced_kinds(key: &str) -> Vec<String> {
         // kind is what makes the kind creatable.
         "source" => vec!["timeseries".to_string()],
         "curve" => vec!["curve".to_string()],
+        "outletCurve" => vec!["curve".to_string()],
         // Every kind of conveyance node, *and* another subcatchment:
         // runoff either enters the network or cascades overland. This is
         // the attribute §4.5.1.1 was widened for — one kind id could not
