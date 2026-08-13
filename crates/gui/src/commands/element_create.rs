@@ -115,6 +115,20 @@ pub fn create_element(
         "uds" => super::mutations::mutate_uds(&app, &state, |network| {
             let mut draft = network.clone();
             match &where_ {
+                Placement::At(x, y) if class == ElementClass::Region => {
+                    // Its gage and its outlet go in up front: the model
+                    // holds both as indices and there is no value meaning
+                    // "not yet chosen", so a parcel exists pointing at
+                    // something or it does not exist at all.
+                    super::uds_create::create_uds_parcel(
+                        &mut draft,
+                        &id,
+                        *x,
+                        *y,
+                        &required_text(&element, "raingage")?,
+                        &required_text(&element, "outlet")?,
+                    )?;
+                }
                 Placement::At(x, y) => super::uds_create::create_uds_vertex(
                     &mut draft,
                     &element.kind,
@@ -143,6 +157,7 @@ pub fn create_element(
                 )?,
             }
             let consumed: &[&str] = match &where_ {
+                Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
                 Placement::At(_, _) | Placement::Nowhere => &[],
                 Placement::Between(_, _) => &["length", "diameter"],
             };
@@ -230,6 +245,19 @@ fn optional(element: &NewElement, key: &str) -> Option<f64> {
         .get(key)
         .and_then(serde_json::Value::as_f64)
         .filter(|v| v.is_finite() && *v > 0.0)
+}
+
+/// A supplied name the constructor needs, which no default can stand in
+/// for — a reference to an element that has to already exist.
+fn required_text(element: &NewElement, key: &str) -> Result<String, String> {
+    element
+        .fields
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("a {} needs its {key}", element.kind))
 }
 
 fn required(element: &NewElement, key: &str) -> Result<f64, String> {

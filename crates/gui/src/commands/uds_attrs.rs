@@ -1726,6 +1726,9 @@ pub(crate) fn set_attribute(
     // rather than holding a number, and the model stores it as an index
     // into one of two arrays — which of the two is what the name
     // decides.
+    if key == "raingage" {
+        return set_parcel_gage(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "outlet" {
         return set_parcel_outlet(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -1834,6 +1837,25 @@ fn set_link_attribute(
         }
         _ => return Err(unwritable(key)),
     }
+    Ok(())
+}
+
+/// Point a subcatchment at the gage whose rainfall drives it.
+///
+/// Stored as an index like an outlet, and required — there is no value
+/// meaning "no gage", so this replaces one rather than clearing it.
+fn set_parcel_gage(net: &mut Network, id: &str, gage_id: &str) -> Result<(), String> {
+    let gage = net
+        .gages
+        .iter()
+        .position(|g| g.id.eq_ignore_ascii_case(gage_id))
+        .ok_or_else(|| format!("'{gage_id}' is not a rain gage in this model"))?;
+    let parcel = net
+        .parcels
+        .iter_mut()
+        .find(|p| p.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    parcel.gage = gage;
     Ok(())
 }
 
@@ -1953,6 +1975,7 @@ S1  3.5  0.6  4.14  6
 
 [RAINGAGES]
 G1  INTENSITY  0:15  1.0  TIMESERIES  RS1
+G2  INTENSITY  0:15  1.0  TIMESERIES  RS1
 
 [TIMESERIES]
 RS1  0:00  0.4
@@ -2164,20 +2187,51 @@ RS1  0:00  0.4
         }
     }
 
-    /// A row the setter refuses must not be offered as editable, or the
-    /// inspector renders an input whose every use fails.
+    /// The pair of the round-trip test above, from the other side: a row
+    /// the setter refuses must not read as editable, or the inspector
+    /// renders an input whose every use fails.
+    ///
+    /// Asserted over the whole schema rather than a list of known cases,
+    /// so a key that becomes writable without its flag being flipped —
+    /// or the reverse — fails here rather than in the app.
     #[test]
     fn a_row_that_cannot_be_set_does_not_read_as_editable() {
-        let net = model();
-        for (id, key) in [("S1", "raingage"), ("C1", "shape")] {
-            let row = element_attributes(&net, id)
-                .expect("attributes")
-                .into_iter()
-                .find(|r| r.key == key);
-            if let Some(row) = row {
-                assert!(!row.editable, "{id}.{key} offers an edit it cannot take");
+        let sample = |kind: &str| -> Option<&'static str> {
+            match kind {
+                "junction" => Some("J1"),
+                "outfall" => Some("O1"),
+                "conduit" => Some("C1"),
+                "subcatchment" => Some("S1"),
+                _ => None,
+            }
+        };
+        let mut checked = 0;
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let Some(id) = sample(kind.id) else { continue };
+            for attr in hydra::uds::descriptors::attribute_schema(kind.id) {
+                if attr.editable {
+                    continue;
+                }
+                let mut net = model();
+                // Whatever shape the row is, the setter has to refuse it.
+                // A number for a numeric key and text for a textual one,
+                // so a refusal cannot come from the value being the wrong
+                // type rather than the key being unwritable.
+                let value = match attr.kind {
+                    hydra::common::OptionKind::Number { .. }
+                    | hydra::common::OptionKind::Integer { .. } => serde_json::json!(1.0),
+                    _ => serde_json::json!("X"),
+                };
+                assert!(
+                    set_attribute(&mut net, id, &attr.key, &value).is_err(),
+                    "{}.{} reads as fixed and the setter took it",
+                    kind.id,
+                    attr.key
+                );
+                checked += 1;
             }
         }
+        assert!(checked > 0, "no unwritable attribute was exercised");
     }
 
     #[test]
@@ -2194,17 +2248,19 @@ RS1  0:00  0.4
 
     #[test]
     fn a_key_this_path_cannot_set_says_so() {
-        // A referent names another object and a shape carries four
-        // geometry values behind one label; both refuse by name rather
-        // than being quietly ignored, so a caller learns which of the two
-        // it asked for.
+        // A shape carries four geometry values behind one label, so it
+        // refuses by name rather than being quietly ignored — a caller
+        // learns which of the two it asked for. The referents that used
+        // to be here are writable now, and are exercised above.
         let mut net = model();
-        let err = set_attribute(&mut net, "S1", "raingage", &serde_json::json!("G1"))
-            .expect_err("refused");
-        assert!(err.contains("raingage"), "{err}");
         let err =
             set_attribute(&mut net, "C1", "shape", &serde_json::json!(1.0)).expect_err("refused");
         assert!(err.contains("shape"), "{err}");
+        // A reference that names nothing still refuses, which is a
+        // different thing from a key that cannot be written at all.
+        let err = set_attribute(&mut net, "S1", "raingage", &serde_json::json!("NOPE"))
+            .expect_err("unknown gage");
+        assert!(err.contains("NOPE"), "{err}");
     }
 
     #[test]

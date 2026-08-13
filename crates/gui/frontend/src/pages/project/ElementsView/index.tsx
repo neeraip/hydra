@@ -397,15 +397,12 @@ export function ElementsView() {
             endIds={endIds}
             referenceIds={referenceIds}
             onAdd={
-              // The kind can be created, this dialog knows how to place
-              // its class, and there is a dialog at all — the third
-              // clause is the one that was once missing, and the button
-              // did nothing when pressed. Every class but region is
-              // placeable here now: a point by a coordinate, a line by
-              // its two ends, a container by its name alone.
-              CreateNode && creatableHere && activeClass !== "region"
-                ? () => setAdding(true)
-                : undefined
+              // The kind can be created and there is a dialog at all —
+              // the second clause is the one that was once missing, and
+              // the button did nothing when pressed. Every class is
+              // placeable here now: a point or a region by a coordinate,
+              // a line by its two ends, a container by its name alone.
+              CreateNode && creatableHere ? () => setAdding(true) : undefined
             }
             onReveal={spatial ? onReveal : undefined}
             onRename={setRenaming}
@@ -428,11 +425,7 @@ export function ElementsView() {
           // No gesture behind this one: the dialog asks where to put it,
           // or which two elements to run it between.
           position={null}
-          klass={
-            activeClass === "polyline" || activeClass === "collection"
-              ? activeClass
-              : "point"
-          }
+          klass={activeClass}
           onCreated={(_kind, id) => {
             setAdding(false);
             refetch();

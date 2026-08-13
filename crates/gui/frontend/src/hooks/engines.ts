@@ -236,8 +236,14 @@ export interface ElementAttributeInfo {
   /** The value's shape and bounds — what a create form needs to know
    * which control to draw, before any element exists to read. */
   kind: OptionKind;
-  /** The kind whose elements this attribute may name (§4.5.1.1). */
-  references?: string;
+  /** The kinds whose elements this attribute may name (§4.5.1.1).
+   *
+   * A list because a reference is not always to one kind — a drainage
+   * subcatchment discharges to a conveyance node or to another
+   * subcatchment. This interface said one kind until the create dialog
+   * needed to offer them, which nothing had caught because nothing read
+   * it. */
+  references?: string[];
 }
 
 // Static per engine and kind, exactly as the kind catalog is.

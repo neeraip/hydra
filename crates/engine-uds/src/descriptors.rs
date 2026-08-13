@@ -143,10 +143,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Region,
         role: Some(ElementRole::Boundary),
         badge: "SC",
-        creatable: false,
-        not_creatable_because: Some(
-            "a subcatchment needs an area, which is its polygon rather than a number to type",
-        ),
+        // Creatable, and its refusal was wrong twice over: an area is a
+        // plain number here and the polygon is optional display
+        // geometry. What a new one really needs is a gage and an outlet,
+        // and both are references the create can now be given.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pollutant",
@@ -180,10 +182,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Ts",
-        creatable: false,
-        not_creatable_because: Some(
-            "a time series is its list of values, and a new one would have none",
-        ),
+        // Creatable since its values became editable. A new one is two
+        // readings of nothing an hour apart, which is a series rather
+        // than a placeholder — and not an empty one, which the writer
+        // would drop at the next save.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "pattern",
@@ -382,7 +386,7 @@ fn taggable(kind_id: &str) -> bool {
 fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
     match kind_id {
         "subcatchment" => vec![
-            attr("raingage", "Rain gage", text(), None),
+            rw("raingage", "Rain gage", text(), None),
             rw("outlet", "Outlet", text(), None),
             rw("area", "Area", num(), Some("area")),
             rw("width", "Width", num(), Some("length")),

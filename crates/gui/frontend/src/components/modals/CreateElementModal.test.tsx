@@ -49,6 +49,14 @@ const KINDS = [
     creatable: false,
   },
   {
+    id: "subcatchment",
+    label: "Subcatchment",
+    labelPlural: "Subcatchments",
+    class: "region",
+    badge: "SC",
+    creatable: true,
+  },
+  {
     id: "pipe",
     label: "Pipe",
     labelPlural: "Pipes",
@@ -71,6 +79,16 @@ const SCHEMA: Record<string, unknown[]> = {
     },
   ],
   tank: [{ key: "diameter", label: "Diameter", editable: true, kind: NUMBER }],
+  subcatchment: [
+    {
+      key: "raingage",
+      label: "Rain gage",
+      editable: true,
+      kind: { type: "text", default: null },
+      references: ["raingage"],
+    },
+    { key: "area", label: "Area", editable: true, kind: NUMBER },
+  ],
   pipe: [{ key: "length", label: "Length", editable: true, kind: NUMBER }],
 };
 
@@ -86,7 +104,17 @@ vi.mock("../../hooks", async (importOriginal) => ({
   createElement: vi.fn(() => Promise.resolve()),
   useElementKinds: () => KINDS,
   useElementAttributes: (_engine: string, kind: string) => SCHEMA[kind] ?? [],
-  useReferenceIds: () => ({ junction: ["J1", "J2"], tank: ["T1"] }),
+  // Faithful to the real hook, which answers only for the kinds it was
+  // asked about — a mock that returned everything let a link's end list
+  // silently include rain gages.
+  useReferenceIds: (_p: unknown, _s: unknown, kinds: string[]) =>
+    Object.fromEntries(
+      Object.entries({
+        junction: ["J1", "J2"],
+        tank: ["T1"],
+        raingage: ["G1"],
+      }).filter(([k]) => kinds.includes(k)),
+    ),
 }));
 vi.mock("../../units", () => ({ useUnitSystem: () => "si" }));
 
@@ -134,6 +162,22 @@ describe("CreateElementModal", () => {
   it("does not ask again when a click already answered", () => {
     render(<CreateElementModal {...props} position={[5, 6]} />);
     expect(screen.queryByLabelText("X")).toBeNull();
+  });
+
+  it("asks for a reference the kind requires, with the model's own ids", () => {
+    // The change that unlocked half a catalog. A subcatchment must name a
+    // rain gage and an outlet, and the model holds both as indices with
+    // no value meaning "not yet chosen" — so unlike a number they cannot
+    // be left to the edit that follows the create.
+    render(<CreateElementModal {...props} klass="region" />);
+    const gage = screen.getByLabelText("Rain gage") as HTMLInputElement;
+    expect(gage).toBeDefined();
+    const list = document.getElementById(gage.getAttribute("list") ?? "");
+    expect(
+      [...(list?.querySelectorAll("option") ?? [])].map((o) => o.value),
+    ).toEqual(["G1"]);
+    // Numbers still appear beside it.
+    expect(screen.getByLabelText("Area")).toBeDefined();
   });
 
   it("asks for nothing but a name when adding a container", () => {

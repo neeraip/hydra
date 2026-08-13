@@ -176,6 +176,26 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
         return Err(refuse_kind(kind));
     }
     match kind {
+        "timeseries" => {
+            net.timeseries.push(hydra::uds::model::TimeSeries {
+                id: id.to_string(),
+                // Two readings of nothing, an hour apart. Not an empty
+                // series: the writer emits a line per point, so one with
+                // none would vanish at the next save — which is the
+                // failure this whole file is written against.
+                source: hydra::uds::model::TimeSeriesSource::Points(vec![
+                    hydra::uds::model::TimeSeriesPoint {
+                        time: hydra::uds::model::SeriesTime::Elapsed(0.0),
+                        value: 0.0,
+                    },
+                    hydra::uds::model::TimeSeriesPoint {
+                        time: hydra::uds::model::SeriesTime::Elapsed(3600.0),
+                        value: 0.0,
+                    },
+                ]),
+            });
+            Ok(())
+        }
         "pattern" => {
             net.patterns.push(hydra::uds::model::TimePattern {
                 id: id.to_string(),
@@ -268,6 +288,83 @@ pub(crate) fn create_uds_link(
     Ok(())
 }
 
+/// Add a subcatchment at `(x, y)`.
+///
+/// Its rain gage and its outlet are taken up front rather than left to
+/// the attribute writes that follow, because the model holds both as
+/// indices and there is no value meaning "not yet chosen" — a parcel
+/// exists pointing at something or it does not exist. The refusal names
+/// whichever is missing, so a caller learns which of the two it got
+/// wrong.
+pub(crate) fn create_uds_parcel(
+    net: &mut Network,
+    id: &str,
+    x: f64,
+    y: f64,
+    gage_id: &str,
+    outlet_id: &str,
+) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("subcatchment") {
+        return Err(refuse_kind("subcatchment"));
+    }
+    let gage = net
+        .gages
+        .iter()
+        .position(|g| g.id.eq_ignore_ascii_case(gage_id))
+        .ok_or_else(|| format!("'{gage_id}' is not a rain gage in this model"))?;
+    let outlet = if let Some(v) = net
+        .vertices
+        .iter()
+        .position(|v| v.id.eq_ignore_ascii_case(outlet_id))
+    {
+        hydra::uds::model::ParcelOutlet::Vertex(v)
+    } else if let Some(p) = net
+        .parcels
+        .iter()
+        .position(|p| p.id.eq_ignore_ascii_case(outlet_id))
+    {
+        hydra::uds::model::ParcelOutlet::Parcel(p)
+    } else {
+        return Err(format!(
+            "'{outlet_id}' is not a node or a subcatchment in this model"
+        ));
+    };
+    net.parcels.push(hydra::uds::model::Parcel {
+        id: id.to_string(),
+        gage,
+        outlet,
+        // Everything below is an ordinary editable attribute and arrives
+        // with the rest of the create. These are the engine's defaults
+        // for a catchment nobody has surveyed, not placeholders: a
+        // hectare of half-impervious ground at a one-percent slope is
+        // what a modeller sketching a catchment starts from.
+        area: 10_000.0,
+        frac_imperv: 0.5,
+        width: 100.0,
+        slope: 0.01,
+        curb_length: 0.0,
+        snowpack: None,
+        land_cover: Vec::new(),
+        init_buildup: Vec::new(),
+        // Absent, not defaulted. Each of these is a whole parameter set
+        // the file supplies in its own section, and an engine reading a
+        // model without them applies its own defaults — inventing one
+        // here would put values in the written file that the source
+        // never had.
+        subareas: None,
+        infiltration: None,
+        groundwater: None,
+        n_perv_pattern: None,
+        dstore_pattern: None,
+        infil_pattern: None,
+    });
+    super::uds_view::set_display_point(net, "[Polygons]", id, x, y);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +386,21 @@ C1 CIRCULAR 1.5 0 0 0
 J1 0 0
 O1 100 0
 ";
+
+    /// The fixture plus a rain gage, for the kinds that need one.
+    fn gaged_model() -> Network {
+        let (net, diags) = parse_network(&MODEL.replace(
+            "[COORDINATES]",
+            "[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+             [TIMESERIES]\nTS1 0:00 0.0\nTS1 1:00 0.0\n\
+             [COORDINATES]",
+        ));
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}"
+        );
+        net
+    }
 
     fn model() -> Network {
         let (net, diags) = parse_network(MODEL);
@@ -502,6 +614,55 @@ O1 100 0
             "{diags:?}\n{written}"
         );
         assert!(again.patterns.iter().any(|p| p.id == "PX"));
+    }
+
+    /// The kind whose refusal was wrong twice over. It said a
+    /// subcatchment "needs an area, which is its polygon rather than a
+    /// number" — the area is a plain number and the polygon is optional
+    /// display geometry. What it really needs is a gage and an outlet,
+    /// and both are references a create can be given.
+    #[test]
+    fn a_subcatchment_is_created_from_a_gage_and_an_outlet() {
+        let mut net = gaged_model();
+        create_uds_parcel(&mut net, "S1", 10.0, 20.0, "RG1", "J1").expect("subcatchment");
+        let made = net.parcels.iter().find(|p| p.id == "S1").expect("S1");
+        assert_eq!(net.gages[made.gage].id, "RG1");
+        assert!(matches!(
+            made.outlet,
+            hydra::uds::model::ParcelOutlet::Vertex(_)
+        ));
+        assert!(made.area > 0.0, "a catchment of no area drains nothing");
+
+        // Both references are checked, and neither is invented.
+        assert!(create_uds_parcel(&mut net, "S2", 0.0, 0.0, "NOPE", "J1").is_err());
+        assert!(create_uds_parcel(&mut net, "S2", 0.0, 0.0, "RG1", "NOPE").is_err());
+        assert_eq!(net.parcels.len(), 1, "a refused create still added one");
+
+        // And it survives the writer, which is what makes it an element
+        // the user added rather than one that vanishes on save.
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        let back = again.parcels.iter().find(|p| p.id == "S1").expect("S1");
+        assert_eq!(again.gages[back.gage].id, "RG1");
+    }
+
+    /// A time series with no points is not an empty series — it is a
+    /// series the writer emits nothing for, which vanishes at the next
+    /// save. So a new one carries two readings.
+    #[test]
+    fn a_new_time_series_survives_being_written() {
+        let mut net = gaged_model();
+        create_uds_container(&mut net, "timeseries", "TS9").expect("series");
+        let written = write_inp(&net).expect("write");
+        let (again, _) = parse_network(&written);
+        assert!(
+            again.timeseries.iter().any(|t| t.id == "TS9"),
+            "the series did not survive the round trip:\n{written}"
+        );
     }
 
     #[test]

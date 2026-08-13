@@ -99,18 +99,41 @@ export function CreateElementModal({
   }, [spanLength]);
 
   const schema = useElementAttributes(engine, kind);
-  // Only the numbers. A new element's references and choices keep the
-  // engine's defaults and are changed afterwards in the table, where
-  // they have their proper editors and the model to resolve against.
+  // Numbers, and the attributes that name another element.
+  //
+  // The references are the reason half this engine's kinds could not be
+  // created. A subcatchment must name a rain gage and an outlet, and the
+  // model holds both as indices with no value meaning "not yet chosen" —
+  // so they cannot be left to the edit that follows the create, the way a
+  // number can. This dialog asking for them is what makes the kind
+  // creatable at all.
+  //
+  // Choices still keep the engine's default and are changed afterwards:
+  // a choice always *has* a value, so there is nothing a create would be
+  // unable to express by leaving it alone.
   const fields = useMemo(
     () =>
       schema.filter(
         (a) =>
           a.editable &&
-          (a.kind?.type === "number" || a.kind?.type === "integer"),
+          (a.kind?.type === "number" ||
+            a.kind?.type === "integer" ||
+            (a.references?.length ?? 0) > 0),
       ),
     [schema],
   );
+
+  // The ids each reference field may name, for the kinds those fields
+  // declare (§4.5.1.1).
+  const referenced = useMemo(
+    () => [...new Set(fields.flatMap((a) => a.references ?? []))],
+    [fields],
+  );
+  const referenceIds = useReferenceIds(project?.id, scenarioId, referenced);
+
+  // What the user has typed into the reference fields, by key. Separate
+  // from `values`, which holds numbers.
+  const [named, setNamed] = useState<Record<string, string>>({});
 
   const first = kinds[0]?.value ?? "";
   useEffect(() => {
@@ -122,6 +145,7 @@ export function CreateElementModal({
     setTypedAt([0, 0]);
     setTypedFrom(fromNodeId ?? "");
     setTypedTo(toNodeId ?? "");
+    setNamed({});
   }, [open, first, suggestId, fromNodeId, toNodeId]);
 
   return (
@@ -135,6 +159,7 @@ export function CreateElementModal({
         // Values are per kind, and a maximum depth typed for a junction
         // means nothing to an outfall. Cleared rather than carried.
         setValues({});
+        setNamed({});
         // A suggested id follows the kind until the user takes it over —
         // typing a name and having it replaced on the next click is the
         // behaviour this avoids.
@@ -158,22 +183,34 @@ export function CreateElementModal({
                 // edited in the panel below the table.
                 {}
               : { position: position ?? typedAt }),
-          fields: { ...seeded, ...values },
+          fields: { ...seeded, ...values, ...named },
         });
         onCreated(kind, name);
       }}
       onCancel={onCancel}
     >
-      {fields.map((a) => (
-        <CreateNumberField
-          key={a.key}
-          label={a.label}
-          value={values[a.key] ?? seeded[a.key] ?? 0}
-          quantity={a.quantity}
-          sys={sys}
-          onCommit={(v) => setValues((prev) => ({ ...prev, [a.key]: v }))}
-        />
-      ))}
+      {fields.map((a) =>
+        a.references?.length ? (
+          <ReferenceField
+            key={a.key}
+            label={a.label}
+            value={named[a.key] ?? ""}
+            options={[
+              ...new Set(a.references.flatMap((k) => referenceIds[k] ?? [])),
+            ].sort()}
+            onChange={(v) => setNamed((prev) => ({ ...prev, [a.key]: v }))}
+          />
+        ) : (
+          <CreateNumberField
+            key={a.key}
+            label={a.label}
+            value={values[a.key] ?? seeded[a.key] ?? 0}
+            quantity={a.quantity}
+            sys={sys}
+            onCommit={(v) => setValues((prev) => ({ ...prev, [a.key]: v }))}
+          />
+        ),
+      )}
       {klass === "polyline" && (
         <>
           <ReferenceField
