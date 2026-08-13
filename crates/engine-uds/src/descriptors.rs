@@ -80,20 +80,6 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         not_creatable_because: None,
     },
     ElementKind {
-        id: "raingage",
-        group: Some("Rain gages"),
-        label: "Rain gage",
-        label_plural: "Rain gages",
-        class: ElementClass::Point,
-        role: None,
-        badge: "RG",
-        // Creatable since the catalog says which kind its source names:
-        // a form can ask for the series, which is the thing that had to
-        // exist first.
-        creatable: true,
-        not_creatable_because: None,
-    },
-    ElementKind {
         id: "conduit",
         group: Some("Links"),
         label: "Conduit",
@@ -157,7 +143,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
     },
     ElementKind {
         id: "subcatchment",
-        group: Some("Catchments"),
+        group: Some("Rainfall and runoff"),
         label: "Subcatchment",
         label_plural: "Subcatchments",
         class: ElementClass::Region,
@@ -167,6 +153,20 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         // plain number here and the polygon is optional display
         // geometry. What a new one really needs is a gage and an outlet,
         // and both are references the create can now be given.
+        creatable: true,
+        not_creatable_because: None,
+    },
+    ElementKind {
+        id: "raingage",
+        group: Some("Rainfall and runoff"),
+        label: "Rain gage",
+        label_plural: "Rain gages",
+        class: ElementClass::Point,
+        role: None,
+        badge: "RG",
+        // Creatable since the catalog says which kind its source names:
+        // a form can ask for the series, which is the thing that had to
+        // exist first.
         creatable: true,
         not_creatable_because: None,
     },
@@ -1041,6 +1041,28 @@ mod tests {
     /// reorders. A group appearing twice would draw two headings with
     /// the same words, which reads as a duplicate rather than as two
     /// runs of one thing.
+    /// A heading that repeats its only entry says nothing twice. "Rain
+    /// gages" over Rain gages was a group of one named after its member,
+    /// which reads as the rail stuttering rather than as a heading.
+    ///
+    /// Near-repeats are fine and deliberately not caught: "Catchments"
+    /// over Subcatchments still says where the catchment side begins.
+    #[test]
+    fn no_heading_repeats_the_entry_beneath_it() {
+        for kind in ELEMENT_KINDS {
+            let Some(group) = kind.group else { continue };
+            let alone = ELEMENT_KINDS
+                .iter()
+                .filter(|k| k.group == Some(group))
+                .count()
+                == 1;
+            assert!(
+                !(alone && group.eq_ignore_ascii_case(kind.label_plural)),
+                "'{group}' is a heading over nothing but itself"
+            );
+        }
+    }
+
     #[test]
     fn each_group_is_one_run_of_the_catalog() {
         let mut runs: Vec<&str> = Vec::new();
