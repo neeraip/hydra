@@ -286,8 +286,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Tr",
-        creatable: false,
-        not_creatable_because: Some("a transect is its surveyed station-elevation pairs"),
+        // Creatable since those pairs became editable: a new one is two
+        // flat survey points, and its shape is entered afterwards.
+        creatable: true,
+        not_creatable_because: None,
     },
     // A street cross-section: the roadway geometry a conduit routes surface
     // flow across in a dual-drainage model. A named registry like transects
@@ -299,8 +301,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "St",
-        creatable: false,
-        not_creatable_because: Some("a street section is its cross-slope geometry"),
+        // Creatable since its geometry became editable. Every dimension
+        // is asked for, because each describes one particular street.
+        creatable: true,
+        not_creatable_because: None,
     },
     // An inlet design: the grate, curb opening or slotted drain through
     // which a street captures flow into the sewer below. One design serves
@@ -617,24 +621,26 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("removals", "Pollutant removals", num(), None),
         ],
         "transect" => vec![
-            attr("nChannel", "Channel roughness", num(), None),
-            attr("nLeft", "Left-bank roughness", num(), None),
-            attr("nRight", "Right-bank roughness", num(), None),
+            rw("nChannel", "Channel roughness", num(), None),
+            rw("nLeft", "Left-bank roughness", num(), None),
+            rw("nRight", "Right-bank roughness", num(), None),
+            // A count, not a value: the stations themselves are the
+            // element's contents (§4.5.2.2), edited in their own panel.
             attr("stations", "Stations", num(), None),
         ],
         "street" => vec![
-            attr("crownWidth", "Crown width", num(), Some("length")),
-            attr("curbHeight", "Curb height", num(), Some("length")),
-            attr("crossSlope", "Cross slope", num(), Some("percent")),
-            attr("roughness", "Roughness", num(), None),
-            attr("gutterWidth", "Gutter width", num(), Some("length")),
-            attr(
+            rw("crownWidth", "Crown width", num(), Some("length")),
+            rw("curbHeight", "Curb height", num(), Some("length")),
+            rw("crossSlope", "Cross slope", num(), Some("percent")),
+            rw("roughness", "Roughness", num(), None),
+            rw("gutterWidth", "Gutter width", num(), Some("length")),
+            rw(
                 "gutterDepression",
                 "Gutter depression",
                 num(),
                 Some("length"),
             ),
-            attr("sides", "Sides", num(), None),
+            rw("sides", "Sides", num(), None),
         ],
         "inlet" => vec![
             // What the design *is* — a combination inlet carries more than

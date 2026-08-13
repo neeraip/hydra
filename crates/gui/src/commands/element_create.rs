@@ -155,6 +155,17 @@ pub fn create_element(
                     // default for a vertex nobody has surveyed.
                     0.0,
                 )?,
+                Placement::Nowhere if element.kind == "street" => {
+                    // Its dimensions describe one particular street, so
+                    // every one of them is asked for.
+                    super::uds_create::create_uds_street(
+                        &mut draft,
+                        &id,
+                        required(&element, "crownWidth")?,
+                        required(&element, "curbHeight")?,
+                        required(&element, "crossSlope")?,
+                    )?;
+                }
                 Placement::Nowhere => {
                     super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
                 }
@@ -191,6 +202,9 @@ pub fn create_element(
             let consumed: &[&str] = match &where_ {
                 Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
                 Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
+                Placement::Nowhere if element.kind == "street" => {
+                    &["crownWidth", "curbHeight", "crossSlope"]
+                }
                 Placement::At(_, _) | Placement::Nowhere => &[],
                 Placement::Between(_, _) if element.kind == "orifice" => &["height", "width"],
                 Placement::Between(_, _) if element.kind == "weir" => {

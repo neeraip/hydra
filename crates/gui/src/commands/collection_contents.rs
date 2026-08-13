@@ -98,6 +98,29 @@ pub(crate) fn set_uds_contents(
             curve.points = points;
             Ok(())
         }
+        "transect" => {
+            // Two points at least: a section of one station has no width
+            // and conveys nothing.
+            let points = pairs(rows, 2)?;
+            let transect = net
+                .transects
+                .iter_mut()
+                .find(|t| t.id.eq_ignore_ascii_case(id))
+                .ok_or_else(|| format!("no transect '{id}'"))?;
+            // Stations must advance across the section, which is the
+            // same rule a curve's abscissae follow — except the station
+            // is the *second* value here, not the first.
+            for w in points.windows(2) {
+                if w[1].1 <= w[0].1 {
+                    return Err(format!(
+                        "a transect's stations have to increase: {} does not follow {}",
+                        w[1].1, w[0].1
+                    ));
+                }
+            }
+            transect.stations = points;
+            Ok(())
+        }
         "pattern" => {
             let factors = factors(rows)?;
             let pattern = net
@@ -290,6 +313,45 @@ P1 HOURLY 1 1.2 0.8 1 1 1
         let mut network = wds();
         set_wds_contents(&mut network, "pattern", "PA1", &[vec![1.0, 1.5]]).expect("set");
         assert_eq!(network.patterns[0].factors, vec![1.5]);
+    }
+
+    /// A transect's survey points, which are the same table shape as a
+    /// curve's with one difference that matters: the model holds them as
+    /// (elevation, station), so it is the *second* value that has to
+    /// advance across the section.
+    #[test]
+    fn a_transect_takes_survey_points_and_checks_the_station_not_the_elevation() {
+        let mut net = uds();
+        net.transects.push(hydra::uds::model::Transect {
+            id: "TR1".into(),
+            n_left: 0.03,
+            n_right: 0.03,
+            n_channel: 0.02,
+            x_left: 0.0,
+            x_right: 0.0,
+            meander_factor: 1.0,
+            stations: vec![(0.0, 0.0), (0.0, 1.0)],
+        });
+        set_uds_contents(
+            &mut net,
+            "transect",
+            "TR1",
+            &[vec![2.0, 0.0], vec![0.0, 5.0], vec![2.0, 10.0]],
+        )
+        .expect("a surveyed section");
+        assert_eq!(net.transects[0].stations.len(), 3);
+
+        // Elevations legitimately repeat and fall — a section rises to
+        // both banks — so the check is on the station alone.
+        let err = set_uds_contents(
+            &mut net,
+            "transect",
+            "TR1",
+            &[vec![2.0, 5.0], vec![0.0, 5.0]],
+        )
+        .expect_err("two points at one station");
+        assert!(err.contains("stations"), "{err}");
+        assert_eq!(net.transects[0].stations.len(), 3, "a refusal changed it");
     }
 
     #[test]

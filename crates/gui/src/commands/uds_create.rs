@@ -293,6 +293,55 @@ pub(crate) fn create_uds_storage(
     Ok(())
 }
 
+/// Add a street section.
+///
+/// Every dimension is the caller's: a crown width, a curb height and a
+/// cross slope describe one particular street, and no value for any of
+/// them is more defensible than another. Only the roughness has a
+/// convention, and it is the one this engine already defaults a channel
+/// to.
+pub(crate) fn create_uds_street(
+    net: &mut Network,
+    id: &str,
+    crown_width: f64,
+    curb_height: f64,
+    cross_slope: f64,
+) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("street") {
+        return Err(refuse_kind("street"));
+    }
+    for (what, v) in [
+        ("crown width", crown_width),
+        ("curb height", curb_height),
+        ("cross slope", cross_slope),
+    ] {
+        if !(v.is_finite() && v > 0.0) {
+            return Err(format!("a street needs a positive {what}"));
+        }
+    }
+    net.streets.push(hydra::uds::model::Street {
+        id: id.to_string(),
+        crown_width,
+        curb_height,
+        // Described as a percentage and stored as a fraction, the same
+        // pair a subcatchment's slope makes.
+        cross_slope: cross_slope / 100.0,
+        roughness: DEFAULT_ROUGHNESS,
+        gutter_depression: 0.0,
+        gutter_width: 0.0,
+        sides: 2,
+        // No backing behind the curb, which is what a street with none
+        // is written as rather than a value standing in for one.
+        backing_width: 0.0,
+        backing_slope: 0.0,
+        backing_roughness: 0.0,
+    });
+    Ok(())
+}
+
 /// Add a container element — a pattern (§4.5.3).
 ///
 /// A curve is deliberately absent. Its role decides the *units* its two
@@ -346,6 +395,26 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
                 sweep_days_since: 0.0,
                 buildup: Vec::new(),
                 washoff: Vec::new(),
+            });
+            Ok(())
+        }
+        "transect" => {
+            net.transects.push(hydra::uds::model::Transect {
+                id: id.to_string(),
+                // The roughnesses arrive with the rest of the create as
+                // ordinary attribute writes; these are the values the
+                // engine already defaults a channel to, so a transect
+                // nobody has surveyed conveys like the pipes around it.
+                n_left: DEFAULT_ROUGHNESS,
+                n_right: DEFAULT_ROUGHNESS,
+                n_channel: DEFAULT_ROUGHNESS,
+                x_left: 0.0,
+                x_right: 0.0,
+                meander_factor: 1.0,
+                // Two survey points, because a section of one has no
+                // width — and not none, which the writer would drop.
+                // Flat, and the shape is the modeller's to enter.
+                stations: vec![(0.0, 0.0), (0.0, 1.0)],
             });
             Ok(())
         }
@@ -930,6 +999,36 @@ O1 100 0
             );
         }
         assert!(again.vertices.iter().any(|v| v.id == "ST1"));
+    }
+
+    /// The last two flat records. A street's dimensions describe one
+    /// particular street, so all three are asked for; a transect's shape
+    /// is its survey points, which became editable as contents — so a new
+    /// one starts flat and is surveyed afterwards, exactly as a curve is.
+    #[test]
+    fn a_street_and_a_transect_are_created_and_survive_the_writer() {
+        let mut net = gaged_model();
+        create_uds_street(&mut net, "ST9", 12.0, 0.15, 4.0).expect("street");
+        let made = net.streets.iter().find(|s| s.id == "ST9").expect("ST9");
+        assert!((made.crown_width - 12.0).abs() < 1e-12);
+        // Described as a percentage, stored as a fraction.
+        assert!((made.cross_slope - 0.04).abs() < 1e-12);
+        // A dimension nobody gave is refused rather than invented.
+        assert!(create_uds_street(&mut net, "X", 0.0, 0.15, 4.0).is_err());
+
+        create_uds_container(&mut net, "transect", "TR9").expect("transect");
+        let t = net.transects.iter().find(|t| t.id == "TR9").expect("TR9");
+        assert_eq!(t.stations.len(), 2, "a section of one station has no width");
+        assert!(t.n_channel > 0.0, "a roughness of nought divides by zero");
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        assert!(again.streets.iter().any(|s| s.id == "ST9"));
+        assert!(again.transects.iter().any(|t| t.id == "TR9"));
     }
 
     #[test]

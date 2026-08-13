@@ -599,6 +599,21 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 ..Default::default()
             }
         }
+        // Survey points, which the model holds as (elevation, station)
+        // — that order, not the other, and the headings say so rather
+        // than leaving a reader to infer it from the numbers.
+        "transect" => net
+            .transects
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| {
+                pair(
+                    ["Elevation", "Station"],
+                    [Some("elevation"), Some("length")],
+                    t.stations.iter().map(|(e, x)| vec![*e, *x]).collect(),
+                )
+            })
+            .unwrap_or_default(),
         "pattern" => net
             .patterns
             .iter()
@@ -1813,7 +1828,7 @@ pub(crate) fn set_attribute(
     {
         return set_parcel_attribute(p, key, value);
     }
-    Err(format!("element '{element_id}' not found"))
+    set_record_attribute(net, element_id, key, value)
 }
 
 /// The attribute keys this path can set, per element kind.
@@ -2022,6 +2037,64 @@ fn set_diverted_link(net: &mut Network, id: &str, link: &str) -> Result<(), Stri
     };
     *diverted_link = diverted;
     Ok(())
+}
+
+/// Write one field of a street section or a transect.
+///
+/// Both are flat records of numbers the file carries in its own section,
+/// which is why neither reaches the vertex/link/parcel arms below —
+/// there is no element to match on, only a named record.
+fn set_record_attribute(
+    net: &mut Network,
+    element_id: &str,
+    key: &str,
+    value: f64,
+) -> Result<(), String> {
+    if let Some(st) = net
+        .streets
+        .iter_mut()
+        .find(|st| st.id.eq_ignore_ascii_case(element_id))
+    {
+        match key {
+            "crownWidth" => st.crown_width = value,
+            "curbHeight" => st.curb_height = value,
+            // Stored as a fraction, described as a percentage — the same
+            // pair a subcatchment's slope makes.
+            "crossSlope" => st.cross_slope = value / 100.0,
+            "roughness" => st.roughness = value,
+            "gutterWidth" => st.gutter_width = value,
+            "gutterDepression" => st.gutter_depression = value,
+            "sides" => {
+                if value != 1.0 && value != 2.0 {
+                    return Err("a street has one side or two".into());
+                }
+                st.sides = value as u8;
+            }
+            other => return Err(unwritable(other)),
+        }
+        return Ok(());
+    }
+    if let Some(t) = net
+        .transects
+        .iter_mut()
+        .find(|t| t.id.eq_ignore_ascii_case(element_id))
+    {
+        // A Manning roughness of nought divides by zero in the
+        // conveyance, so it is refused here rather than at the solver.
+        let positive = |v: f64| {
+            (v > 0.0)
+                .then_some(v)
+                .ok_or_else(|| "a roughness has to be greater than zero".to_string())
+        };
+        match key {
+            "nChannel" => t.n_channel = positive(value)?,
+            "nLeft" => t.n_left = positive(value)?,
+            "nRight" => t.n_right = positive(value)?,
+            other => return Err(unwritable(other)),
+        }
+        return Ok(());
+    }
+    Err(format!("element '{element_id}' not found"))
 }
 
 fn set_parcel_attribute(
