@@ -117,21 +117,25 @@ impl Shift {
 /// a choice — the message names what, so the caller can say so.
 pub(crate) fn delete_uds_element(net: &mut Network, id: &str) -> Result<Removed, String> {
     let Some((class, index)) = locate(net, id) else {
-        // A container answers to the name and cannot be removed yet, and
-        // saying "not found" about a thing plainly on the screen is the
-        // worst of the two wrong answers. Every one of them is referenced
-        // by *index* — a storage unit points at curve 3 — so removing one
-        // moves every reference past it across a dozen index spaces, and
-        // a removal that got that wrong would silently repoint a model at
-        // the wrong curve rather than fail.
-        return Err(if super::uds_create::taken(net, id) {
-            format!(
-                "'{id}' can be renamed and edited but not removed yet — \
-                 the model refers to it by position"
-            )
-        } else {
-            format!("element '{id}' not found")
-        });
+        // Not a vertex, a link or a parcel: one of the collections a
+        // model keeps beside its network, removed by the same surgery
+        // and a different policy — see `remove_container`.
+        if let Some((space, at)) = container_at(net, id) {
+            return remove_container(net, space, at).map(|()| Removed::default());
+        }
+        // A rule is the one collection nothing points at: it names other
+        // elements and no element names it, so it goes without any
+        // shifting at all.
+        if let Some(at) = net
+            .controls
+            .rules
+            .iter()
+            .position(|r| r.name.eq_ignore_ascii_case(id))
+        {
+            net.controls.rules.remove(at);
+            return Ok(Removed::default());
+        }
+        return Err(format!("element '{id}' not found"));
     };
     match class {
         "vertex" => delete_vertex(net, index),
@@ -426,6 +430,454 @@ fn shift_selection(selection: &mut hydra::uds::model::ReportSelection, shift: &S
     };
 }
 
+// ── Removing a container ─────────────────────────────────────────────────────
+//
+// The collections a model keeps beside its network — its curves, its
+// patterns, its pollutants — are referred to by *position*, exactly as
+// its vertices are. Removing one is the same surgery: take the entry
+// out, then move every index above it down, everywhere one is held.
+//
+// The policy is different, and it is the one the water-distribution side
+// already applies to its own curves and patterns: **refuse while
+// anything still points at it**, naming what does. That is right here
+// for a reason beyond consistency. A vertex cascades because the things
+// attached to one describe nothing without it — an inflow *at* a deleted
+// vertex is not a decision, it is debris. A curve is the opposite: a
+// storage unit whose curve is deleted still exists and still needs a
+// geometry, and picking one for it is picking wrong.
+//
+// **`refs_into` is the single place that knows where a reference can
+// be.** The check and the shift are both built on it, so they cannot
+// come to disagree about a holder — which is the failure that matters,
+// because a shift that misses one does not fail. It leaves an index
+// naming a different curve, and the model still runs.
+
+/// A collection a model refers to by position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Space {
+    Curve,
+    Series,
+    Pattern,
+    Gage,
+    Constituent,
+    LandUse,
+    Transect,
+    Aquifer,
+    Snowpack,
+    Hydrograph,
+    LidControl,
+    Street,
+    Inlet,
+}
+
+impl Space {
+    /// What the engine calls one of these, for a refusal that reads.
+    fn label(self) -> &'static str {
+        match self {
+            Space::Curve => "curve",
+            Space::Series => "time series",
+            Space::Pattern => "pattern",
+            Space::Gage => "rain gage",
+            Space::Constituent => "pollutant",
+            Space::LandUse => "land use",
+            Space::Transect => "transect",
+            Space::Aquifer => "aquifer",
+            Space::Snowpack => "snow pack",
+            Space::Hydrograph => "unit hydrograph",
+            Space::LidControl => "LID control",
+            Space::Street => "street",
+            Space::Inlet => "inlet design",
+        }
+    }
+}
+
+/// Which collection an id names, and where in it.
+fn container_at(net: &Network, id: &str) -> Option<(Space, usize)> {
+    macro_rules! look {
+        ($space:expr, $list:expr) => {
+            if let Some(i) = $list.iter().position(|x| x.id.eq_ignore_ascii_case(id)) {
+                return Some(($space, i));
+            }
+        };
+    }
+    look!(Space::Curve, net.curves);
+    look!(Space::Series, net.timeseries);
+    look!(Space::Pattern, net.patterns);
+    look!(Space::Gage, net.gages);
+    look!(Space::Constituent, net.constituents);
+    look!(Space::LandUse, net.land_uses);
+    look!(Space::Transect, net.transects);
+    look!(Space::Aquifer, net.aquifers);
+    look!(Space::Snowpack, net.snowpacks);
+    look!(Space::Hydrograph, net.unit_hydrographs);
+    look!(Space::LidControl, net.lid_controls);
+    look!(Space::Street, net.streets);
+    look!(Space::Inlet, net.inlets);
+    None
+}
+
+/// Every reference into `space`, as a description of what holds it and
+/// the slot itself.
+///
+/// The one enumeration. Both the refusal and the shift walk this, so a
+/// holder added to the model is either in both or in neither — and a
+/// holder in neither is caught by the test that removes one of every kind
+/// from a model that references all of them.
+#[allow(clippy::too_many_lines)] // one arm per index space; splitting hides the map
+fn refs_into(net: &mut Network, space: Space) -> Vec<(String, &mut usize)> {
+    use hydra::uds::model::{
+        DividerRule, LinkKind, OutfallStage, OutletRating, StorageGeometry, XsectReferent,
+    };
+    let Network {
+        vertices,
+        links,
+        parcels,
+        gages,
+        inflows,
+        dry_weather,
+        aquifers,
+        unit_hydrographs,
+        rdii,
+        treatments,
+        land_uses,
+        lid_controls,
+        lid_usage,
+        inlets,
+        inlet_usage,
+        constituents,
+        climate,
+        ..
+    } = net;
+    let mut out: Vec<(String, &mut usize)> = Vec::new();
+    match space {
+        Space::Curve => {
+            for v in vertices.iter_mut() {
+                let id = &v.id;
+                match &mut v.kind {
+                    VertexKind::Outfall {
+                        stage: OutfallStage::Tidal { curve },
+                        ..
+                    } => out.push((format!("outfall {id}"), curve)),
+                    VertexKind::Storage {
+                        geometry: StorageGeometry::Tabular { curve },
+                        ..
+                    } => out.push((format!("storage unit {id}"), curve)),
+                    VertexKind::Divider {
+                        rule: DividerRule::Tabular { curve },
+                        ..
+                    } => out.push((format!("divider {id}"), curve)),
+                    _ => {}
+                }
+            }
+            for l in links.iter_mut() {
+                let id = &l.id;
+                match &mut l.kind {
+                    LinkKind::Pump {
+                        curve: Some(curve), ..
+                    } => out.push((format!("pump {id}"), curve)),
+                    LinkKind::Weir {
+                        coeff_curve: Some(curve),
+                        ..
+                    } => out.push((format!("weir {id}"), curve)),
+                    LinkKind::Outlet {
+                        rating: OutletRating::Tabular { curve },
+                        ..
+                    } => out.push((format!("outlet {id}"), curve)),
+                    _ => {}
+                }
+                if let Some(Some(XsectReferent::Curve(i))) =
+                    l.cross_section.as_mut().map(|c| &mut c.referent)
+                {
+                    out.push((format!("{id}'s cross-section"), i));
+                }
+            }
+            for c in lid_controls.iter_mut() {
+                let id = &c.id;
+                if let Some(curve) = c.drain.as_mut().and_then(|d| d.curve.as_mut()) {
+                    out.push((format!("LID control {id}"), curve));
+                }
+            }
+            for d in inlets.iter_mut() {
+                let id = &d.id;
+                if let Some(curve) = d.custom_curve.as_mut() {
+                    out.push((format!("inlet design {id}"), curve));
+                }
+            }
+        }
+        Space::Series => {
+            for v in vertices.iter_mut() {
+                let id = &v.id;
+                if let VertexKind::Outfall {
+                    stage: OutfallStage::Series { series },
+                    ..
+                } = &mut v.kind
+                {
+                    out.push((format!("outfall {id}"), series));
+                }
+            }
+            for g in gages.iter_mut() {
+                let id = &g.id;
+                if let hydra::uds::model::GageSource::Series { series } = &mut g.source {
+                    out.push((format!("rain gage {id}"), series));
+                }
+            }
+            for u in land_uses.iter_mut() {
+                let id = &u.id;
+                for b in u.buildup.iter_mut().flatten() {
+                    if let Some(series) = b.series.as_mut() {
+                        out.push((format!("land use {id}"), series));
+                    }
+                }
+            }
+            for (n, f) in inflows.iter_mut().enumerate() {
+                if let Some(series) = f.series.as_mut() {
+                    out.push((format!("inflow {}", n + 1), series));
+                }
+            }
+        }
+        Space::Pattern => {
+            for p in parcels.iter_mut() {
+                let id = p.id.clone();
+                for slot in [
+                    &mut p.n_perv_pattern,
+                    &mut p.dstore_pattern,
+                    &mut p.infil_pattern,
+                ] {
+                    if let Some(i) = slot.as_mut() {
+                        out.push((format!("subcatchment {id}"), i));
+                    }
+                }
+            }
+            for (n, f) in inflows.iter_mut().enumerate() {
+                if let Some(i) = f.base_pattern.as_mut() {
+                    out.push((format!("inflow {}", n + 1), i));
+                }
+            }
+            for (n, d) in dry_weather.iter_mut().enumerate() {
+                for slot in d.patterns.iter_mut() {
+                    if let Some(i) = slot.as_mut() {
+                        out.push((format!("dry weather inflow {}", n + 1), i));
+                    }
+                }
+            }
+            for a in aquifers.iter_mut() {
+                let id = &a.id;
+                if let Some(i) = a.evap_pattern.as_mut() {
+                    out.push((format!("aquifer {id}"), i));
+                }
+            }
+            if let Some(i) = climate.recovery_pattern.as_mut() {
+                out.push(("the climate options".to_string(), i));
+            }
+        }
+        Space::Gage => {
+            for p in parcels.iter_mut() {
+                let id = &p.id;
+                out.push((format!("subcatchment {id}"), &mut p.gage));
+            }
+            for g in unit_hydrographs.iter_mut() {
+                let id = &g.id;
+                if let Some(i) = g.gage.as_mut() {
+                    out.push((format!("unit hydrograph {id}"), i));
+                }
+            }
+        }
+        Space::Constituent => {
+            for c in constituents.iter_mut() {
+                let id = &c.id;
+                if let Some(i) = c.co_constituent.as_mut() {
+                    out.push((format!("pollutant {id}"), i));
+                }
+            }
+            for (n, f) in inflows.iter_mut().enumerate() {
+                if let Some(i) = f.constituent.as_mut() {
+                    out.push((format!("inflow {}", n + 1), i));
+                }
+            }
+            for (n, d) in dry_weather.iter_mut().enumerate() {
+                if let Some(i) = d.constituent.as_mut() {
+                    out.push((format!("dry weather inflow {}", n + 1), i));
+                }
+            }
+            for (n, t) in treatments.iter_mut().enumerate() {
+                out.push((format!("treatment {}", n + 1), &mut t.constituent));
+            }
+            for p in parcels.iter_mut() {
+                let id = p.id.clone();
+                for (i, _) in p.init_buildup.iter_mut() {
+                    out.push((format!("subcatchment {id}"), i));
+                }
+            }
+            for c in lid_controls.iter_mut() {
+                let id = c.id.clone();
+                for (i, _) in c.removals.iter_mut() {
+                    out.push((format!("LID control {id}"), i));
+                }
+            }
+        }
+        Space::LandUse => {
+            for p in parcels.iter_mut() {
+                let id = p.id.clone();
+                for (i, _) in p.land_cover.iter_mut() {
+                    out.push((format!("subcatchment {id}"), i));
+                }
+            }
+        }
+        Space::Transect => {
+            for l in links.iter_mut() {
+                let id = &l.id;
+                if let Some(Some(XsectReferent::Transect(i))) =
+                    l.cross_section.as_mut().map(|c| &mut c.referent)
+                {
+                    out.push((format!("{id}'s cross-section"), i));
+                }
+            }
+        }
+        Space::Street => {
+            for l in links.iter_mut() {
+                let id = &l.id;
+                if let Some(Some(XsectReferent::Street(i))) =
+                    l.cross_section.as_mut().map(|c| &mut c.referent)
+                {
+                    out.push((format!("{id}'s cross-section"), i));
+                }
+            }
+        }
+        Space::Aquifer => {
+            for p in parcels.iter_mut() {
+                let id = &p.id;
+                if let Some(g) = p.groundwater.as_mut() {
+                    out.push((format!("subcatchment {id}"), &mut g.aquifer));
+                }
+            }
+        }
+        Space::Snowpack => {
+            for p in parcels.iter_mut() {
+                let id = &p.id;
+                if let Some(i) = p.snowpack.as_mut() {
+                    out.push((format!("subcatchment {id}"), i));
+                }
+            }
+        }
+        Space::Hydrograph => {
+            for (n, r) in rdii.iter_mut().enumerate() {
+                out.push((format!("sewer inflow {}", n + 1), &mut r.group));
+            }
+        }
+        Space::LidControl => {
+            for (n, u) in lid_usage.iter_mut().enumerate() {
+                out.push((format!("LID deployment {}", n + 1), &mut u.control));
+            }
+        }
+        Space::Inlet => {
+            for (n, u) in inlet_usage.iter_mut().enumerate() {
+                out.push((format!("inlet placement {}", n + 1), &mut u.design));
+            }
+        }
+    }
+    out
+}
+
+/// Take a container out, once nothing points at it.
+///
+/// The refusal names every holder, and names them together: a modeller
+/// who has to detach three things wants to know that before they start,
+/// which is the same reason the vertex path collects its refusals.
+fn remove_container(net: &mut Network, space: Space, index: usize) -> Result<(), String> {
+    let id = container_id(net, space, index);
+    let mut attached: Vec<String> = refs_into(net, space)
+        .into_iter()
+        .filter(|(_, at)| **at == index)
+        .map(|(what, _)| what)
+        .collect();
+    // A pollutant is also named by *position* in every land use's
+    // accumulation lists, which are one slot per pollutant rather than a
+    // list of indices — so a land use that has something to say about
+    // this one holds it just as surely.
+    if space == Space::Constituent {
+        for u in &net.land_uses {
+            let holds = u.buildup.get(index).is_some_and(Option::is_some)
+                || u.washoff.get(index).is_some_and(Option::is_some);
+            if holds {
+                attached.push(format!("land use {}", u.id));
+            }
+        }
+    }
+    attached.dedup();
+    if !attached.is_empty() {
+        return Err(format!(
+            "{} '{id}' is still attached to {}; detach it first",
+            space.label(),
+            attached.join(", ")
+        ));
+    }
+
+    remove_at(net, space, index);
+    // Everything above it moves down by one. Nothing is left pointing at
+    // the hole, because nothing pointed at it.
+    for (_, at) in refs_into(net, space) {
+        if *at > index {
+            *at -= 1;
+        }
+    }
+    Ok(())
+}
+
+/// The id at a position, for the refusal message.
+fn container_id(net: &Network, space: Space, index: usize) -> String {
+    macro_rules! id_at {
+        ($list:expr) => {
+            $list.get(index).map(|x| x.id.clone()).unwrap_or_default()
+        };
+    }
+    match space {
+        Space::Curve => id_at!(net.curves),
+        Space::Series => id_at!(net.timeseries),
+        Space::Pattern => id_at!(net.patterns),
+        Space::Gage => id_at!(net.gages),
+        Space::Constituent => id_at!(net.constituents),
+        Space::LandUse => id_at!(net.land_uses),
+        Space::Transect => id_at!(net.transects),
+        Space::Aquifer => id_at!(net.aquifers),
+        Space::Snowpack => id_at!(net.snowpacks),
+        Space::Hydrograph => id_at!(net.unit_hydrographs),
+        Space::LidControl => id_at!(net.lid_controls),
+        Space::Street => id_at!(net.streets),
+        Space::Inlet => id_at!(net.inlets),
+    }
+}
+
+/// Take the entry out of its own list.
+fn remove_at(net: &mut Network, space: Space, index: usize) {
+    match space {
+        Space::Curve => drop(net.curves.remove(index)),
+        Space::Series => drop(net.timeseries.remove(index)),
+        Space::Pattern => drop(net.patterns.remove(index)),
+        Space::Gage => drop(net.gages.remove(index)),
+        Space::Constituent => {
+            net.constituents.remove(index);
+            // The per-pollutant slots go with it, or every land use's
+            // accumulation would shift onto the next pollutant along.
+            for u in &mut net.land_uses {
+                if index < u.buildup.len() {
+                    u.buildup.remove(index);
+                }
+                if index < u.washoff.len() {
+                    u.washoff.remove(index);
+                }
+            }
+        }
+        Space::LandUse => drop(net.land_uses.remove(index)),
+        Space::Transect => drop(net.transects.remove(index)),
+        Space::Aquifer => drop(net.aquifers.remove(index)),
+        Space::Snowpack => drop(net.snowpacks.remove(index)),
+        Space::Hydrograph => drop(net.unit_hydrographs.remove(index)),
+        Space::LidControl => drop(net.lid_controls.remove(index)),
+        Space::Street => drop(net.streets.remove(index)),
+        Space::Inlet => drop(net.inlets.remove(index)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -474,70 +926,138 @@ mod tests {
             }
         }
 
-        // Three outcomes, and only two of them are about the model.
+        // Two outcomes now, and both are about the model.
         //
-        // A spatial element goes. A subcatchment draining into another
-        // refuses for a reason the modeller can act on — that is a
-        // statement about the network, not a limit. The containers
-        // refuse because removing one is not built: the model refers to
-        // each by position, so a removal that got the shift wrong would
-        // repoint the model at the wrong curve rather than fail, and
-        // failing is the better of the two until it is right.
-        assert_eq!(
-            removable,
-            vec!["junction", "outfall", "divider", "conduit"],
-            "the set of removable kinds changed"
+        // Nothing refuses because a removal is unbuilt. What refuses,
+        // refuses because something in the network still points at it —
+        // a subcatchment another drains into, a curve a storage unit
+        // needs — which is a refusal a modeller can act on, and the
+        // message names what to detach.
+        assert!(
+            refused
+                .iter()
+                .all(|(_, e)| e.contains("detach it first") || e.contains("drains to it")),
+            "a refusal that is not about the network: {refused:?}"
         );
-
-        let unbuilt: Vec<&str> = refused
-            .iter()
-            .filter(|(_, e)| e.contains("not removed yet"))
-            .map(|(k, _)| *k)
-            .collect();
-        assert_eq!(
-            unbuilt,
-            vec![
-                "raingage",
-                "timeseries",
-                "hydrograph",
-                "pollutant",
-                "aquifer",
-                "snowpack",
-                "lidcontrol",
-                "street",
-                "inlet",
-            ],
-            "the set of kinds that cannot yet be removed changed"
+        assert!(
+            removable.contains(&"junction") && removable.contains(&"conduit"),
+            "the spatial kinds still go: {removable:?}"
         );
-
-        // The rest refused for a reason about the network itself, which
-        // is a refusal a modeller can do something about.
-        let by_the_model: Vec<&str> = refused
-            .iter()
-            .filter(|(_, e)| !e.contains("not removed yet"))
-            .map(|(k, _)| *k)
-            .collect();
-        assert_eq!(by_the_model, vec!["subcatchment"]);
+        // Every container in this model is attached to something, which
+        // is why none of them is in `removable` — the removal itself is
+        // covered by the three tests below, on models where one is not.
+        assert!(
+            refused.len() >= 9,
+            "only {} kinds were exercised for a refusal",
+            refused.len()
+        );
     }
 
-    /// A container answers to its name and cannot be removed yet, so the
-    /// refusal says that rather than "not found" — which is the worst of
-    /// the two wrong answers about a thing plainly on the screen.
+    /// A container that nothing points at is removed, and everything
+    /// above it moves down.
+    ///
+    /// The shift is the part that cannot be seen from outside: a
+    /// reference that was never moved still resolves, still writes, and
+    /// still runs — it has simply come to name a different curve. So
+    /// this asserts what the survivors *resolve to*, by id, rather than
+    /// that the removal returned Ok.
     #[test]
-    fn removing_a_container_refuses_by_naming_the_limit() {
-        let (mut net, _) = parse_network(FULL);
-        net.curves.push(hydra::uds::model::Curve {
-            id: "CURVE9".into(),
-            kind: hydra::uds::model::CurveKind::Storage,
-            points: vec![(0.0, 0.0), (1.0, 1.0)],
-        });
-        let err = delete_uds_element(&mut net, "CURVE9").expect_err("not yet");
-        assert!(!err.contains("not found"), "{err}");
-        assert!(err.contains("by position"), "{err}");
-        // And a name nothing answers to still says so.
-        let err = delete_uds_element(&mut net, "NOPE").expect_err("absent");
-        assert!(err.contains("not found"), "{err}");
+    fn removing_a_container_moves_every_reference_above_it_down() {
+        const THREE_CURVES: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+             [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+             [OUTFALLS]\nO1 8 FREE NO\n\
+             [STORAGE]\nST1 5 12 0 TABULAR SC3\n\
+             [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n\
+             [CURVES]\nSC1 STORAGE 0 10\nSC1 1 12\n\
+             SC2 STORAGE 0 20\nSC2 1 22\n\
+             SC3 STORAGE 0 30\nSC3 1 32\n";
+        let (mut net, _) = parse_network(THREE_CURVES);
+        assert_eq!(net.curves.len(), 3);
+
+        // SC2 is attached to nothing; SC3 is the storage unit's geometry
+        // and sits above it, so it is the one that has to move.
+        delete_uds_element(&mut net, "SC2").expect("SC2 is attached to nothing");
+        assert_eq!(
+            net.curves.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec!["SC1", "SC3"]
+        );
+
+        let storage = net.vertices.iter().find(|v| v.id == "ST1").expect("ST1");
+        let hydra::uds::model::VertexKind::Storage {
+            geometry: hydra::uds::model::StorageGeometry::Tabular { curve },
+            ..
+        } = &storage.kind
+        else {
+            panic!("ST1 is not a tabular storage unit");
+        };
+        assert_eq!(
+            net.curves[*curve].id, "SC3",
+            "the storage unit came to name a different curve"
+        );
     }
+
+    /// A container something points at refuses, and says what points at
+    /// it.
+    ///
+    /// The rule the water-distribution side already applies to its own
+    /// curves. A vertex cascades what is attached to it, because an
+    /// inflow at a deleted vertex is debris rather than a decision — but
+    /// a storage unit whose curve is deleted still exists and still
+    /// needs a geometry, and picking one for it is picking wrong.
+    #[test]
+    fn removing_an_attached_container_refuses_and_names_the_holder() {
+        const ONE_CURVE: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+             [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+             [OUTFALLS]\nO1 8 FREE NO\n\
+             [STORAGE]\nST1 5 12 0 TABULAR SC1\n\
+             [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n\
+             [CURVES]\nSC1 STORAGE 0 10\nSC1 1 12\n";
+        let (mut net, _) = parse_network(ONE_CURVE);
+        let err = delete_uds_element(&mut net, "SC1").expect_err("still attached");
+        assert!(err.contains("storage unit ST1"), "{err}");
+        assert!(err.contains("detach it first"), "{err}");
+        assert_eq!(net.curves.len(), 1, "a refusal removed nothing");
+    }
+
+    /// A pollutant is named by position twice over: by the indices other
+    /// records hold, and by *where it sits* in every land use's
+    /// accumulation lists, which are one slot per pollutant.
+    ///
+    /// The second is the one an index shift does not touch. Remove the
+    /// pollutant and leave the slots alone and every land use's buildup
+    /// moves onto the next pollutant along — a model that still runs and
+    /// washes off the wrong thing.
+    #[test]
+    fn removing_a_pollutant_takes_its_slot_out_of_every_land_use() {
+        const TWO: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+             [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+             [POLLUTANTS]\n\
+             LEAD MG/L 0 0 0 0 NO\n\
+             TSS MG/L 0 0 0 0 NO\n\
+             [LANDUSES]\nRESID 0 0 0\n\
+             [WASHOFF]\nRESID TSS EXP 0.5 1.0 0 0\n";
+        let (mut net, _) = parse_network(TWO);
+        assert_eq!(net.constituents.len(), 2);
+
+        // LEAD is first and nothing refers to it; TSS is second and the
+        // land use washes it off.
+        delete_uds_element(&mut net, "LEAD").expect("LEAD is attached to nothing");
+        assert_eq!(
+            net.constituents
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TSS"]
+        );
+        let use_ = &net.land_uses[0];
+        assert!(
+            use_.washoff.first().is_some_and(Option::is_some),
+            "the washoff slot did not move down with the pollutant it belongs to"
+        );
+    }
+
     use super::*;
     use hydra::uds::io::inp_writer::write_inp;
     use hydra::uds::io::objects::parse_network;
