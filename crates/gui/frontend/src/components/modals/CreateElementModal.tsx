@@ -124,9 +124,12 @@ export function CreateElementModal({
   // number can. This dialog asking for them is what makes the kind
   // creatable at all.
   //
-  // Choices still keep the engine's default and are changed afterwards:
-  // a choice always *has* a value, so there is nothing a create would be
-  // unable to express by leaving it alone.
+  // Choices are asked for too. The reasoning that once excluded them —
+  // a choice always *has* a value, so a create can express it by leaving
+  // it alone — holds for an element that already exists and fails for
+  // one being built: a drainage inlet's grate family decides what the
+  // engine constructs, not merely what it is set to afterwards. Each
+  // starts at the default the catalog declares.
   const fields = useMemo(
     () =>
       schemaFields.filter(
@@ -134,6 +137,8 @@ export function CreateElementModal({
           a.editable &&
           (a.kind?.type === "number" ||
             a.kind?.type === "integer" ||
+            a.kind?.type === "choice" ||
+            a.kind?.type === "boolean" ||
             (a.references?.length ?? 0) > 0),
       ),
     [schemaFields],
@@ -147,9 +152,25 @@ export function CreateElementModal({
   );
   const referenceIds = useReferenceIds(project?.id, scenarioId, referenced);
 
-  // What the user has typed into the reference fields, by key. Separate
-  // from `values`, which holds numbers.
+  // What the user has typed or picked in the textual fields, by key —
+  // references and choices alike, since both send a string. Separate from
+  // `values`, which holds numbers.
   const [named, setNamed] = useState<Record<string, string>>({});
+
+  // A choice's declared default, which is what it starts at. Unlike a
+  // number there is no sensible zero to fall back to: the first item is
+  // the engine's own answer only if it said so.
+  const chosen = useMemo<Record<string, string>>(() => {
+    const at: Record<string, string> = {};
+    for (const a of fields) {
+      if (a.kind?.type === "choice") {
+        at[a.key] = a.kind.default ?? a.kind.items[0]?.value ?? "";
+      } else if (a.kind?.type === "boolean") {
+        at[a.key] = a.kind.default ? "Yes" : "No";
+      }
+    }
+    return at;
+  }, [fields]);
 
   const first = kinds[0]?.value ?? "";
   useEffect(() => {
@@ -199,14 +220,29 @@ export function CreateElementModal({
                 // edited in the panel below the table.
                 {}
               : { position: position ?? typedAt }),
-          fields: { ...declared, ...seeded, ...values, ...named },
+          fields: { ...declared, ...chosen, ...seeded, ...values, ...named },
         });
         onCreated(kind, name);
       }}
       onCancel={onCancel}
     >
       {fields.map((a) =>
-        a.references?.length ? (
+        a.kind?.type === "choice" || a.kind?.type === "boolean" ? (
+          <ChoiceRow
+            key={a.key}
+            label={a.label}
+            value={named[a.key] ?? chosen[a.key] ?? ""}
+            items={
+              a.kind.type === "choice"
+                ? a.kind.items
+                : [
+                    { value: "Yes", label: "Yes" },
+                    { value: "No", label: "No" },
+                  ]
+            }
+            onChange={(v) => setNamed((prev) => ({ ...prev, [a.key]: v }))}
+          />
+        ) : a.references?.length ? (
           <ReferenceField
             key={a.key}
             label={a.label}
@@ -267,6 +303,55 @@ export function CreateElementModal({
         </>
       )}
     </CreateElementDialog>
+  );
+}
+
+/** One of a declared list, in the dialog's own field chrome. */
+function ChoiceRow({
+  label,
+  value,
+  items,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  items: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-tertiary)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+        }}
+      >
+        {label}
+      </span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          background: "var(--bg-input)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          padding: "6px 10px",
+          color: "var(--text-primary)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--text-md)",
+          outline: "none",
+        }}
+      >
+        {items.map((i) => (
+          <option key={i.value} value={i.value}>
+            {i.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 

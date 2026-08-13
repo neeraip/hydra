@@ -1794,6 +1794,11 @@ pub(crate) fn set_attribute(
     if key == "curve" {
         return set_pump_curve(net, element_id, value.as_str().unwrap_or("").trim());
     }
+    // A grate's family is a keyword rather than a number, so it is
+    // matched here with the other textual writes.
+    if key == "grateType" {
+        return set_grate_type(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "raingage" {
         return set_parcel_gage(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -1960,6 +1965,23 @@ fn set_link_attribute(
     Ok(())
 }
 
+/// Set an inlet's grate family, by the predecessor's own keyword.
+fn set_grate_type(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    let kind = super::uds_create::grate_kind(name)
+        .ok_or_else(|| format!("'{name}' is not a grate type"))?;
+    let inlet = net
+        .inlets
+        .iter_mut()
+        .find(|i| i.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let grate = inlet
+        .grate
+        .as_mut()
+        .ok_or_else(|| format!("'{id}' has no grate opening"))?;
+    grate.grate = kind;
+    Ok(())
+}
+
 /// Point a rain gage at the time series it reads.
 ///
 /// Only a series: a gage may instead read an external file, and swapping
@@ -2117,6 +2139,44 @@ fn set_record_attribute(
                     return Err("a street has one side or two".into());
                 }
                 st.sides = value as u8;
+            }
+            other => return Err(unwritable(other)),
+        }
+        return Ok(());
+    }
+    if let Some(i) = net
+        .inlets
+        .iter_mut()
+        .find(|i| i.id.eq_ignore_ascii_case(element_id))
+    {
+        // An opening's dimensions, and only where that opening exists —
+        // writing a grate width on a design with no grate would have to
+        // invent the rest of one.
+        let missing = |what: &str| format!("'{element_id}' has no {what} opening");
+        match key {
+            "grateLength" | "grateWidth" => {
+                let g = i.grate.as_mut().ok_or_else(|| missing("grate"))?;
+                if key == "grateLength" {
+                    g.length = value;
+                } else {
+                    g.width = value;
+                }
+            }
+            "curbLength" | "curbHeight" => {
+                let c = i.curb.as_mut().ok_or_else(|| missing("curb"))?;
+                if key == "curbLength" {
+                    c.length = value;
+                } else {
+                    c.height = value;
+                }
+            }
+            "slottedLength" | "slottedWidth" => {
+                let sl = i.slotted.as_mut().ok_or_else(|| missing("slotted"))?;
+                if key == "slottedLength" {
+                    sl.length = value;
+                } else {
+                    sl.width = value;
+                }
             }
             other => return Err(unwritable(other)),
         }
@@ -2477,12 +2537,20 @@ RS1  0:00  0.4
     /// or the reverse — fails here rather than in the app.
     #[test]
     fn a_row_that_cannot_be_set_does_not_read_as_editable() {
+        // Every kind the fixture has one of. The list started at four and
+        // let a real drift through: an inlet's fields were marked
+        // editable with no setter behind them, and nothing failed because
+        // no inlet was sampled. A kind the fixture gains is covered the
+        // moment it is named here.
         let sample = |kind: &str| -> Option<&'static str> {
             match kind {
                 "junction" => Some("J1"),
                 "outfall" => Some("O1"),
                 "conduit" => Some("C1"),
                 "subcatchment" => Some("S1"),
+                "street" => Some("ST1"),
+                "transect" => Some("TR1"),
+                "inlet" => Some("CB1"),
                 _ => None,
             }
         };

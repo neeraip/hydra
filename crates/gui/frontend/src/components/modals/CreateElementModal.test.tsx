@@ -88,6 +88,19 @@ const SCHEMA: Record<string, unknown[]> = {
       references: ["raingage"],
     },
     { key: "area", label: "Area", editable: true, kind: NUMBER },
+    {
+      key: "grateType",
+      label: "Grate type",
+      editable: true,
+      kind: {
+        type: "choice",
+        default: "CURVED_VANE",
+        items: [
+          { value: "P_BAR-50", label: "P_BAR-50" },
+          { value: "CURVED_VANE", label: "CURVED_VANE" },
+        ],
+      },
+    },
   ],
   pipe: [{ key: "length", label: "Length", editable: true, kind: NUMBER }],
 };
@@ -178,6 +191,20 @@ describe("CreateElementModal", () => {
     ).toEqual(["G1"]);
     // Numbers still appear beside it.
     expect(screen.getByLabelText("Area")).toBeDefined();
+  });
+
+  it("asks for a choice, starting at the default the engine declared", () => {
+    // The reasoning that once excluded choices — a choice always has a
+    // value, so a create can leave it alone — holds for an element that
+    // exists and fails for one being built: a drainage inlet's grate
+    // family decides what the engine constructs.
+    render(<CreateElementModal {...props} klass="region" />);
+    const family = screen.getByLabelText("Grate type") as HTMLSelectElement;
+    expect(family.value).toBe("CURVED_VANE");
+    expect([...family.options].map((o) => o.value)).toEqual([
+      "P_BAR-50",
+      "CURVED_VANE",
+    ]);
   });
 
   it("asks for nothing but a name when adding a container", () => {

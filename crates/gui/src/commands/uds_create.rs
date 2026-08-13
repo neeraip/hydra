@@ -293,6 +293,86 @@ pub(crate) fn create_uds_storage(
     Ok(())
 }
 
+/// The grate families, in the predecessor's own spelling and order.
+///
+/// The same pair the reader keeps, restated here because the create
+/// takes a keyword rather than a parsed kind — and a spelling that
+/// drifted would write a family the reader cannot read back.
+const GRATE_TYPES: [(&str, hydra::uds::model::GrateKind); 8] = {
+    use hydra::uds::model::GrateKind as G;
+    [
+        ("P_BAR-50x100", G::PBar50x100),
+        ("P_BAR-50", G::PBar50),
+        ("P_BAR-30", G::PBar30),
+        ("CURVED_VANE", G::CurvedVane),
+        ("TILT_BAR-45", G::TiltBar45),
+        ("TILT_BAR-30", G::TiltBar30),
+        ("RETICULINE", G::Reticuline),
+        ("GENERIC", G::Generic),
+    ]
+};
+
+/// The `GrateKind` a keyword names, or `None` for one no reader knows.
+pub(crate) fn grate_kind(name: &str) -> Option<hydra::uds::model::GrateKind> {
+    GRATE_TYPES
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| *v)
+}
+
+/// Add an inlet design.
+///
+/// A design may carry a grate, a curb opening and a slot at once, so all
+/// three pairs of dimensions are offered and an opening given no size is
+/// simply absent — which is what the file says too, a line per opening
+/// the design has. A design with none of the three is refused: it
+/// captures nothing, and the writer would emit no line for it, so it
+/// would vanish at the next save.
+pub(crate) fn create_uds_inlet(
+    net: &mut Network,
+    id: &str,
+    grate: Option<(f64, f64)>,
+    grate_type: &str,
+    curb: Option<(f64, f64)>,
+    slotted: Option<(f64, f64)>,
+) -> Result<(), String> {
+    use hydra::uds::model::{CurbInlet, GrateInlet, InletDesign, SlottedInlet, ThroatAngle};
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("inlet") {
+        return Err(refuse_kind("inlet"));
+    }
+    if grate.is_none() && curb.is_none() && slotted.is_none() {
+        return Err("an inlet needs at least one opening with a size".into());
+    }
+    let kind =
+        grate_kind(grate_type).ok_or_else(|| format!("'{grate_type}' is not a grate type"))?;
+    net.inlets.push(InletDesign {
+        id: id.to_string(),
+        grate: grate.map(|(length, width)| GrateInlet {
+            length,
+            width,
+            grate: kind,
+            // Only a generic grate reads these; a named family carries
+            // its own published capture curve, so zero here is "not
+            // stated" rather than "no open area".
+            area_ratio: 0.0,
+            splash_velocity: 0.0,
+        }),
+        curb: curb.map(|(length, height)| CurbInlet {
+            length,
+            height,
+            throat: ThroatAngle::Horizontal,
+        }),
+        slotted: slotted.map(|(length, width)| SlottedInlet { length, width }),
+        custom_curve: None,
+        drop_grate: false,
+        drop_curb: false,
+    });
+    Ok(())
+}
+
 /// Add a rain gage reading a time series.
 ///
 /// The series has to exist, which is what the refusal this replaces was
@@ -1148,6 +1228,50 @@ O1 100 0
         );
         assert!(again.gages.iter().any(|g| g.id == "RG2"));
         assert!(again.links.iter().any(|l| l.id == "PU1"));
+    }
+
+    /// The kind that looked like it needed a form changing shape with a
+    /// choice, and did not. A design may carry a grate, a curb opening
+    /// and a slot at once, so all three pairs are offered and an opening
+    /// given no size is absent — conditional in what it produces without
+    /// being conditional in what it asks.
+    #[test]
+    fn an_inlet_carries_whichever_openings_were_given_a_size() {
+        let mut net = gaged_model();
+        create_uds_inlet(&mut net, "IN1", Some((0.6, 0.4)), "P_BAR-50", None, None)
+            .expect("a grate alone");
+        let made = net.inlets.iter().find(|i| i.id == "IN1").expect("IN1");
+        assert!(made.grate.is_some());
+        assert!(made.curb.is_none() && made.slotted.is_none());
+
+        // And more than one at a time, which is what a combination inlet
+        // is and what no single-choice form could have expressed.
+        create_uds_inlet(
+            &mut net,
+            "IN2",
+            Some((0.6, 0.4)),
+            "CURVED_VANE",
+            Some((1.0, 0.12)),
+            None,
+        )
+        .expect("a combination");
+        let combo = net.inlets.iter().find(|i| i.id == "IN2").expect("IN2");
+        assert!(combo.grate.is_some() && combo.curb.is_some());
+
+        // A design with no opening captures nothing and the writer would
+        // emit no line for it, so it would vanish at the next save.
+        assert!(create_uds_inlet(&mut net, "IN3", None, "P_BAR-50", None, None).is_err());
+        // A family the reader could not read back is refused here.
+        assert!(create_uds_inlet(&mut net, "IN3", Some((1.0, 1.0)), "NOPE", None, None).is_err());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        let back = again.inlets.iter().find(|i| i.id == "IN2").expect("IN2");
+        assert!(back.grate.is_some() && back.curb.is_some());
     }
 
     #[test]

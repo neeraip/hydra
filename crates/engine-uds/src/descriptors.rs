@@ -322,8 +322,13 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "In",
-        creatable: false,
-        not_creatable_because: Some("an inlet design is its opening geometry"),
+        // Creatable since that geometry became editable. A design may
+        // carry a grate, a curb opening and a slot at once, so the form
+        // offers all three and builds whichever were given a size —
+        // which is conditional in what it produces without being
+        // conditional in what it asks.
+        creatable: true,
+        not_creatable_because: None,
     },
 ];
 
@@ -655,13 +660,45 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             // What the design *is* — a combination inlet carries more than
             // one, so this is a summary rather than a single type.
             attr("openings", "Openings", text(), None),
-            attr("grateLength", "Grate length", num(), Some("length")),
-            attr("grateWidth", "Grate width", num(), Some("length")),
-            attr("grateType", "Grate type", text(), None),
-            attr("curbLength", "Curb length", num(), Some("length")),
-            attr("curbHeight", "Curb opening height", num(), Some("length")),
-            attr("slottedLength", "Slotted length", num(), Some("length")),
-            attr("slottedWidth", "Slotted width", num(), Some("length")),
+            // One design may carry a grate, a curb opening and a slot at
+            // once, so all three pairs are offered and a size given to
+            // none of them means that opening is absent. That is what the
+            // file says too: a line per opening the design has.
+            rw("grateLength", "Grate length", num(), Some("length")),
+            rw("grateWidth", "Grate width", num(), Some("length")),
+            rw(
+                "grateType",
+                "Grate type",
+                OptionKind::Choice {
+                    // The family the predecessor's own examples reach for
+                    // first, and the one this list starts with.
+                    default: Some("P_BAR-50".to_string()),
+                    // The predecessor's own spellings, in its own order —
+                    // these are what the file carries, so a value picked
+                    // here writes back verbatim.
+                    items: [
+                        "P_BAR-50x100",
+                        "P_BAR-50",
+                        "P_BAR-30",
+                        "CURVED_VANE",
+                        "TILT_BAR-45",
+                        "TILT_BAR-30",
+                        "RETICULINE",
+                        "GENERIC",
+                    ]
+                    .iter()
+                    .map(|v| hydra_common::ChoiceItem {
+                        value: (*v).to_string(),
+                        label: (*v).to_string(),
+                    })
+                    .collect(),
+                },
+                None,
+            ),
+            rw("curbLength", "Curb length", num(), Some("length")),
+            rw("curbHeight", "Curb opening height", num(), Some("length")),
+            rw("slottedLength", "Slotted length", num(), Some("length")),
+            rw("slottedWidth", "Slotted width", num(), Some("length")),
         ],
         _ => Vec::new(),
     }
@@ -947,8 +984,10 @@ mod tests {
                             OptionKind::Number { .. }
                                 | OptionKind::Integer { .. }
                                 | OptionKind::Text { .. }
+                                | OptionKind::Choice { .. }
+                                | OptionKind::Boolean { .. }
                         ),
-                        "{}.{} is editable but is neither a number nor text",
+                        "{}.{} is editable but is not a value a cell can hold",
                         kind.id,
                         a.key
                     );

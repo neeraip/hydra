@@ -163,6 +163,25 @@ pub fn create_element(
                     // default for a vertex nobody has surveyed.
                     0.0,
                 )?,
+                Placement::Nowhere if element.kind == "inlet" => {
+                    // Each opening is a pair, present only when it was
+                    // given a size — the form offers all three and the
+                    // design carries whichever were filled in.
+                    let opening =
+                        |a: &str, b: &str| optional(&element, a).zip(optional(&element, b));
+                    super::uds_create::create_uds_inlet(
+                        &mut draft,
+                        &id,
+                        opening("grateLength", "grateWidth"),
+                        element
+                            .fields
+                            .get("grateType")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("P_BAR-50"),
+                        opening("curbLength", "curbHeight"),
+                        opening("slottedLength", "slottedWidth"),
+                    )?;
+                }
                 Placement::Nowhere if element.kind == "street" => {
                     // Its dimensions describe one particular street, so
                     // every one of them is asked for.
@@ -220,6 +239,15 @@ pub fn create_element(
                 Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
                 Placement::At(_, _) if element.kind == "raingage" => &["source"],
                 Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
+                Placement::Nowhere if element.kind == "inlet" => &[
+                    "grateLength",
+                    "grateWidth",
+                    "grateType",
+                    "curbLength",
+                    "curbHeight",
+                    "slottedLength",
+                    "slottedWidth",
+                ],
                 Placement::Nowhere if element.kind == "street" => {
                     &["crownWidth", "curbHeight", "crossSlope"]
                 }
