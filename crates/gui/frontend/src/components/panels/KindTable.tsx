@@ -350,19 +350,12 @@ export function KindTable({
     (joined ? 2 : 0) +
     (hasActions ? 1 : 0);
 
-  if (elements.ids.length === 0) {
-    return (
-      <div
-        style={{
-          padding: 16,
-          fontSize: "var(--text-md)",
-          color: "var(--text-tertiary)",
-        }}
-      >
-        No elements of this kind.
-      </div>
-    );
-  }
+  // A kind with nothing in it still draws its bar, because the Add
+  // button lives there. This used to return early with the message
+  // alone, which hid Add in the one case where it is the only thing on
+  // the screen worth pressing: a model with no dividers offered no way
+  // to make the first one.
+  const empty = elements.ids.length === 0;
 
   return (
     <div
@@ -389,25 +382,30 @@ export function KindTable({
           flexShrink: 0,
         }}
       >
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search…"
-          aria-label="Search ids"
-          style={{
-            width: 200,
-            height: 28,
-            background: "var(--bg-input)",
-            border: "1px solid var(--border)",
-            borderRadius: 5,
-            padding: "0 8px",
-            color: "var(--text-primary)",
-            fontFamily: "var(--font-ui)",
-            fontSize: "var(--text-lg)",
-            outline: "none",
-          }}
-        />
+        {/* Nothing to search when there is nothing there — a box that
+            can only ever return nothing is a control offering work it
+            cannot do. */}
+        {!empty && (
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search…"
+            aria-label="Search ids"
+            style={{
+              width: 200,
+              height: 28,
+              background: "var(--bg-input)",
+              border: "1px solid var(--border)",
+              borderRadius: 5,
+              padding: "0 8px",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-ui)",
+              fontSize: "var(--text-lg)",
+              outline: "none",
+            }}
+          />
+        )}
         {onAdd && (
           <button
             type="button"
@@ -432,7 +430,17 @@ export function KindTable({
       {/* A search that matches nothing is not the same as a kind with
           nothing in it, and saying "no elements of this kind" here would
           be false. */}
-      {order.length === 0 ? (
+      {empty ? (
+        <div
+          style={{
+            padding: 16,
+            fontSize: "var(--text-md)",
+            color: "var(--text-tertiary)",
+          }}
+        >
+          No elements of this kind.
+        </div>
+      ) : order.length === 0 ? (
         <div
           style={{
             padding: 16,

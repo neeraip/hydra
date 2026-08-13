@@ -650,6 +650,41 @@ describe("KindTable row actions", () => {
  * where the names are the model's own and a typo produces a reference
  * to nothing.
  */
+/**
+ * A kind with nothing in it is the one case where Add is the only thing
+ * on the screen worth pressing — and it was the one case where the
+ * button was not drawn. The table returned its empty message before it
+ * rendered the bar the button lives in, so a model with no dividers
+ * offered no way to make the first one.
+ */
+describe("KindTable with nothing in it", () => {
+  const nothing = {
+    ids: [],
+    columns: [],
+    positions: [],
+    ends: [],
+  } as KindElements;
+
+  it("still offers Add", () => {
+    render(<KindTable elements={nothing} onAdd={() => {}} />);
+    expect(screen.getByText("+ Add")).toBeDefined();
+    expect(screen.getByText("No elements of this kind.")).toBeDefined();
+  });
+
+  it("offers no search, which could only ever return nothing", () => {
+    render(<KindTable elements={nothing} onAdd={() => {}} />);
+    expect(screen.queryByLabelText("Search ids")).toBeNull();
+  });
+
+  it("says so without an Add it was not given", () => {
+    // A kind the catalog will not create still explains itself rather
+    // than showing a bare bar.
+    render(<KindTable elements={nothing} />);
+    expect(screen.queryByText("+ Add")).toBeNull();
+    expect(screen.getByText("No elements of this kind.")).toBeDefined();
+  });
+});
+
 describe("KindTable references", () => {
   const withRef: KindElements = {
     ids: ["J1"],
