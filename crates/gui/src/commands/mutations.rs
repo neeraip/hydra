@@ -1045,6 +1045,30 @@ fn delete_element_from_network(
             delete_pattern_from_network(network, id)?;
             return Ok(Vec::new());
         }
+        // Addressed by position, and removable because nothing points at
+        // one: a control names a link and a node, and no part of the
+        // model names a control. So the removal is the entry and nothing
+        // else — the index shuffle that makes removing a *node* delicate
+        // has no counterpart here.
+        "control" | "rule" => {
+            let count = if kind == "control" {
+                network.controls.len()
+            } else {
+                network.rules.len()
+            };
+            let index = id
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .filter(|&i| i < count)
+                .ok_or_else(|| format!("{kind} '{id}' not found"))?;
+            if kind == "control" {
+                network.controls.remove(index);
+            } else {
+                network.rules.remove(index);
+            }
+            return Ok(Vec::new());
+        }
         other => return Err(format!("unknown element kind '{}'", other)),
     }
     // Only a node cascades; a link takes nothing with it.
@@ -1207,6 +1231,17 @@ fn rename_element_in_network(
         // the modeller's choice.
         "curve" => return rename_curve_in_network(network, old_id, new_id),
         "pattern" => return rename_pattern_in_network(network, old_id, new_id),
+        // Neither has a name to change. The reader keeps none — a file's
+        // `RULE R1` is decoration that nothing resolves through — so
+        // what the table shows is the position, and a position is not a
+        // thing you rename. Said plainly, because the alternative was
+        // "unknown element kind 'control'", which reads as the element
+        // being missing rather than the operation not applying.
+        "control" | "rule" => {
+            return Err(format!(
+                "a {kind} is identified by where it sits in the model, so it has no name to change"
+            ))
+        }
         other => return Err(format!("unknown element kind '{other}'")),
     }
     Ok(())
@@ -1597,9 +1632,10 @@ fn delete_pattern_from_network(network: &mut hydra::Network, id: &str) -> Result
 }
 
 /// Rename a curve in place, cascading the new ID to every reference. See
-/// [`rename_curve`] for the contract. Extracted so the cascade is testable
-/// without an `AppHandle`; `new_id` is assumed validated by
-/// [`validate_inp_id`].
+/// [`rename_element`] for the contract — a curve reaches it like any
+/// other kind now, and the command this named went with the editor that
+/// used to own curves. Extracted so the cascade is testable without an
+/// `AppHandle`; `new_id` is assumed validated by [`validate_inp_id`].
 fn rename_curve_in_network(
     network: &mut hydra::Network,
     old_id: &str,
@@ -3062,5 +3098,48 @@ Duration  0
         });
         assert!(rename_curve_in_network(&mut network, "CURVE_A", "C2").is_err());
         assert!(rename_curve_in_network(&mut network, "NOPE", "X").is_err());
+    }
+
+    // ── controls and rules: removable, and not renameable ─────────────────
+
+    /// A control is removed by the position it is listed at.
+    ///
+    /// The Editor offers delete on every row of every kind, and this one
+    /// answered "unknown element kind 'control'" — which reads as the
+    /// control being missing rather than as the operation not being
+    /// built. It is a plain removal: a control names a link and a node,
+    /// and nothing in the model names a control back, so there are no
+    /// references to shift.
+    #[test]
+    fn a_control_is_deleted_by_its_position() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).expect("fixture");
+        assert_eq!(network.controls.len(), 1);
+
+        // Out of range and unparseable are both "not found" rather than
+        // a panic or a silent removal of the last one.
+        assert!(delete_element_from_network(&mut network, "control", "2").is_err());
+        assert!(delete_element_from_network(&mut network, "control", "0").is_err());
+        assert!(delete_element_from_network(&mut network, "control", "first").is_err());
+        assert_eq!(network.controls.len(), 1, "a refusal removed nothing");
+
+        assert!(delete_element_from_network(&mut network, "control", "1").is_ok());
+        assert!(network.controls.is_empty());
+    }
+
+    /// Neither can be renamed, and the refusal says why.
+    ///
+    /// A control has no name in the model — the reader keeps none,
+    /// because a file's own is decoration nothing resolves through — so
+    /// the id the table shows is its position. "Unknown element kind"
+    /// described the code rather than the model.
+    #[test]
+    fn a_control_has_no_name_to_change() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).expect("fixture");
+        for kind in ["control", "rule"] {
+            let err = rename_element_in_network(&mut network, kind, "1", "2")
+                .expect_err("there is nothing to rename");
+            assert!(err.contains("no name to change"), "{kind}: {err}");
+            assert!(!err.contains("unknown"), "{kind}: {err}");
+        }
     }
 }

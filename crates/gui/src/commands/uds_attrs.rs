@@ -478,6 +478,21 @@ pub struct CollectionDetailDto {
     /// with the engine's own reader. Serving the text to be read is
     /// worth doing whether or not it can be rewritten.
     pub editable: bool,
+    /// Why there is nothing, when there is nothing (§4.5.2.2).
+    ///
+    /// Empty contents are two different answers. A pollutant has none —
+    /// it is its attributes and nothing further. An external time
+    /// series' values are real and held in a file beside the model. Both
+    /// arrive as no rows and no lines, and a consumer telling them apart
+    /// would be doing it by the kind it asked for, which is the list of
+    /// kinds §1 exists to prevent.
+    ///
+    /// Served only where there is something to say. No note means the
+    /// element has no contents, and the panel is not drawn at all — a
+    /// bordered box holding a heading and nothing else reads as a surface
+    /// that failed to load.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The contents of one collection element, or an empty detail when the
@@ -525,6 +540,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
             // Every tabular container is a table of numbers under
             // engine-named headings, which is the shape the write takes.
             editable: true,
+            note: None,
         }
     };
     /// What a curve's two columns *are* depends on what the curve is for
@@ -677,6 +693,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                                     }
                                 })
                                 .collect(),
+                            note: None,
                         }
                     } else {
                         pair(
@@ -697,11 +714,40 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                     }
                 }
                 // An external series lives in a file this crate never
-                // reads; there is nothing to show and saying so is the
-                // consumer's job.
-                hydra::uds::model::TimeSeriesSource::External { .. } => {
-                    CollectionDetailDto::default()
-                }
+                // reads. Its values are real and elsewhere, which is a
+                // different thing from having none — and the note is
+                // what says so. It used to be the consumer's sentence,
+                // and the consumer showed it under every kind whose
+                // contents were empty for any reason at all, telling
+                // readers that a pollutant's contents lived in a file.
+                hydra::uds::model::TimeSeriesSource::External { file } => CollectionDetailDto {
+                    note: Some(format!(
+                        "This series is read from '{file}', which is kept beside the model \
+                         rather than in it."
+                    )),
+                    ..CollectionDetailDto::default()
+                },
+            })
+            .unwrap_or_default(),
+        // Its row counts the layers and this cannot open one — the shape
+        // §4.5.2.2 exists to remove, and the only kind left with it. A
+        // layer is neither a row of numbers under one set of headings nor
+        // a block of text: it is six named groups of six to fourteen
+        // parameters each, which the contents shapes cannot describe. So
+        // it says so, rather than the row promising four layers and the
+        // panel below it being absent.
+        "lidcontrol" => net
+            .lid_controls
+            .iter()
+            .find(|c| c.id == id)
+            .map(|_| CollectionDetailDto {
+                note: Some(
+                    "A control measure's layers cannot be read here yet — its surface, \
+                     soil, pavement, storage and drain each hold their own parameters, \
+                     and this shows a table or a block of text."
+                        .to_string(),
+                ),
+                ..CollectionDetailDto::default()
             })
             .unwrap_or_default(),
         "rule" => net
@@ -718,6 +764,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 // reach — so it is served to be read and not rewritten.
                 editable: false,
                 lines: r.lines.clone(),
+                note: None,
             })
             .unwrap_or_default(),
         _ => CollectionDetailDto::default(),
@@ -1364,6 +1411,64 @@ mod tests {
         let series = collection_detail(&net, "timeseries", "TS1");
         assert_eq!(series.columns, vec!["Time (h)", "Value"]);
         assert_eq!(series.rows, vec![vec![0.0, 0.1], vec![1.0, 0.4]]);
+    }
+
+    /// Empty is two answers, and the engine says which (§4.5.2.2).
+    ///
+    /// A consumer cannot tell them apart: an external series' values are
+    /// real and held in a file beside the model, while a pollutant has no
+    /// contents at all, and both arrive as no rows and no lines. The
+    /// sentence explaining the first used to be written in the consumer,
+    /// so it appeared under every kind whose contents were empty for any
+    /// reason — telling readers that a pollutant's contents lived in a
+    /// file that does not exist.
+    #[test]
+    fn empty_contents_say_why_only_when_there_is_a_why() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO\n\
+                     [TIMESERIES]\nRAIN FILE \"rain.dat\"\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let external = collection_detail(&net, "timeseries", "RAIN");
+        assert!(external.rows.is_empty() && external.lines.is_empty());
+        let note = external.note.expect("an external series says where it is");
+        assert!(note.contains("rain.dat"), "{note}");
+
+        // A pollutant is its attributes and nothing further. No note, so
+        // the panel is not drawn at all rather than drawn saying nothing.
+        let pollutant = collection_detail(&net, "pollutant", "TSS");
+        assert!(pollutant.rows.is_empty() && pollutant.lines.is_empty());
+        assert_eq!(pollutant.note, None);
+
+        // And a container that *has* contents never carries one: a note
+        // explains an absence, and this is not one.
+        assert_eq!(collection_detail(&net, "junction", "J1").note, None);
+    }
+
+    /// The one kind whose row counts something this cannot open.
+    ///
+    /// A LID control's row says how many layers it has, and a layer is
+    /// neither a table of numbers nor a block of text — it is six named
+    /// groups of parameters, which neither contents shape describes. That
+    /// is exactly the countable-and-unopenable state §4.5.2.2 was written
+    /// to remove, so it is stated rather than left as an absence.
+    #[test]
+    fn a_lid_control_says_its_layers_are_not_readable() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [LID_CONTROLS]\n\
+                     GR1 BIO_CELL\n\
+                     GR1 SURFACE 150 0.0 0.1 1.0 5\n\
+                     GR1 SOIL 600 0.5 0.2 0.1 10.0 30 3.5\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let detail = collection_detail(&net, "lidcontrol", "GR1");
+        assert!(detail.rows.is_empty() && detail.lines.is_empty());
+        let note = detail.note.expect("it says why");
+        assert!(note.contains("layers"), "{note}");
+        // Not the absent case: a control the model does not have has
+        // nothing to explain.
+        assert_eq!(collection_detail(&net, "lidcontrol", "NOPE").note, None);
     }
 
     /// An unknown id is an expected state — a stale selection after the

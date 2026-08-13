@@ -114,176 +114,7 @@ pub fn create_element(
     match engine.as_str() {
         "uds" => super::mutations::mutate_uds(&app, &state, |network| {
             let mut draft = network.clone();
-            match &where_ {
-                Placement::At(x, y) if class == ElementClass::Region => {
-                    // Its gage and its outlet go in up front: the model
-                    // holds both as indices and there is no value meaning
-                    // "not yet chosen", so a parcel exists pointing at
-                    // something or it does not exist at all.
-                    super::uds_create::create_uds_parcel(
-                        &mut draft,
-                        &id,
-                        *x,
-                        *y,
-                        &required_text(&element, "raingage")?,
-                        &required_text(&element, "outlet")?,
-                    )?;
-                }
-                Placement::At(x, y) if element.kind == "raingage" => {
-                    super::uds_create::create_uds_gage(
-                        &mut draft,
-                        &id,
-                        &required_text(&element, "source")?,
-                    )?;
-                    super::uds_view::set_display_point(&mut draft, "[SYMBOLS]", &id, *x, *y);
-                }
-                Placement::At(x, y) if element.kind == "storage" => {
-                    // A prismatic tank: the one storage shape a pair of
-                    // numbers can describe, and both are the caller's
-                    // because neither a depth nor an area has a
-                    // conventional value.
-                    super::uds_create::create_uds_storage(
-                        &mut draft,
-                        &id,
-                        *x,
-                        *y,
-                        0.0,
-                        required(&element, "maxDepth")?,
-                        required(&element, "surfaceArea")?,
-                    )?;
-                }
-                Placement::At(x, y) => super::uds_create::create_uds_vertex(
-                    &mut draft,
-                    &element.kind,
-                    &id,
-                    *x,
-                    *y,
-                    // The invert is an ordinary editable attribute and
-                    // arrives with the rest; zero is the engine's own
-                    // default for a vertex nobody has surveyed.
-                    0.0,
-                )?,
-                Placement::Nowhere if element.kind == "curve" => {
-                    super::uds_create::create_uds_curve(
-                        &mut draft,
-                        &id,
-                        &required_text(&element, "curveType")?,
-                    )?;
-                }
-                Placement::Nowhere if element.kind == "inlet" => {
-                    // Each opening is a pair, present only when it was
-                    // given a size — the form offers all three and the
-                    // design carries whichever were filled in.
-                    let opening =
-                        |a: &str, b: &str| optional(&element, a).zip(optional(&element, b));
-                    super::uds_create::create_uds_inlet(
-                        &mut draft,
-                        &id,
-                        opening("grateLength", "grateWidth"),
-                        element
-                            .fields
-                            .get("grateType")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("P_BAR-50"),
-                        opening("curbLength", "curbHeight"),
-                        opening("slottedLength", "slottedWidth"),
-                    )?;
-                }
-                Placement::Nowhere if element.kind == "street" => {
-                    // Its dimensions describe one particular street, so
-                    // every one of them is asked for.
-                    super::uds_create::create_uds_street(
-                        &mut draft,
-                        &id,
-                        required(&element, "crownWidth")?,
-                        required(&element, "curbHeight")?,
-                        required(&element, "crossSlope")?,
-                    )?;
-                }
-                Placement::Nowhere => {
-                    super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
-                }
-                Placement::Between(from, to) if element.kind == "outlet" => {
-                    super::uds_create::create_uds_outlet(
-                        &mut draft,
-                        &id,
-                        from,
-                        to,
-                        element
-                            .fields
-                            .get("outletCurve")
-                            .and_then(serde_json::Value::as_str),
-                        optional(&element, "ratingCoeff")
-                            .map(|c| (c, optional(&element, "ratingExponent").unwrap_or(0.5))),
-                    )?;
-                }
-                Placement::Between(from, to) if element.kind == "pump" => {
-                    super::uds_create::create_uds_pump(
-                        &mut draft,
-                        &id,
-                        from,
-                        to,
-                        &required_text(&element, "curve")?,
-                    )?;
-                }
-                Placement::Between(from, to) if element.kind != "conduit" => {
-                    // An opening rather than a channel. Its two
-                    // dimensions come from the caller, because neither an
-                    // orifice's height nor a weir's crest has the
-                    // conventional value a bore does — while the
-                    // discharge coefficients, which do, are the engine's.
-                    let (height, width) = opening_keys(&element.kind);
-                    super::uds_create::create_uds_opening(
-                        &mut draft,
-                        &element.kind,
-                        &id,
-                        from,
-                        to,
-                        required(&element, height)?,
-                        required(&element, width)?,
-                    )?;
-                }
-                Placement::Between(from, to) => super::uds_create::create_uds_link(
-                    &mut draft,
-                    &element.kind,
-                    &id,
-                    from,
-                    to,
-                    length_of(&element)?,
-                    // Optional: a cross-section is more than a bore, and
-                    // the engine's default is the honest answer until
-                    // the rest of one can be edited too.
-                    optional(&element, "diameter"),
-                )?,
-            }
-            let consumed: &[&str] = match &where_ {
-                Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
-                Placement::At(_, _) if element.kind == "raingage" => &["source"],
-                Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
-                Placement::Nowhere if element.kind == "curve" => &["curveType"],
-                Placement::Nowhere if element.kind == "inlet" => &[
-                    "grateLength",
-                    "grateWidth",
-                    "grateType",
-                    "curbLength",
-                    "curbHeight",
-                    "slottedLength",
-                    "slottedWidth",
-                ],
-                Placement::Nowhere if element.kind == "street" => {
-                    &["crownWidth", "curbHeight", "crossSlope"]
-                }
-                Placement::At(_, _) | Placement::Nowhere => &[],
-                Placement::Between(_, _) if element.kind == "outlet" => {
-                    &["outletCurve", "ratingCoeff", "ratingExponent"]
-                }
-                Placement::Between(_, _) if element.kind == "pump" => &["curve"],
-                Placement::Between(_, _) if element.kind == "orifice" => &["height", "width"],
-                Placement::Between(_, _) if element.kind == "weir" => {
-                    &["crestHeight", "crestLength"]
-                }
-                Placement::Between(_, _) => &["length", "diameter"],
-            };
+            let consumed = build_uds(&mut draft, &element, &id, &where_, class)?;
             apply_fields(&element, consumed, |key, value| {
                 super::uds_attrs::set_attribute(&mut draft, &id, key, value)
             })?;
@@ -292,37 +123,232 @@ pub fn create_element(
         }),
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             let mut draft = network.clone();
-            match &where_ {
-                Placement::At(x, y) => super::mutations::create_node_in_network(
-                    &mut draft,
-                    &element.kind,
-                    &id,
-                    *x,
-                    *y,
-                    None,
-                    None,
-                    None,
-                    None,
-                )?,
-                Placement::Between(from, to) => super::mutations::create_link_in_network(
-                    &mut draft,
-                    &element.kind,
-                    &id,
-                    from,
-                    to,
-                )?,
-                Placement::Nowhere => {
-                    super::mutations::create_container_in_network(&mut draft, &element.kind, &id)?;
-                }
-            }
-            apply_fields(&element, &[], |key, value| {
-                super::wds_attrs::set_attribute(&mut draft, &id, key, value)
+            let consumed = build_wds(&mut draft, &element, &id, &where_)?;
+            apply_fields(&element, consumed, |key, value| {
+                // The kind is known here: it is the one being created.
+                super::wds_attrs::set_attribute(&mut draft, Some(&element.kind), &id, key, value)
             })?;
             *network = draft;
             Ok(())
         }),
         other => Err(format!("no editing surface for engine '{other}'")),
     }
+}
+
+/// Build the new drainage element, and say which of the form's fields its
+/// constructor already took.
+///
+/// The two used to be written as separate matches on the same conditions,
+/// one after the other. A list that disagreed with its arm wrote a field
+/// the constructor had already applied, the second write refused, and the
+/// refusal took the whole create with it — which is how the drainage Add
+/// dialog came to be unable to make a conduit. Returning the list from
+/// the arm that consumed it makes the two one decision, so they cannot
+/// drift again.
+///
+/// It is also the only reason this is a function rather than the body of
+/// the command: a `#[tauri::command]` cannot be called from a test, so
+/// the guard that every creatable kind has a constructor could assert
+/// only that the catalog agreed with itself.
+fn build_uds(
+    draft: &mut hydra::uds::model::Network,
+    element: &NewElement,
+    id: &str,
+    where_: &Placement,
+    class: ElementClass,
+) -> Result<&'static [&'static str], String> {
+    match where_ {
+        Placement::At(x, y) if class == ElementClass::Region => {
+            // Its gage and its outlet go in up front: the model holds
+            // both as indices and there is no value meaning "not yet
+            // chosen", so a parcel exists pointing at something or it
+            // does not exist at all.
+            super::uds_create::create_uds_parcel(
+                draft,
+                id,
+                *x,
+                *y,
+                &required_text(element, "raingage")?,
+                &required_text(element, "outlet")?,
+            )?;
+            Ok(&["raingage", "outlet"])
+        }
+        Placement::At(x, y) if element.kind == "raingage" => {
+            super::uds_create::create_uds_gage(draft, id, &required_text(element, "source")?)?;
+            super::uds_view::set_display_point(draft, "[SYMBOLS]", id, *x, *y);
+            Ok(&["source"])
+        }
+        Placement::At(x, y) if element.kind == "storage" => {
+            // A prismatic tank: the one storage shape a pair of numbers
+            // can describe, and both are the caller's because neither a
+            // depth nor an area has a conventional value.
+            super::uds_create::create_uds_storage(
+                draft,
+                id,
+                *x,
+                *y,
+                0.0,
+                required(element, "maxDepth")?,
+                required(element, "surfaceArea")?,
+            )?;
+            Ok(&["maxDepth", "surfaceArea"])
+        }
+        Placement::At(x, y) => {
+            super::uds_create::create_uds_vertex(
+                draft,
+                &element.kind,
+                id,
+                *x,
+                *y,
+                // The invert is an ordinary editable attribute and
+                // arrives with the rest; zero is the engine's own
+                // default for a vertex nobody has surveyed.
+                0.0,
+            )?;
+            Ok(&[])
+        }
+        Placement::Nowhere if element.kind == "curve" => {
+            super::uds_create::create_uds_curve(draft, id, &required_text(element, "curveType")?)?;
+            Ok(&["curveType"])
+        }
+        Placement::Nowhere if element.kind == "inlet" => {
+            // Each opening is a pair, present only when it was given a
+            // size — the form offers all three and the design carries
+            // whichever were filled in.
+            let opening = |a: &str, b: &str| optional(element, a).zip(optional(element, b));
+            super::uds_create::create_uds_inlet(
+                draft,
+                id,
+                opening("grateLength", "grateWidth"),
+                element
+                    .fields
+                    .get("grateType")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("P_BAR-50"),
+                opening("curbLength", "curbHeight"),
+                opening("slottedLength", "slottedWidth"),
+            )?;
+            Ok(&[
+                "grateLength",
+                "grateWidth",
+                "grateType",
+                "curbLength",
+                "curbHeight",
+                "slottedLength",
+                "slottedWidth",
+            ])
+        }
+        Placement::Nowhere if element.kind == "street" => {
+            // Its dimensions describe one particular street, so every one
+            // of them is asked for.
+            super::uds_create::create_uds_street(
+                draft,
+                id,
+                required(element, "crownWidth")?,
+                required(element, "curbHeight")?,
+                required(element, "crossSlope")?,
+            )?;
+            Ok(&["crownWidth", "curbHeight", "crossSlope"])
+        }
+        Placement::Nowhere => {
+            super::uds_create::create_uds_container(draft, &element.kind, id)?;
+            Ok(&[])
+        }
+        Placement::Between(from, to) if element.kind == "outlet" => {
+            super::uds_create::create_uds_outlet(
+                draft,
+                id,
+                from,
+                to,
+                element
+                    .fields
+                    .get("outletCurve")
+                    .and_then(serde_json::Value::as_str),
+                optional(element, "ratingCoeff")
+                    .map(|c| (c, optional(element, "ratingExponent").unwrap_or(0.5))),
+            )?;
+            Ok(&["outletCurve", "ratingCoeff", "ratingExponent"])
+        }
+        Placement::Between(from, to) if element.kind == "pump" => {
+            super::uds_create::create_uds_pump(
+                draft,
+                id,
+                from,
+                to,
+                &required_text(element, "curve")?,
+            )?;
+            Ok(&["curve"])
+        }
+        Placement::Between(from, to) if element.kind != "conduit" => {
+            // An opening rather than a channel. Its two dimensions come
+            // from the caller, because neither an orifice's height nor a
+            // weir's crest has the conventional value a bore does — while
+            // the discharge coefficients, which do, are the engine's.
+            let (height, width) = opening_keys(&element.kind);
+            super::uds_create::create_uds_opening(
+                draft,
+                &element.kind,
+                id,
+                from,
+                to,
+                required(element, height)?,
+                required(element, width)?,
+            )?;
+            // The pair this arm asked for, whichever pair that was. Named
+            // once, by the same call that took them.
+            Ok(match element.kind.as_str() {
+                "weir" => &["crestHeight", "crestLength"],
+                _ => &["height", "width"],
+            })
+        }
+        Placement::Between(from, to) => {
+            super::uds_create::create_uds_link(
+                draft,
+                &element.kind,
+                id,
+                from,
+                to,
+                length_of(element)?,
+                // Optional: a cross-section is more than a bore, and the
+                // engine's default is the honest answer until the rest of
+                // one can be edited too.
+                optional(element, "diameter"),
+            )?;
+            Ok(&["length", "diameter"])
+        }
+    }
+}
+
+/// Build the new distribution element. Its constructors take no form
+/// fields at all — every value arrives as an ordinary attribute write —
+/// so the consumed list is always empty, and it is a function for the
+/// other reason: so the guard test can call it.
+fn build_wds(
+    draft: &mut hydra::Network,
+    element: &NewElement,
+    id: &str,
+    where_: &Placement,
+) -> Result<&'static [&'static str], String> {
+    match where_ {
+        Placement::At(x, y) => super::mutations::create_node_in_network(
+            draft,
+            &element.kind,
+            id,
+            *x,
+            *y,
+            None,
+            None,
+            None,
+            None,
+        )?,
+        Placement::Between(from, to) => {
+            super::mutations::create_link_in_network(draft, &element.kind, id, from, to)?;
+        }
+        Placement::Nowhere => {
+            super::mutations::create_container_in_network(draft, &element.kind, id)?;
+        }
+    }
+    Ok(&[])
 }
 
 /// Apply the supplied fields in a stable order.
@@ -489,14 +515,81 @@ mod tests {
         );
     }
 
-    /// Every kind the catalog says can be created has a constructor
-    /// behind it. The two are set in different files, and a flag flipped
-    /// without its arm gives a button that refuses with "no constructor
-    /// for" — which reads as a bug rather than as a limit.
+    /// A model with one of everything the drainage constructors need to
+    /// point at: a series for a gage to read, a curve for a pump to
+    /// follow, and two nodes to hang links between.
+    const UDS_FIXTURE: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+         [RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+         [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+         [OUTFALLS]\nO1 8 FREE NO\n\
+         [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+         [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n\
+         [CURVES]\nPC1 PUMP4 0 10\nPC1 1 8\n\
+         [TIMESERIES]\nTS1 0:00 0.0\nTS1 1:00 0.5\n";
+
+    /// What the Add dialog would collect for a kind, as the dialog
+    /// collects it: the fields the engine declared it could not default.
+    ///
+    /// Keyed by engine as well as by kind, because a kind id names a kind
+    /// only within its engine — both engines have a pump, and only the
+    /// drainage one is created by naming a curve. Keying on the id alone
+    /// fed the distribution pump the drainage pump's answer, which its
+    /// write refused.
+    fn dialog_answers(engine: &str, kind: &str) -> HashMap<String, serde_json::Value> {
+        use serde_json::json;
+        if engine == "wds" {
+            // Every distribution constructor takes its values as ordinary
+            // attribute writes, so its dialog asks for none up front.
+            return HashMap::new();
+        }
+        let answers: &[(&str, serde_json::Value)] = &match kind {
+            "storage" => vec![("maxDepth", json!(3.0)), ("surfaceArea", json!(20.0))],
+            "subcatchment" => vec![("raingage", json!("RG1")), ("outlet", json!("J1"))],
+            "raingage" => vec![("source", json!("TS1"))],
+            "curve" => vec![("curveType", json!("STORAGE"))],
+            "inlet" => vec![("grateLength", json!(0.6)), ("grateWidth", json!(0.4))],
+            "street" => vec![
+                ("crownWidth", json!(10.0)),
+                ("curbHeight", json!(0.15)),
+                ("crossSlope", json!(0.02)),
+            ],
+            "conduit" => vec![("length", json!(120.0)), ("diameter", json!(0.5))],
+            "pump" => vec![("curve", json!("PC1"))],
+            "orifice" => vec![("height", json!(0.5)), ("width", json!(0.5))],
+            "weir" => vec![("crestHeight", json!(0.3)), ("crestLength", json!(1.2))],
+            "outlet" => vec![("ratingCoeff", json!(1.5)), ("ratingExponent", json!(0.5))],
+            _ => vec![],
+        };
+        answers
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect()
+    }
+
+    /// Every kind the catalog says can be created is created — against a
+    /// model, through the function the command calls, with the answers
+    /// its dialog would collect.
+    ///
+    /// The test this replaces asserted that `creatable_class` and
+    /// `placement` agreed with the catalog. Both of those *read* the
+    /// catalog, so the catalog agreeing with itself was the whole of it:
+    /// a kind flipped creatable with no arm behind it passed, and then
+    /// refused in the app with "no constructor for" — which reads as a
+    /// bug rather than as a limit, and is the one thing the test's name
+    /// promised to catch.
+    ///
+    /// It runs the field writes too, because a create is not finished
+    /// until they land. That is the other failure this covers: a
+    /// constructor that took a value and a `consumed` list that forgot to
+    /// say so wrote it twice, the second write refused, and the refusal
+    /// took the create with it — which is why the drainage dialog could
+    /// not make a conduit.
     #[test]
     fn every_creatable_kind_can_actually_be_created() {
-        // Not an end-to-end create: this asserts the pair exists, and
-        // each constructor's own test asserts what it builds.
+        let uds = hydra::uds::io::objects::parse_network(UDS_FIXTURE).0;
+        let wds =
+            hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).expect("fixture");
+
         for (engine, catalog) in [
             ("wds", hydra::descriptors::ELEMENT_KINDS),
             ("uds", hydra::uds::descriptors::ELEMENT_KINDS),
@@ -505,14 +598,49 @@ mod tests {
                 let class = creatable_class(engine, kind.id)
                     .unwrap_or_else(|e| panic!("{engine}.{} is creatable but: {e}", kind.id));
                 assert_eq!(class, kind.class);
-                // And a placement is expressible for it, which is what
-                // the create asks for before it builds anything.
-                let mut element = new(kind.id, "X");
-                element.position = Some([0.0, 0.0]);
-                element.from_id = Some("A".into());
-                element.to_id = Some("B".into());
-                placement(&element, class)
+
+                let mut element = new(kind.id, "NEW");
+                element.position = Some([5.0, 5.0]);
+                // The ends of a link, and of a drainage one the two the
+                // fixture has: the wds fixture's junction and tank, the
+                // uds fixture's junction and outfall.
+                let (from, to) = if engine == "wds" {
+                    ("J1", "T1")
+                } else {
+                    ("J1", "O1")
+                };
+                element.from_id = Some(from.into());
+                element.to_id = Some(to.into());
+                element.fields = dialog_answers(engine, kind.id);
+
+                let where_ = placement(&element, class)
                     .unwrap_or_else(|e| panic!("{engine}.{} cannot be placed: {e}", kind.id));
+
+                // A fresh model each time, so one kind's element is never
+                // what makes the next one's create succeed or clash.
+                if engine == "uds" {
+                    let mut draft = uds.clone();
+                    let consumed = build_uds(&mut draft, &element, "NEW", &where_, class)
+                        .unwrap_or_else(|e| panic!("uds.{} is creatable but: {e}", kind.id));
+                    apply_fields(&element, consumed, |key, value| {
+                        super::super::uds_attrs::set_attribute(&mut draft, "NEW", key, value)
+                    })
+                    .unwrap_or_else(|e| panic!("uds.{}'s answers were refused: {e}", kind.id));
+                } else {
+                    let mut draft = wds.clone();
+                    let consumed = build_wds(&mut draft, &element, "NEW", &where_)
+                        .unwrap_or_else(|e| panic!("wds.{} is creatable but: {e}", kind.id));
+                    apply_fields(&element, consumed, |key, value| {
+                        super::super::wds_attrs::set_attribute(
+                            &mut draft,
+                            Some(kind.id),
+                            "NEW",
+                            key,
+                            value,
+                        )
+                    })
+                    .unwrap_or_else(|e| panic!("wds.{}'s answers were refused: {e}", kind.id));
+                }
             }
         }
     }
@@ -772,11 +900,11 @@ mod tests {
         )
         .expect("create");
         apply_fields(&element, &[], |key, value| {
-            super::super::wds_attrs::set_attribute(&mut net, "T2", key, value)
+            super::super::wds_attrs::set_attribute(&mut net, None, "T2", key, value)
         })
         .expect("fields");
 
-        let rows = super::super::wds_attrs::element_attributes(&net, "T2").expect("rows");
+        let rows = super::super::wds_attrs::element_attributes(&net, None, "T2").expect("rows");
         let read = |key: &str| {
             rows.iter()
                 .find(|r| r.key == key)

@@ -90,12 +90,17 @@ fn text() -> OptionKind {
 /// Empty for an element that carries none, and for an engine this build
 /// cannot open — never an error, because a panel asking about an element
 /// with nothing attached wants to draw nothing rather than a failure.
+///
+/// `kind` says which family the id belongs to, where the caller knows.
+/// Water distribution keeps nodes and links in separate namespaces, so
+/// an id alone is half an address there.
 pub fn get_element_records(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
     element_id: String,
+    kind: Option<String>,
 ) -> Result<Vec<RecordSetDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
@@ -111,9 +116,9 @@ pub fn get_element_records(
         }
         "wds" => {
             let guard = state.0.lock();
-            Ok(guard
-                .wds_network()
-                .map_or_else(Vec::new, |net| wds_records(net, &element_id)))
+            Ok(guard.wds_network().map_or_else(Vec::new, |net| {
+                wds_records(net, kind.as_deref(), &element_id)
+            }))
         }
         _ => Ok(Vec::new()),
     }
@@ -125,6 +130,11 @@ pub fn get_element_records(
 /// The whole set every time: adding a record is writing it with a row
 /// more, which keeps one validation pass and makes the inverse the set
 /// that was there.
+///
+/// `kind` addresses the element together with its id, as it does for
+/// [`get_element_records`]. A write to an ambiguous id without one is
+/// refused rather than applied to whichever element the lookup reaches
+/// first.
 pub fn set_element_records(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -132,6 +142,7 @@ pub fn set_element_records(
     element_id: String,
     set: String,
     rows: Vec<Vec<serde_json::Value>>,
+    kind: Option<String>,
 ) -> Result<(), String> {
     validate_target_ids(&project_id, None)?;
     let app_data = app_data_dir(&app)?;
@@ -140,7 +151,7 @@ pub fn set_element_records(
             set_uds_records(network, &element_id, &set, &rows)
         }),
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
-            set_wds_records(network, &element_id, &set, &rows)
+            set_wds_records(network, kind.as_deref(), &element_id, &set, &rows)
         }),
         other => Err(format!("no editing surface for engine '{other}'")),
     }
@@ -166,6 +177,23 @@ fn wrong_width(got: usize, want: usize) -> String {
 
 // ── Water distribution ───────────────────────────────────────────────────────
 
+/// Whether the id, addressed as `kind`, is a node this engine keeps
+/// records for.
+///
+/// Every record set here belongs to a node, so a caller naming a link
+/// kind is asking about something that carries none — and a caller
+/// naming nothing gets the same answer as the attribute path gives: the
+/// element, when the id names one thing, and neither when it names two.
+fn carries_records(network: &hydra::Network, kind: Option<&str>, element_id: &str) -> bool {
+    match kind {
+        Some("junction" | "reservoir" | "tank") => true,
+        // A named kind that is not a node — a pipe, a curve — carries no
+        // records, whatever a node of the same id happens to hold.
+        Some(_) => false,
+        None => !network.links.iter().any(|l| l.base.id == element_id),
+    }
+}
+
 /// The demand categories of a junction (§4.5.2.3).
 ///
 /// The record set that made this section necessary. A junction may carry
@@ -173,7 +201,20 @@ fn wrong_width(got: usize, want: usize) -> String {
 /// schema can only publish their sum and the first one's pattern — so
 /// before this, a junction with two categories read as one and could not
 /// be edited at all.
-pub(crate) fn wds_records(network: &hydra::Network, element_id: &str) -> Vec<RecordSetDto> {
+/// `kind` says which family the id belongs to, for the reason the
+/// attribute read takes one: this engine keeps nodes and links in
+/// separate namespaces, and only its nodes carry records. Looking up
+/// nodes alone meant a pipe `10` beside a junction `10` was served the
+/// junction's demand categories — and this set is editable, so a
+/// category added under the pipe landed on the junction.
+pub(crate) fn wds_records(
+    network: &hydra::Network,
+    kind: Option<&str>,
+    element_id: &str,
+) -> Vec<RecordSetDto> {
+    if !carries_records(network, kind, element_id) {
+        return Vec::new();
+    }
     let Some(node) = network.nodes.iter().find(|n| n.base.id == element_id) else {
         return Vec::new();
     };
@@ -211,12 +252,18 @@ pub(crate) fn wds_records(network: &hydra::Network, element_id: &str) -> Vec<Rec
 
 pub(crate) fn set_wds_records(
     network: &mut hydra::Network,
+    kind: Option<&str>,
     element_id: &str,
     set: &str,
     rows: &[Vec<serde_json::Value>],
 ) -> Result<(), String> {
     if set != "demands" {
         return Err(format!("no record set '{set}'"));
+    }
+    // Before anything is parsed, because the answer decides which element
+    // is being written to and getting that wrong is worse than refusing.
+    if !carries_records(network, kind, element_id) {
+        return Err(format!("'{element_id}' carries no demand categories"));
     }
     let demands = rows
         .iter()
@@ -573,6 +620,71 @@ mod tests {
     use super::*;
     use crate::commands::test_fixtures::TEST_INP;
 
+    /// A junction and a pipe that share an id, which EPANET allows.
+    const COLLIDING_INP: &str = "\
+[JUNCTIONS]
+10  10  5
+[RESERVOIRS]
+R1  100
+[PIPES]
+10  R1  10  1000  12  100  0  Open
+[COORDINATES]
+10  1.0  2.0
+R1  0.0  0.0
+[OPTIONS]
+Units  GPM
+[TIMES]
+Duration  0
+[END]
+";
+
+    /// Records belong to an element, and an id names one only with its
+    /// kind.
+    ///
+    /// Every set this engine has hangs off a node, and the lookup walked
+    /// the nodes and stopped — so a pipe `10` beside a junction `10` was
+    /// served the junction's demand categories. That set is editable, so
+    /// a category added while looking at the pipe was written onto the
+    /// junction and reported as saved.
+    #[test]
+    fn records_belong_to_the_kind_that_carries_them() {
+        let mut net = hydra::io::parse(COLLIDING_INP.as_bytes()).expect("a legal model");
+
+        assert_eq!(wds_records(&net, Some("junction"), "10").len(), 1);
+        // A pipe carries none, whatever a junction of the same id holds.
+        assert!(wds_records(&net, Some("pipe"), "10").is_empty());
+        // Nothing said, and the id names two things: neither.
+        assert!(wds_records(&net, None, "10").is_empty());
+        // An id that names one thing still answers without a kind.
+        assert!(
+            wds_records(&net, None, "R1").is_empty(),
+            "a reservoir has none"
+        );
+
+        let row = vec![vec![
+            serde_json::json!(5.0),
+            serde_json::json!(""),
+            serde_json::json!("Residential"),
+        ]];
+        // The write refuses on the pipe rather than landing on the
+        // junction, and refuses when nothing said which.
+        assert!(set_wds_records(&mut net, Some("pipe"), "10", "demands", &row).is_err());
+        assert!(set_wds_records(&mut net, None, "10", "demands", &row).is_err());
+        let junction = net.nodes.iter().find(|n| n.base.id == "10").expect("10");
+        let hydra::NodeKind::Junction(j) = &junction.kind else {
+            panic!("10 is a junction");
+        };
+        assert_eq!(j.demands.len(), 1, "a refusal wrote nothing");
+
+        set_wds_records(&mut net, Some("junction"), "10", "demands", &row).expect("the junction");
+        let junction = net.nodes.iter().find(|n| n.base.id == "10").expect("10");
+        let hydra::NodeKind::Junction(j) = &junction.kind else {
+            panic!("10 is a junction");
+        };
+        assert_eq!(j.demands.len(), 1);
+        assert_eq!(j.demands[0].name.as_deref(), Some("Residential"));
+    }
+
     fn pack_model() -> hydra::uds::model::Network {
         let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
                      [JUNCTIONS]\nJ1 10 3 0 0 0\n\
@@ -587,7 +699,7 @@ mod tests {
     }
 
     fn demands(network: &hydra::Network, id: &str) -> RecordSetDto {
-        wds_records(network, id)
+        wds_records(network, None, id)
             .into_iter()
             .find(|s| s.key == "demands")
             .expect("a demands set")
@@ -660,6 +772,7 @@ mod tests {
         let mut network = wds_model();
         set_wds_records(
             &mut network,
+            None,
             "J1",
             "demands",
             &[
@@ -692,7 +805,7 @@ mod tests {
 
         // Removing every record leaves a junction with no demand, which
         // is a thing a model may say.
-        set_wds_records(&mut network, "J1", "demands", &[]).expect("empty");
+        set_wds_records(&mut network, None, "J1", "demands", &[]).expect("empty");
         let node = network.nodes.iter().find(|n| n.base.id == "J1").unwrap();
         let hydra::NodeKind::Junction(j) = &node.kind else {
             panic!()
@@ -706,6 +819,7 @@ mod tests {
         let before = demands(&network, "J1").rows;
         let err = set_wds_records(
             &mut network,
+            None,
             "J1",
             "demands",
             &[vec![serde_json::json!(1.0)]],
@@ -714,8 +828,8 @@ mod tests {
         assert!(err.contains("3 values"), "{err}");
         assert_eq!(demands(&network, "J1").rows, before);
 
-        assert!(set_wds_records(&mut network, "J1", "nope", &[]).is_err());
-        assert!(set_wds_records(&mut network, "NOPE", "demands", &[]).is_err());
+        assert!(set_wds_records(&mut network, None, "J1", "nope", &[]).is_err());
+        assert!(set_wds_records(&mut network, None, "NOPE", "demands", &[]).is_err());
     }
 
     /// The parameter set the record shape was needed for. A pack is
@@ -845,8 +959,8 @@ mod tests {
     #[test]
     fn an_element_with_nothing_attached_reports_nothing() {
         let network = wds_model();
-        assert!(wds_records(&network, "R1").is_empty(), "a reservoir");
-        assert!(wds_records(&network, "P1").is_empty(), "a pipe");
-        assert!(wds_records(&network, "NOPE").is_empty());
+        assert!(wds_records(&network, None, "R1").is_empty(), "a reservoir");
+        assert!(wds_records(&network, None, "P1").is_empty(), "a pipe");
+        assert!(wds_records(&network, None, "NOPE").is_empty());
     }
 }

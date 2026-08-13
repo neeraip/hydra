@@ -115,12 +115,20 @@ pub(crate) fn rows_from_schema(
 /// `None` for a project whose engine this build cannot open, and for an
 /// id no element answers to — a caller cannot tell which, deliberately,
 /// because neither is a case it can act on differently.
+///
+/// `kind` is optional because an id is usually a whole address, and it
+/// is not always one: water distribution keeps nodes and links in
+/// separate namespaces, so a junction `10` and a pipe `10` are two
+/// elements. A caller that knows which it is holding says so; one that
+/// does not gets `None` for an ambiguous id rather than whichever the
+/// lookup reached first.
 pub fn get_element_details(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
     element_id: String,
+    kind: Option<String>,
 ) -> Result<Option<Vec<ElementAttributeDto>>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
@@ -139,7 +147,11 @@ pub fn get_element_details(
             let Some(network) = guard.wds_network() else {
                 return Ok(None);
             };
-            Ok(super::wds_attrs::element_attributes(network, &element_id))
+            Ok(super::wds_attrs::element_attributes(
+                network,
+                kind.as_deref(),
+                &element_id,
+            ))
         }
         _ => Ok(None),
     }
@@ -161,6 +173,13 @@ pub fn get_element_details(
 /// editing to numbers; drainage's own write takes only numbers, and
 /// refuses anything else, which is why its schema marks only numbers
 /// editable.
+///
+/// `kind` addresses the element together with its id, for the reason
+/// [`get_element_details`] takes one: a water-distribution id names an
+/// element only within its family. Omitting it on an id that two
+/// families answer to is refused rather than resolved — a tag typed on
+/// pipe `10` used to be written onto junction `10` and reported as
+/// saved.
 pub fn set_element_attribute(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -168,15 +187,18 @@ pub fn set_element_attribute(
     element_id: String,
     key: String,
     value: serde_json::Value,
+    kind: Option<String>,
 ) -> Result<(), String> {
     validate_target_ids(&project_id, None)?;
     let app_data = app_data_dir(&app)?;
     match project_engine_key(&app_data, &project_id).as_str() {
+        // Drainage registers every id in one namespace, so its write
+        // needs no kind and is given none.
         "uds" => super::mutations::mutate_uds(&app, &state, |network| {
             super::uds_attrs::set_attribute(network, &element_id, &key, &value)
         }),
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
-            super::wds_attrs::set_attribute(network, &element_id, &key, &value)
+            super::wds_attrs::set_attribute(network, kind.as_deref(), &element_id, &key, &value)
         }),
         other => Err(format!("no editing surface for engine '{other}'")),
     }
