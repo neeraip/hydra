@@ -129,6 +129,21 @@ pub fn create_element(
                         &required_text(&element, "outlet")?,
                     )?;
                 }
+                Placement::At(x, y) if element.kind == "storage" => {
+                    // A prismatic tank: the one storage shape a pair of
+                    // numbers can describe, and both are the caller's
+                    // because neither a depth nor an area has a
+                    // conventional value.
+                    super::uds_create::create_uds_storage(
+                        &mut draft,
+                        &id,
+                        *x,
+                        *y,
+                        0.0,
+                        required(&element, "maxDepth")?,
+                        required(&element, "surfaceArea")?,
+                    )?;
+                }
                 Placement::At(x, y) => super::uds_create::create_uds_vertex(
                     &mut draft,
                     &element.kind,
@@ -142,6 +157,23 @@ pub fn create_element(
                 )?,
                 Placement::Nowhere => {
                     super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
+                }
+                Placement::Between(from, to) if element.kind != "conduit" => {
+                    // An opening rather than a channel. Its two
+                    // dimensions come from the caller, because neither an
+                    // orifice's height nor a weir's crest has the
+                    // conventional value a bore does — while the
+                    // discharge coefficients, which do, are the engine's.
+                    let (height, width) = opening_keys(&element.kind);
+                    super::uds_create::create_uds_opening(
+                        &mut draft,
+                        &element.kind,
+                        &id,
+                        from,
+                        to,
+                        required(&element, height)?,
+                        required(&element, width)?,
+                    )?;
                 }
                 Placement::Between(from, to) => super::uds_create::create_uds_link(
                     &mut draft,
@@ -158,7 +190,12 @@ pub fn create_element(
             }
             let consumed: &[&str] = match &where_ {
                 Placement::At(_, _) if class == ElementClass::Region => &["raingage", "outlet"],
+                Placement::At(_, _) if element.kind == "storage" => &["maxDepth", "surfaceArea"],
                 Placement::At(_, _) | Placement::Nowhere => &[],
+                Placement::Between(_, _) if element.kind == "orifice" => &["height", "width"],
+                Placement::Between(_, _) if element.kind == "weir" => {
+                    &["crestHeight", "crestLength"]
+                }
                 Placement::Between(_, _) => &["length", "diameter"],
             };
             apply_fields(&element, consumed, |key, value| {
@@ -247,6 +284,16 @@ fn optional(element: &NewElement, key: &str) -> Option<f64> {
         .filter(|v| v.is_finite() && *v > 0.0)
 }
 
+/// The two keys a kind calls its opening's dimensions by. They differ
+/// because the things differ: an orifice has a height and a width, a
+/// weir a crest height and a crest length.
+fn opening_keys(kind: &str) -> (&'static str, &'static str) {
+    match kind {
+        "weir" => ("crestHeight", "crestLength"),
+        _ => ("height", "width"),
+    }
+}
+
 /// A supplied name the constructor needs, which no default can stand in
 /// for — a reference to an element that has to already exist.
 fn required_text(element: &NewElement, key: &str) -> Result<String, String> {
@@ -300,8 +347,8 @@ mod tests {
     /// rather than one written here (§4.5.3).
     #[test]
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
-        let err = creatable_class("uds", "storage").expect_err("should refuse");
-        assert!(err.contains("surface area"), "unhelpful: {err}");
+        let err = creatable_class("uds", "outlet").expect_err("should refuse");
+        assert!(err.contains("defensible"), "unhelpful: {err}");
         // The two engines answer differently for the same kind, and the
         // difference is the data model's rather than the editor's: a
         // water-distribution curve's purpose is inferred from what
@@ -352,6 +399,34 @@ mod tests {
             super::super::mutations::create_container_in_network(&mut network, "curve", "C9")
                 .is_err()
         );
+    }
+
+    /// Every kind the catalog says can be created has a constructor
+    /// behind it. The two are set in different files, and a flag flipped
+    /// without its arm gives a button that refuses with "no constructor
+    /// for" — which reads as a bug rather than as a limit.
+    #[test]
+    fn every_creatable_kind_can_actually_be_created() {
+        // Not an end-to-end create: this asserts the pair exists, and
+        // each constructor's own test asserts what it builds.
+        for (engine, catalog) in [
+            ("wds", hydra::descriptors::ELEMENT_KINDS),
+            ("uds", hydra::uds::descriptors::ELEMENT_KINDS),
+        ] {
+            for kind in catalog.iter().filter(|k| k.creatable) {
+                let class = creatable_class(engine, kind.id)
+                    .unwrap_or_else(|e| panic!("{engine}.{} is creatable but: {e}", kind.id));
+                assert_eq!(class, kind.class);
+                // And a placement is expressible for it, which is what
+                // the create asks for before it builds anything.
+                let mut element = new(kind.id, "X");
+                element.position = Some([0.0, 0.0]);
+                element.from_id = Some("A".into());
+                element.to_id = Some("B".into());
+                placement(&element, class)
+                    .unwrap_or_else(|e| panic!("{engine}.{} cannot be placed: {e}", kind.id));
+            }
+        }
     }
 
     /// A refusal says what a new one would *lack*, never where to go

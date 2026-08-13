@@ -69,11 +69,11 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Point,
         role: Some(ElementRole::Boundary),
         badge: "SU",
-        creatable: false,
-        not_creatable_because: Some(
-            "a storage unit needs a depth and a surface area, which are not editable \
-             anywhere yet",
-        ),
+        // Creatable as a prismatic tank, whose depth and area are asked
+        // for. A tabulated or fitted relation is still authored by
+        // pointing the unit at a curve afterwards.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "raingage",
@@ -112,10 +112,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "OR",
-        creatable: false,
-        not_creatable_because: Some(
-            "an orifice needs an opening size, which is not editable anywhere yet",
-        ),
+        // Creatable since its opening became editable: the size is
+        // asked for, and the coefficient the catalog declares.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "weir",
@@ -124,10 +124,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Polyline,
         role: Some(ElementRole::Control),
         badge: "W",
-        creatable: false,
-        not_creatable_because: Some(
-            "a weir needs a crest height and length, which are not editable anywhere yet",
-        ),
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "outlet",
@@ -449,6 +447,11 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             rw("invert", "Invert elevation", num(), Some("elevation")),
             rw("maxDepth", "Maximum depth", num(), Some("depth")),
             attr("shape", "Shape", text(), None),
+            // Only for a storage unit whose area does not vary with
+            // depth. One number cannot describe a tabulated or fitted
+            // relation, and an element that has no such value carries no
+            // row for it (§4.5.1) rather than a misleading one.
+            rw("surfaceArea", "Surface area", num(), Some("area")),
         ],
         "raingage" => vec![
             attr("format", "Data format", text(), None),
@@ -486,12 +489,36 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
                 },
                 None,
             ),
-            attr("height", "Opening height", num(), Some("depth")),
-            rw("dischargeCoeff", "Discharge coefficient", num(), None),
+            // The opening. Editable since it became servable at all —
+            // the schema declared a height for the life of this catalog
+            // and no value was ever attached to it, so the row was
+            // dropped and an orifice's size was unreadable.
+            rw("height", "Opening height", num(), Some("depth")),
+            rw("width", "Opening width", num(), Some("length")),
+            rw(
+                "dischargeCoeff",
+                "Discharge coefficient",
+                // The sharp-edged orifice value every text prints, and
+                // dimensionless, so it needs no unit interpretation.
+                numd(0.65),
+                None,
+            ),
         ],
         "weir" => vec![
-            attr("crestHeight", "Crest height", num(), Some("depth")),
-            rw("dischargeCoeff", "Discharge coefficient", num(), None),
+            rw("crestHeight", "Crest height", num(), Some("depth")),
+            // Not "length": a conduit's `length` is how far it runs, and
+            // one key meaning two things across two kinds is how a reader
+            // comes to believe they are the same measurement.
+            rw("crestLength", "Crest length", num(), Some("length")),
+            rw(
+                "dischargeCoeff",
+                "Discharge coefficient",
+                // Declared, so a form creating one starts from the value
+                // every text prints for a transverse weir rather than
+                // from zero. 1.84 in SI; the file's own units convert.
+                numd(1.84),
+                None,
+            ),
         ],
         "outlet" => vec![
             attr("outletCurve", "Rating curve", text(), None),
@@ -689,6 +716,16 @@ fn kinds_of_class(class: ElementClass) -> impl Iterator<Item = String> {
         .iter()
         .filter(move |k| k.class == class)
         .map(|k| k.id.to_string())
+}
+
+/// A number the engine has a default for — what a form creating an
+/// element should start the field at, rather than zero.
+fn numd(default: f64) -> OptionKind {
+    OptionKind::Number {
+        default: Some(default),
+        min: None,
+        max: None,
+    }
 }
 
 fn num() -> OptionKind {

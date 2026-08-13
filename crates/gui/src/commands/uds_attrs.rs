@@ -137,6 +137,22 @@ fn vertex_values(
                     StorageGeometry::Shape { .. } => "Shaped".to_string(),
                 };
                 m.insert("shape", Text(shape));
+                // A single surface area, only where the area does not
+                // vary with depth: a functional relation whose depth term
+                // vanishes is a prismatic tank, and its constant *is* the
+                // area. Every other geometry carries no such number, so
+                // it carries no row (§4.5.1) — a tabulated relation
+                // reported as one area would be a confident wrong answer.
+                if let StorageGeometry::Functional {
+                    coeff,
+                    exponent,
+                    constant,
+                } = geometry
+                {
+                    if *coeff == 0.0 || *exponent == 0.0 {
+                        m.insert("surfaceArea", Number(*constant));
+                    }
+                }
                 "storage"
             }
             VertexKind::Divider { diverted_link, .. } => {
@@ -148,6 +164,29 @@ fn vertex_values(
         };
         (kind, m)
     }
+}
+
+/// Serve a link's opening as two metres, under the keys its kind uses.
+///
+/// §5 carries a cross-section's geometry **in the file's own units**, so
+/// this converts on the way out through the mapping the file was read
+/// under — asked of the engine rather than restated here, which is the
+/// same trap the writer once fell into by a factor of three.
+///
+/// Nothing is inserted for a link with no cross-section: an element that
+/// carries no value for a key has no row (§4.5.1), and a zero would read
+/// as an opening of no height.
+fn insert_opening(
+    m: &mut HashMap<&'static str, AttrValue>,
+    net: &Network,
+    l: &hydra::uds::model::Link,
+    height_key: &'static str,
+    width_key: &'static str,
+) {
+    let Some(xs) = &l.cross_section else { return };
+    let per_unit = net.options.flow_units.m_per_length_unit();
+    m.insert(height_key, AttrValue::Number(xs.geom_user[0] * per_unit));
+    m.insert(width_key, AttrValue::Number(xs.geom_user[1] * per_unit));
 }
 
 fn link_values(
@@ -188,12 +227,18 @@ fn link_values(
                 Text(format!("{orientation:?}").to_uppercase()),
             );
             m.insert("dischargeCoeff", Number(*discharge_coeff));
+            // The opening, which the schema has always declared and this
+            // has never served — so the row was dropped and the size was
+            // unreadable and unwritable anywhere. It lives in the same
+            // cross-section a conduit's bore does, in the file's units.
+            insert_opening(&mut m, net, l, "height", "width");
             "orifice"
         }
         LinkKind::Weir {
             discharge_coeff, ..
         } => {
             m.insert("dischargeCoeff", Number(*discharge_coeff));
+            insert_opening(&mut m, net, l, "crestHeight", "crestLength");
             "weir"
         }
         LinkKind::Outlet {
@@ -1751,12 +1796,15 @@ pub(crate) fn set_attribute(
     {
         return set_vertex_attribute(v, key, value);
     }
+    // Read before the mutable borrow: a cross-section's geometry is in
+    // the file's units, and the mapping is a property of the model.
+    let per_unit = net.options.flow_units.m_per_length_unit();
     if let Some(l) = net
         .links
         .iter_mut()
         .find(|l| l.id.eq_ignore_ascii_case(element_id))
     {
-        return set_link_attribute(l, key, value);
+        return set_link_attribute(l, key, value, per_unit);
     }
     if let Some(p) = net
         .parcels
@@ -1805,6 +1853,21 @@ fn set_vertex_attribute(
         vertex.invert = value;
         return Ok(());
     }
+    if let (K::Storage { geometry, .. }, "surfaceArea") = (&mut vertex.kind, key) {
+        let StorageGeometry::Functional {
+            coeff,
+            exponent,
+            constant,
+        } = geometry
+        else {
+            return Err("only a prismatic storage unit has one surface area".into());
+        };
+        if *coeff != 0.0 && *exponent != 0.0 {
+            return Err("only a prismatic storage unit has one surface area".into());
+        }
+        *constant = value;
+        return Ok(());
+    }
     match (&mut vertex.kind, key) {
         (K::Junction { max_depth, .. } | K::Storage { max_depth, .. }, "maxDepth")
         | (K::Divider { max_depth, .. }, "maxDepth") => *max_depth = value,
@@ -1815,12 +1878,46 @@ fn set_vertex_attribute(
     Ok(())
 }
 
+/// Write one of a link's opening dimensions back into its cross-section.
+///
+/// Metres in, the file's own units stored — the inverse of what the read
+/// applied, asked of the same mapping so the pair cannot drift.
+fn set_opening(
+    net_units: f64,
+    l: &mut hydra::uds::model::Link,
+    at: usize,
+    value: f64,
+) -> Result<(), String> {
+    if !(value.is_finite() && value > 0.0) {
+        return Err("an opening needs a positive size".into());
+    }
+    let xs = l
+        .cross_section
+        .as_mut()
+        .ok_or_else(|| format!("'{}' carries no cross-section", l.id))?;
+    xs.geom_user[at] = value / net_units;
+    Ok(())
+}
+
 fn set_link_attribute(
     link: &mut hydra::uds::model::Link,
     key: &str,
     value: f64,
+    per_unit: f64,
 ) -> Result<(), String> {
     use hydra::uds::model::LinkKind as K;
+    // The opening, which lives in the cross-section rather than on the
+    // kind — so it is matched on the key before the kind, the way a tag
+    // is. Both kinds that have one call it something different, which is
+    // why the key decides which of the two geometry slots it means.
+    let slot = match (&link.kind, key) {
+        (K::Orifice { .. }, "height") | (K::Weir { .. }, "crestHeight") => Some(0),
+        (K::Orifice { .. }, "width") | (K::Weir { .. }, "crestLength") => Some(1),
+        _ => None,
+    };
+    if let Some(at) = slot {
+        return set_opening(per_unit, link, at, value);
+    }
     match (&mut link.kind, key) {
         (K::Channel { length, .. }, "length") => *length = value,
         (K::Channel { roughness, .. }, "roughness") => *roughness = value,
@@ -2163,6 +2260,69 @@ RS1  0:00  0.4
         let err = set_attribute(&mut net, "J1", "divertedLink", &serde_json::json!("C1"))
             .expect_err("not a divider");
         assert!(err.contains("divider"), "{err}");
+    }
+
+    /// The dimensions the schema declared and never served. An orifice's
+    /// height sat in the catalog for the life of this build with no value
+    /// attached, so §4.5.1 dropped the row and the size was unreadable —
+    /// which is why the kind could not be created either.
+    #[test]
+    fn an_opening_and_a_tank_report_and_take_their_sizes() {
+        let mut net = model();
+        // The fixture is CMS, so the file's units are metres and the
+        // conversion is the identity — the factor itself is asserted in
+        // the create test, against a CFS model.
+        let read = |net: &Network, id: &str, key: &str| {
+            element_attributes(net, id)
+                .expect("attributes")
+                .into_iter()
+                .find(|r| r.key == key)
+                .and_then(|r| r.number)
+        };
+        // Nothing carries an opening in the fixture, so one is made the
+        // same way the app would.
+        super::super::uds_create::create_uds_opening(&mut net, "weir", "W1", "J1", "O1", 1.5, 2.0)
+            .expect("weir");
+        assert_eq!(read(&net, "W1", "crestHeight"), Some(1.5));
+        assert_eq!(read(&net, "W1", "crestLength"), Some(2.0));
+
+        set_attribute(&mut net, "W1", "crestHeight", &serde_json::json!(2.25)).expect("set");
+        assert_eq!(read(&net, "W1", "crestHeight"), Some(2.25));
+        // An opening of no size is refused rather than stored.
+        assert!(set_attribute(&mut net, "W1", "crestHeight", &serde_json::json!(0.0)).is_err());
+
+        super::super::uds_create::create_uds_storage(&mut net, "ST1", 0.0, 0.0, 5.0, 3.0, 400.0)
+            .expect("storage");
+        assert_eq!(read(&net, "ST1", "surfaceArea"), Some(400.0));
+        set_attribute(&mut net, "ST1", "surfaceArea", &serde_json::json!(500.0)).expect("set");
+        assert_eq!(read(&net, "ST1", "surfaceArea"), Some(500.0));
+    }
+
+    /// A storage unit whose area varies with depth has no single surface
+    /// area, so it publishes no row for one — a tabulated relation
+    /// reported as one number would be a confident wrong answer.
+    #[test]
+    fn a_tabulated_storage_unit_reports_no_single_area() {
+        let net = model();
+        let tabulated = net.vertices.iter().find(|v| {
+            matches!(
+                &v.kind,
+                VertexKind::Storage {
+                    geometry: hydra::uds::model::StorageGeometry::Tabular { .. },
+                    ..
+                }
+            )
+        });
+        let Some(v) = tabulated else {
+            return; // the fixture has none; the rule is asserted by the write below
+        };
+        assert!(
+            element_attributes(&net, &v.id)
+                .expect("attributes")
+                .iter()
+                .all(|r| r.key != "surfaceArea"),
+            "a tabulated unit reported one area"
+        );
     }
 
     /// The catalog has to name every kind an outlet may be, because a

@@ -92,13 +92,29 @@ export function CreateElementModal({
   // stored into `values` — a seed that lived in state would have to be
   // re-seeded on every kind change, and would be indistinguishable from
   // a number the user typed.
+  const schemaFields = useElementAttributes(engine, kind);
+
   const seeded = useMemo<Record<string, number>>(() => {
     const at: Record<string, number> = {};
     if (spanLength != null) at.length = spanLength;
     return at;
   }, [spanLength]);
 
-  const schema = useElementAttributes(engine, kind);
+  // What the engine says a field starts at, when it says anything.
+  //
+  // Zero is the wrong opening value for the fields that have a
+  // conventional one — a weir created with a discharge coefficient of
+  // nought passes no flow — and the catalog already had somewhere to put
+  // it, so the answer is the engine's rather than this form's.
+  const declared = useMemo<Record<string, number>>(() => {
+    const at: Record<string, number> = {};
+    for (const a of schemaFields) {
+      const d = a.kind?.type === "number" ? a.kind.default : null;
+      if (typeof d === "number") at[a.key] = d;
+    }
+    return at;
+  }, [schemaFields]);
+
   // Numbers, and the attributes that name another element.
   //
   // The references are the reason half this engine's kinds could not be
@@ -113,14 +129,14 @@ export function CreateElementModal({
   // unable to express by leaving it alone.
   const fields = useMemo(
     () =>
-      schema.filter(
+      schemaFields.filter(
         (a) =>
           a.editable &&
           (a.kind?.type === "number" ||
             a.kind?.type === "integer" ||
             (a.references?.length ?? 0) > 0),
       ),
-    [schema],
+    [schemaFields],
   );
 
   // The ids each reference field may name, for the kinds those fields
@@ -183,7 +199,7 @@ export function CreateElementModal({
                 // edited in the panel below the table.
                 {}
               : { position: position ?? typedAt }),
-          fields: { ...seeded, ...values, ...named },
+          fields: { ...declared, ...seeded, ...values, ...named },
         });
         onCreated(kind, name);
       }}
@@ -204,7 +220,7 @@ export function CreateElementModal({
           <CreateNumberField
             key={a.key}
             label={a.label}
-            value={values[a.key] ?? seeded[a.key] ?? 0}
+            value={values[a.key] ?? seeded[a.key] ?? declared[a.key] ?? 0}
             quantity={a.quantity}
             sys={sys}
             onCommit={(v) => setValues((prev) => ({ ...prev, [a.key]: v }))}

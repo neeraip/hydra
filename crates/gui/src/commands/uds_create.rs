@@ -157,6 +157,142 @@ pub(crate) fn create_uds_vertex(
     Ok(())
 }
 
+/// Add an orifice or a weir between two existing vertices.
+///
+/// Both are an opening of a given size, and the size is what the caller
+/// supplies: there is no conventional height for an orifice or crest for
+/// a weir, so nothing here invents one. Their discharge coefficients are
+/// the opposite case — 0.65 and 1.84 are the values every text prints,
+/// and the catalog declares them so a form starts there.
+pub(crate) fn create_uds_opening(
+    net: &mut Network,
+    kind: &str,
+    id: &str,
+    from_id: &str,
+    to_id: &str,
+    height: f64,
+    width: f64,
+) -> Result<(), String> {
+    use hydra::uds::model::{OrificeOrientation, WeirForm};
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable(kind) {
+        return Err(refuse_kind(kind));
+    }
+    let find = |name: &str| {
+        net.vertices
+            .iter()
+            .position(|v| v.id.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("'{name}' is not a node in this model"))
+    };
+    let from = find(from_id)?;
+    let to = find(to_id)?;
+    if from == to {
+        return Err("a link needs two different ends".into());
+    }
+    for (what, v) in [("height", height), ("width", width)] {
+        if !(v.is_finite() && v > 0.0) {
+            return Err(format!("an opening needs a positive {what}"));
+        }
+    }
+    let link_kind = match kind {
+        "orifice" => LinkKind::Orifice {
+            // A side orifice flush with the invert, which is what an
+            // opening drawn between two nodes means before anyone says
+            // otherwise — the same stance the conduit's offsets take.
+            orientation: OrificeOrientation::Side,
+            offset: Offset::Depth(0.0),
+            discharge_coeff: 0.65,
+            flap_gate: false,
+            open_close_time: 0.0,
+        },
+        "weir" => LinkKind::Weir {
+            form: WeirForm::Transverse,
+            offset: Offset::Depth(0.0),
+            discharge_coeff: 1.84,
+            flap_gate: false,
+            end_contractions: 0.0,
+            end_coeff: 0.0,
+            can_surcharge: false,
+            road_width: 0.0,
+            road_surface: hydra::uds::model::RoadSurface::Unspecified,
+            coeff_curve: None,
+        },
+        other => return Err(format!("no constructor for opening kind '{other}'")),
+    };
+    let per_unit = net.options.flow_units.m_per_length_unit();
+    net.links.push(Link {
+        id: id.to_string(),
+        from,
+        to,
+        kind: link_kind,
+        // §5 carries geometry in the file's own units, so the two
+        // dimensions convert on the way in through the mapping the file
+        // was read under.
+        cross_section: Some(CrossSection {
+            shape: if kind == "orifice" {
+                XsectShape::RectClosed
+            } else {
+                XsectShape::RectOpen
+            },
+            geom_user: [height / per_unit, width / per_unit, 0.0, 0.0],
+            barrels: 1,
+            culvert_code: 0,
+            referent: None,
+        }),
+    });
+    Ok(())
+}
+
+/// Add a storage unit at `(x, y)`.
+///
+/// Prismatic: its area does not vary with depth, which is the one shape
+/// a single number can describe. A tabulated or fitted relation is a
+/// curve or three coefficients, and neither is something a create can be
+/// handed as one value.
+pub(crate) fn create_uds_storage(
+    net: &mut Network,
+    id: &str,
+    x: f64,
+    y: f64,
+    invert: f64,
+    max_depth: f64,
+    area: f64,
+) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("storage") {
+        return Err(refuse_kind("storage"));
+    }
+    for (what, v) in [("depth", max_depth), ("surface area", area)] {
+        if !(v.is_finite() && v > 0.0) {
+            return Err(format!("a storage unit needs a positive {what}"));
+        }
+    }
+    net.vertices.push(Vertex {
+        id: id.to_string(),
+        invert,
+        kind: VertexKind::Storage {
+            max_depth,
+            init_depth: 0.0,
+            // A = c + a·y^b with a = 0: the depth term vanishes and the
+            // constant *is* the area, which is what a prismatic tank is.
+            geometry: hydra::uds::model::StorageGeometry::Functional {
+                coeff: 0.0,
+                exponent: 0.0,
+                constant: area,
+            },
+            surcharge_depth: 0.0,
+            evap_fraction: 0.0,
+            seepage: None,
+        },
+    });
+    super::uds_view::set_display_point(net, "[COORDINATES]", id, x, y);
+    Ok(())
+}
+
 /// Add a container element — a pattern (§4.5.3).
 ///
 /// A curve is deliberately absent. Its role decides the *units* its two
@@ -548,17 +684,18 @@ O1 100 0
     #[test]
     fn a_kind_that_would_need_an_invented_value_is_refused_by_name() {
         let mut net = model();
-        // A divider used to be here too, and is not: its rule is never
-        // read (§7.5), so nothing about a new one has to be invented —
-        // which the test below asserts instead.
-        let err =
-            create_uds_vertex(&mut net, "storage", "X", 0.0, 0.0, 90.0).expect_err("should refuse");
-        assert!(err.contains("surface area"), "unhelpful for storage: {err}");
-        for (kind, expect) in [
-            ("pump", "characteristic curve"),
-            ("outlet", "rating"),
-            ("weir", "crest height"),
-        ] {
+        // Storage and the divider used to be here and are not: a
+        // divider's rule is never read (§7.5), and a storage unit's
+        // depth and area are asked for rather than invented. Both are
+        // asserted by their own tests below.
+        //
+        // A rain gage is the point kind still refused, and it refuses
+        // for the reason the others do not: it names a series or a file
+        // that has to exist first.
+        let err = create_uds_vertex(&mut net, "raingage", "X", 0.0, 0.0, 90.0)
+            .expect_err("should refuse");
+        assert!(err.contains("rainfall"), "unhelpful for raingage: {err}");
+        for (kind, expect) in [("pump", "characteristic curve"), ("outlet", "rating")] {
             let err = create_uds_link(&mut net, kind, "X", "J1", "O1", 10.0, Some(0.3))
                 .expect_err("should refuse");
             assert!(err.contains(expect), "unhelpful for {kind}: {err}");
@@ -738,6 +875,61 @@ O1 100 0
         );
         assert!(again.constituents.iter().any(|c| c.id == "TSS"));
         assert!(again.land_uses.iter().any(|l| l.id == "Residential"));
+    }
+
+    /// The three kinds whose refusal was plumbing rather than
+    /// judgement. Each needs one or two plain numbers that no convention
+    /// supplies, so the caller supplies them — and each coefficient that
+    /// *does* have a conventional value is the engine's own.
+    #[test]
+    fn an_opening_and_a_tank_are_created_from_the_sizes_they_are_given() {
+        let mut net = gaged_model();
+        create_uds_opening(&mut net, "orifice", "OR1", "J1", "O1", 0.5, 0.4).expect("orifice");
+        create_uds_opening(&mut net, "weir", "W1", "J1", "O1", 1.2, 3.0).expect("weir");
+        create_uds_storage(&mut net, "ST1", 5.0, 5.0, 90.0, 4.0, 250.0).expect("storage");
+
+        let orifice = net.links.iter().find(|l| l.id == "OR1").expect("OR1");
+        let LinkKind::Orifice {
+            discharge_coeff, ..
+        } = orifice.kind
+        else {
+            panic!("OR1 is not an orifice");
+        };
+        assert!((discharge_coeff - 0.65).abs() < 1e-12);
+        // A CFS file, so the opening is stored in feet.
+        let per_unit = net.options.flow_units.m_per_length_unit();
+        let xs = orifice.cross_section.as_ref().expect("a cross-section");
+        assert!((xs.geom_user[0] - 0.5 / per_unit).abs() < 1e-12);
+
+        let store = net.vertices.iter().find(|v| v.id == "ST1").expect("ST1");
+        let VertexKind::Storage { geometry, .. } = &store.kind else {
+            panic!("ST1 is not a storage unit");
+        };
+        // Prismatic: the depth term vanishes and the constant is the area.
+        assert!(matches!(
+            geometry,
+            hydra::uds::model::StorageGeometry::Functional {
+                coeff, constant, ..
+            } if *coeff == 0.0 && (*constant - 250.0).abs() < 1e-12
+        ));
+
+        // A size nobody gave is refused rather than invented.
+        assert!(create_uds_opening(&mut net, "orifice", "X", "J1", "O1", 0.0, 0.4).is_err());
+        assert!(create_uds_storage(&mut net, "X", 0.0, 0.0, 90.0, 4.0, 0.0).is_err());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        for id in ["OR1", "W1"] {
+            assert!(
+                again.links.iter().any(|l| l.id == id),
+                "{id} did not survive"
+            );
+        }
+        assert!(again.vertices.iter().any(|v| v.id == "ST1"));
     }
 
     #[test]
