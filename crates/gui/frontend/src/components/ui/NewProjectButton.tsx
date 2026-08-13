@@ -13,12 +13,13 @@
  */
 
 import { ChevronDownIcon } from "@heroicons/react/16/solid";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   formatInpImportError,
   type ImportedModel,
   openAndRecogniseNetwork,
 } from "../../hooks";
+import { clampedMenuLeft } from "./menuPlacement";
 import { PrimaryButton } from "./PrimaryButton";
 
 export function NewProjectButton({
@@ -49,9 +50,30 @@ export function NewProjectButton({
   // the criteria popover are: this button sits in a column with
   // `overflow: hidden`, which clips any child extending past it however
   // high the z-index goes — the menu was being cut off at the rail's edge.
+  // Its right edge and its top, in viewport coordinates. The *left* is
+  // computed once the menu has rendered and can be measured, because the
+  // number that decides whether it fits is the width it actually took
+  // rather than the `minWidth` it declared — a menu whose longest item is
+  // wider than its minimum ran off the window while the arithmetic said
+  // it fitted.
   const [anchor, setAnchor] = useState<{ right: number; top: number } | null>(
     null,
   );
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Measured, then moved — before the browser paints, so the menu is
+  // never seen at the offscreen position it renders at first. Applied to
+  // the node rather than held in state: a state round trip would be a
+  // second render the reader could catch.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el || !anchor) return;
+    el.style.left = `${clampedMenuLeft(
+      anchor.right,
+      el.getBoundingClientRect().width,
+      window.innerWidth,
+    )}px`;
+  }, [anchor]);
 
   useEffect(() => {
     if (!open) return;
@@ -111,10 +133,7 @@ export function NewProjectButton({
             // is the whole button rather than the caret it opened from.
             const wrap = wrapRef.current?.getBoundingClientRect();
             if (wrap) {
-              setAnchor({
-                right: Math.max(8, window.innerWidth - wrap.right),
-                top: wrap.bottom + 4,
-              });
+              setAnchor({ right: wrap.right, top: wrap.bottom + 4 });
             }
             setOpen((v) => !v);
           }}
@@ -141,10 +160,14 @@ export function NewProjectButton({
       {open && anchor && (
         <div
           role="menu"
+          ref={menuRef}
           style={{
             position: "fixed",
             top: anchor.top,
-            right: anchor.right,
+            // Placed offscreen until it has been measured, then moved by
+            // the layout effect below — the same order `TooltipPortal`
+            // uses, so the reader never sees it in the wrong place.
+            left: -9999,
             // The app's overlay band, shared with the toolbar's popovers:
             // above the cards and the rail this menu is drawn over.
             zIndex: 120,

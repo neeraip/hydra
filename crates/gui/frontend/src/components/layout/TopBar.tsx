@@ -1,6 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "@heroicons/react/24/outline";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { PROJECT_VIEWS } from "../../hooks";
+import { HistoryControls } from "./HistoryControls";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 
 // ── TopBar ────────────────────────────────────────────────────────────────────
@@ -143,6 +144,12 @@ export function TopBar() {
       )}
 
       <div style={{ flex: 1 }} />
+
+      {/* At this end deliberately. Back and forward move between screens;
+          these change the model, and two pairs of arrows within a hundred
+          pixels of each other — one of which edits your network — is a
+          mistake worth not inviting. */}
+      <HistoryControls />
     </div>
   );
 }

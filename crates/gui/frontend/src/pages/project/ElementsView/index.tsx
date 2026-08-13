@@ -38,6 +38,12 @@ import {
   useReferenceIds,
 } from "../../../hooks";
 import {
+  clearStacks,
+  moveEntry,
+  pushUndoEntry,
+  stackKey,
+} from "../../../hooks/undoStack";
+import {
   useCollectionContentsWrite,
   useElementAttributeWrite,
   useElementEndsWrite,
@@ -156,22 +162,51 @@ export function ElementsView() {
       key: string,
       value: number | string,
       previous?: number | string,
-    ) => write(id, key, value, previous).then(refetch),
-    [write, refetch],
+      // The kind is the tab being shown, which is the whole reason this
+      // surface can address an element unambiguously where the canvas
+      // cannot: a water-distribution id names an element only within its
+      // family, and the table is a family at a time.
+    ) => write(id, key, value, previous, kind ?? undefined).then(refetch),
+    [write, refetch, kind],
   );
 
   // A move is its own operation, not an attribute write: a drainage
   // element's position is a line in a section the engine preserves
   // verbatim, and it appears in no attribute schema.
+  //
+  // Captured for undo the same way the canvas captures its own drags —
+  // it is one operation, and being undoable on one surface and not the
+  // other is a difference the reader has to discover by losing work. The
+  // previous coordinate comes from the table's own positions, read
+  // before the patch.
   const onMove = useCallback(
-    (id: string, x: number, y: number) =>
-      patchNodePosition(id, x, y)
+    (id: string, x: number, y: number) => {
+      const before = elements.positions[elements.ids.indexOf(id)];
+      return patchNodePosition(id, x, y)
+        .then(() => {
+          const entry = moveEntry(id, before, x, y, kind ?? undefined);
+          if (project?.id && entry) {
+            pushUndoEntry(
+              stackKey(project.id, activeScenarioId ?? null),
+              entry,
+            );
+          }
+        })
         .then(refetch)
         .catch((e) => {
           showToast(String(e), "error");
           throw e;
-        }),
-    [refetch, showToast],
+        });
+    },
+    [
+      refetch,
+      showToast,
+      project?.id,
+      activeScenarioId,
+      elements.positions,
+      elements.ids,
+      kind,
+    ],
   );
 
   // Reconnecting is its own operation too, for the same reason a move
@@ -181,9 +216,11 @@ export function ElementsView() {
   const onReconnect = useCallback(
     (id: string, fromId: string, toId: string) => {
       const previous = elements.ends[elements.ids.indexOf(id)];
-      return writeEnds(id, fromId, toId, previous).then(refetch);
+      return writeEnds(id, fromId, toId, previous, kind ?? undefined).then(
+        refetch,
+      );
     },
-    [writeEnds, refetch, elements.ends, elements.ids],
+    [writeEnds, refetch, elements.ends, elements.ids, kind],
   );
 
   // The ids either end may name: every point in the model, whatever kind
@@ -424,7 +461,10 @@ export function ElementsView() {
               which is the same value giving two answers depending on
               which surface you asked. */}
           {spatial && selectedId && (
-            <ElementRecordsPanel elementId={selectedId} />
+            <ElementRecordsPanel
+              elementId={selectedId}
+              kind={kind ?? undefined}
+            />
           )}
         </div>
       )}
@@ -486,6 +526,20 @@ export function ElementsView() {
           if (target === selectedId) clearSelection();
           try {
             const removed = await deleteElement(kind, target);
+            // The history no longer describes a model that exists. Every
+            // entry names its elements by id, and one of those ids has
+            // just stopped meaning anything — worse for the kinds that
+            // are addressed by position, where removing control 2 makes
+            // the old control 3 into the new control 2 and an entry
+            // naming "2" now names a different statement.
+            //
+            // The canvas has always cleared here when it could not
+            // capture a way back; this surface captured nothing and
+            // cleared nothing, so the entries stayed and could replay
+            // onto whatever had taken the id.
+            if (project?.id) {
+              clearStacks(stackKey(project.id, activeScenarioId ?? null));
+            }
             const summary = deletionSummary(removed);
             if (summary) showToast(summary, "info");
             refetch();

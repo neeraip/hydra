@@ -75,6 +75,7 @@ import { useCriteriaValuation } from "../../hooks/criteriaValuation";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   clearStacks,
+  moveEntry,
   pushUndoEntry,
   recreateSpecsForDelete,
   stackKey,
@@ -2122,17 +2123,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // patch — same coordinate space as the converted values patched below.
       const prev = rawNetworkRef.current.nodes.find((n) => n.id === id);
       await patchNodePosition(id, x, y);
-      if (prev) {
-        // A move, both ways, in the contract's own vocabulary — so the
-        // entry is applied by the same command that made the change and
-        // works for whichever engine holds the model. It used to travel
-        // as water-distribution field patches, which a drainage model
-        // accepted into the history and refused on apply.
-        pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
-          label: `Moved ${id}`,
-          undo: { ops: [{ op: "move", id, x: prev.x, y: prev.y }] },
-          redo: { ops: [{ op: "move", id, x, y }] },
-        });
+      const entry = moveEntry(
+        id,
+        prev ? [prev.x, prev.y] : null,
+        x,
+        y,
+        prev?.type,
+      );
+      if (entry) {
+        pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), entry);
       }
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(project.id, activeScenarioId);
@@ -2169,6 +2168,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (recreates) {
       pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
         label: `Deleted ${id}`,
+        subject: { kind, id },
         undo: { recreates },
         redo: { deletes: [{ kind, id }] },
       });
