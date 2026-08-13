@@ -357,6 +357,35 @@ export function clearStacks(key: string): void {
   emit();
 }
 
+/**
+ * Discard every history belonging to one project.
+ *
+ * For the operations that replace the model rather than change it —
+ * importing a file over the top of an open project is the one that
+ * exists. Every entry names its elements by id, and after a replacement
+ * those ids describe a different model: at best the entry fails and is
+ * dropped, at worst it finds an element that happens to share the id and
+ * writes the old model's value onto it.
+ *
+ * By project rather than by target, because a replacement is not
+ * addressed to one scenario — whatever the base model was, none of the
+ * histories hanging off it still describe anything.
+ */
+export function clearProjectStacks(projectId: string): void {
+  // Built by `stackKey` rather than by restating its separator, which is
+  // not the space it looks like. Every scenario's key begins with the
+  // base model's, so this is a prefix that cannot drift from the format.
+  const prefix = stackKey(projectId, null);
+  let removed = false;
+  for (const key of [...stacksByKey.keys()]) {
+    if (key.startsWith(prefix)) {
+      stacksByKey.delete(key);
+      removed = true;
+    }
+  }
+  if (removed) emit();
+}
+
 /** Test seam: wipe every key. */
 export function clearAllStacks(): void {
   if (stacksByKey.size === 0) return;

@@ -19,6 +19,7 @@ import {
   useScenarios,
 } from "../../hooks";
 import { tryInvoke } from "../../hooks/ipc";
+import { clearProjectStacks } from "../../hooks/undoStack";
 import { useUndoRedo } from "../../hooks/useUndoRedo";
 import {
   formatPrimaryShortcut,
@@ -706,6 +707,12 @@ export function CommandPalette() {
           .then((imported) => {
             if (imported) {
               bumpNetwork();
+              // The history describes the model that was just replaced.
+              // Every entry names its elements by id, and those ids now
+              // belong to a different model — an undo would either fail
+              // or, worse, find an element that happens to share an id
+              // and write the old model's value onto it.
+              if (activeProjectId) clearProjectStacks(activeProjectId);
               const { network, findings, repairs } = imported;
               // Repairs must be surfaced (repair-by-omission contract).
               if (repairs?.length) {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Link, Node } from "../types";
 import {
   clearAllStacks,
+  clearProjectStacks,
   clearRedo,
   getUndoStacks,
   inverseFieldPatch,
@@ -474,5 +475,40 @@ describe("moveEntry", () => {
     // absent than captured and refused when it is applied.
     expect(moveEntry("J1", null, 5, 6)).toBeNull();
     expect(moveEntry("J1", undefined, 5, 6)).toBeNull();
+  });
+});
+
+describe("clearProjectStacks", () => {
+  // Importing a file over an open project replaces the model rather than
+  // changing it, and every entry names its elements by id. After a
+  // replacement those ids describe something else: at best the entry
+  // fails and is dropped, at worst it finds an element that happens to
+  // share an id and writes the old model's value onto it.
+  const entry = (label: string): UndoEntry => ({ label, undo: {}, redo: {} });
+
+  it("discards every history belonging to the project", () => {
+    // A replacement is not addressed to one scenario, so the base
+    // model's history and every scenario's go together.
+    pushUndoEntry(stackKey("p1", null), entry("base edit"));
+    pushUndoEntry(stackKey("p1", "s1"), entry("scenario edit"));
+    clearProjectStacks("p1");
+    expect(getUndoStacks(stackKey("p1", null)).undo).toHaveLength(0);
+    expect(getUndoStacks(stackKey("p1", "s1")).undo).toHaveLength(0);
+  });
+
+  it("leaves other projects alone", () => {
+    pushUndoEntry(stackKey("p1", null), entry("mine"));
+    pushUndoEntry(stackKey("p2", null), entry("theirs"));
+    clearProjectStacks("p1");
+    expect(getUndoStacks(stackKey("p2", null)).undo).toHaveLength(1);
+  });
+
+  it("does not match a project whose id merely starts the same", () => {
+    // A prefix test has to include the separator or `p1` would clear
+    // `p10` — which is why the prefix is built by `stackKey` rather than
+    // written out, the separator not being the space it prints as.
+    pushUndoEntry(stackKey("p10", null), entry("other project"));
+    clearProjectStacks("p1");
+    expect(getUndoStacks(stackKey("p10", null)).undo).toHaveLength(1);
   });
 });
