@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
         let err = creatable_class("uds", "storage").expect_err("should refuse");
-        assert!(err.contains("stage-area"), "unhelpful: {err}");
+        assert!(err.contains("surface area"), "unhelpful: {err}");
         // The two engines answer differently for the same kind, and the
         // difference is the data model's rather than the editor's: a
         // water-distribution curve's purpose is inferred from what

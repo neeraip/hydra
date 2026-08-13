@@ -71,7 +71,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "SU",
         creatable: false,
         not_creatable_because: Some(
-            "a storage unit needs a stage-area relation — a curve, or a fitted shape",
+            "a storage unit needs a depth and a surface area, which are not editable \
+             anywhere yet",
         ),
     },
     ElementKind {
@@ -113,7 +114,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "OR",
         creatable: false,
         not_creatable_because: Some(
-            "an orifice needs an opening geometry and a discharge coefficient",
+            "an orifice needs an opening size, which is not editable anywhere yet",
         ),
     },
     ElementKind {
@@ -124,7 +125,9 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: Some(ElementRole::Control),
         badge: "W",
         creatable: false,
-        not_creatable_because: Some("a weir needs an opening geometry and a discharge coefficient"),
+        not_creatable_because: Some(
+            "a weir needs a crest height and length, which are not editable anywhere yet",
+        ),
     },
     ElementKind {
         id: "outlet",
@@ -134,7 +137,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: Some(ElementRole::Control),
         badge: "OL",
         creatable: false,
-        not_creatable_because: Some("an outlet needs a rating — a curve, or a power relation"),
+        not_creatable_because: Some(
+            "an outlet's rating sets how much flow it passes, and no value for that \
+             is more defensible than another",
+        ),
     },
     ElementKind {
         id: "subcatchment",
@@ -157,10 +163,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Po",
-        creatable: false,
-        not_creatable_because: Some(
-            "a pollutant is defined by its buildup and washoff, authored with its land uses",
-        ),
+        // Creatable, and its refusal named the wrong thing: buildup and
+        // washoff are kept on the *land uses*, not here. A new one is a
+        // constituent that exists and which nothing yet generates —
+        // every value a genuine zero.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "curve",
@@ -221,8 +229,11 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Lu",
-        creatable: false,
-        not_creatable_because: Some("a land use is defined by its buildup and washoff functions"),
+        // Creatable: a land use with no accumulation covers ground and
+        // contributes nothing, which is a state a model may hold rather
+        // than a value standing in for one.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "aquifer",
@@ -233,7 +244,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Aq",
         creatable: false,
         not_creatable_because: Some(
-            "an aquifer is a set of soil parameters with no defensible defaults",
+            "an aquifer sits at a bottom elevation and a water table, and putting \
+             those at datum would bury it silently",
         ),
     },
     ElementKind {
@@ -245,7 +257,8 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         badge: "Sn",
         creatable: false,
         not_creatable_because: Some(
-            "a snow pack is a set of melt parameters with no defensible defaults",
+            "a snow pack is three surfaces of melt parameters, none of them \
+             editable yet",
         ),
     },
     ElementKind {

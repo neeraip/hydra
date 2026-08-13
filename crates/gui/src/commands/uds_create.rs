@@ -176,6 +176,43 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
         return Err(refuse_kind(kind));
     }
     match kind {
+        "pollutant" => {
+            net.constituents.push(hydra::uds::model::Constituent {
+                id: id.to_string(),
+                units: hydra::uds::model::ConcentrationUnits::MgPerL,
+                // Every one of these is a real zero rather than a value
+                // standing in for one nobody supplied: a constituent that
+                // exists and which nothing yet generates. What accumulates
+                // it lives on the land uses, not here — the refusal this
+                // replaces said otherwise and was simply wrong about
+                // where buildup and washoff are kept.
+                c_rain: 0.0,
+                c_groundwater: 0.0,
+                c_rdii: 0.0,
+                decay: 0.0,
+                snow_only: false,
+                co_constituent: None,
+                co_fraction: 0.0,
+                c_dwf: 0.0,
+                c_init: 0.0,
+            });
+            Ok(())
+        }
+        "landuse" => {
+            net.land_uses.push(hydra::uds::model::LandUse {
+                id: id.to_string(),
+                // No street cleaning, and no accumulation for any
+                // constituent — a land use that covers ground and
+                // contributes nothing until its relations are given. Both
+                // are states a model may hold rather than placeholders.
+                sweep_interval: 0.0,
+                sweep_removal: 0.0,
+                sweep_days_since: 0.0,
+                buildup: Vec::new(),
+                washoff: Vec::new(),
+            });
+            Ok(())
+        }
         "timeseries" => {
             net.timeseries.push(hydra::uds::model::TimeSeries {
                 id: id.to_string(),
@@ -516,11 +553,11 @@ O1 100 0
         // which the test below asserts instead.
         let err =
             create_uds_vertex(&mut net, "storage", "X", 0.0, 0.0, 90.0).expect_err("should refuse");
-        assert!(err.contains("stage-area"), "unhelpful for storage: {err}");
+        assert!(err.contains("surface area"), "unhelpful for storage: {err}");
         for (kind, expect) in [
             ("pump", "characteristic curve"),
             ("outlet", "rating"),
-            ("weir", "discharge coefficient"),
+            ("weir", "crest height"),
         ] {
             let err = create_uds_link(&mut net, kind, "X", "J1", "O1", 10.0, Some(0.3))
                 .expect_err("should refuse");
@@ -663,6 +700,44 @@ O1 100 0
             again.timeseries.iter().any(|t| t.id == "TS9"),
             "the series did not survive the round trip:\n{written}"
         );
+    }
+
+    /// Two kinds whose every value is a genuine zero rather than one
+    /// standing in for a number nobody supplied. A constituent that
+    /// exists and which nothing generates, and a land use that covers
+    /// ground and contributes nothing, are both states a model may hold.
+    ///
+    /// The pollutant's refusal also named the wrong thing: buildup and
+    /// washoff are kept on the land uses, not on the constituent.
+    #[test]
+    fn a_pollutant_and_a_land_use_are_created_empty_and_survive_the_writer() {
+        let mut net = gaged_model();
+        create_uds_container(&mut net, "pollutant", "TSS").expect("pollutant");
+        create_uds_container(&mut net, "landuse", "Residential").expect("land use");
+
+        let made = net
+            .constituents
+            .iter()
+            .find(|c| c.id == "TSS")
+            .expect("TSS");
+        assert_eq!(made.c_rain, 0.0);
+        assert_eq!(made.decay, 0.0);
+        assert!(made.co_constituent.is_none());
+        let use_ = net
+            .land_uses
+            .iter()
+            .find(|l| l.id == "Residential")
+            .expect("Residential");
+        assert!(use_.buildup.is_empty() && use_.washoff.is_empty());
+
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        assert!(again.constituents.iter().any(|c| c.id == "TSS"));
+        assert!(again.land_uses.iter().any(|l| l.id == "Residential"));
     }
 
     #[test]
