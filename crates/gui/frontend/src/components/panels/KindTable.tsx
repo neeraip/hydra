@@ -35,6 +35,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
+import { compareNatural } from "../../naturalOrder";
 import { readTextScale } from "../../textScale";
 import { useUnitSystem } from "../../units";
 import { AttributeField } from "./attributeField";
@@ -52,6 +53,7 @@ import {
   useVirtualRows,
   VirtualSpacerRow,
 } from "./editorTable";
+import { type Cell, sortRows } from "./kindTableSort";
 
 type SortDir = "asc" | "desc";
 
@@ -228,18 +230,16 @@ export function KindTable({
     const propCol = elements.columns.find((c) => c.key === sortCol);
     const axis = sortCol === "x" ? 0 : sortCol === "y" ? 1 : null;
     const end = sortCol === "from" ? 0 : sortCol === "to" ? 1 : null;
-    const get = (i: number): number | string | null => {
-      if (propCol) return propCol.values[i] ?? null;
+    const get = (i: number): Cell => {
+      if (propCol) {
+        const v = propCol.values[i];
+        return typeof v === "number" || typeof v === "string" ? v : null;
+      }
       if (axis != null) return elements.positions[i]?.[axis] ?? null;
       if (end != null) return elements.ends[i]?.[end] ?? null;
       return elements.ids[i];
     };
-    return idx.sort((a, b) => {
-      const av = get(a) ?? "";
-      const bv = get(b) ?? "";
-      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      return sortDir === "asc" ? cmp : -cmp;
-    });
+    return sortRows(idx, get, sortDir);
   }, [elements, sortCol, sortDir, matches]);
 
   const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
@@ -310,7 +310,7 @@ export function KindTable({
         ...new Set(
           (c.references ?? []).flatMap((k) => referenceIds?.[k] ?? []),
         ),
-      ].sort();
+      ].sort(compareNatural);
       // Undefined rather than empty, so a column whose kinds the caller
       // supplied nothing for stays a plain field — an empty list is a
       // list, and the browser draws it as one that offers nothing.

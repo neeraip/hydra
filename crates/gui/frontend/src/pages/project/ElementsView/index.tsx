@@ -49,6 +49,7 @@ import {
   useElementEndsWrite,
 } from "../../../hooks/useAttributeWrite";
 import { useElementRename } from "../../../hooks/useElementRename";
+import { compareNatural } from "../../../naturalOrder";
 import { deletionSummary } from "../CanvasView/deletionSummary";
 import {
   type EditorSection,
@@ -236,7 +237,7 @@ export function ElementsView() {
   );
   const endsByKind = useReferenceIds(project?.id, activeScenarioId, pointKinds);
   const endIds = useMemo(
-    () => Object.values(endsByKind).flat().sort(),
+    () => Object.values(endsByKind).flat().sort(compareNatural),
     [endsByKind],
   );
 

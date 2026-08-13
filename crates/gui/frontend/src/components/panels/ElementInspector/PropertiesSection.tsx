@@ -30,6 +30,7 @@ import {
 } from "../../../hooks";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementAttributeWrite } from "../../../hooks/useAttributeWrite";
+import { compareNatural } from "../../../naturalOrder";
 import { useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { AttributeField } from "../attributeField";
@@ -191,7 +192,7 @@ export function PropertiesSection({
       // as one set of ids rather than as several lists run together.
       const ids = [
         ...new Set((r.references ?? []).flatMap((k) => referenceIds[k] ?? [])),
-      ].sort();
+      ].sort(compareNatural);
       // Above the cutoff the list is dropped rather than truncated: a
       // shortened list silently hides valid ids while still looking
       // authoritative.

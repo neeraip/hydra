@@ -529,17 +529,21 @@ describe("KindTable ends", () => {
 
 describe("KindTable positions", () => {
   const placed: KindElements = {
-    ids: ["J1", "J2"],
+    ids: ["J1", "J2", "J3"],
     columns: [
       {
         key: "invert",
         label: "Invert",
         editable: false,
         kind: NUMBER,
-        values: [12, 4],
+        values: [12, 4, 8],
       },
     ],
-    positions: [[10, 20], null],
+    // J3 sits west of the origin, which is what lets a test tell "this
+    // element has no position" apart from "its position is zero". With
+    // only a positive coordinate and an absent one, treating absent as
+    // the origin and sorting it first give the same answer.
+    positions: [[10, 20], null, [-5, 1]],
     ends: [],
   } as KindElements;
 
@@ -585,14 +589,33 @@ describe("KindTable positions", () => {
     expect(screen.getByText("10")).toBeDefined();
   });
 
-  it("sorts by a position column", () => {
+  it("sorts by a position column, and an unplaced element is not at zero", () => {
     const { container } = render(<KindTable elements={placed} />);
     const [, xHeader] = [...container.querySelectorAll("th")];
     if (!xHeader) throw new Error("no X header");
     fireEvent.click(sortButton(xHeader));
-    // The unplaced element sorts as absent, not as the origin.
-    const first = container.querySelector("tbody tr td");
-    expect(first?.textContent).toBe("J2");
+    const ids = [...container.querySelectorAll("tbody tr td:first-child")].map(
+      (td) => td.textContent,
+    );
+    // Having no position is not having one of zero, so J2 does not land
+    // between J3 at -5 and J1 at 10 — it goes last, where every cell
+    // with nothing to say goes.
+    expect(ids).toEqual(["J3", "J1", "J2"]);
+  });
+
+  it("keeps the unplaced element last when the column is reversed", () => {
+    // A missing value is not a small one: reversing the column reverses
+    // what the reader was reading, not their interest in the rows that
+    // have no answer for it.
+    const { container } = render(<KindTable elements={placed} />);
+    const [, xHeader] = [...container.querySelectorAll("th")];
+    if (!xHeader) throw new Error("no X header");
+    fireEvent.click(sortButton(xHeader));
+    fireEvent.click(sortButton(xHeader));
+    const ids = [...container.querySelectorAll("tbody tr td:first-child")].map(
+      (td) => td.textContent,
+    );
+    expect(ids).toEqual(["J1", "J3", "J2"]);
   });
 });
 

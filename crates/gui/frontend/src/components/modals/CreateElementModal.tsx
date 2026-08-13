@@ -23,6 +23,7 @@ import {
   useElementKinds,
   useReferenceIds,
 } from "../../hooks";
+import { compareNatural } from "../../naturalOrder";
 import { useUnitSystem } from "../../units";
 import { offerDatalist } from "../panels/editorTable";
 import {
@@ -70,7 +71,10 @@ export function CreateElementModal({
     [catalog, klass],
   );
   const endIds = useReferenceIds(project?.id, scenarioId, pointKinds);
-  const allEnds = useMemo(() => Object.values(endIds).flat().sort(), [endIds]);
+  const allEnds = useMemo(
+    () => Object.values(endIds).flat().sort(compareNatural),
+    [endIds],
+  );
 
   const [kind, setKind] = useState("");
   const [id, setId] = useState("");
@@ -259,7 +263,7 @@ export function CreateElementModal({
             value={named[a.key] ?? ""}
             options={[
               ...new Set(a.references.flatMap((k) => referenceIds[k] ?? [])),
-            ].sort()}
+            ].sort(compareNatural)}
             onChange={(v) => setNamed((prev) => ({ ...prev, [a.key]: v }))}
           />
         ) : (

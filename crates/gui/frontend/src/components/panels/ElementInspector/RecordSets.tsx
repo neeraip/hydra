@@ -27,6 +27,7 @@ import {
 } from "../../../hooks";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementRecordsWrite } from "../../../hooks/useAttributeWrite";
+import { compareNatural } from "../../../naturalOrder";
 import { useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { AttributeField } from "../attributeField";
@@ -172,7 +173,7 @@ function RecordTable({
     for (const c of set.columns) {
       const ids = [
         ...new Set((c.references ?? []).flatMap((k) => referenceIds[k] ?? [])),
-      ].sort();
+      ].sort(compareNatural);
       if (ids.length && offerDatalist(ids.length))
         out.push({ key: c.key, ids });
     }
