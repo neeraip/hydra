@@ -157,6 +157,40 @@ pub(crate) fn create_uds_vertex(
     Ok(())
 }
 
+/// Add a container element — a pattern (§4.5.3).
+///
+/// A curve is deliberately absent. Its role decides the *units* its two
+/// columns are read in — a storage curve is depth against area, a rating
+/// curve head against discharge — so a curve created with a guessed role
+/// stores numbers under an interpretation nobody chose, which is the
+/// "runs and is wrong" outcome this file refuses. The role is not
+/// editable anywhere yet, so there is nowhere to correct it either.
+///
+/// A pattern's kind decides its *length*, not its meaning, and a flat
+/// hourly pattern is a complete answer rather than a placeholder.
+pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> Result<(), String> {
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable(kind) {
+        return Err(refuse_kind(kind));
+    }
+    match kind {
+        "pattern" => {
+            net.patterns.push(hydra::uds::model::TimePattern {
+                id: id.to_string(),
+                kind: hydra::uds::model::PatternKind::Hourly,
+                // Twenty-four hours of no variation, which is what a
+                // pattern of ones means rather than a value standing in
+                // for one nobody supplied.
+                factors: vec![1.0; 24],
+            });
+            Ok(())
+        }
+        other => Err(format!("no constructor for container kind '{other}'")),
+    }
+}
+
 /// Add a link between two existing vertices.
 ///
 /// `length` and `diameter` are metres. The diameter reaches the model as
@@ -442,6 +476,32 @@ O1 100 0
                 ..
             })
         ));
+    }
+
+    /// A drainage pattern is creatable and a drainage curve is not, and
+    /// the difference is the data model's rather than the editor's: a
+    /// pattern's kind decides its length, a curve's role decides what
+    /// units its two columns are read in. There is a defensible default
+    /// for the first and none for the second.
+    #[test]
+    fn a_pattern_is_created_flat_and_a_curve_is_refused() {
+        let mut net = model();
+        create_uds_container(&mut net, "pattern", "PX").expect("pattern");
+        let made = net.patterns.iter().find(|p| p.id == "PX").expect("PX");
+        assert_eq!(made.factors, vec![1.0; 24]);
+
+        let err = create_uds_container(&mut net, "curve", "CX").expect_err("should refuse");
+        assert!(err.contains("units"), "unhelpful: {err}");
+
+        // And it survives the round trip, which is what makes it an
+        // element the user added rather than one that vanishes on save.
+        let written = write_inp(&net).expect("write");
+        let (again, diags) = parse_network(&written);
+        assert!(
+            !diags.iter().any(|d| format!("{d:?}").contains("Error")),
+            "{diags:?}\n{written}"
+        );
+        assert!(again.patterns.iter().any(|p| p.id == "PX"));
     }
 
     #[test]

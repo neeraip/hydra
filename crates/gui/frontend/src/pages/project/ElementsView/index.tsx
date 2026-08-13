@@ -396,18 +396,14 @@ export function ElementsView() {
             onReconnect={onReconnect}
             endIds={endIds}
             referenceIds={referenceIds}
-            // Only where a new one can be put somewhere by typing. A
-            // conduit is drawn between two nodes, which is a gesture the
-            // map has and a table does not — so its table offers no add
-            // rather than a dialog with two more blanks in it.
             onAdd={
               // The kind can be created, this dialog knows how to place
               // its class, and there is a dialog at all — the third
               // clause is the one that was once missing, and the button
-              // did nothing when pressed.
-              CreateNode &&
-              creatableHere &&
-              (activeClass === "point" || activeClass === "polyline")
+              // did nothing when pressed. Every class but region is
+              // placeable here now: a point by a coordinate, a line by
+              // its two ends, a container by its name alone.
+              CreateNode && creatableHere && activeClass !== "region"
                 ? () => setAdding(true)
                 : undefined
             }
@@ -432,7 +428,11 @@ export function ElementsView() {
           // No gesture behind this one: the dialog asks where to put it,
           // or which two elements to run it between.
           position={null}
-          klass={activeClass === "polyline" ? "polyline" : "point"}
+          klass={
+            activeClass === "polyline" || activeClass === "collection"
+              ? activeClass
+              : "point"
+          }
           onCreated={(_kind, id) => {
             setAdding(false);
             refetch();

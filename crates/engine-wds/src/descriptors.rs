@@ -83,10 +83,11 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Pa",
-        creatable: false,
-        not_creatable_because: Some(
-            "a pattern is its list of multipliers, and a new one would have none",
-        ),
+        // Creatable since its multipliers became editable: a new one is
+        // twenty-four hours of no variation, which is a complete answer
+        // rather than a value standing in for one.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "curve",
@@ -95,8 +96,13 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Cv",
-        creatable: false,
-        not_creatable_because: Some("a curve is its list of points, and a new one would have none"),
+        // Creatable since its points became editable. A curve's purpose
+        // here is inferred from what references it (model spec §2.3), so
+        // a new one nothing points at is generic — and generic is the
+        // one kind whose axes impose no unit on its numbers, which is
+        // why nothing has to be guessed to make one.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "control",

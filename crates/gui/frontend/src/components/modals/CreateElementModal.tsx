@@ -152,7 +152,12 @@ export function CreateElementModal({
           id: name,
           ...(klass === "polyline"
             ? { fromId: typedFrom.trim(), toId: typedTo.trim() }
-            : { position: position ?? typedAt }),
+            : klass === "collection"
+              ? // Nowhere to be and nothing to run between: a container
+                // is its name and its contents, and the contents are
+                // edited in the panel below the table.
+                {}
+              : { position: position ?? typedAt }),
           fields: { ...seeded, ...values },
         });
         onCreated(kind, name);
@@ -192,7 +197,7 @@ export function CreateElementModal({
           it. The numbers are the model's own coordinate system, which is
           why they carry no quantity — a model may be a map or a drawing
           and this dialog cannot tell. */}
-      {klass !== "polyline" && !position && (
+      {klass !== "polyline" && klass !== "collection" && !position && (
         <>
           <CreateNumberField
             label="X"

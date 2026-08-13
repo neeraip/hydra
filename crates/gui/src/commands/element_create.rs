@@ -73,10 +73,13 @@ fn creatable_class(engine: &str, kind: &str) -> Result<ElementClass, String> {
     Ok(descriptor.class)
 }
 
-/// The position a spatial kind needs, or the two ends a polyline does.
+/// Where a new element goes: a position, two ends, or nowhere.
 enum Placement {
     At(f64, f64),
     Between(String, String),
+    /// A collection is not anywhere. It is named and it has contents,
+    /// and both of those are edited afterwards (§4.5.2.2).
+    Nowhere,
 }
 
 fn placement(new: &NewElement, class: ElementClass) -> Result<Placement, String> {
@@ -89,9 +92,7 @@ fn placement(new: &NewElement, class: ElementClass) -> Result<Placement, String>
             (Some(from), Some(to)) => Ok(Placement::Between(from.clone(), to.clone())),
             _ => Err(format!("a {} needs two ends", new.kind)),
         },
-        // A collection is not anywhere, and the kinds that are
-        // collections are refused as uncreatable before this is reached.
-        ElementClass::Collection => Err(format!("a {} is not placed on the map", new.kind)),
+        ElementClass::Collection => Ok(Placement::Nowhere),
     }
 }
 
@@ -125,6 +126,9 @@ pub fn create_element(
                     // default for a vertex nobody has surveyed.
                     0.0,
                 )?,
+                Placement::Nowhere => {
+                    super::uds_create::create_uds_container(&mut draft, &element.kind, &id)?;
+                }
                 Placement::Between(from, to) => super::uds_create::create_uds_link(
                     &mut draft,
                     &element.kind,
@@ -139,7 +143,7 @@ pub fn create_element(
                 )?,
             }
             let consumed: &[&str] = match &where_ {
-                Placement::At(_, _) => &[],
+                Placement::At(_, _) | Placement::Nowhere => &[],
                 Placement::Between(_, _) => &["length", "diameter"],
             };
             apply_fields(&element, consumed, |key, value| {
@@ -169,6 +173,9 @@ pub fn create_element(
                     from,
                     to,
                 )?,
+                Placement::Nowhere => {
+                    super::mutations::create_container_in_network(&mut draft, &element.kind, &id)?;
+                }
             }
             apply_fields(&element, &[], |key, value| {
                 super::wds_attrs::set_attribute(&mut draft, &id, key, value)
@@ -267,9 +274,56 @@ mod tests {
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
         let err = creatable_class("uds", "storage").expect_err("should refuse");
         assert!(err.contains("stage-area"), "unhelpful: {err}");
-        let err = creatable_class("wds", "curve").expect_err("should refuse");
-        assert!(err.contains("list of points"), "unhelpful: {err}");
+        // The two engines answer differently for the same kind, and the
+        // difference is the data model's rather than the editor's: a
+        // water-distribution curve's purpose is inferred from what
+        // references it, so a new one needs nothing said; a drainage
+        // curve declares a role that decides what units its columns are
+        // read in, and there is no defensible one.
+        let err = creatable_class("uds", "curve").expect_err("should refuse");
+        assert!(err.contains("units"), "unhelpful: {err}");
+        assert!(creatable_class("wds", "curve").is_ok());
         assert!(creatable_class("uds", "junction").is_ok());
+    }
+
+    /// A container is created by naming it and nothing else — no
+    /// position, no ends. Its contents are the point of it, and those
+    /// are edited afterwards (§4.5.2.2), which is what makes creating
+    /// one possible at all: before the contents could be edited, a new
+    /// curve was a thing you could make and never finish.
+    #[test]
+    fn a_container_is_created_by_name_alone_and_starts_complete() {
+        let mut network =
+            hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).expect("fixture");
+        assert!(matches!(
+            placement(&new("curve", "C9"), ElementClass::Collection),
+            Ok(Placement::Nowhere)
+        ));
+
+        super::super::mutations::create_container_in_network(&mut network, "curve", "C9")
+            .expect("curve");
+        let curve = network.curves.iter().find(|c| c.id == "C9").expect("C9");
+        // Generic, not pump-head: nothing references it, so nothing has
+        // said what its numbers are, and generic is the one kind that
+        // imposes no unit on them.
+        assert_eq!(curve.kind, hydra::CurveKind::Generic);
+        // Two points, ascending — the shape the contents write demands,
+        // so the thing that was just made can be edited without first
+        // being repaired.
+        assert_eq!(curve.points.len(), 2);
+        assert!(curve.points[1].x > curve.points[0].x);
+
+        super::super::mutations::create_container_in_network(&mut network, "pattern", "PX")
+            .expect("pattern");
+        let pattern = network.patterns.iter().find(|p| p.id == "PX").expect("PX");
+        assert_eq!(pattern.factors, vec![1.0; 24]);
+
+        // And a second one of the same name is refused rather than
+        // shadowing the first.
+        assert!(
+            super::super::mutations::create_container_in_network(&mut network, "curve", "C9")
+                .is_err()
+        );
     }
 
     /// A refusal says what a new one would *lack*, never where to go

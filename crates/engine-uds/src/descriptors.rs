@@ -168,7 +168,10 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: None,
         badge: "Cv",
         creatable: false,
-        not_creatable_because: Some("a curve is its list of points, and a new one would have none"),
+        not_creatable_because: Some(
+            "a curve's role decides what units its two columns are read in, \
+             and nothing here can choose one",
+        ),
     },
     ElementKind {
         id: "timeseries",
@@ -189,10 +192,11 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Pa",
-        creatable: false,
-        not_creatable_because: Some(
-            "a pattern is its list of multipliers, and a new one would have none",
-        ),
+        // Creatable since its multipliers became editable. Its kind
+        // decides the pattern's *length* rather than what its numbers
+        // mean, so a flat hourly one is complete rather than a guess.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "rule",

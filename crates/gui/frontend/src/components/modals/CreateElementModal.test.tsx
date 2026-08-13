@@ -38,6 +38,14 @@ const KINDS = [
     labelPlural: "Curves",
     class: "collection",
     badge: "C",
+    creatable: true,
+  },
+  {
+    id: "rule",
+    label: "Rule",
+    labelPlural: "Rules",
+    class: "collection",
+    badge: "R",
     creatable: false,
   },
   {
@@ -126,6 +134,16 @@ describe("CreateElementModal", () => {
   it("does not ask again when a click already answered", () => {
     render(<CreateElementModal {...props} position={[5, 6]} />);
     expect(screen.queryByLabelText("X")).toBeNull();
+  });
+
+  it("asks for nothing but a name when adding a container", () => {
+    // A curve is not anywhere and runs between nothing. Its contents are
+    // the point of it, and those are edited in the panel below the
+    // table — which is what made creating one possible at all.
+    render(<CreateElementModal {...props} klass="collection" />);
+    expect(screen.getByText("Curve")).toBeDefined();
+    expect(screen.queryByLabelText("X")).toBeNull();
+    expect(screen.queryByLabelText("From")).toBeNull();
   });
 
   it("asks for the two ends when adding a link", () => {

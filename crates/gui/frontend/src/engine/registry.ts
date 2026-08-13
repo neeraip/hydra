@@ -104,10 +104,11 @@ export interface CreateNodeModalProps {
    * Which class of element is being added.
    *
    * A point or a region is placed by a position; a polyline by naming
-   * its two ends. Defaults to `point`, which is what a click on empty
-   * map means.
+   * its two ends; a collection by its name alone, because it is not
+   * anywhere. Defaults to `point`, which is what a click on empty map
+   * means.
    */
-  klass?: "point" | "region" | "polyline";
+  klass?: "point" | "region" | "polyline" | "collection";
   /** The ends, when a drawn line already named them. Absent and the
    * dialog asks, which is how a link is added from a table. */
   fromNodeId?: string;

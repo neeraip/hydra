@@ -1478,6 +1478,59 @@ fn curve_references(network: &hydra::Network, curve_id: &str) -> Vec<String> {
 /// head-curve, valve-curve, or volume-curve respectively) — the reference
 /// must be cleared first so the network never ends up with a dangling curve
 /// ID that would fail to parse on the next INP round-trip.
+/// Create a container element — a curve or a pattern (§4.5.3).
+///
+/// Both get contents that are complete and mean nothing in particular,
+/// which is the honest starting point for a thing whose contents are the
+/// point of it: a flat pattern varies by nothing, and a two-point curve
+/// interpolates. Neither is a guess about what the modeller meant,
+/// because neither affects a run until something references it.
+pub(crate) fn create_container_in_network(
+    network: &mut hydra::Network,
+    kind: &str,
+    id: &str,
+) -> Result<(), String> {
+    let id = validate_inp_id(id, kind)?;
+    match kind {
+        "curve" => {
+            if network.curves.iter().any(|c| c.id == id) {
+                return Err(format!("curve '{id}' already exists"));
+            }
+            network.curves.push(hydra::Curve {
+                id,
+                // Generic, not a pump curve. A curve's purpose here is
+                // *inferred from what references it* (model spec §2.3),
+                // so a new one nothing points at has none — and generic
+                // is the one kind whose axes impose no unit on its
+                // numbers. Defaulting to pump-head, as the deleted
+                // editor did, told the table those two columns were
+                // litres per second and metres before anyone said so.
+                kind: hydra::CurveKind::Generic,
+                points: vec![
+                    hydra::CurvePoint { x: 0.0, y: 0.0 },
+                    hydra::CurvePoint { x: 1.0, y: 1.0 },
+                ],
+            });
+            Ok(())
+        }
+        "pattern" => {
+            if network.patterns.iter().any(|p| p.id == id) {
+                return Err(format!("pattern '{id}' already exists"));
+            }
+            // Twenty-four hours of no variation. A pattern of ones is
+            // what "this demand does not change through the day" is
+            // written as, so it is a real answer rather than a
+            // placeholder.
+            network.patterns.push(hydra::Pattern {
+                id,
+                factors: vec![1.0; 24],
+            });
+            Ok(())
+        }
+        other => Err(format!("no constructor for container kind '{other}'")),
+    }
+}
+
 fn delete_curve_from_network(network: &mut hydra::Network, id: &str) -> Result<(), String> {
     if !network.curves.iter().any(|c| c.id == id) {
         return Err(format!("curve '{id}' not found"));
