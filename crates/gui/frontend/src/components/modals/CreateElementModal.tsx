@@ -35,36 +35,61 @@ import {
 } from "./CreateElementDialog";
 
 /**
+ * How a new element is placed — which is the question the dialog is
+ * really asking, and the one `class` only approximates.
+ *
+ * A point and a region are both put *somewhere*: the dialog asks for a
+ * coordinate, and the create sends a position. Every place this dialog
+ * branched on class was really branching on this, treating the two the
+ * same and spelling it out twice.
+ */
+export type Placing = "at" | "between" | "named";
+
+export function placingOf(klass: ElementClass): Placing {
+  if (klass === "polyline") return "between";
+  if (klass === "collection") return "named";
+  return "at";
+}
+
+/**
  * The kinds an Add dialog offers to switch between.
  *
- * Two filters, and the second is the one that was missing.
+ * **When the caller names a kind, the family is what it offers** — the
+ * kinds sharing that one's group, which is the engine's own answer to
+ * what belongs together (§4.2.1) and what the rail already lists them
+ * under. A rain gage is a point, so it used to sit in the type row
+ * beside Junction and Storage unit while the rail had it with the
+ * subcatchments: two organising principles for one catalog, and the
+ * reader met both.
  *
- * **Class**, because it decides what the dialog has to ask for: a point
- * or a region is placed by a coordinate, a polyline by naming its two
- * ends, a collection by nothing at all.
+ * A family may cross classes, and this offers it whole where the dialog
+ * can place it the same way. Rainfall and runoff is the case: a gage is
+ * a point and a subcatchment a region, and both are put at a coordinate,
+ * so both belong in the dialog the rail's own heading implies. What it
+ * will not do is mix a *placing* — a form that asked for a coordinate
+ * and two ends at once would be asking about two different things.
  *
- * **Group**, because a shared class is not a family. A rain gage is a
- * point, so it sat in the type row beside Junction, Outfall, Divider and
- * Storage unit — while the rail lists it under Rainfall and runoff with
- * the subcatchments, where it belongs. Two organising principles for one
- * catalog, and the reader meets both. The group is the engine's own
- * answer to what belongs together (§4.2.1) and the rail already uses it,
- * so this is the dialog agreeing with the list that opened it rather
- * than a second opinion.
- *
- * With no opening kind — a click on the map, which names a place and not
- * a family — the class is all there is to go on, and every kind that can
- * be put there is offered.
+ * **When the caller names only a geometry, that is all there is to go
+ * on** — a click on the map says where, not what family — so every
+ * creatable kind of that class is offered, as before.
  */
 export function offeredKinds(
   catalog: ElementKindInfo[],
   klass: ElementClass,
   opensOn?: string,
 ): CreateKind[] {
-  const placeable = catalog.filter((k) => k.creatable && k.class === klass);
-  const group = placeable.find((k) => k.id === opensOn)?.group;
-  return (group ? placeable.filter((k) => k.group === group) : placeable).map(
-    (k) => ({ value: k.id, label: k.label }),
+  const named = (kinds: ElementKindInfo[]) =>
+    kinds.map((k) => ({ value: k.id, label: k.label }));
+  const creatable = catalog.filter((k) => k.creatable);
+  const group = creatable.find(
+    (k) => k.id === opensOn && k.class === klass,
+  )?.group;
+  if (!group) return named(creatable.filter((k) => k.class === klass));
+  const placing = placingOf(klass);
+  return named(
+    creatable.filter(
+      (k) => k.group === group && placingOf(k.class) === placing,
+    ),
   );
 }
 
@@ -92,12 +117,22 @@ export function CreateElementModal({
     [catalog, klass, preferKind],
   );
 
-  // The ids a polyline may name: every point the model has, whatever
-  // kind of point. Fetched only for that case.
+  // The ids a polyline may name: the points that are part of the flow
+  // network, whatever kind they are. Fetched only for that case.
+  //
+  // Not every point is one. A rain gage is a point and a link cannot
+  // reach it — the create refuses with "not a node in this model" — so
+  // offering its id in the From list was offering a choice that always
+  // failed. The catalog already draws the distinction: a role is absent
+  // exactly where the kind plays no part in the flow network, which is
+  // the engine saying this rather than this component guessing from a
+  // list of kind names.
   const pointKinds = useMemo(
     () =>
       klass === "polyline"
-        ? catalog.filter((k) => k.class === "point").map((k) => k.id)
+        ? catalog
+            .filter((k) => k.class === "point" && k.role != null)
+            .map((k) => k.id)
         : [],
     [catalog, klass],
   );
@@ -218,6 +253,17 @@ export function CreateElementModal({
       kinds.find((k) => k.value === preferKind)?.value ?? kinds[0]?.value ?? "",
     [kinds, preferKind],
   );
+  // How the *selected* kind is placed, which is not always how the
+  // caller's class is: a family may cross classes — a rain gage is a
+  // point and a subcatchment a region — and both are put at a
+  // coordinate. Reading it from the choice rather than from the prop is
+  // what lets the two share a dialog without it asking for the wrong
+  // thing when the choice changes.
+  const placing = useMemo(
+    () => placingOf(catalog.find((k) => k.id === kind)?.class ?? klass),
+    [catalog, kind, klass],
+  );
+
   useEffect(() => {
     if (!open) return;
     setKind(opensOn);
@@ -257,9 +303,9 @@ export function CreateElementModal({
         await createElement(projectId, {
           kind,
           id: name,
-          ...(klass === "polyline"
+          ...(placing === "between"
             ? { fromId: typedFrom.trim(), toId: typedTo.trim() }
-            : klass === "collection"
+            : placing === "named"
               ? // Nowhere to be and nothing to run between: a container
                 // is its name and its contents, and the contents are
                 // edited in the panel below the table.
@@ -308,7 +354,7 @@ export function CreateElementModal({
           />
         ),
       )}
-      {klass === "polyline" && (
+      {placing === "between" && (
         <>
           <ReferenceField
             label="From"
@@ -331,7 +377,7 @@ export function CreateElementModal({
           it. The numbers are the model's own coordinate system, which is
           why they carry no quantity — a model may be a map or a drawing
           and this dialog cannot tell. */}
-      {klass !== "polyline" && klass !== "collection" && !position && (
+      {placing === "at" && !position && (
         <>
           <CreateNumberField
             label="X"

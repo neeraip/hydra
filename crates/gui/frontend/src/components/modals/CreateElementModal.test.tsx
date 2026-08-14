@@ -23,6 +23,29 @@ const KINDS = [
     labelPlural: "Junctions",
     class: "point",
     badge: "J",
+    group: "Nodes",
+    role: "conveyance",
+    creatable: true,
+  },
+  // A family that crosses classes, which is the case the dialog has to
+  // follow the *choice* for: both are put at a coordinate, and only one
+  // of them is a point.
+  {
+    id: "raingage",
+    label: "Rain gage",
+    labelPlural: "Rain gages",
+    class: "point",
+    badge: "RG",
+    group: "Rainfall and runoff",
+    creatable: true,
+  },
+  {
+    id: "subcatchment",
+    label: "Subcatchment",
+    labelPlural: "Subcatchments",
+    class: "region",
+    badge: "SC",
+    group: "Rainfall and runoff",
     creatable: true,
   },
   {
@@ -31,6 +54,8 @@ const KINDS = [
     labelPlural: "Tanks",
     class: "point",
     badge: "TK",
+    group: "Nodes",
+    role: "boundary",
     creatable: true,
   },
   {
@@ -278,8 +303,11 @@ describe("CreateElementModal", () => {
     expect(screen.getByText("Pipe")).toBeDefined();
     expect(screen.getByLabelText("From")).toBeDefined();
     expect(screen.getByLabelText("To")).toBeDefined();
-    // One list per end, each offering every point in the model whatever
-    // kind it is — a pipe may run to a tank as readily as to a junction.
+    // One list per end, each offering every point that is part of the
+    // flow network, whatever kind it is — a pipe may run to a tank as
+    // readily as to a junction. A rain gage is a point and is not one of
+    // them: a link cannot reach it, and offering `G1` here was offering
+    // a choice the create always refused.
     const lists = [...document.querySelectorAll("datalist")];
     expect(lists).toHaveLength(2);
     for (const list of lists) {
@@ -290,6 +318,25 @@ describe("CreateElementModal", () => {
     }
     // A link is placed by its ends, not by a coordinate.
     expect(screen.queryByLabelText("X")).toBeNull();
+  });
+
+  it("switches what it asks for when the chosen kind is placed differently", () => {
+    // A family may cross classes — a rain gage is a point and a
+    // subcatchment a region, and both are put at a coordinate — so the
+    // dialog follows the choice rather than the class it was opened
+    // with. Reading the placing from the prop would have left a
+    // subcatchment chosen here sending a point's payload.
+    render(<CreateElementModal {...props} klass="point" kind="raingage" />);
+    expect(screen.getByText("Rain gage")).toBeDefined();
+    expect(screen.getByText("Subcatchment")).toBeDefined();
+    // Both are placed at a coordinate, so the coordinate is asked for
+    // either way and no end fields appear.
+    expect(screen.getByLabelText("X")).toBeDefined();
+    expect(screen.queryByLabelText("From")).toBeNull();
+
+    fireEvent.click(screen.getByText("Subcatchment"));
+    expect(screen.getByLabelText("X")).toBeDefined();
+    expect(screen.queryByLabelText("From")).toBeNull();
   });
 
   it("starts a drawn link's length at the distance drawn", () => {
@@ -346,19 +393,32 @@ describe("offeredKinds", () => {
     ).toEqual(["junction", "outfall", "storage"]);
   });
 
-  it("offers a rain gage on its own", () => {
+  it("offers a family whole where it can place it the same way", () => {
+    // A gage is a point and a subcatchment a region, and both are put at
+    // a coordinate — so the rail's own heading implies one dialog and
+    // this is it. Reached from either side.
     expect(
       offeredKinds(CATALOG, "point", "raingage").map((o) => o.value),
-    ).toEqual(["raingage"]);
-  });
-
-  it("still bounds the family by what the dialog can place", () => {
-    // A subcatchment shares the gage's group and is placed the same way,
-    // but the class decides what the dialog asks for, so the two filters
-    // are both needed rather than one standing in for the other.
+    ).toEqual(["raingage", "subcatchment"]);
     expect(
       offeredKinds(CATALOG, "region", "subcatchment").map((o) => o.value),
-    ).toEqual(["subcatchment"]);
+    ).toEqual(["raingage", "subcatchment"]);
+  });
+
+  it("never mixes two ways of placing something", () => {
+    // A form that asked for a coordinate and two ends at once would be
+    // asking about two different things. The conduit shares no group
+    // here, but the rule is about the placing rather than the group.
+    const linked = [
+      ...CATALOG,
+      k("gutter", "Gutter", "polyline", "Rainfall and runoff"),
+    ];
+    expect(
+      offeredKinds(linked, "point", "raingage").map((o) => o.value),
+    ).toEqual(["raingage", "subcatchment"]);
+    expect(
+      offeredKinds(linked, "polyline", "gutter").map((o) => o.value),
+    ).toEqual(["gutter"]);
   });
 
   it("offers everything placeable when nothing named a family", () => {
