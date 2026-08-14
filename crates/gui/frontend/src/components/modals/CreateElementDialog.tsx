@@ -41,6 +41,42 @@ const FIELD: React.CSSProperties = {
   gap: 4,
 };
 
+// ── The dialog's box ─────────────────────────────────────────────────────────
+//
+// Exported so the layout test asserts against what ships rather than
+// against a copy of it, which is the only way the two cannot drift.
+
+/**
+ * How wide the dialog is, and the margin it keeps from the window.
+ *
+ * Wide enough for two columns of fields. A screen is almost always wider
+ * than it is tall, and a column of one field per row made a dialog with
+ * six of them taller than some windows while leaving most of the width
+ * empty.
+ */
+export const CREATE_DIALOG_WIDTH = 520;
+export const CREATE_DIALOG_GUTTER = 32;
+
+/**
+ * The narrowest a kind button may be before the row wraps instead.
+ *
+ * The row used to divide the width by however many kinds there were, so
+ * five of them squeezed "Storage unit" and "Rain gage" onto two lines
+ * each while "Junction" sat in the same box with room to spare. Below
+ * this the label is what gives, and a label that breaks mid-phrase is
+ * harder to scan than a second row of buttons.
+ */
+export const KIND_BUTTON_MIN = 104;
+
+/**
+ * The narrowest a field column may be before the grid drops to one.
+ *
+ * Two columns is the point of the width, but a number with a unit beside
+ * it and an uppercase label above needs room — squeezing two into a
+ * narrow window would trade one bad layout for another.
+ */
+export const FIELD_COLUMN_MIN = 210;
+
 export function CreateElementDialog({
   open,
   title,
@@ -147,7 +183,8 @@ export function CreateElementDialog({
           border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "20px 24px",
-          width: 320,
+          // Never wider than the window it is centred in.
+          width: `min(${CREATE_DIALOG_WIDTH}px, calc(100vw - ${CREATE_DIALOG_GUTTER}px))`,
           boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
           display: "flex",
           flexDirection: "column",
@@ -178,7 +215,13 @@ export function CreateElementDialog({
               {kinds[0].label}
             </span>
           ) : (
-            <div style={{ display: "flex", gap: 6 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fit, minmax(${KIND_BUTTON_MIN}px, 1fr))`,
+                gap: 6,
+              }}
+            >
               {kinds.map((t) => (
                 <button
                   type="button"
@@ -189,8 +232,7 @@ export function CreateElementDialog({
                   }}
                   aria-pressed={kind === t.value}
                   style={{
-                    flex: 1,
-                    padding: "5px 0",
+                    padding: "5px 6px",
                     borderRadius: 6,
                     fontSize: "var(--text-md)",
                     fontWeight: 500,
@@ -258,7 +300,22 @@ export function CreateElementDialog({
           )}
         </label>
 
-        {children}
+        {/* Two columns, dropping to one when the window is too narrow to
+            hold them. The dialog owns the arrangement rather than each
+            caller, so every Add form is laid out the same way and a new
+            one cannot arrive single-file. */}
+        {children && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${FIELD_COLUMN_MIN}px, 1fr))`,
+              gap: "14px 16px",
+              alignItems: "start",
+            }}
+          >
+            {children}
+          </div>
+        )}
 
         {note && (
           <div
