@@ -304,8 +304,13 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Li",
-        creatable: false,
-        not_creatable_because: Some("a control measure is defined by its layers"),
+        // Creatable since its layers became editable. A new one is its
+        // id and its unit type, with the layers entered afterwards —
+        // the same shape a transect took when its survey points became
+        // editable. The refusal this replaces was true while nothing
+        // could reach a layer, and only while.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "transect",
@@ -670,7 +675,11 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("responses", "Responses defined", num(), None),
         ],
         "lidcontrol" => vec![
-            attr("lidType", "Type", text(), None),
+            // Editable and asked for at creation, because it is the one
+            // thing a control measure is before any layer is entered:
+            // the unit type decides what the engine builds, not merely
+            // what it is set to afterwards.
+            rw("lidType", "Type", lid_kinds(), None),
             attr("layers", "Layers defined", num(), None),
             attr("removals", "Pollutant removals", num(), None),
         ],
@@ -831,6 +840,24 @@ fn numd(default: f64) -> OptionKind {
 /// No default: the role decides what the two columns *mean*, so a
 /// storage curve created as a rating one is not a curve set to the wrong
 /// thing — it is two numbers read in the wrong units.
+/// The eight unit types (§3.4), in the keywords the file writes.
+///
+/// A choice rather than free text: there are exactly eight, the engine
+/// resolves nothing else, and a control measure whose type was typed
+/// wrong is one the reader has to correct before it can do anything.
+fn lid_kinds() -> OptionKind {
+    OptionKind::Choice {
+        default: None,
+        items: ["BC", "RG", "GR", "IT", "PP", "RB", "VS", "RD"]
+            .iter()
+            .map(|v| hydra_common::ChoiceItem {
+                value: (*v).to_string(),
+                label: (*v).to_string(),
+            })
+            .collect(),
+    }
+}
+
 fn curve_roles() -> OptionKind {
     OptionKind::Choice {
         default: None,

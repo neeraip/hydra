@@ -84,6 +84,20 @@ fn text() -> OptionKind {
     OptionKind::Text { default: None }
 }
 
+/// A yes/no cell, in the words the rest of the drainage rows use.
+fn yes_no() -> OptionKind {
+    OptionKind::Choice {
+        default: None,
+        items: ["Yes", "No"]
+            .iter()
+            .map(|v| hydra::common::ChoiceItem {
+                value: (*v).to_string(),
+                label: (*v).to_string(),
+            })
+            .collect(),
+    }
+}
+
 #[tauri::command(async)]
 /// Every record set attached to one element (§4.5.2.3).
 ///
@@ -293,6 +307,350 @@ pub(crate) fn set_wds_records(
     Ok(())
 }
 
+// ── A control measure's layers ───────────────────────────────────────────────
+//
+// Six layers, three to seven parameters each, and no two of them the
+// same shape — which is why one table cannot hold them honestly and why
+// this kind read as "defined by its layers" and could be neither opened
+// nor created.
+//
+// Six *sets* can. §4.5.2.3 already lets an element carry several, each
+// with its own columns, and a layer is a set holding at most one row:
+// present is a row, absent is none. Adding the row is the layer
+// appearing, and removing it is the layer going away — which is exactly
+// what the file means by omitting the section.
+//
+// All six are offered whatever the unit type is. Hiding the ones a type
+// does not use would make a layer that is absent indistinguishable from
+// one that does not apply, and the engine refuses neither — a rain
+// barrel with a soil layer is a model the reader may hold, and this is
+// an editor rather than a second opinion about it.
+
+/// One layer: its set key, what to call it, and its columns.
+///
+/// The columns are named once and read by both directions. A read and a
+/// write that each listed them would be two lists to keep in step, and
+/// the one that drifted would put a porosity into a wilting point.
+struct Layer {
+    key: &'static str,
+    label: &'static str,
+    /// `(key, label, quantity)` per column, in file order.
+    columns: &'static [(&'static str, &'static str, Option<&'static str>)],
+}
+
+const LAYERS: [Layer; 6] = [
+    Layer {
+        key: "surface",
+        label: "Surface layer",
+        columns: &[
+            ("thickness", "Berm height", Some("depth")),
+            ("voidFrac", "Vegetation volume", None),
+            ("roughness", "Roughness", None),
+            ("slope", "Surface slope", None),
+            ("sideSlope", "Side slope", None),
+        ],
+    },
+    Layer {
+        key: "soil",
+        label: "Soil layer",
+        columns: &[
+            ("thickness", "Thickness", Some("depth")),
+            ("porosity", "Porosity", None),
+            ("fieldCapacity", "Field capacity", None),
+            ("wiltingPoint", "Wilting point", None),
+            ("kSat", "Conductivity", None),
+            ("kSlope", "Conductivity slope", None),
+            ("suction", "Suction head", Some("depth")),
+        ],
+    },
+    Layer {
+        key: "pavement",
+        label: "Pavement layer",
+        columns: &[
+            ("thickness", "Thickness", Some("depth")),
+            ("voidFrac", "Void fraction", None),
+            ("impervFrac", "Impervious fraction", None),
+            ("kSat", "Permeability", None),
+            ("clogFactor", "Clogging factor", None),
+            ("regenDays", "Regeneration interval", None),
+            ("regenDegree", "Regeneration degree", None),
+        ],
+    },
+    Layer {
+        key: "storage",
+        label: "Storage layer",
+        columns: &[
+            ("thickness", "Thickness", Some("depth")),
+            ("voidFrac", "Void fraction", None),
+            ("kSat", "Exfiltration rate", None),
+            ("clogFactor", "Clogging factor", None),
+            ("covered", "Covered", None),
+        ],
+    },
+    Layer {
+        key: "drain",
+        label: "Underdrain",
+        columns: &[
+            ("coeff", "Coefficient", None),
+            ("exponent", "Exponent", None),
+            ("offset", "Offset", Some("depth")),
+            ("delay", "Delay", None),
+            ("hOpen", "Open head", Some("depth")),
+            ("hClose", "Close head", Some("depth")),
+            ("curve", "Control curve", None),
+        ],
+    },
+    Layer {
+        key: "drainMat",
+        label: "Drainage mat",
+        columns: &[
+            ("thickness", "Thickness", Some("depth")),
+            ("voidFrac", "Void fraction", None),
+            ("roughness", "Roughness", None),
+        ],
+    },
+];
+
+/// The layer sets of a control measure, one per layer whatever it holds.
+fn lid_records(net: &hydra::uds::model::Network, id: &str) -> Vec<RecordSetDto> {
+    let Some(lid) = net
+        .lid_controls
+        .iter()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
+    else {
+        return Vec::new();
+    };
+    LAYERS
+        .iter()
+        .map(|layer| {
+            let mut columns: Vec<RecordColumnDto> = layer
+                .columns
+                .iter()
+                .map(|(key, label, quantity)| match *key {
+                    // The one cell that is not a number: a rain barrel
+                    // is covered or it is not.
+                    "covered" => column(key, label, yes_no()),
+                    // And the one that names another element, so the
+                    // field offers the model's own curves (§4.5.1.1).
+                    "curve" => RecordColumnDto {
+                        references: vec!["curve".to_string()],
+                        ..column(key, label, text())
+                    },
+                    _ => RecordColumnDto {
+                        quantity: quantity.and_then(super::uds_results::quantity_descriptor),
+                        ..column(key, label, number())
+                    },
+                })
+                .collect();
+            columns.shrink_to_fit();
+            RecordSetDto {
+                key: layer.key.to_string(),
+                label: layer.label.to_string(),
+                columns,
+                rows: lid_layer_row(net, lid, layer.key).into_iter().collect(),
+                editable: true,
+            }
+        })
+        .collect()
+}
+
+/// The one row a layer has, or none when the control measure lacks it.
+fn lid_layer_row(
+    net: &hydra::uds::model::Network,
+    lid: &hydra::uds::model::LidControl,
+    key: &str,
+) -> Option<Vec<serde_json::Value>> {
+    use serde_json::json;
+    let curve_id = |i: Option<usize>| {
+        i.and_then(|i| net.curves.get(i))
+            .map_or_else(String::new, |c| c.id.clone())
+    };
+    match key {
+        "surface" => lid.surface.as_ref().map(|l| {
+            vec![
+                json!(l.thickness),
+                json!(l.void_frac),
+                json!(l.roughness),
+                json!(l.slope),
+                json!(l.side_slope),
+            ]
+        }),
+        "soil" => lid.soil.as_ref().map(|l| {
+            vec![
+                json!(l.thickness),
+                json!(l.porosity),
+                json!(l.field_capacity),
+                json!(l.wilting_point),
+                json!(l.k_sat),
+                json!(l.k_slope),
+                json!(l.suction),
+            ]
+        }),
+        "pavement" => lid.pavement.as_ref().map(|l| {
+            vec![
+                json!(l.thickness),
+                json!(l.void_frac),
+                json!(l.imperv_frac),
+                json!(l.k_sat),
+                json!(l.clog_factor),
+                json!(l.regen_days),
+                json!(l.regen_degree),
+            ]
+        }),
+        "storage" => lid.storage.as_ref().map(|l| {
+            vec![
+                json!(l.thickness),
+                json!(l.void_frac),
+                json!(l.k_sat),
+                json!(l.clog_factor),
+                json!(if l.covered { "Yes" } else { "No" }),
+            ]
+        }),
+        "drain" => lid.drain.as_ref().map(|l| {
+            vec![
+                json!(l.coeff),
+                json!(l.exponent),
+                json!(l.offset),
+                json!(l.delay),
+                json!(l.h_open),
+                json!(l.h_close),
+                json!(curve_id(l.curve)),
+            ]
+        }),
+        "drainMat" => lid
+            .drain_mat
+            .as_ref()
+            .map(|l| vec![json!(l.thickness), json!(l.void_frac), json!(l.roughness)]),
+        _ => None,
+    }
+}
+
+/// Replace one layer: a row makes it present, no rows takes it away.
+fn set_lid_layer(
+    net: &mut hydra::uds::model::Network,
+    element_id: &str,
+    key: &str,
+    rows: &[Vec<serde_json::Value>],
+) -> Result<(), String> {
+    use hydra::uds::model as m;
+    let layer = LAYERS
+        .iter()
+        .find(|l| l.key == key)
+        .ok_or_else(|| format!("no record set '{key}'"))?;
+    if rows.len() > 1 {
+        return Err(format!(
+            "a control measure has one {} or none",
+            layer.label.to_lowercase()
+        ));
+    }
+    // Resolved before the layer is touched, so a curve nobody has does
+    // not leave the measure half-written.
+    let curve = match rows.first().and_then(|r| cell_text(r, 6)) {
+        Some(name) => Some(
+            net.curves
+                .iter()
+                .position(|c| c.id.eq_ignore_ascii_case(&name))
+                .ok_or_else(|| format!("'{name}' is not a curve in this model"))?,
+        ),
+        None => None,
+    };
+    let at = net
+        .lid_controls
+        .iter()
+        .position(|c| c.id.eq_ignore_ascii_case(element_id))
+        .ok_or_else(|| format!("no control measure '{element_id}'"))?;
+    let row = rows.first();
+    if let Some(r) = row {
+        if r.len() != layer.columns.len() {
+            return Err(wrong_width(r.len(), layer.columns.len()));
+        }
+    }
+    let n = |at: usize, what: &str| -> Result<f64, String> {
+        cell_number(row.expect("checked"), at, what)
+    };
+    let lid = &mut net.lid_controls[at];
+    match key {
+        "surface" => {
+            lid.surface = match row {
+                None => None,
+                Some(_) => Some(m::LidSurface {
+                    thickness: n(0, "a berm height")?,
+                    void_frac: n(1, "a vegetation volume")?,
+                    roughness: n(2, "a roughness")?,
+                    slope: n(3, "a surface slope")?,
+                    side_slope: n(4, "a side slope")?,
+                }),
+            }
+        }
+        "soil" => {
+            lid.soil = match row {
+                None => None,
+                Some(_) => Some(m::LidSoil {
+                    thickness: n(0, "a thickness")?,
+                    porosity: n(1, "a porosity")?,
+                    field_capacity: n(2, "a field capacity")?,
+                    wilting_point: n(3, "a wilting point")?,
+                    k_sat: n(4, "a conductivity")?,
+                    k_slope: n(5, "a conductivity slope")?,
+                    suction: n(6, "a suction head")?,
+                }),
+            }
+        }
+        "pavement" => {
+            lid.pavement = match row {
+                None => None,
+                Some(_) => Some(m::LidPavement {
+                    thickness: n(0, "a thickness")?,
+                    void_frac: n(1, "a void fraction")?,
+                    imperv_frac: n(2, "an impervious fraction")?,
+                    k_sat: n(3, "a permeability")?,
+                    clog_factor: n(4, "a clogging factor")?,
+                    regen_days: n(5, "a regeneration interval")?,
+                    regen_degree: n(6, "a regeneration degree")?,
+                }),
+            }
+        }
+        "storage" => {
+            lid.storage = match row {
+                None => None,
+                Some(r) => Some(m::LidStorage {
+                    thickness: n(0, "a thickness")?,
+                    void_frac: n(1, "a void fraction")?,
+                    k_sat: n(2, "an exfiltration rate")?,
+                    clog_factor: n(3, "a clogging factor")?,
+                    covered: cell_text(r, 4).is_some_and(|v| v.eq_ignore_ascii_case("yes")),
+                }),
+            }
+        }
+        "drain" => {
+            lid.drain = match row {
+                None => None,
+                Some(_) => Some(m::LidDrain {
+                    coeff: n(0, "a coefficient")?,
+                    exponent: n(1, "an exponent")?,
+                    offset: n(2, "an offset")?,
+                    delay: n(3, "a delay")?,
+                    h_open: n(4, "an open head")?,
+                    h_close: n(5, "a close head")?,
+                    curve,
+                }),
+            }
+        }
+        "drainMat" => {
+            lid.drain_mat = match row {
+                None => None,
+                Some(_) => Some(m::LidDrainMat {
+                    thickness: n(0, "a thickness")?,
+                    void_frac: n(1, "a void fraction")?,
+                    roughness: n(2, "a roughness")?,
+                }),
+            }
+        }
+        _ => return Err(format!("no record set '{key}'")),
+    }
+    Ok(())
+}
+
 // ── Urban drainage ───────────────────────────────────────────────────────────
 
 /// The four pattern slots a sanitary inflow is modulated by, in the
@@ -487,6 +845,10 @@ pub(crate) fn uds_records(net: &hydra::uds::model::Network, element_id: &str) ->
         .iter()
         .position(|v| v.id.eq_ignore_ascii_case(element_id))
     else {
+        let layers = lid_records(net, element_id);
+        if !layers.is_empty() {
+            return layers;
+        }
         return snowpack_records(net, element_id)
             .or_else(|| hydrograph_records(net, element_id))
             .into_iter()
@@ -545,6 +907,9 @@ pub(crate) fn set_uds_records(
     set: &str,
     rows: &[Vec<serde_json::Value>],
 ) -> Result<(), String> {
+    if LAYERS.iter().any(|l| l.key == set) {
+        return set_lid_layer(net, element_id, set, rows);
+    }
     if set != "surfaces" {
         return Err(format!("'{set}' cannot be edited here yet"));
     }
@@ -683,6 +1048,119 @@ Duration  0
         };
         assert_eq!(j.demands.len(), 1);
         assert_eq!(j.demands[0].name.as_deref(), Some("Residential"));
+    }
+
+    /// A model with one control measure carrying two of its six layers.
+    fn lid_model() -> hydra::uds::model::Network {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [CURVES]\nDC1 CONTROL 0 1\nDC1 1 2\n\
+                     [LID_CONTROLS]\n\
+                     GR1 BC\n\
+                     GR1 SURFACE 150 0.0 0.1 1.0 5\n\
+                     GR1 SOIL 600 0.5 0.2 0.1 10.0 30 3.5\n";
+        hydra::uds::io::objects::parse_network(model).0
+    }
+
+    /// Six sets, one per layer, whatever the measure holds.
+    ///
+    /// Not one table: no two layers have the same shape — a surface has
+    /// five parameters and a soil seven, and they are different
+    /// parameters — so a single table of the union would be mostly empty
+    /// cells meaning different things per row. Six sets is what
+    /// §4.5.2.3 already offers, and a layer is one that holds at most
+    /// one row.
+    #[test]
+    fn a_control_measure_serves_a_set_for_every_layer() {
+        let net = lid_model();
+        let sets = uds_records(&net, "GR1");
+        assert_eq!(
+            sets.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(),
+            vec!["surface", "soil", "pavement", "storage", "drain", "drainMat"]
+        );
+
+        // Present is a row; absent is none. All six are offered whatever
+        // the type is, because a layer that is absent and one that does
+        // not apply are different things and hiding the second would
+        // make them look the same.
+        let rows = |key: &str| sets.iter().find(|s| s.key == key).expect(key).rows.len();
+        assert_eq!(rows("surface"), 1);
+        assert_eq!(rows("soil"), 1);
+        assert_eq!(rows("pavement"), 0);
+        assert_eq!(rows("drain"), 0);
+
+        // Every one can be written, which is what makes an absent layer
+        // addable: the headings and the add button are how the first row
+        // is entered.
+        assert!(sets.iter().all(|s| s.editable));
+    }
+
+    /// Adding a row is the layer appearing; removing it is the layer
+    /// going away — which is what the file means by omitting a section.
+    #[test]
+    fn writing_a_layer_adds_it_and_emptying_it_takes_it_away() {
+        let mut net = lid_model();
+        assert!(net.lid_controls[0].drain.is_none());
+
+        let row = vec![vec![
+            serde_json::json!(0.5),
+            serde_json::json!(0.5),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!("DC1"),
+        ]];
+        set_uds_records(&mut net, "GR1", "drain", &row).expect("the drain goes in");
+        let drain = net.lid_controls[0].drain.as_ref().expect("a drain");
+        assert!((drain.coeff - 0.5).abs() < 1e-9);
+        // The curve column names another element, and the write resolves
+        // it to the index the model keys by.
+        assert_eq!(
+            drain.curve.and_then(|i| net.curves.get(i)).map(|c| &c.id),
+            Some(&"DC1".to_string())
+        );
+
+        set_uds_records(&mut net, "GR1", "drain", &[]).expect("and comes out again");
+        assert!(net.lid_controls[0].drain.is_none());
+    }
+
+    /// A layer is one or none, and a curve nobody has is refused before
+    /// anything is touched.
+    #[test]
+    fn a_layer_refuses_what_it_cannot_hold() {
+        let mut net = lid_model();
+        let one = vec![
+            serde_json::json!(0.1),
+            serde_json::json!(0.2),
+            serde_json::json!(0.3),
+        ];
+        assert!(
+            set_uds_records(&mut net, "GR1", "drainMat", &[one.clone(), one]).is_err(),
+            "a measure has one drainage mat or none"
+        );
+
+        // The curve is resolved before the layer is assigned, so a name
+        // the model does not have leaves the measure exactly as it was.
+        let bad = vec![vec![
+            serde_json::json!(0.5),
+            serde_json::json!(0.5),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!(0.0),
+            serde_json::json!("NOPE"),
+        ]];
+        assert!(set_uds_records(&mut net, "GR1", "drain", &bad).is_err());
+        assert!(
+            net.lid_controls[0].drain.is_none(),
+            "a refusal wrote nothing"
+        );
+
+        // And the width has to match the columns it was served with.
+        assert!(
+            set_uds_records(&mut net, "GR1", "surface", &[vec![serde_json::json!(1.0)]]).is_err()
+        );
     }
 
     fn pack_model() -> hydra::uds::model::Network {

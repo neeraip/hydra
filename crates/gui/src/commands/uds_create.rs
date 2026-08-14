@@ -368,6 +368,30 @@ pub(crate) fn curve_kind(name: &str) -> Option<hydra::uds::model::CurveKind> {
         .map(|(_, v)| *v)
 }
 
+/// The `LidKind` a file keyword names, or `None` for one no reader
+/// knows.
+///
+/// The eight the reader accepts, in its own order — the same list the
+/// catalog offers, so a type this dialog shows is a type the file can be
+/// written with.
+pub(crate) fn lid_kind(name: &str) -> Option<hydra::uds::model::LidKind> {
+    use hydra::uds::model::LidKind as K;
+    const KINDS: [(&str, K); 8] = [
+        ("BC", K::BioRetention),
+        ("RG", K::RainGarden),
+        ("GR", K::GreenRoof),
+        ("IT", K::InfiltrationTrench),
+        ("PP", K::PermeablePavement),
+        ("RB", K::RainBarrel),
+        ("VS", K::VegetativeSwale),
+        ("RD", K::RooftopDisconnection),
+    ];
+    KINDS
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| *v)
+}
+
 /// The `GrateKind` a keyword names, or `None` for one no reader knows.
 pub(crate) fn grate_kind(name: &str) -> Option<hydra::uds::model::GrateKind> {
     GRATE_TYPES
@@ -732,6 +756,28 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
                 // width — and not none, which the writer would drop.
                 // Flat, and the shape is the modeller's to enter.
                 stations: vec![(0.0, 0.0), (0.0, 1.0)],
+            });
+            Ok(())
+        }
+        "lidcontrol" => {
+            net.lid_controls.push(hydra::uds::model::LidControl {
+                id: id.to_string(),
+                // The type is the one thing a control measure is before
+                // any layer is entered, and the form asks for it — the
+                // catalog offers the eight the file can be written with.
+                kind: None,
+                // No layers, which is a state the file writes and reads:
+                // a measure named with none is one nobody has described
+                // yet, and each is entered afterwards in its own table.
+                // It was the absence of *those* that made this kind
+                // uncreatable, not the absence of a default for them.
+                surface: None,
+                soil: None,
+                pavement: None,
+                storage: None,
+                drain: None,
+                drain_mat: None,
+                removals: Vec::new(),
             });
             Ok(())
         }

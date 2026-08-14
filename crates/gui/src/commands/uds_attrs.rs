@@ -729,27 +729,6 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 },
             })
             .unwrap_or_default(),
-        // Its row counts the layers and this cannot open one — the shape
-        // §4.5.2.2 exists to remove, and the only kind left with it. A
-        // layer is neither a row of numbers under one set of headings nor
-        // a block of text: it is six named groups of six to fourteen
-        // parameters each, which the contents shapes cannot describe. So
-        // it says so, rather than the row promising four layers and the
-        // panel below it being absent.
-        "lidcontrol" => net
-            .lid_controls
-            .iter()
-            .find(|c| c.id == id)
-            .map(|_| CollectionDetailDto {
-                note: Some(
-                    "A control measure's layers cannot be read here yet — its surface, \
-                     soil, pavement, storage and drain each hold their own parameters, \
-                     and this shows a table or a block of text."
-                        .to_string(),
-                ),
-                ..CollectionDetailDto::default()
-            })
-            .unwrap_or_default(),
         "rule" => net
             .controls
             .rules
@@ -1446,29 +1425,24 @@ mod tests {
         assert_eq!(collection_detail(&net, "junction", "J1").note, None);
     }
 
-    /// The one kind whose row counts something this cannot open.
+    /// A control measure has no *contents*, and that is now the whole
+    /// answer.
     ///
-    /// A LID control's row says how many layers it has, and a layer is
-    /// neither a table of numbers nor a block of text — it is six named
-    /// groups of parameters, which neither contents shape describes. That
-    /// is exactly the countable-and-unopenable state §4.5.2.2 was written
-    /// to remove, so it is stated rather than left as an absence.
+    /// It used to say its layers could not be read, which was true while
+    /// nothing could reach one. They are six record sets now (§4.5.2.3),
+    /// so the panel below the table has nothing to add and says nothing
+    /// rather than explaining an absence that is no longer there.
     #[test]
-    fn a_lid_control_says_its_layers_are_not_readable() {
+    fn a_lid_control_has_no_contents_to_show() {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
                      [JUNCTIONS]\nJ1 100 4 0.5\n\
                      [LID_CONTROLS]\n\
                      GR1 BIO_CELL\n\
-                     GR1 SURFACE 150 0.0 0.1 1.0 5\n\
-                     GR1 SOIL 600 0.5 0.2 0.1 10.0 30 3.5\n";
+                     GR1 SURFACE 150 0.0 0.1 1.0 5\n";
         let (net, _diags) = hydra::uds::io::objects::parse_network(model);
         let detail = collection_detail(&net, "lidcontrol", "GR1");
         assert!(detail.rows.is_empty() && detail.lines.is_empty());
-        let note = detail.note.expect("it says why");
-        assert!(note.contains("layers"), "{note}");
-        // Not the absent case: a control the model does not have has
-        // nothing to explain.
-        assert_eq!(collection_detail(&net, "lidcontrol", "NOPE").note, None);
+        assert_eq!(detail.note, None);
     }
 
     /// An unknown id is an expected state — a stale selection after the
@@ -1926,6 +1900,11 @@ pub(crate) fn set_attribute(
     if key == "grateType" {
         return set_grate_type(net, element_id, value.as_str().unwrap_or("").trim());
     }
+    // A control measure's unit type, which is what it is before any
+    // layer is entered — and the one field a new one is created by.
+    if key == "lidType" {
+        return set_lid_kind(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "raingage" {
         return set_parcel_gage(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -2138,6 +2117,24 @@ fn set_curve_role(net: &mut Network, id: &str, name: &str) -> Result<(), String>
         .find(|c| c.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("element '{id}' not found"))?;
     curve.kind = kind;
+    Ok(())
+}
+
+/// Set a control measure's unit type, by the file's own keyword.
+///
+/// The layers are left exactly as they are. A type says which layers the
+/// engine will *read*, not what they contain, and silently discarding a
+/// soil layer because the type changed would be a second edit nobody
+/// asked for — the file is free to carry one either way.
+fn set_lid_kind(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    let kind = super::uds_create::lid_kind(name)
+        .ok_or_else(|| format!("'{name}' is not a control measure type"))?;
+    let lid = net
+        .lid_controls
+        .iter_mut()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    lid.kind = Some(kind);
     Ok(())
 }
 
