@@ -19,6 +19,8 @@ import { useActiveProject, useAppState } from "../../AppContext";
 import type { CreateNodeModalProps } from "../../engine/registry";
 import {
   createElement,
+  type ElementClass,
+  type ElementKindInfo,
   useElementAttributes,
   useElementKinds,
   useReferenceIds,
@@ -31,6 +33,40 @@ import {
   type CreateKind,
   CreateNumberField,
 } from "./CreateElementDialog";
+
+/**
+ * The kinds an Add dialog offers to switch between.
+ *
+ * Two filters, and the second is the one that was missing.
+ *
+ * **Class**, because it decides what the dialog has to ask for: a point
+ * or a region is placed by a coordinate, a polyline by naming its two
+ * ends, a collection by nothing at all.
+ *
+ * **Group**, because a shared class is not a family. A rain gage is a
+ * point, so it sat in the type row beside Junction, Outfall, Divider and
+ * Storage unit — while the rail lists it under Rainfall and runoff with
+ * the subcatchments, where it belongs. Two organising principles for one
+ * catalog, and the reader meets both. The group is the engine's own
+ * answer to what belongs together (§4.2.1) and the rail already uses it,
+ * so this is the dialog agreeing with the list that opened it rather
+ * than a second opinion.
+ *
+ * With no opening kind — a click on the map, which names a place and not
+ * a family — the class is all there is to go on, and every kind that can
+ * be put there is offered.
+ */
+export function offeredKinds(
+  catalog: ElementKindInfo[],
+  klass: ElementClass,
+  opensOn?: string,
+): CreateKind[] {
+  const placeable = catalog.filter((k) => k.creatable && k.class === klass);
+  const group = placeable.find((k) => k.id === opensOn)?.group;
+  return (group ? placeable.filter((k) => k.group === group) : placeable).map(
+    (k) => ({ value: k.id, label: k.label }),
+  );
+}
 
 export function CreateElementModal({
   open,
@@ -50,15 +86,10 @@ export function CreateElementModal({
   const engine = project?.engine;
   const sys = useUnitSystem();
 
-  // The creatable kinds of the class being added. A point or a region
-  // is placed by a position; a polyline by naming its two ends.
   const catalog = useElementKinds(engine);
   const kinds: CreateKind[] = useMemo(
-    () =>
-      catalog
-        .filter((k) => k.creatable && k.class === klass)
-        .map((k) => ({ value: k.id, label: k.label })),
-    [catalog, klass],
+    () => offeredKinds(catalog, klass, preferKind),
+    [catalog, klass, preferKind],
   );
 
   // The ids a polyline may name: every point the model has, whatever

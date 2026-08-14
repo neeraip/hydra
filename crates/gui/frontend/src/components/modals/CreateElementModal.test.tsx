@@ -3,7 +3,8 @@
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { CreateElementModal } from "./CreateElementModal";
+import type { ElementKindInfo } from "../../hooks";
+import { CreateElementModal, offeredKinds } from "./CreateElementModal";
 
 /**
  * The water-distribution Add button did nothing. The button asked the
@@ -147,6 +148,24 @@ const props = {
   onCreated: vi.fn(),
   onCancel: vi.fn(),
 };
+
+/** One catalog entry, as the engine publishes it. */
+function k(
+  id: string,
+  label: string,
+  klass: ElementKindInfo["class"],
+  group: string,
+): ElementKindInfo {
+  return {
+    id,
+    label,
+    labelPlural: `${label}s`,
+    class: klass,
+    badge: label.slice(0, 2),
+    group,
+    creatable: true,
+  } as ElementKindInfo;
+}
 
 describe("CreateElementModal", () => {
   it("offers the kinds the catalog says can be created", () => {
@@ -302,5 +321,67 @@ describe("CreateElementModal", () => {
     );
     expect(screen.getByLabelText("From")).toHaveProperty("readOnly", true);
     expect(screen.getByLabelText("From")).toHaveProperty("value", "J1");
+  });
+});
+
+describe("offeredKinds", () => {
+  // The engine's own catalog, in the shape the complaint is about: a
+  // rain gage is a point, and it belongs with the subcatchments rather
+  // than with the nodes.
+  const CATALOG: ElementKindInfo[] = [
+    k("junction", "Junction", "point", "Nodes"),
+    k("outfall", "Outfall", "point", "Nodes"),
+    k("storage", "Storage unit", "point", "Nodes"),
+    k("raingage", "Rain gage", "point", "Rainfall and runoff"),
+    k("subcatchment", "Subcatchment", "region", "Rainfall and runoff"),
+    k("conduit", "Conduit", "polyline", "Links"),
+  ];
+
+  it("offers the family the dialog opened on, not the geometry", () => {
+    // The complaint: a shared class is not a family. The rail lists a
+    // rain gage under Rainfall and runoff and the type row put it beside
+    // Junction, which is two organising principles for one catalog.
+    expect(
+      offeredKinds(CATALOG, "point", "junction").map((o) => o.value),
+    ).toEqual(["junction", "outfall", "storage"]);
+  });
+
+  it("offers a rain gage on its own", () => {
+    expect(
+      offeredKinds(CATALOG, "point", "raingage").map((o) => o.value),
+    ).toEqual(["raingage"]);
+  });
+
+  it("still bounds the family by what the dialog can place", () => {
+    // A subcatchment shares the gage's group and is placed the same way,
+    // but the class decides what the dialog asks for, so the two filters
+    // are both needed rather than one standing in for the other.
+    expect(
+      offeredKinds(CATALOG, "region", "subcatchment").map((o) => o.value),
+    ).toEqual(["subcatchment"]);
+  });
+
+  it("offers everything placeable when nothing named a family", () => {
+    // A click on the map names a place and not a family, so the class is
+    // all there is to go on.
+    expect(offeredKinds(CATALOG, "point").map((o) => o.value)).toEqual([
+      "junction",
+      "outfall",
+      "storage",
+      "raingage",
+    ]);
+  });
+
+  it("leaves out what cannot be created", () => {
+    const withRefusal = [
+      ...CATALOG,
+      {
+        ...k("rule", "Control rule", "collection", "Controls"),
+        creatable: false,
+      },
+    ];
+    expect(
+      offeredKinds(withRefusal, "collection", "rule").map((o) => o.value),
+    ).toEqual([]);
   });
 });
