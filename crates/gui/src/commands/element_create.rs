@@ -459,11 +459,11 @@ mod tests {
     /// rather than one written here (§4.5.3).
     #[test]
     fn a_kind_that_cannot_be_created_refuses_in_the_engines_words() {
-        // An aquifer is the point kind still refused, and it refuses on
-        // principle rather than for want of plumbing: its elevations
-        // would put it at datum in any model above sea level.
-        let err = creatable_class("uds", "aquifer").expect_err("should refuse");
-        assert!(err.contains("datum"), "unhelpful: {err}");
+        // A unit hydrograph refuses on principle rather than for want of
+        // plumbing: it *is* its per-month responses, and one with none
+        // is a name with nothing behind it.
+        let err = creatable_class("uds", "hydrograph").expect_err("should refuse");
+        assert!(err.contains("responses"), "unhelpful: {err}");
         // Both engines' curves are creatable now, and the difference
         // between them survives in what a create has to be told: a
         // water-distribution curve's purpose is inferred from what

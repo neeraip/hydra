@@ -345,6 +345,18 @@ pub struct KindElementsDto {
 }
 
 impl KindElementsDto {
+    /// One element's value for one column, by the column's key.
+    ///
+    /// The arrays are parallel and addressed by position, which is easy
+    /// to get right once and wrong afterwards — so the pairing is done
+    /// here rather than at each reader.
+    #[cfg(test)]
+    pub(crate) fn values_at(&self, key: &str, row: usize) -> Option<&serde_json::Value> {
+        self.columns.iter().find(|c| c.key == key)?.values.get(row)
+    }
+}
+
+impl KindElementsDto {
     /// No elements — what a kind the engine does not publish looks like.
     pub(crate) fn empty() -> Self {
         KindElementsDto {
@@ -926,8 +938,14 @@ fn collection_rows(
                 m.insert("wiltingPoint", Number(a.wilting_point));
                 m.insert("fieldCapacity", Number(a.field_capacity));
                 m.insert("conductivity", Number(a.conductivity));
+                m.insert("conductivitySlope", Number(a.conductivity_slope));
+                m.insert("tensionSlope", Number(a.tension_slope));
                 m.insert("upperEvapFrac", Number(a.upper_evap_frac));
                 m.insert("lowerEvapDepth", Number(a.lower_evap_depth));
+                m.insert("lowerLossCoeff", Number(a.lower_loss_coeff));
+                m.insert("bottomElev", Number(a.bottom_elev));
+                m.insert("waterTableElev", Number(a.water_table_elev));
+                m.insert("upperMoisture", Number(a.upper_moisture));
                 (a.id.clone(), m)
             })
             .collect(),
@@ -2317,6 +2335,28 @@ fn set_record_attribute(
         }
         return Ok(());
     }
+    if let Some(a) = net
+        .aquifers
+        .iter_mut()
+        .find(|a| a.id.eq_ignore_ascii_case(element_id))
+    {
+        match key {
+            "porosity" => a.porosity = value,
+            "wiltingPoint" => a.wilting_point = value,
+            "fieldCapacity" => a.field_capacity = value,
+            "conductivity" => a.conductivity = value,
+            "conductivitySlope" => a.conductivity_slope = value,
+            "tensionSlope" => a.tension_slope = value,
+            "upperEvapFrac" => a.upper_evap_frac = value,
+            "lowerEvapDepth" => a.lower_evap_depth = value,
+            "lowerLossCoeff" => a.lower_loss_coeff = value,
+            "bottomElev" => a.bottom_elev = value,
+            "waterTableElev" => a.water_table_elev = value,
+            "upperMoisture" => a.upper_moisture = value,
+            other => return Err(unwritable(other)),
+        }
+        return Ok(());
+    }
     if let Some(i) = net
         .inlets
         .iter_mut()
@@ -2428,6 +2468,23 @@ S1  3.5  0.6  4.14  6
 G1  INTENSITY  0:15  1.0  TIMESERIES  RS1
 G2  INTENSITY  0:15  1.0  TIMESERIES  RS1
 
+[AQUIFERS]
+AQ1  0.5  0.15  0.30  0.5  10  15  0.35  14  0.002  0  10  0.30
+
+[TRANSECTS]
+NC  0.02  0.02  0.016
+X1  TR1  3  0  0  0  0  0  0  0
+GR  10  0  0  5  10  10
+
+[STREETS]
+STRT1  20  0.5  2  0.016  0.1  2  1  10  4  0.02
+
+[INLETS]
+CB1  GRATE  2  2  P_BAR-50
+
+[LID_CONTROLS]
+GR1  BC
+
 [TIMESERIES]
 RS1  0:00  0.4
 ";
@@ -2468,62 +2525,98 @@ RS1  0:00  0.4
         let net = model();
         let mut checked = 0;
         for kind in hydra::uds::descriptors::ELEMENT_KINDS {
-            let Some(id) = kind_elements(&net, kind.id).ids.first().cloned() else {
+            // Read from the *table*, not from the per-element rows. The
+            // per-element path serves only the spatial kinds, so a loop
+            // over it skipped every container in silence — which is most
+            // of what this engine has, and where the read-only
+            // attributes were hiding.
+            let table = kind_elements(&net, kind.id);
+            let Some(id) = table.ids.first().cloned() else {
                 continue;
             };
-            let Some(rows) = element_attributes(&net, &id) else {
-                continue;
-            };
-            for row in rows.into_iter().filter(|r| r.editable) {
-                // Only the rows carrying a number: a reference and a
-                // choice are restored by the same write, and their
-                // round trip is asserted where the values live.
-                let Some(before) = row.number else { continue };
-                let changed = if before.abs() < 1e-9 {
-                    1.0
-                } else {
-                    before * 1.5
+            for column in table.columns.iter().filter(|c| c.editable) {
+                let Some(before) = table.values_at(&column.key, 0).and_then(|v| v.as_f64()) else {
+                    continue;
                 };
+                let changed = a_different_value(before, &column.kind);
+                assert!(
+                    (changed - before).abs() > 1e-9,
+                    "{}.{}: no different value could be chosen for {before} in {:?}",
+                    kind.id,
+                    column.key,
+                    column.kind
+                );
 
                 let mut draft = model();
-                set_attribute(&mut draft, &id, &row.key, &serde_json::json!(changed))
-                    .unwrap_or_else(|e| panic!("{}.{} refused the edit: {e}", kind.id, row.key));
-                let now = read_key(&draft, &id, &row.key);
+                set_attribute(&mut draft, &id, &column.key, &serde_json::json!(changed))
+                    .unwrap_or_else(|e| panic!("{}.{} refused the edit: {e}", kind.id, column.key));
+                let now = table_value(&draft, kind.id, &column.key);
                 assert!(
                     (now - changed).abs() < 1e-6,
                     "{}.{} was set to {changed} and reads {now}",
                     kind.id,
-                    row.key
+                    column.key
                 );
 
                 // The undo: the same write, with what was there before.
-                set_attribute(&mut draft, &id, &row.key, &serde_json::json!(before))
-                    .unwrap_or_else(|e| panic!("{}.{} refused the undo: {e}", kind.id, row.key));
-                let back = read_key(&draft, &id, &row.key);
+                set_attribute(&mut draft, &id, &column.key, &serde_json::json!(before))
+                    .unwrap_or_else(|e| panic!("{}.{} refused the undo: {e}", kind.id, column.key));
+                let back = table_value(&draft, kind.id, &column.key);
                 assert!(
                     (back - before).abs() < 1e-6,
                     "{}.{} started at {before}, was set to {changed}, and came back {back}",
                     kind.id,
-                    row.key
+                    column.key
                 );
                 checked += 1;
             }
         }
         assert!(
-            checked >= 10,
+            checked >= 20,
             "only {checked} editable values were exercised"
         );
     }
 
-    /// One attribute's number, by its schema key.
-    fn read_key(net: &Network, id: &str, key: &str) -> f64 {
-        element_attributes(net, id)
-            .unwrap_or_else(|| panic!("{id} has no attributes"))
-            .into_iter()
-            .find(|r| r.key == key)
-            .unwrap_or_else(|| panic!("{id} has no {key} row"))
-            .number
-            .expect("a number")
+    /// A value that is not `before` and that the column would accept.
+    ///
+    /// Half again is the usual answer, and it is the wrong one where the
+    /// column declares bounds: a street has one side or two, so 1.5×
+    /// tests that the *write* refuses three rather than that the value
+    /// round-trips.
+    fn a_different_value(before: f64, kind: &hydra::common::OptionKind) -> f64 {
+        use hydra::common::OptionKind as K;
+        // A whole number where the column says whole numbers: half again
+        // of one side is one and a half sides, which the write refuses
+        // for the right reason and tells this test nothing.
+        if let K::Integer { min, max, .. } = kind {
+            let lo = min.unwrap_or(0) as f64;
+            let hi = max.unwrap_or_else(|| min.unwrap_or(0) + 10) as f64;
+            return if (before - lo).abs() < 1e-9 { hi } else { lo };
+        }
+        let bumped = if before.abs() < 1e-9 {
+            1.0
+        } else {
+            before * 1.5
+        };
+        if let K::Number {
+            min: Some(lo),
+            max: Some(hi),
+            ..
+        } = kind
+        {
+            if bumped > *hi {
+                return if (before - lo).abs() < 1e-9 { *hi } else { *lo };
+            }
+        }
+        bumped
+    }
+
+    /// The first element's value for a column, from the table.
+    fn table_value(net: &Network, kind: &str, key: &str) -> f64 {
+        kind_elements(net, kind)
+            .values_at(key, 0)
+            .and_then(|v| v.as_f64())
+            .unwrap_or_else(|| panic!("{kind} has no {key} value"))
     }
 
     /// Setting a value and reading it back is the only check that catches

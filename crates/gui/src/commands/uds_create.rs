@@ -759,6 +759,33 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
             });
             Ok(())
         }
+        "aquifer" => {
+            net.aquifers.push(hydra::uds::model::Aquifer {
+                id: id.to_string(),
+                // Every one of these is asked for by the form and
+                // arrives as an ordinary attribute write. They open at
+                // zero because the engine declares no default for any of
+                // them, and a groundwater parameter has no conventional
+                // value the way a roughness does — which is why the form
+                // asks rather than this inventing.
+                porosity: 0.0,
+                wilting_point: 0.0,
+                field_capacity: 0.0,
+                conductivity: 0.0,
+                conductivity_slope: 0.0,
+                tension_slope: 0.0,
+                upper_evap_frac: 0.0,
+                lower_evap_depth: 0.0,
+                lower_loss_coeff: 0.0,
+                bottom_elev: 0.0,
+                water_table_elev: 0.0,
+                upper_moisture: 0.0,
+                // No monthly pattern on the evaporation fraction, which
+                // is a state the file writes as an absent column.
+                evap_pattern: None,
+            });
+            Ok(())
+        }
         "lidcontrol" => {
             net.lid_controls.push(hydra::uds::model::LidControl {
                 id: id.to_string(),

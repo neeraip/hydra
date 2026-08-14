@@ -263,11 +263,12 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         class: ElementClass::Collection,
         role: None,
         badge: "Aq",
-        creatable: false,
-        not_creatable_because: Some(
-            "an aquifer sits at a bottom elevation and a water table, and putting \
-             those at datum would bury it silently",
-        ),
+        // Creatable since its parameters became editable. The refusal
+        // this replaces was about the two elevations being invented at
+        // datum; the form asks for them now, and for the rest, which is
+        // what the objection actually wanted.
+        creatable: true,
+        not_creatable_because: None,
     },
     ElementKind {
         id: "snowpack",
@@ -652,13 +653,31 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("buildupFor", "Buildup defined", num(), None),
             attr("washoffFor", "Washoff defined", num(), None),
         ],
+        // Every one of these is a stored value a modeller sets, so every one
+        // is writable. Six of the twelve were published read-only and the
+        // other six were not published at all — so an aquifer could be
+        // looked at, partly, and changed in no respect.
         "aquifer" => vec![
-            attr("porosity", "Porosity", num(), None),
-            attr("wiltingPoint", "Wilting point", num(), None),
-            attr("fieldCapacity", "Field capacity", num(), None),
-            attr("conductivity", "Conductivity", num(), Some("infiltration")),
-            attr("upperEvapFrac", "Upper evap. fraction", num(), None),
-            attr("lowerEvapDepth", "Lower evap. depth", num(), Some("depth")),
+            rw("porosity", "Porosity", num(), None),
+            rw("wiltingPoint", "Wilting point", num(), None),
+            rw("fieldCapacity", "Field capacity", num(), None),
+            rw("conductivity", "Conductivity", num(), Some("infiltration")),
+            rw("conductivitySlope", "Conductivity slope", num(), None),
+            rw("tensionSlope", "Tension slope", num(), Some("depth")),
+            rw("upperEvapFrac", "Upper evap. fraction", num(), None),
+            rw("lowerEvapDepth", "Lower evap. depth", num(), Some("depth")),
+            rw(
+                "lowerLossCoeff",
+                "Deep percolation",
+                num(),
+                Some("infiltration"),
+            ),
+            // The two the refusal to create one was about: an aquifer
+            // sits at a bottom elevation and a water table, and a form
+            // that asks for them is what makes a new one possible.
+            rw("bottomElev", "Bottom elevation", num(), Some("elevation")),
+            rw("waterTableElev", "Water table", num(), Some("elevation")),
+            rw("upperMoisture", "Initial upper moisture", num(), None),
         ],
         "snowpack" => vec![
             attr("surfaces", "Surfaces defined", num(), None),
@@ -703,7 +722,19 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
                 num(),
                 Some("length"),
             ),
-            rw("sides", "Sides", num(), None),
+            // Bounded, because the write is: a street has one side or
+            // two, and a schema that said only "a number" let a form
+            // offer three and left the refusal to the write.
+            rw(
+                "sides",
+                "Sides",
+                OptionKind::Integer {
+                    default: None,
+                    min: Some(1),
+                    max: Some(2),
+                },
+                None,
+            ),
         ],
         "inlet" => vec![
             // What the design *is* — a combination inlet carries more than
