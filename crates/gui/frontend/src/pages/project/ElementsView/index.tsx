@@ -29,24 +29,19 @@ import { RenameElementModal } from "../../../components/modals/RenameElementModa
 import { KindTable } from "../../../components/panels/KindTable";
 import { engineComponents } from "../../../engine/registry";
 import {
-  deleteElement,
-  patchNodePosition,
   useCollectionDetail,
   useElementKinds,
   useKindCounts,
   useKindElements,
   useReferenceIds,
 } from "../../../hooks";
-import {
-  clearStacks,
-  moveEntry,
-  pushUndoEntry,
-  stackKey,
-} from "../../../hooks/undoStack";
+import { clearStacks, stackKey } from "../../../hooks/undoStack";
 import {
   useCollectionContentsWrite,
   useElementAttributeWrite,
   useElementEndsWrite,
+  useElementMoveWrite,
+  useElementRemoveWrite,
 } from "../../../hooks/useAttributeWrite";
 import { useElementRename } from "../../../hooks/useElementRename";
 import { compareNatural } from "../../../naturalOrder";
@@ -76,6 +71,7 @@ export function ElementsView() {
     zoomToLink,
   } = useCanvasSelection();
   const renameFlow = useElementRename();
+  const removeElement = useElementRemoveWrite();
 
   const kinds = useElementKinds(project?.engine);
   const { CreateNodeModal: CreateNode } = engineComponents(project?.engine);
@@ -175,39 +171,19 @@ export function ElementsView() {
   // element's position is a line in a section the engine preserves
   // verbatim, and it appears in no attribute schema.
   //
-  // Captured for undo the same way the canvas captures its own drags —
-  // it is one operation, and being undoable on one surface and not the
-  // other is a difference the reader has to discover by losing work. The
+  // Through the shared write, which captures the undo, saves the model
+  // and marks the results stale. This surface used to do the first of
+  // those and none of the other two, so a coordinate typed here was gone
+  // at the next open and the run beside it went on looking current. The
   // previous coordinate comes from the table's own positions, read
   // before the patch.
+  const writeMove = useElementMoveWrite();
   const onMove = useCallback(
     (id: string, x: number, y: number) => {
       const before = elements.positions[elements.ids.indexOf(id)];
-      return patchNodePosition(id, x, y)
-        .then(() => {
-          const entry = moveEntry(id, before, x, y, kind ?? undefined);
-          if (project?.id && entry) {
-            pushUndoEntry(
-              stackKey(project.id, activeScenarioId ?? null),
-              entry,
-            );
-          }
-        })
-        .then(refetch)
-        .catch((e) => {
-          showToast(String(e), "error");
-          throw e;
-        });
+      return writeMove(id, before, x, y, kind ?? undefined).then(refetch);
     },
-    [
-      refetch,
-      showToast,
-      project?.id,
-      activeScenarioId,
-      elements.positions,
-      elements.ids,
-      kind,
-    ],
+    [writeMove, refetch, elements.positions, elements.ids, kind],
   );
 
   // Reconnecting is its own operation too, for the same reason a move
@@ -526,7 +502,10 @@ export function ElementsView() {
           // canvas's own delete has always done this; this one did not.
           if (target === selectedId) clearSelection();
           try {
-            const removed = await deleteElement(kind, target);
+            // Through the shared removal, which also saves the model and
+            // marks the results stale — the two steps this surface left
+            // out, so a deletion made here came back at the next open.
+            const removed = await removeElement(kind, target);
             // The history no longer describes a model that exists. Every
             // entry names its elements by id, and one of those ids has
             // just stopped meaning anything — worse for the kinds that

@@ -25,6 +25,9 @@ import {
   useElementKinds,
   useReferenceIds,
 } from "../../hooks";
+import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { persistOrSay } from "../../hooks/projects";
+import { createEntry, pushUndoEntry, stackKey } from "../../hooks/undoStack";
 import { compareNatural } from "../../naturalOrder";
 import { useUnitSystem } from "../../units";
 import { offerDatalist } from "../panels/editorTable";
@@ -106,7 +109,8 @@ export function CreateElementModal({
   onCancel,
 }: CreateNodeModalProps) {
   const { project } = useActiveProject();
-  const { activeScenarioId: scenarioId } = useAppState();
+  const { activeScenarioId: scenarioId, showToast } = useAppState();
+  const { markEdited } = useNetworkVersion();
   const projectId = project?.id ?? "";
   const engine = project?.engine;
   const sys = useUnitSystem();
@@ -300,7 +304,7 @@ export function CreateElementModal({
       }}
       onSubmit={async () => {
         const name = id.trim();
-        await createElement(projectId, {
+        const element = {
           kind,
           id: name,
           ...(placing === "between"
@@ -312,7 +316,23 @@ export function CreateElementModal({
                 {}
               : { position: position ?? typedAt }),
           fields: { ...declared, ...chosen, ...seeded, ...values, ...named },
-        });
+        };
+        // A write is four things, and this one shipped as one. The other
+        // three are here rather than in the callers because a caller can
+        // forget them and one did: the Editor's Add wrote the element
+        // into the loaded model and stopped, so it was gone at the next
+        // open and the results on screen went on describing a model that
+        // no longer existed. Neither is visible while the app is
+        // running, which is how it survived being clicked.
+        await createElement(projectId, element);
+        // Captured after the create, so a refused one leaves no entry —
+        // the same order every other write here uses.
+        pushUndoEntry(
+          stackKey(projectId, scenarioId ?? null),
+          createEntry(element),
+        );
+        await persistOrSay(projectId, scenarioId ?? null, showToast);
+        markEdited(projectId, scenarioId ?? null);
         onCreated(kind, name);
       }}
       onCancel={onCancel}

@@ -9,6 +9,7 @@ import {
   clearAllStacks,
   clearProjectStacks,
   clearRedo,
+  createEntry,
   getUndoStacks,
   inverseFieldPatch,
   inverseOp,
@@ -475,6 +476,63 @@ describe("moveEntry", () => {
     // absent than captured and refused when it is applied.
     expect(moveEntry("J1", null, 5, 6)).toBeNull();
     expect(moveEntry("J1", undefined, 5, 6)).toBeNull();
+  });
+});
+
+describe("createEntry", () => {
+  // The last operation the contract could express and no surface
+  // recorded. Both halves were already defined and `inverseOp` already
+  // answered for them; the Add dialog simply pushed nothing, so an
+  // element added by mistake had to be found and deleted by hand.
+  const junctionSpec = {
+    kind: "junction",
+    id: "J9",
+    position: [10, 20] as [number, number],
+    fields: { invert: 4.5 },
+  };
+
+  it("removes what it added, and adds it back the same way", () => {
+    expect(createEntry(junctionSpec)).toEqual({
+      label: "Added J9",
+      // The badge the history menu draws: an id names an element only
+      // within its kind.
+      subject: { kind: "junction", id: "J9" },
+      undo: { ops: [{ op: "remove", kind: "junction", id: "J9" }] },
+      redo: { ops: [{ op: "create", element: junctionSpec }] },
+    });
+  });
+
+  it("redoes the request the dialog made, not a summary of it", () => {
+    // Every field travels, so the element comes back as it was asked
+    // for rather than as a bare id with the engine's defaults.
+    const entry = createEntry(junctionSpec);
+    const [op] = entry.redo.ops ?? [];
+    expect(op).toEqual({ op: "create", element: junctionSpec });
+  });
+
+  it("captures a container, which has nowhere to be", () => {
+    // A collection is its name and its contents. No position, and the
+    // entry is no less complete for it.
+    const entry = createEntry({ kind: "pattern", id: "P1", fields: {} });
+    expect(entry.undo.ops).toEqual([
+      { op: "remove", kind: "pattern", id: "P1" },
+    ]);
+  });
+
+  // Undoing an addition is a removal, and every surface that deletes
+  // clears the history instead of capturing one. The difference is that
+  // an addition appends: undoing it removes the tail and shifts nothing,
+  // so the entries below go on naming what they named. A removal in the
+  // middle does shift — take control 2 out and the old control 3 becomes
+  // the new control 2 — which is why that one still clears.
+  it("is a removal that cannot renumber the entries under it", () => {
+    const key = stackKey("p1", null);
+    pushUndoEntry(key, entry("earlier edit"));
+    pushUndoEntry(key, createEntry({ kind: "control", id: "3" }));
+    // The addition is on top, so it is what an undo takes.
+    const top = takeUndo(key);
+    expect(top?.label).toBe("Added 3");
+    expect(getUndoStacks(key).undo[0]?.label).toBe("earlier edit");
   });
 });
 

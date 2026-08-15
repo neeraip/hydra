@@ -51,15 +51,12 @@ import {
 } from "../../components/panels/ElementInspector";
 import { engineComponents } from "../../engine/registry";
 import {
-  deleteElement,
   type GenericPeriodValues,
   type GenericQuantity,
   type GenericVariable,
   getGenericPeriodValues,
   getPeriodResults,
   type PeriodResults,
-  patchNodePosition,
-  persistOrSay,
   type Removed,
   resultsPath,
   useElementKinds,
@@ -72,14 +69,16 @@ import {
 } from "../../hooks";
 import { useCriteriaCatalog } from "../../hooks/criteriaCatalog";
 import { useCriteriaValuation } from "../../hooks/criteriaValuation";
-import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   clearStacks,
-  moveEntry,
   pushUndoEntry,
   recreateSpecsForDelete,
   stackKey,
 } from "../../hooks/undoStack";
+import {
+  useElementMoveWrite,
+  useElementRemoveWrite,
+} from "../../hooks/useAttributeWrite";
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import type { Link, Node, Region } from "../../types/network";
@@ -375,8 +374,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     () => [...animatedVariables.point, ...animatedVariables.polyline],
     [animatedVariables],
   );
-  const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
+  // One write for each of these, shared with the Editor: each saves the
+  // model and marks the results stale, which this surface used to do in
+  // its own callbacks and the other surface did not do at all.
+  const writeMove = useElementMoveWrite();
+  const removeElement = useElementRemoveWrite();
   const simParams = useSimParams(project?.id);
   const {
     selectedNodeId,
@@ -2122,23 +2125,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // Undo capture: previous raw (source-CRS) coordinates, read BEFORE the
       // patch — same coordinate space as the converted values patched below.
       const prev = rawNetworkRef.current.nodes.find((n) => n.id === id);
-      await patchNodePosition(id, x, y);
-      const entry = moveEntry(
-        id,
-        prev ? [prev.x, prev.y] : null,
-        x,
-        y,
-        prev?.type,
-      );
-      if (entry) {
-        pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), entry);
-      }
-      await persistOrSay(project.id, activeScenarioId, showToast);
-      markEdited(project.id, activeScenarioId);
-      // No bumpNetwork(): the backend emits `network-changed`, which already
-      // bumps the version — a manual bump doubled the full-snapshot refetch.
+      // The shared move, which captures the undo, saves and marks the
+      // results stale. This callback did all three itself, and the
+      // Editor's X and Y columns — the same operation, the other surface
+      // — did only the first.
+      //
+      // No bumpNetwork(): the backend emits `network-changed`, which
+      // already bumps the version — a manual bump doubled the
+      // full-snapshot refetch.
+      await writeMove(id, prev ? [prev.x, prev.y] : null, x, y, prev?.type);
     },
-    [project, activeScenarioId, markEdited, sourceCrs, showToast],
+    [project, sourceCrs, showToast, writeMove],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -2158,7 +2155,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       : null;
     let removed: Removed;
     try {
-      removed = await deleteElement(kind, id);
+      // The shared removal, which also saves and marks the results
+      // stale. The history stays here: it is the one part of a removal
+      // the two surfaces genuinely differ on, because only this one
+      // reads a snapshot first and can offer a way back.
+      removed = await removeElement(kind, id);
     } catch (err) {
       // A refused delete must surface, not vanish as an unhandled
       // rejection with the element silently still present.
@@ -2183,17 +2184,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // expect, so they are said rather than discovered.
     const summary = deletionSummary(removed);
     if (summary) showToast(summary, "info");
-    await persistOrSay(project.id, activeScenarioId, showToast);
-    markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
   }, [
     pendingDelete,
     project,
     activeScenarioId,
-    markEdited,
     clearSelection,
     showToast,
     undoableRemoval,
+    removeElement,
   ]);
 
   const handleRenameElement = useCallback(
@@ -2264,18 +2263,25 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // water-distribution create commands, so an engine with its own create
   // has no entry to push. Clearing is the same answer a rename gives —
   // the history describes a model that no longer exists.
+  // Saving, marking the results stale and capturing the undo all happen
+  // inside the dialog now, because they are consequences of the write
+  // rather than of this surface — the Editor's Add did none of the three
+  // and looked identical while it was open.
+  //
+  // The history is no longer cleared here either. It was, because an
+  // addition could not be undone and an uninvertible edit clears rather
+  // than lies about what ⌘Z will do. It can be undone now, and an
+  // addition appends, so the entries under it still name what they
+  // named.
   const handleEngineCreated = useCallback(
-    async (kind: string, id: string) => {
+    (kind: string, id: string) => {
       if (!project) return;
       setPendingCreateNode(null);
       setPendingCreateLink(null);
-      clearStacks(stackKey(project.id, activeScenarioId ?? null));
-      await persistOrSay(project.id, activeScenarioId, showToast);
-      markEdited(project.id, activeScenarioId);
       if (kind === "conduit") selectLink(id);
       else selectNode(id);
     },
-    [project, activeScenarioId, markEdited, selectNode, selectLink, showToast],
+    [project, selectNode, selectLink],
   );
 
   // The click that opened the create dialog, in the model's own

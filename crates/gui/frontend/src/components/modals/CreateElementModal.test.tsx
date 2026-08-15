@@ -2,8 +2,10 @@
  * @vitest-environment jsdom
  */
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElementKindInfo } from "../../hooks";
+import { clearAllStacks, getUndoStacks, stackKey } from "../../hooks/undoStack";
 import { CreateElementModal, offeredKinds } from "./CreateElementModal";
 
 /**
@@ -140,9 +142,26 @@ const SCHEMA: Record<string, unknown[]> = {
   pump: [{ key: "power", label: "Power", editable: true, kind: NUMBER }],
 };
 
+const showToast = vi.fn();
+const markEdited = vi.fn();
+const persistOrSay = vi.fn(
+  (_id: string, _scenarioId: string | null, _toast: (m: string) => void) =>
+    Promise.resolve(),
+);
+
 vi.mock("../../AppContext", () => ({
   useActiveProject: () => ({ project: { id: "p1", engine: "wds" } }),
-  useAppState: () => ({ activeScenarioId: null }),
+  useAppState: () => ({ activeScenarioId: null, showToast }),
+}));
+vi.mock("../../hooks/NetworkVersionContext", () => ({
+  useNetworkVersion: () => ({ markEdited }),
+}));
+vi.mock("../../hooks/projects", () => ({
+  persistOrSay: (
+    id: string,
+    scenarioId: string | null,
+    toast: (m: string) => void,
+  ) => persistOrSay(id, scenarioId, toast),
 }));
 // Partial: `EditableNumber` reaches through the same barrel for the
 // format/parse pair, and mocking those would be mocking the thing under
@@ -443,5 +462,63 @@ describe("offeredKinds", () => {
     expect(
       offeredKinds(withRefusal, "collection", "rule").map((o) => o.value),
     ).toEqual([]);
+  });
+});
+
+/**
+ * What pressing Add actually does.
+ *
+ * Nothing here reached the submit before, and that is how the Editor's
+ * Add shipped writing the element into the loaded model and doing
+ * nothing else: no save, so it was gone at the next open, and no stale
+ * mark, so the results on screen went on describing a model that no
+ * longer existed. The canvas's Add did both, in its own caller, where
+ * the other caller could not inherit them — and did not.
+ *
+ * All four consequences belong to the write, so they are asserted on the
+ * dialog that performs it rather than on either surface that opens it.
+ */
+describe("pressing Add", () => {
+  beforeEach(() => {
+    showToast.mockClear();
+    markEdited.mockClear();
+    persistOrSay.mockClear();
+    clearAllStacks();
+  });
+
+  async function add() {
+    render(<CreateElementModal {...props} klass="point" kind="junction" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    // The submit is a chain of awaits; let it drain.
+    await act(async () => {});
+  }
+
+  it("saves the model to disk", async () => {
+    // The one that loses work. A create that only reaches the loaded
+    // model is gone at the next open, and nothing on screen says so.
+    await add();
+    expect(persistOrSay).toHaveBeenCalledWith("p1", null, showToast);
+  });
+
+  it("marks the results stale", async () => {
+    // The model on disk and the results beside it now disagree, and a
+    // result that does not say it is out of date reads as current.
+    await add();
+    expect(markEdited).toHaveBeenCalledWith("p1", null);
+  });
+
+  it("captures the addition for undo", async () => {
+    await add();
+    const { undo } = getUndoStacks(stackKey("p1", null));
+    expect(undo).toHaveLength(1);
+    expect(undo[0].label).toBe("Added J1");
+    expect(undo[0].undo.ops).toEqual([
+      { op: "remove", kind: "junction", id: "J1" },
+    ]);
+  });
+
+  it("tells the surface what was added, so it can be selected", async () => {
+    await add();
+    expect(props.onCreated).toHaveBeenCalledWith("junction", "J1");
   });
 });

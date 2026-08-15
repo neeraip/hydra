@@ -261,6 +261,41 @@ export function moveEntry(
   };
 }
 
+/**
+ * An addition, both ways.
+ *
+ * The last operation in the contract's vocabulary that no surface
+ * captured. Both halves were already expressible and `inverseOp` already
+ * answered for them — an addition is undone by removing what was added —
+ * so the gap was that the Add dialog never pushed anything, and an
+ * element added by mistake had to be found and deleted by hand.
+ *
+ * **Undoing an addition is a removal, and a removal usually clears the
+ * history.** It does not have to here, and the difference is worth
+ * stating because it looks like an inconsistency. Every surface that
+ * deletes clears the stacks, because the kinds addressed by position
+ * shift underneath the entries: remove control 2 and the old control 3
+ * becomes the new control 2, so an entry naming "2" now names a
+ * different statement. An addition appends, so undoing one removes the
+ * tail and shifts nothing. The entries below it go on naming what they
+ * named.
+ *
+ * That holds only while nothing else was removed in between — and
+ * nothing can have been, because any other removal cleared this entry
+ * along with the rest.
+ */
+export function createEntry(element: NewElement): UndoEntry {
+  return {
+    label: `Added ${element.id}`,
+    subject: { kind: element.kind, id: element.id },
+    undo: { ops: [{ op: "remove", kind: element.kind, id: element.id }] },
+    // The element as it was asked for, not as the engine stored it: the
+    // redo is the same request the dialog made, so it lands the same
+    // way — defaults included.
+    redo: { ops: [{ op: "create", element }] },
+  };
+}
+
 export interface UndoStacks {
   undo: readonly UndoEntry[];
   redo: readonly UndoEntry[];
