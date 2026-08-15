@@ -128,6 +128,20 @@ pub(crate) fn set_uds_contents(
                 .iter_mut()
                 .find(|p| p.id.eq_ignore_ascii_case(id))
                 .ok_or_else(|| format!("no pattern '{id}'"))?;
+            // The period bounds the table, and this is the same rule the
+            // type write enforces from the other side — a pattern may
+            // carry fewer multipliers than its period has slots, never
+            // more, because a multiplier past the end of the period stops
+            // meaning anything without anyone being told. Enforced on
+            // both doors or on neither: one door alone is a model that
+            // reaches a state its own rule forbids.
+            let want = super::uds_attrs::pattern_period(pattern.kind);
+            if factors.len() > want {
+                return Err(format!(
+                    "'{id}' repeats every {want} multipliers and this is {}",
+                    factors.len()
+                ));
+            }
             pattern.factors = factors;
             Ok(())
         }
@@ -313,6 +327,36 @@ P1 HOURLY 1 1.2 0.8 1 1 1
         let mut network = wds();
         set_wds_contents(&mut network, "pattern", "PA1", &[vec![1.0, 1.5]]).expect("set");
         assert_eq!(network.patterns[0].factors, vec![1.5]);
+    }
+
+    /// The period bounds the table, from this door as well as from the
+    /// type write's.
+    ///
+    /// A drainage pattern repeats, so a multiplier past the end of the
+    /// period is one the engine never reads — it would sit in the file
+    /// and in this table looking like it did something. The type write
+    /// already refused a period too short for the multipliers on hand;
+    /// enforcing it there alone left this door open to reach the same
+    /// state from the other side.
+    ///
+    /// Fewer is not more, and stays allowed: an absent multiplier reads
+    /// as 1.0, and the fixture's own hourly pattern carries six.
+    #[test]
+    fn a_drainage_pattern_takes_no_more_multipliers_than_its_period() {
+        let mut net = uds();
+        let rows: Vec<Vec<f64>> = (0..25).map(|i| vec![f64::from(i), 1.0]).collect();
+        let err = set_uds_contents(&mut net, "pattern", "P1", &rows).expect_err("past the period");
+        assert!(err.contains("every 24 multipliers"), "{err}");
+        assert_eq!(net.patterns[0].factors.len(), 6);
+
+        set_uds_contents(&mut net, "pattern", "P1", &rows[..24]).expect("a full day");
+        assert_eq!(net.patterns[0].factors.len(), 24);
+
+        // And a water-distribution pattern has no period to bound it.
+        let mut network = wds();
+        let long: Vec<Vec<f64>> = (0..30).map(|i| vec![f64::from(i), 1.0]).collect();
+        set_wds_contents(&mut network, "pattern", "PA1", &long).expect("no period");
+        assert_eq!(network.patterns[0].factors.len(), 30);
     }
 
     /// A transect's survey points, which are the same table shape as a

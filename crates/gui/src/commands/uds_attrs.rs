@@ -73,7 +73,10 @@ fn pattern_keyword(kind: hydra::uds::model::PatternKind) -> &'static str {
 }
 
 /// How many multipliers a period takes.
-fn pattern_period(kind: hydra::uds::model::PatternKind) -> usize {
+///
+/// Shared with the contents write, which bounds the table by the same
+/// number from the other side.
+pub(crate) fn pattern_period(kind: hydra::uds::model::PatternKind) -> usize {
     use hydra::uds::model::PatternKind as K;
     match kind {
         K::Monthly => 12,
@@ -2235,10 +2238,15 @@ fn set_pattern_kind(net: &mut Network, id: &str, name: &str) -> Result<(), Strin
         .iter_mut()
         .find(|p| p.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("element '{id}' not found"))?;
+    // A pattern may carry fewer multipliers than its period has slots —
+    // the engine reads an absent one as 1.0 — so the only change that
+    // has to be refused is one that would leave multipliers past the end
+    // of the new period, where they would stop meaning anything without
+    // anyone being told.
     let want = pattern_period(kind);
-    if pattern.factors.len() != want {
+    if pattern.factors.len() > want {
         return Err(format!(
-            "a {} pattern has {want} multipliers and '{id}' has {}",
+            "a {} pattern holds at most {want} multipliers and '{id}' has {}",
             name.to_ascii_lowercase(),
             pattern.factors.len()
         ));
@@ -2814,6 +2822,21 @@ RS1  0:00  0.4
             net.patterns[0].kind,
             hydra::uds::model::PatternKind::Weekend
         );
+
+        // Short of the period is not the same as past it. A pattern may
+        // carry fewer multipliers than its period has slots — the engine
+        // reads an absent one as 1.0 — so a six-multiplier pattern
+        // becoming monthly loses nothing and is allowed. Refusing it
+        // would have made the type unchangeable for every partial
+        // pattern in a model.
+        net.patterns[0].factors.truncate(6);
+        set_attribute(&mut net, "P1", "patternType", &serde_json::json!("MONTHLY"))
+            .expect("six fits in twelve");
+        assert_eq!(
+            net.patterns[0].kind,
+            hydra::uds::model::PatternKind::Monthly
+        );
+        assert_eq!(net.patterns[0].factors.len(), 6);
     }
 
     /// Two kinds hold a rain gage under the same key, and the write
