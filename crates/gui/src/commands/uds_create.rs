@@ -478,6 +478,43 @@ pub(crate) fn create_uds_curve(net: &mut Network, id: &str, role: &str) -> Resul
     Ok(())
 }
 
+/// Add a time pattern of a given period.
+///
+/// The period decides the length — twelve months, seven days,
+/// twenty-four hours — so it is taken up front for the reason a curve's
+/// role is: a pattern built under a guessed one is the wrong number of
+/// multipliers, and the write that would correct it refuses precisely
+/// because the length no longer suits.
+pub(crate) fn create_uds_pattern(net: &mut Network, id: &str, period: &str) -> Result<(), String> {
+    use hydra::uds::model::PatternKind as K;
+    if taken(net, id) {
+        return Err(format!("ID '{id}' is already in use"));
+    }
+    if !creatable("pattern") {
+        return Err(refuse_kind("pattern"));
+    }
+    let kind = match period.to_ascii_uppercase().as_str() {
+        "MONTHLY" => K::Monthly,
+        "DAILY" => K::Daily,
+        "HOURLY" => K::Hourly,
+        "WEEKEND" => K::Weekend,
+        other => return Err(format!("'{other}' is not a pattern type")),
+    };
+    let n = match kind {
+        K::Monthly => 12,
+        K::Daily => 7,
+        K::Hourly | K::Weekend => 24,
+    };
+    net.patterns.push(hydra::uds::model::TimePattern {
+        id: id.to_string(),
+        kind,
+        // A period of no variation, which is what a pattern of ones
+        // means rather than a value standing in for one nobody supplied.
+        factors: vec![1.0; n],
+    });
+    Ok(())
+}
+
 /// Add an outlet between two existing vertices.
 ///
 /// Its rating is either a tabulated curve or a power relation $Q = aH^b$,
@@ -829,16 +866,12 @@ pub(crate) fn create_uds_container(net: &mut Network, kind: &str, id: &str) -> R
             });
             Ok(())
         }
+        // A pattern is created by `create_uds_pattern`, which takes the
+        // period: it decides how many multipliers the pattern has, so a
+        // new one built under a guessed period is a table of the wrong
+        // length rather than a table nobody has filled in.
         "pattern" => {
-            net.patterns.push(hydra::uds::model::TimePattern {
-                id: id.to_string(),
-                kind: hydra::uds::model::PatternKind::Hourly,
-                // Twenty-four hours of no variation, which is what a
-                // pattern of ones means rather than a value standing in
-                // for one nobody supplied.
-                factors: vec![1.0; 24],
-            });
-            Ok(())
+            Err("a pattern needs its period, which decides how many multipliers it has".into())
         }
         other => Err(format!("no constructor for container kind '{other}'")),
     }
@@ -1203,26 +1236,51 @@ O1 100 0
         ));
     }
 
-    /// A drainage pattern is creatable and a drainage curve is not, and
-    /// the difference is the data model's rather than the editor's: a
-    /// pattern's kind decides its length, a curve's role decides what
-    /// units its two columns are read in. There is a defensible default
-    /// for the first and none for the second.
+    /// A pattern and a curve are both created by saying what they are
+    /// for, and neither goes through the container path.
+    ///
+    /// The difference between them is the data model's rather than the
+    /// editor's — a pattern's period decides how many multipliers it
+    /// has, a curve's role decides what units its two columns are read
+    /// in — but the consequence is the same: a value guessed here is a
+    /// table of the wrong length or numbers read in the wrong units.
     #[test]
-    fn a_pattern_is_created_flat_and_a_curve_needs_its_role() {
+    fn a_pattern_and_a_curve_are_created_by_what_they_are_for() {
         let mut net = model();
-        create_uds_container(&mut net, "pattern", "PX").expect("pattern");
-        let made = net.patterns.iter().find(|p| p.id == "PX").expect("PX");
-        assert_eq!(made.factors, vec![1.0; 24]);
+        for (kind, id) in [("pattern", "PX"), ("curve", "CX")] {
+            let err = create_uds_container(&mut net, kind, id).expect_err("should refuse");
+            assert!(
+                err.contains("period") || err.contains("role"),
+                "unhelpful for {kind}: {err}"
+            );
+        }
 
-        // A curve does not go through the container path at all: its
-        // role is the whole of what it needs, and a create without one
-        // says so rather than picking a role that would change what the
-        // columns mean.
-        let err = create_uds_container(&mut net, "curve", "CX").expect_err("should refuse");
-        assert!(err.contains("role"), "unhelpful: {err}");
+        // The period decides the length, which is the whole reason it is
+        // taken up front rather than corrected afterwards: the write that
+        // would correct it refuses precisely because the length no longer
+        // suits the type.
+        create_uds_pattern(&mut net, "PM", "MONTHLY").expect("a monthly pattern");
+        assert_eq!(
+            net.patterns
+                .iter()
+                .find(|p| p.id == "PM")
+                .expect("PM")
+                .factors,
+            vec![1.0; 12]
+        );
+        create_uds_pattern(&mut net, "PH", "HOURLY").expect("an hourly pattern");
+        assert_eq!(
+            net.patterns
+                .iter()
+                .find(|p| p.id == "PH")
+                .expect("PH")
+                .factors
+                .len(),
+            24
+        );
+        assert!(create_uds_pattern(&mut net, "PZ", "FORTNIGHTLY").is_err());
 
-        // And it survives the round trip, which is what makes it an
+        // And they survive the round trip, which is what makes one an
         // element the user added rather than one that vanishes on save.
         let written = write_inp(&net).expect("write");
         let (again, diags) = parse_network(&written);
@@ -1230,14 +1288,9 @@ O1 100 0
             !diags.iter().any(|d| format!("{d:?}").contains("Error")),
             "{diags:?}\n{written}"
         );
-        assert!(again.patterns.iter().any(|p| p.id == "PX"));
+        assert!(again.patterns.iter().any(|p| p.id == "PM"));
     }
 
-    /// The kind whose refusal was wrong twice over. It said a
-    /// subcatchment "needs an area, which is its polygon rather than a
-    /// number" — the area is a plain number and the polygon is optional
-    /// display geometry. What it really needs is a gage and an outlet,
-    /// and both are references a create can be given.
     #[test]
     fn a_subcatchment_is_created_from_a_gage_and_an_outlet() {
         let mut net = gaged_model();

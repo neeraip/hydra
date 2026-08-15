@@ -207,6 +207,14 @@ fn build_uds(
             )?;
             Ok(&[])
         }
+        Placement::Nowhere if element.kind == "pattern" => {
+            super::uds_create::create_uds_pattern(
+                draft,
+                id,
+                &required_text(element, "patternType")?,
+            )?;
+            Ok(&["patternType"])
+        }
         Placement::Nowhere if element.kind == "curve" => {
             super::uds_create::create_uds_curve(draft, id, &required_text(element, "curveType")?)?;
             Ok(&["curveType"])

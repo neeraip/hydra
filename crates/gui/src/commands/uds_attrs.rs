@@ -61,6 +61,27 @@ fn extract(
 /// too slow.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
+/// What the file calls a pattern's period.
+fn pattern_keyword(kind: hydra::uds::model::PatternKind) -> &'static str {
+    use hydra::uds::model::PatternKind as K;
+    match kind {
+        K::Monthly => "MONTHLY",
+        K::Daily => "DAILY",
+        K::Hourly => "HOURLY",
+        K::Weekend => "WEEKEND",
+    }
+}
+
+/// How many multipliers a period takes.
+fn pattern_period(kind: hydra::uds::model::PatternKind) -> usize {
+    use hydra::uds::model::PatternKind as K;
+    match kind {
+        K::Monthly => 12,
+        K::Daily => 7,
+        K::Hourly | K::Weekend => 24,
+    }
+}
+
 /// What the file calls a concentration unit.
 ///
 /// The file's own keyword rather than the enum's spelling: `MgPerL` is a
@@ -920,7 +941,7 @@ fn collection_rows(
             .iter()
             .map(|p| {
                 let mut m = HashMap::new();
-                m.insert("patternType", Text(format!("{:?}", p.kind)));
+                m.insert("patternType", Text(pattern_keyword(p.kind).to_string()));
                 m.insert("factors", Number(p.factors.len() as f64));
                 (p.id.clone(), m)
             })
@@ -1951,6 +1972,9 @@ pub(crate) fn set_attribute(
     if key == "lidType" {
         return set_lid_kind(net, element_id, value.as_str().unwrap_or("").trim());
     }
+    if key == "patternType" {
+        return set_pattern_kind(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "units" {
         return set_constituent_units(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -2189,6 +2213,40 @@ fn set_curve_role(net: &mut Network, id: &str, name: &str) -> Result<(), String>
     Ok(())
 }
 
+/// Set a pattern's period, where its multipliers suit the new one.
+///
+/// Refused rather than resized. A pattern's period decides how many
+/// multipliers it has — twelve months, seven days, twenty-four hours —
+/// so changing the type is a claim about the contents and not a label on
+/// them. Padding to fit would invent multipliers nobody chose, and
+/// truncating would throw away ones somebody did; the modeller edits the
+/// factors in their own panel and then says what they are.
+fn set_pattern_kind(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    use hydra::uds::model::PatternKind as K;
+    let kind = match name.to_ascii_uppercase().as_str() {
+        "MONTHLY" => K::Monthly,
+        "DAILY" => K::Daily,
+        "HOURLY" => K::Hourly,
+        "WEEKEND" => K::Weekend,
+        other => return Err(format!("'{other}' is not a pattern type")),
+    };
+    let pattern = net
+        .patterns
+        .iter_mut()
+        .find(|p| p.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    let want = pattern_period(kind);
+    if pattern.factors.len() != want {
+        return Err(format!(
+            "a {} pattern has {want} multipliers and '{id}' has {}",
+            name.to_ascii_lowercase(),
+            pattern.factors.len()
+        ));
+    }
+    pattern.kind = kind;
+    Ok(())
+}
+
 /// A yes/no value, in the words the reads serve.
 fn flag(value: &serde_json::Value) -> Result<bool, String> {
     match value
@@ -2331,18 +2389,42 @@ fn set_pump_curve(net: &mut Network, id: &str, curve_id: &str) -> Result<(), Str
 ///
 /// Stored as an index like an outlet, and required — there is no value
 /// meaning "no gage", so this replaces one rather than clearing it.
+/// Point a subcatchment or a unit hydrograph at a rain gage.
+///
+/// Two kinds hold one, under the same attribute key, so this resolves by
+/// what the id names rather than by the key. A subcatchment must have a
+/// gage — the model keeps an index with no value meaning "none" — while
+/// a group's is optional, and an emptied name clears it.
 fn set_parcel_gage(net: &mut Network, id: &str, gage_id: &str) -> Result<(), String> {
-    let gage = net
-        .gages
-        .iter()
-        .position(|g| g.id.eq_ignore_ascii_case(gage_id))
-        .ok_or_else(|| format!("'{gage_id}' is not a rain gage in this model"))?;
-    let parcel = net
+    let named = |g: &str| {
+        net.gages
+            .iter()
+            .position(|x| x.id.eq_ignore_ascii_case(g))
+            .ok_or_else(|| format!("'{g}' is not a rain gage in this model"))
+    };
+    if let Some(p) = net
         .parcels
         .iter_mut()
         .find(|p| p.id.eq_ignore_ascii_case(id))
-        .ok_or_else(|| format!("element '{id}' not found"))?;
-    parcel.gage = gage;
+    {
+        let gage = net
+            .gages
+            .iter()
+            .position(|x| x.id.eq_ignore_ascii_case(gage_id))
+            .ok_or_else(|| format!("'{gage_id}' is not a rain gage in this model"))?;
+        p.gage = gage;
+        return Ok(());
+    }
+    let at = if gage_id.is_empty() {
+        None
+    } else {
+        Some(named(gage_id)?)
+    };
+    net.unit_hydrographs
+        .iter_mut()
+        .find(|g| g.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?
+        .gage = at;
     Ok(())
 }
 
@@ -2448,6 +2530,19 @@ fn set_record_attribute(
             other => return Err(unwritable(other)),
         }
         return Ok(());
+    }
+    if let Some(p) = net
+        .snowpacks
+        .iter_mut()
+        .find(|p| p.id.eq_ignore_ascii_case(element_id))
+    {
+        return match key {
+            "plowFraction" => {
+                p.plow_fraction = value;
+                Ok(())
+            }
+            other => Err(unwritable(other)),
+        };
     }
     if let Some(c) = net
         .constituents
@@ -2683,6 +2778,74 @@ RS1  0:00  0.4
             "0.5 per day stored as {}",
             net.constituents[0].decay
         );
+    }
+
+    /// A pattern's period decides how many multipliers it has, so
+    /// changing it is a claim about the contents.
+    ///
+    /// Refused rather than resized: padding would invent multipliers
+    /// nobody chose and truncating would throw away ones somebody did.
+    /// The modeller edits the factors in their own panel and then says
+    /// what they are.
+    #[test]
+    fn a_pattern_type_is_refused_where_the_multipliers_do_not_suit_it() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [PATTERNS]\nP1 HOURLY 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+
+        // Read as the file writes it, not as the enum spells it.
+        let shown = kind_elements(&net, "pattern")
+            .values_at("patternType", 0)
+            .and_then(|v| v.as_str().map(str::to_string));
+        assert_eq!(shown.as_deref(), Some("HOURLY"));
+
+        // Twenty-four multipliers are not twelve months.
+        let err = set_attribute(&mut net, "P1", "patternType", &serde_json::json!("MONTHLY"))
+            .expect_err("should refuse");
+        assert!(err.contains("12 multipliers"), "{err}");
+        assert_eq!(net.patterns[0].kind, hydra::uds::model::PatternKind::Hourly);
+
+        // A weekend pattern is twenty-four too, so that one is a label
+        // the contents already suit.
+        set_attribute(&mut net, "P1", "patternType", &serde_json::json!("WEEKEND"))
+            .expect("the same length");
+        assert_eq!(
+            net.patterns[0].kind,
+            hydra::uds::model::PatternKind::Weekend
+        );
+    }
+
+    /// Two kinds hold a rain gage under the same key, and the write
+    /// resolves by what the id names rather than by the key.
+    #[test]
+    fn a_hydrograph_and_a_subcatchment_both_take_a_gage() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [RAINGAGES]\n\
+                     RG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                     RG2 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [SUBCATCHMENTS]\nS1 RG1 J1 5 40 500 0.5 0\n\
+                     [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+                     [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
+                     [HYDROGRAPHS]\nUH1 RG1\nUH1 All SHORT 0.5 1.0 2.0\n\
+                     [TIMESERIES]\nTS1 0:00 1.0\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+
+        set_attribute(&mut net, "UH1", "raingage", &serde_json::json!("RG2"))
+            .expect("a group takes a gage");
+        assert_eq!(net.unit_hydrographs[0].gage, Some(1));
+        set_attribute(&mut net, "S1", "raingage", &serde_json::json!("RG2"))
+            .expect("so does a subcatchment");
+        assert_eq!(net.parcels[0].gage, 1);
+
+        // A group's gage is optional and an emptied name clears it; a
+        // subcatchment's is an index with no value meaning "none", so
+        // the same empty name is refused.
+        set_attribute(&mut net, "UH1", "raingage", &serde_json::json!(""))
+            .expect("a group may have none");
+        assert_eq!(net.unit_hydrographs[0].gage, None);
+        assert!(set_attribute(&mut net, "S1", "raingage", &serde_json::json!("")).is_err());
     }
 
     /// A pollutant's unit is the file's keyword, not the enum's name.

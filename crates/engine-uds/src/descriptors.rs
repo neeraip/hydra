@@ -640,7 +640,12 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("points", "Points", num(), None),
         ],
         "pattern" => vec![
-            attr("patternType", "Type", text(), None),
+            // The period a pattern repeats over. Writable, and refused
+            // where the multipliers it already holds do not suit the new
+            // one — a monthly pattern is twelve numbers and an hourly
+            // one is twenty-four, so changing the type is a claim about
+            // the contents rather than a label on them.
+            rw("patternType", "Type", pattern_kinds(), None),
             attr("factors", "Factors", num(), None),
         ],
         "rule" => vec![attr("clauses", "Clauses", num(), None)],
@@ -691,7 +696,11 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
         ],
         "snowpack" => vec![
             attr("surfaces", "Surfaces defined", num(), None),
-            attr("plowFraction", "Plowable fraction", num(), None),
+            // Stored, so writable. The surfaces beside it are a record
+            // set of their own and the removal rule is derived from
+            // whether one was supplied, which is why those two stay as
+            // they are.
+            rw("plowFraction", "Plowable fraction", num(), None),
             attr(
                 "removal",
                 "Removal defined",
@@ -700,7 +709,9 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
             ),
         ],
         "hydrograph" => vec![
-            attr("raingage", "Rain gage", text(), None),
+            // The gage driving the group, which is a stored reference
+            // like any other and names the kind it may point at.
+            rw("raingage", "Rain gage", text(), None),
             attr("responses", "Responses defined", num(), None),
         ],
         "lidcontrol" => vec![
@@ -894,6 +905,20 @@ fn numd(default: f64) -> OptionKind {
 /// The file's own words rather than the enum's: `MgPerL` is a name for
 /// programmers and `MG/L` is the one on the page a modeller is reading
 /// from.
+/// The four periods a pattern may repeat over, in the file's keywords.
+fn pattern_kinds() -> OptionKind {
+    OptionKind::Choice {
+        default: None,
+        items: ["MONTHLY", "DAILY", "HOURLY", "WEEKEND"]
+            .iter()
+            .map(|v| hydra_common::ChoiceItem {
+                value: (*v).to_string(),
+                label: (*v).to_string(),
+            })
+            .collect(),
+    }
+}
+
 fn concentration_units() -> OptionKind {
     OptionKind::Choice {
         default: None,
