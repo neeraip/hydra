@@ -594,26 +594,36 @@ fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
         // The point of each is a table or a rule body — too large for a
         // cell — so the schemas describe *what a row is* and how big,
         // leaving the contents to a dedicated editor.
+        // Every one is a stored value a modeller sets, so every one is
+        // writable. They were published read-only, and three of the ten
+        // were not published at all.
         "pollutant" => vec![
-            attr("units", "Units", text(), None),
-            attr("rainConc", "Rainfall conc.", num(), Some("concentration")),
-            attr(
+            rw("units", "Units", concentration_units(), None),
+            rw("rainConc", "Rainfall conc.", num(), Some("concentration")),
+            rw(
                 "groundwaterConc",
                 "Groundwater conc.",
                 num(),
                 Some("concentration"),
             ),
-            attr("rdiiConc", "RDII conc.", num(), Some("concentration")),
-            attr("dwfConc", "Dry-weather conc.", num(), Some("concentration")),
+            rw("rdiiConc", "RDII conc.", num(), Some("concentration")),
+            rw("dwfConc", "Dry-weather conc.", num(), Some("concentration")),
+            rw("initConc", "Initial conc.", num(), Some("concentration")),
             // First-order decay, per day: dimensionless in the §5 catalog
-            // because a reciprocal-time quantity has no entry there.
-            attr("decay", "Decay (1/day)", num(), None),
-            attr(
+            // because a reciprocal-time quantity has no entry there. The
+            // engine stores it per second, and the boundary that converts
+            // is the one this label describes.
+            rw("decay", "Decay (1/day)", num(), None),
+            rw(
                 "snowOnly",
                 "Snow only",
                 OptionKind::Boolean { default: None },
                 None,
             ),
+            // The co-pollutant relation: this constituent's load gains a
+            // fraction of another's, so the field names an element.
+            rw("coPollutant", "Co-pollutant", text(), None),
+            rw("coFraction", "Co-pollutant fraction", num(), None),
         ],
         "curve" => vec![
             // The role, which is the whole of what a new curve needs and
@@ -832,6 +842,9 @@ fn referenced_kinds(key: &str) -> Vec<String> {
         "source" => vec!["timeseries".to_string()],
         "curve" => vec!["curve".to_string()],
         "outletCurve" => vec!["curve".to_string()],
+        // A constituent whose load gains a fraction of another's names
+        // that other one, so the field offers the model's pollutants.
+        "coPollutant" => vec!["pollutant".to_string()],
         // Every kind of conveyance node, *and* another subcatchment:
         // runoff either enters the network or cascades overland. This is
         // the attribute §4.5.1.1 was widened for — one kind id could not
@@ -876,6 +889,24 @@ fn numd(default: f64) -> OptionKind {
 /// A choice rather than free text: there are exactly eight, the engine
 /// resolves nothing else, and a control measure whose type was typed
 /// wrong is one the reader has to correct before it can do anything.
+/// The three concentration units, in the keywords the file writes.
+///
+/// The file's own words rather than the enum's: `MgPerL` is a name for
+/// programmers and `MG/L` is the one on the page a modeller is reading
+/// from.
+fn concentration_units() -> OptionKind {
+    OptionKind::Choice {
+        default: None,
+        items: ["MG/L", "UG/L", "#/L"]
+            .iter()
+            .map(|v| hydra_common::ChoiceItem {
+                value: (*v).to_string(),
+                label: (*v).to_string(),
+            })
+            .collect(),
+    }
+}
+
 fn lid_kinds() -> OptionKind {
     OptionKind::Choice {
         default: None,

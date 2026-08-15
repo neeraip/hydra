@@ -52,6 +52,29 @@ fn extract(
     Some((kind, values))
 }
 
+/// The seconds a day holds — the boundary a decay coefficient crosses.
+///
+/// The importer reads it per day and stores it per second, so the editor
+/// has to cross back. It did not: the row was served raw under a label
+/// reading "1/day", so a pollutant decaying at 0.1 per day showed as
+/// 0.00000116 and typing 0.1 back would have stored a decay 86 400 times
+/// too slow.
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
+/// What the file calls a concentration unit.
+///
+/// The file's own keyword rather than the enum's spelling: `MgPerL` is a
+/// name for programmers, and the page a modeller is reading from says
+/// `MG/L`.
+fn concentration_units(units: hydra::uds::model::ConcentrationUnits) -> &'static str {
+    use hydra::uds::model::ConcentrationUnits as U;
+    match units {
+        U::MgPerL => "MG/L",
+        U::UgPerL => "UG/L",
+        U::CountPerL => "#/L",
+    }
+}
+
 /// An element's tag, empty when it has none.
 ///
 /// Always a value, never absent — the one place a tag departs from every
@@ -846,13 +869,18 @@ fn collection_rows(
             .iter()
             .map(|c| {
                 let mut m = HashMap::new();
-                m.insert("units", Text(format!("{:?}", c.units)));
+                m.insert("units", Text(concentration_units(c.units).to_string()));
                 m.insert("rainConc", Number(c.c_rain));
                 m.insert("groundwaterConc", Number(c.c_groundwater));
                 m.insert("rdiiConc", Number(c.c_rdii));
                 m.insert("dwfConc", Number(c.c_dwf));
-                m.insert("decay", Number(c.decay));
+                m.insert("initConc", Number(c.c_init));
+                m.insert("decay", Number(c.decay * SECONDS_PER_DAY));
                 m.insert("snowOnly", yes_no(c.snow_only));
+                if let Some(other) = c.co_constituent.and_then(|i| net.constituents.get(i)) {
+                    m.insert("coPollutant", Text(other.id.clone()));
+                }
+                m.insert("coFraction", Number(c.co_fraction));
                 (c.id.clone(), m)
             })
             .collect(),
@@ -1923,6 +1951,29 @@ pub(crate) fn set_attribute(
     if key == "lidType" {
         return set_lid_kind(net, element_id, value.as_str().unwrap_or("").trim());
     }
+    if key == "units" {
+        return set_constituent_units(net, element_id, value.as_str().unwrap_or("").trim());
+    }
+    // The first yes/no this engine offers for editing. It arrives as the
+    // word the read served, so it is matched here with the other textual
+    // writes rather than falling through to the numeric coercion, which
+    // would refuse it for taking a number.
+    if key == "snowOnly" {
+        let on = flag(value)?;
+        net.constituents
+            .iter_mut()
+            .find(|c| c.id.eq_ignore_ascii_case(element_id))
+            .ok_or_else(|| format!("element '{element_id}' not found"))?
+            .snow_only = on;
+        return Ok(());
+    }
+    // The co-pollutant relation, stored as an index like every other
+    // reference here and cleared by an empty name — a constituent that
+    // gains nothing from another is what the file writes with no
+    // co-pollutant column.
+    if key == "coPollutant" {
+        return set_co_pollutant(net, element_id, value.as_str().unwrap_or("").trim());
+    }
     if key == "raingage" {
         return set_parcel_gage(net, element_id, value.as_str().unwrap_or("").trim());
     }
@@ -2138,6 +2189,69 @@ fn set_curve_role(net: &mut Network, id: &str, name: &str) -> Result<(), String>
     Ok(())
 }
 
+/// A yes/no value, in the words the reads serve.
+fn flag(value: &serde_json::Value) -> Result<bool, String> {
+    match value
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "yes" | "true" => Ok(true),
+        "no" | "false" => Ok(false),
+        other => Err(format!("that takes Yes or No, not '{other}'")),
+    }
+}
+
+/// Set a constituent's concentration unit, by the file's own keyword.
+///
+/// The numbers are left exactly as they are. A unit says how to *read*
+/// them, and rescaling them silently because the unit changed would be a
+/// second edit nobody asked for — the same reason a curve's role does
+/// not reinterpret its points.
+fn set_constituent_units(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    use hydra::uds::model::ConcentrationUnits as U;
+    let units = match name.to_ascii_uppercase().as_str() {
+        "MG/L" => U::MgPerL,
+        "UG/L" => U::UgPerL,
+        "#/L" => U::CountPerL,
+        other => return Err(format!("'{other}' is not a concentration unit")),
+    };
+    net.constituents
+        .iter_mut()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?
+        .units = units;
+    Ok(())
+}
+
+/// Set which constituent this one gains a fraction of, or clear it.
+fn set_co_pollutant(net: &mut Network, id: &str, name: &str) -> Result<(), String> {
+    let at = if name.is_empty() {
+        None
+    } else {
+        let found = net
+            .constituents
+            .iter()
+            .position(|c| c.id.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("'{name}' is not a pollutant in this model"))?;
+        Some(found)
+    };
+    let own = net
+        .constituents
+        .iter()
+        .position(|c| c.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("element '{id}' not found"))?;
+    // A constituent gaining a fraction of itself is a loop the solver
+    // would follow for ever, and nothing else in the model refuses it.
+    if at == Some(own) {
+        return Err("a pollutant cannot be its own co-pollutant".into());
+    }
+    net.constituents[own].co_constituent = at;
+    Ok(())
+}
+
 /// Set a control measure's unit type, by the file's own keyword.
 ///
 /// The layers are left exactly as they are. A type says which layers the
@@ -2335,6 +2449,25 @@ fn set_record_attribute(
         }
         return Ok(());
     }
+    if let Some(c) = net
+        .constituents
+        .iter_mut()
+        .find(|c| c.id.eq_ignore_ascii_case(element_id))
+    {
+        match key {
+            "rainConc" => c.c_rain = value,
+            "groundwaterConc" => c.c_groundwater = value,
+            "rdiiConc" => c.c_rdii = value,
+            "dwfConc" => c.c_dwf = value,
+            "initConc" => c.c_init = value,
+            // Back across the boundary the read crossed: per day on the
+            // screen, per second in the model.
+            "decay" => c.decay = value / SECONDS_PER_DAY,
+            "coFraction" => c.co_fraction = value,
+            other => return Err(unwritable(other)),
+        }
+        return Ok(());
+    }
     if let Some(a) = net
         .aquifers
         .iter_mut()
@@ -2520,6 +2653,90 @@ RS1  0:00  0.4
     /// setter behind any of them — the list named four kinds and the
     /// inlet was not one of them. Adding a kind to the fixture now
     /// extends the check by itself.
+    /// A decay coefficient crosses a unit boundary, and the read used to
+    /// cross it in one direction only.
+    ///
+    /// The importer reads it per day and stores it per second. The row
+    /// was served raw under a label reading "1/day", so a pollutant
+    /// decaying at 0.1 per day showed as 0.00000116 — and typing 0.1
+    /// back would have stored a decay 86 400 times too slow, which is a
+    /// model that runs and is wrong.
+    #[test]
+    fn a_decay_reads_and_writes_per_day() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [POLLUTANTS]\nTSS MG/L 0 0 0 0.1 NO\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        // The model holds it per second, which is the file's 0.1 a day.
+        assert!((net.constituents[0].decay - 0.1 / 86_400.0).abs() < 1e-15);
+
+        let shown = table_value(&net, "pollutant", "decay");
+        assert!(
+            (shown - 0.1).abs() < 1e-9,
+            "a decay of 0.1 per day reads as {shown}"
+        );
+
+        set_attribute(&mut net, "TSS", "decay", &serde_json::json!(0.5))
+            .expect("the decay takes a value");
+        assert!(
+            (net.constituents[0].decay - 0.5 / 86_400.0).abs() < 1e-15,
+            "0.5 per day stored as {}",
+            net.constituents[0].decay
+        );
+    }
+
+    /// A pollutant's unit is the file's keyword, not the enum's name.
+    ///
+    /// `MgPerL` is a name for programmers; the page a modeller is
+    /// reading from says `MG/L`.
+    #[test]
+    fn a_concentration_unit_reads_as_the_file_writes_it() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [POLLUTANTS]\nTSS UG/L 0 0 0 0 NO\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let units = kind_elements(&net, "pollutant")
+            .values_at("units", 0)
+            .and_then(|v| v.as_str().map(str::to_string))
+            .expect("a unit");
+        assert_eq!(units, "UG/L");
+
+        // And it is written back by the same word, leaving the numbers
+        // alone: a unit says how to read them.
+        set_attribute(&mut net, "TSS", "units", &serde_json::json!("#/L"))
+            .expect("the unit takes a keyword");
+        assert_eq!(
+            net.constituents[0].units,
+            hydra::uds::model::ConcentrationUnits::CountPerL
+        );
+        assert!(set_attribute(&mut net, "TSS", "units", &serde_json::json!("furlongs")).is_err());
+    }
+
+    /// A constituent gaining a fraction of itself is a loop, and nothing
+    /// else in the model refuses it.
+    #[test]
+    fn a_pollutant_cannot_be_its_own_co_pollutant() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
+                     [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                     [POLLUTANTS]\n\
+                     TSS MG/L 0 0 0 0 NO\n\
+                     LEAD MG/L 0 0 0 0 NO\n";
+        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        assert!(
+            set_attribute(&mut net, "LEAD", "coPollutant", &serde_json::json!("LEAD")).is_err()
+        );
+
+        set_attribute(&mut net, "LEAD", "coPollutant", &serde_json::json!("TSS"))
+            .expect("another pollutant is fine");
+        assert_eq!(net.constituents[1].co_constituent, Some(0));
+
+        // Emptied, which is what the file writes as no co-pollutant at
+        // all rather than as a relation with nothing on the other side.
+        set_attribute(&mut net, "LEAD", "coPollutant", &serde_json::json!(""))
+            .expect("and it can be cleared");
+        assert_eq!(net.constituents[1].co_constituent, None);
+    }
+
     #[test]
     fn every_editable_value_can_be_changed_and_put_back() {
         let net = model();
