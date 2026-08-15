@@ -1278,6 +1278,10 @@ export interface RecordSet {
   /** Whether a write may be offered. A set served read-only is not a
    * failure: showing what is attached is worth doing on its own. */
   editable: boolean;
+  /** How many rows the set may hold, where the engine knows a limit.
+   * Absent is the ordinary case. A set at its capacity is not offered
+   * another row, because the write would refuse it. */
+  capacity?: number;
 }
 
 /** Every record set attached to one element; empty for one that carries

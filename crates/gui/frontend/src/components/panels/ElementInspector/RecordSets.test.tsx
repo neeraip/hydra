@@ -14,6 +14,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RecordSet } from "../../../hooks";
+import type { RecordWriteContext } from "../../../hooks/useAttributeWrite";
 import { RecordSets, shownRecordSets } from "./RecordSets";
 
 const NUMBER = { type: "number", default: null, min: null, max: null } as const;
@@ -48,8 +49,7 @@ const write = vi.fn<
     elementId: string,
     set: string,
     rows: RecordSet["rows"],
-    previous?: RecordSet["rows"],
-    kind?: string,
+    context?: RecordWriteContext,
   ) => Promise<void>
 >(() => Promise.resolve());
 
@@ -126,12 +126,17 @@ describe("RecordSets", () => {
         [10, "P1", "Residential"],
         [4, "", ""],
       ],
-      DEMANDS.rows,
-      // The kind travels with the write: a water-distribution id names an
-      // element only within its family, and every record set here hangs
-      // off a node, so a pipe sharing a junction's id used to be served
-      // — and to write — the junction's categories.
-      "junction",
+      {
+        previous: DEMANDS.rows,
+        // The kind travels with the write: a water-distribution id names
+        // an element only within its family, and every record set here
+        // hangs off a node, so a pipe sharing a junction's id used to be
+        // served — and to write — the junction's categories.
+        kind: "junction",
+        // And the set's name, so the history says which of an element's
+        // sets was edited. A control measure carries six.
+        label: "Demand categories",
+      },
     );
   });
 
@@ -149,6 +154,15 @@ describe("RecordSets", () => {
 
     fireEvent.click(screen.getAllByLabelText("Remove record")[0]);
     expect(write.mock.calls[1][2]).toEqual([[2.5, "", ""]]);
+  });
+
+  it("stops offering a record once the set is full", () => {
+    // A control measure holds one surface layer or none, so the button
+    // under a layer it already had could only ever refuse. Removing the
+    // row is still offered — that is how the layer comes off.
+    renderSet({ ...DEMANDS, rows: [[10, "P1", "Residential"]], capacity: 1 });
+    expect(screen.queryByLabelText("Add record")).toBeNull();
+    expect(screen.getAllByLabelText("Remove record")).toHaveLength(1);
   });
 
   it("reads only when the engine did not mark the set editable", () => {

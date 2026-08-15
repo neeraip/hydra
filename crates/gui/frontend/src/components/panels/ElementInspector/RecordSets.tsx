@@ -33,6 +33,7 @@ import { SectionLabel } from "../../ui/SectionLabel";
 import { AttributeField } from "../attributeField";
 import { cellEditor } from "../cellEditor";
 import { ActionIcon, offerDatalist } from "../editorTable";
+import { blankRecord, canAddRecord } from "./recordRow";
 
 /**
  * Fetch the record sets attached to one element.
@@ -182,7 +183,11 @@ function RecordTable({
 
   const send = (rows: RecordSet["rows"]) => {
     setRefused(null);
-    return write(elementId, set.key, rows, set.rows, kind)
+    return write(elementId, set.key, rows, {
+      previous: set.rows,
+      kind,
+      label: set.label,
+    })
       .then(() => onEdited?.())
       .catch((e: unknown) => {
         setRefused(typeof e === "string" ? e : String(e));
@@ -203,7 +208,8 @@ function RecordTable({
         style={{
           width: "100%",
           borderCollapse: "collapse",
-          marginBottom: set.editable ? 4 : 14,
+          // Tightened only where the add button sits under it.
+          marginBottom: canAddRecord(set) ? 4 : 14,
         }}
       >
         <thead>
@@ -301,17 +307,14 @@ function RecordTable({
       </table>
 
       {/* A new record is the set with a row more — the same write, which
-          is why there is no separate "add" operation to refuse. */}
-      {set.editable && (
+          is why there is no separate "add" operation to refuse. Offered
+          only where there is room for one, and holding what each column
+          can actually take: see `recordRow`. */}
+      {canAddRecord(set) && (
         <div style={{ marginBottom: 14 }}>
           <ActionIcon
             title="Add record"
-            onClick={() =>
-              send([
-                ...set.rows,
-                set.columns.map((c) => (c.kind?.type === "number" ? 0 : "")),
-              ])
-            }
+            onClick={() => send([...set.rows, blankRecord(set)])}
           >
             <PlusIcon style={{ width: 13, height: 13 }} />
           </ActionIcon>

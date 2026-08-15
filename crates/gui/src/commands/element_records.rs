@@ -56,6 +56,16 @@ pub struct RecordSetDto {
     pub columns: Vec<RecordColumnDto>,
     /// The records, in the engine's own order, one value per column.
     pub rows: Vec<Vec<serde_json::Value>>,
+    /// How many rows this set may hold (§4.5.2.3), where the engine
+    /// knows a limit. Absent is the ordinary case — a junction may have
+    /// any number of demand categories.
+    ///
+    /// It says how many rows may exist, never which ones: a pack that is
+    /// not yet full still refuses a second surface named like the first.
+    /// Without it a full set could only be offered a row and then refuse
+    /// it, which is a button that never works.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<usize>,
     /// Whether a write of this set may be offered. Advisory; the write is
     /// the authority. A set served read-only is not a failure — showing
     /// what is attached is worth doing whether or not it can be rewritten.
@@ -261,6 +271,9 @@ pub(crate) fn wds_records(
             })
             .collect(),
         editable: true,
+        // A junction may have as many categories as a modeller cares to
+        // separate.
+        capacity: None,
     }]
 }
 
@@ -449,6 +462,9 @@ fn lid_records(net: &hydra::uds::model::Network, id: &str) -> Vec<RecordSetDto> 
                 columns,
                 rows: lid_layer_row(net, lid, layer.key).into_iter().collect(),
                 editable: true,
+                // A measure has one of each layer or none of it. The
+                // row is the layer.
+                capacity: Some(1),
             }
         })
         .collect()
@@ -741,6 +757,8 @@ fn hydrograph_records(net: &hydra::uds::model::Network, id: &str) -> Option<Reco
         columns,
         rows,
         editable: false,
+        // Twelve months, three terms each.
+        capacity: Some(36),
     })
 }
 
@@ -765,9 +783,9 @@ const SNOW_SURFACES: [(&str, SnowSurfaceOf); 3] = [
 /// absent. The catalog could only ever publish how many were defined,
 /// which is a count of something nobody could then read.
 ///
-/// The surface a row is about is its first column and is not editable:
-/// there are exactly three, they are not interchangeable, and a set that
-/// let one be renamed would let a pack have two pervious surfaces.
+/// The surface a row is about is its first column, and which of the
+/// three it names is what the row is keyed by — so the set is capped at
+/// three and a second row naming one already there is refused.
 fn snowpack_records(net: &hydra::uds::model::Network, id: &str) -> Option<RecordSetDto> {
     let pack = net
         .snowpacks
@@ -831,6 +849,9 @@ fn snowpack_records(net: &hydra::uds::model::Network, id: &str) -> Option<Record
             .filter_map(|(name, which)| which(pack).as_ref().map(|s| row(name, s)))
             .collect(),
         editable: true,
+        // Plowable, impervious, pervious — and no more, because the
+        // three are what a pack is made of rather than a list it keeps.
+        capacity: Some(SNOW_SURFACES.len()),
     })
 }
 
@@ -898,6 +919,9 @@ pub(crate) fn uds_records(net: &hydra::uds::model::Network, element_id: &str) ->
         // the write that took them would have to resolve a name to an
         // index the model keys by. Served so it can be read (§4.5.2.3).
         editable: false,
+        // One per constituent, and a model may carry any number of
+        // those.
+        capacity: None,
     }]
 }
 
@@ -1397,6 +1421,59 @@ Duration  0
         // Nothing moved through any of it: the set is parsed whole
         // before a single surface is assigned.
         assert_eq!(net.snowpacks[0], before);
+    }
+
+    /// The bound a set publishes is the one its write enforces
+    /// (§4.5.2.3).
+    ///
+    /// Both halves matter and neither implies the other. A set that
+    /// under-reports its capacity hides rows a modeller could have
+    /// added; a set that over-reports it offers a row the write then
+    /// refuses, which is the button-that-never-works this field was
+    /// added to remove. The two are checked against each other rather
+    /// than against a written-down number, so a layer added later is
+    /// covered without anyone remembering to add it here.
+    #[test]
+    fn a_set_that_is_full_is_a_set_the_write_takes_no_more_of() {
+        let cases: Vec<(hydra::uds::model::Network, &str)> =
+            vec![(lid_model(), "GR1"), (pack_model(), "SP1")];
+        let mut bounded = 0;
+        for (net, id) in cases {
+            for set in uds_records(&net, id) {
+                let Some(capacity) = set.capacity else {
+                    continue;
+                };
+                if !set.editable {
+                    continue;
+                }
+                bounded += 1;
+                // A row of whatever each column holds, repeated until the
+                // set is one past its bound. What the cells say does not
+                // matter: the count alone has to be refused, or the
+                // capacity is a number the write does not believe.
+                let filler: Vec<serde_json::Value> = set
+                    .columns
+                    .iter()
+                    .map(|c| match c.kind {
+                        OptionKind::Text { .. } | OptionKind::Choice { .. } => {
+                            serde_json::json!("")
+                        }
+                        _ => serde_json::json!(0.0),
+                    })
+                    .collect();
+                let too_many = vec![filler; capacity + 1];
+                let mut probe = net.clone();
+                assert!(
+                    set_uds_records(&mut probe, id, &set.key, &too_many).is_err(),
+                    "'{}' publishes room for {capacity} and took {}",
+                    set.key,
+                    capacity + 1
+                );
+                // And the model as it stands is within what it says.
+                assert!(set.rows.len() <= capacity, "'{}' is over full", set.key);
+            }
+        }
+        assert!(bounded >= 7, "the bounded sets went missing: {bounded}");
     }
 
     /// Thirty-six slots, any of them present or absent, which the
