@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.14 — 2026-08-13** (v1.1 added opaque per-block options
+Status: **v1.15 — 2026-08-15** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -31,7 +31,9 @@ two dozen is a list a reader can find anything in; v1.14 let empty
 contents carry a note saying why they are empty, §4.5.2.2, separating an
 element that has no contents from one whose contents are held outside the
 model — which a consumer had been telling apart by guessing, and getting
-wrong for six kinds).
+wrong for six kinds; v1.15 let a record set say how many rows it may
+hold, §4.5.2.3, so a set that is full stops offering a row it would
+refuse).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -897,6 +899,20 @@ An element carries zero or more **record sets**, each a small table:
 | `label` | What the set is called | Engine-authored; an application never names it. |
 | `columns` | What each row holds | Described exactly as a kind's attributes are (§4.4, §4.5.1, §4.5.1.1): a label, a value shape, a quantity where numeric, referenced kinds where the value names another element. |
 | `rows` | The records themselves, in the engine's order | Each row one value per column, in column order. |
+| `capacity` | How many rows the set may hold | Optional. Absent means the engine knows no limit, which is the ordinary case. |
+
+**A set that is full says so, rather than refusing.** Most sets are
+open-ended — a junction may have any number of demand categories — but
+some are not, and their bound is a fact about the model rather than a
+policy: a control measure has one surface layer or none, a snow pack has
+one of each of its three surfaces. Without a published bound an
+application can only offer a row and let the write refuse it, which
+turns a fixed set into a button that never works.
+
+The bound is on the set, not on the write. An engine still validates:
+`capacity` says how many rows may exist, never which ones, so a set of
+three named surfaces that is not yet full can still refuse a second
+row named the same as the first.
 
 **Columns are described the way attributes are, deliberately.** A
 record's cells are the same kinds of value an attribute holds — a number
