@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { registerElementBadges } from "../types/elementTypes";
+import { fetchInto } from "./fetchInto";
 import { tryInvokeOr } from "./ipc";
 import type { OptionKind } from "./reports";
 import type { GenericQuantity } from "./results";
@@ -142,13 +143,7 @@ export function useEngines(): EngineInfo[] {
     () => cached ?? FALLBACK_ENGINES,
   );
   useEffect(() => {
-    let cancelled = false;
-    void getEngines().then((list) => {
-      if (!cancelled) setEngines(list);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getEngines(), setEngines);
   }, []);
   return engines;
 }
@@ -217,13 +212,7 @@ export function useElementKinds(
       setKinds([]);
       return;
     }
-    let cancelled = false;
-    void getElementKinds(engine).then((list) => {
-      if (!cancelled) setKinds(list);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getElementKinds(engine), setKinds);
   }, [engine]);
   return kinds;
 }
@@ -276,18 +265,19 @@ export function useElementAttributes(
       setAttrs(hit);
       return;
     }
-    let cancelled = false;
-    void tryInvokeOr<ElementAttributeInfo[]>(
-      "list_element_attributes",
-      { engine, kind },
-      [],
-    ).then((list) => {
-      attributeCache.set(key, list);
-      if (!cancelled) setAttrs(list);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      tryInvokeOr<ElementAttributeInfo[]>(
+        "list_element_attributes",
+        { engine, kind },
+        [],
+      ).then((list) => {
+        // On the promise, not in the guarded apply: a cancelled fetch
+        // still warms the cache for whoever asks next.
+        attributeCache.set(key, list);
+        return list;
+      }),
+      setAttrs,
+    );
   }, [engine, kind, key]);
   return attrs;
 }

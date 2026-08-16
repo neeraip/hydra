@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import type { Criterion } from "../components/analysis/criteria";
+import { fetchInto } from "./fetchInto";
 import { tryInvokeOr } from "./ipc";
 
 const cache = new Map<string, Criterion[]>();
@@ -27,19 +28,13 @@ export function useCriteriaCatalog(projectId: string | null): Criterion[] {
       setCatalog(cached);
       return;
     }
-    let cancelled = false;
-    void tryInvokeOr<Criterion[]>(
-      "get_criteria_catalog",
-      { projectId },
-      EMPTY,
-    ).then((read) => {
-      if (cancelled) return;
-      if (read.length > 0) cache.set(projectId, read);
-      setCatalog(read);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      tryInvokeOr<Criterion[]>("get_criteria_catalog", { projectId }, EMPTY),
+      (read) => {
+        if (read.length > 0) cache.set(projectId, read);
+        setCatalog(read);
+      },
+    );
   }, [projectId]);
 
   return catalog;

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { ACCENT } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { formatIpcError } from "../../hooks/ipc";
 import {
   type BlockAvailability,
@@ -205,9 +206,8 @@ export function ReportView() {
     if (!activeProjectId || catalog.length === 0) return;
     const projectId = activeProjectId;
     const scenarioId = activeScenarioId ?? null;
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(
+    return fetchInto(
+      Promise.all(
         catalog.map(
           async (block) =>
             [
@@ -215,13 +215,9 @@ export function ReportView() {
               await getReportBlockOptions(projectId, scenarioId, block.id),
             ] as const,
         ),
-      );
-      if (cancelled) return;
-      setDescriptorsById(Object.fromEntries(entries));
-    })();
-    return () => {
-      cancelled = true;
-    };
+      ),
+      (entries) => setDescriptorsById(Object.fromEntries(entries)),
+    );
   }, [activeProjectId, activeScenarioId, catalog, resultGeneration]);
 
   // Which sections can render for this run. One production pass, so it is
@@ -231,14 +227,7 @@ export function ReportView() {
     if (!activeProjectId) return;
     const projectId = activeProjectId;
     const scenarioId = activeScenarioId ?? null;
-    let cancelled = false;
-    void (async () => {
-      const probed = await probeReportBlocks(projectId, scenarioId);
-      if (!cancelled) setAvailability(probed);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(probeReportBlocks(projectId, scenarioId), setAvailability);
   }, [activeProjectId, activeScenarioId, resultGeneration]);
 
   const templateJson = useMemo(

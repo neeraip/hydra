@@ -19,6 +19,7 @@ import {
   renameScenario,
   useScenarios,
 } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { formatIpcError } from "../../hooks/ipc";
 import { formatBytes } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
@@ -142,13 +143,7 @@ export function ScenariosPanel({
       setSizes(null);
       return;
     }
-    let cancelled = false;
-    void projectResultsSizes(id).then((next) => {
-      if (!cancelled) setSizes(next);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(projectResultsSizes(id), setSizes);
   }, [project?.id, scenariosVersion]);
 
   /** "Frees 12.4 MB", or nothing while unmeasured or with nothing to free. */

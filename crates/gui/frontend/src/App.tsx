@@ -11,6 +11,7 @@ import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
+import { fetchInto } from "./hooks/fetchInto";
 import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
 import { loadSettingsContent, whenIdle } from "./lazyChunks";
@@ -133,20 +134,16 @@ export function App() {
   useEffect(() => whenIdle(() => void loadSettingsContent()), []);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      // Overlay user-defined custom CRS on top — these take precedence because
-      // proj4.defs() overwrites any existing entry for the same code.
-      const defs =
-        await tryInvoke<Array<{ label: string; epsg: string; proj4: string }>>(
-          "list_custom_crs",
-        );
-      if (cancelled || !defs) return;
-      registerCustomCrsDefinitions(defs);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // Overlay user-defined custom CRS on top — these take precedence because
+    // proj4.defs() overwrites any existing entry for the same code.
+    return fetchInto(
+      tryInvoke<Array<{ label: string; epsg: string; proj4: string }>>(
+        "list_custom_crs",
+      ),
+      (defs) => {
+        if (defs) registerCustomCrsDefinitions(defs);
+      },
+    );
   }, []);
 
   useEffect(() => {

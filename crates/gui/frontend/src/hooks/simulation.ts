@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 // hoisted function declaration, so it is callable even while the modules are
 // still mid-evaluation, and it is only invoked at render time.
 import { useAppState } from "../AppContext";
+import { fetchInto } from "./fetchInto";
 import { invoke, tryInvokeOr } from "./ipc";
 
 // ── Simulation progress events ─────────────────────────────────────────────
@@ -145,13 +146,7 @@ export function useSimParams(
       setParams(null);
       return;
     }
-    let cancelled = false;
-    getSimParams(projectId).then((p) => {
-      if (!cancelled) setParams(p);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getSimParams(projectId), setParams);
   }, [projectId, simParamsVersion]);
   return params;
 }

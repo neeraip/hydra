@@ -41,6 +41,7 @@ import {
   useEngines,
   useProjects,
 } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { formatIpcError } from "../../hooks/ipc";
 import { PROJECTS_SEARCH_INPUT_ID } from "../../shortcuts";
 import { formatBytes } from "../../units";
@@ -476,14 +477,8 @@ export function ProjectsPage() {
       setBulkBytes(null);
       return;
     }
-    let cancelled = false;
     setBulkBytes(null);
-    void projectsResultsSize(selectedIds).then((n) => {
-      if (!cancelled) setBulkBytes(n);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(projectsResultsSize(selectedIds), setBulkBytes);
   }, [selectedIds]);
 
   const { rows } = table.getRowModel();

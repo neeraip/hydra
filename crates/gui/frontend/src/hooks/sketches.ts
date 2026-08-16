@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import type { Sketch } from "../components/ui/NetworkSketch";
+import { fetchInto } from "./fetchInto";
 import { tryInvokeOr } from "./ipc";
 
 /** Sketches for the given projects, keyed by id. Absent while loading. */
@@ -19,26 +20,24 @@ export function useSketches(projectIds: string[]): Map<string, Sketch> {
   const key = projectIds.join(",");
 
   useEffect(() => {
-    let cancelled = false;
     const ids = key ? key.split(",") : [];
-    Promise.all(
-      ids.map(async (id) => {
-        const s = await tryInvokeOr<Sketch | null>(
-          "get_project_sketch",
-          { projectId: id },
-          null,
-        );
-        return [id, s] as const;
-      }),
-    ).then((pairs) => {
-      if (cancelled) return;
-      const next = new Map<string, Sketch>();
-      for (const [id, s] of pairs) if (s) next.set(id, s);
-      setSketches(next);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      Promise.all(
+        ids.map(async (id) => {
+          const s = await tryInvokeOr<Sketch | null>(
+            "get_project_sketch",
+            { projectId: id },
+            null,
+          );
+          return [id, s] as const;
+        }),
+      ),
+      (pairs) => {
+        const next = new Map<string, Sketch>();
+        for (const [id, s] of pairs) if (s) next.set(id, s);
+        setSketches(next);
+      },
+    );
   }, [key]);
 
   return sketches;

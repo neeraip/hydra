@@ -55,6 +55,7 @@ import {
   upsertCustomCrsDef,
   useNodes,
 } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 /** Enough rows to scroll through, few enough to stay a shortlist. Searching
@@ -153,16 +154,10 @@ export function CrsPicker() {
     setDraft(project?.sourceCrs ?? "");
     setQuery("");
     setDefining(false);
-    let cancelled = false;
-    void (async () => {
-      const defs = await listCustomCrsDefs();
-      if (cancelled) return;
+    return fetchInto(listCustomCrsDefs(), (defs) => {
       setCustomDefs(defs);
       registerCustomCrsDefinitions(defs);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    });
   }, [crsModalOpen, project?.sourceCrs]);
 
   useEffect(() => {
@@ -185,31 +180,17 @@ export function CrsPicker() {
       setTotal(0);
       return;
     }
-    let cancelled = false;
     setLoading(true);
-    void (async () => {
-      try {
-        const page = await listCrsCatalogPage({
-          query: q,
-          page: 0,
-          pageSize: RESULT_LIMIT,
-        });
-        if (!cancelled) {
-          setResults(page.items);
-          setTotal(page.total);
-        }
-      } catch {
-        if (!cancelled) {
-          setResults([]);
-          setTotal(0);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      listCrsCatalogPage({ query: q, page: 0, pageSize: RESULT_LIMIT })
+        // An unanswerable search is an empty page, not a stuck spinner.
+        .catch(() => ({ items: [], total: 0 })),
+      (page) => {
+        setResults(page.items);
+        setTotal(page.total);
+        setLoading(false);
+      },
+    );
   }, [crsModalOpen, query]);
 
   /** The shortlist shown before anyone searches: what this project already

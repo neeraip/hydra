@@ -40,6 +40,7 @@ import {
   useProjects,
   validationFindingsToIssues,
 } from "./hooks";
+import { fetchInto } from "./hooks/fetchInto";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { backfillTask, taskNeedsBackfill } from "./hooks/taskBackfill";
 
@@ -178,17 +179,12 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       setValidationIssues([]);
       return;
     }
-    let cancelled = false;
     const firstSeen = formatClockTime();
-    fetchValidationFindings(activeProjectId, activeScenarioId).then(
-      (findings) => {
-        if (cancelled) return;
-        setValidationIssues(validationFindingsToIssues(findings, firstSeen));
-      },
+    return fetchInto(
+      fetchValidationFindings(activeProjectId, activeScenarioId),
+      (findings) =>
+        setValidationIssues(validationFindingsToIssues(findings, firstSeen)),
     );
-    return () => {
-      cancelled = true;
-    };
   }, [activeProjectId, activeScenarioId, networkVersion]);
 
   // Refresh the live model's topology digest whenever the target changes,
@@ -205,18 +201,14 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       setDigestLoading(false);
       return;
     }
-    let cancelled = false;
     setDigestLoading(true);
-    getNetworkDigest(activeProjectId, activeScenarioId)
-      .then((digest) => {
-        if (!cancelled) setLiveNetworkDigest(digest);
-      })
-      .finally(() => {
-        if (!cancelled) setDigestLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      getNetworkDigest(activeProjectId, activeScenarioId),
+      (digest) => {
+        setLiveNetworkDigest(digest);
+        setDigestLoading(false);
+      },
+    );
   }, [activeProjectId, activeScenarioId, networkVersion, resultGeneration]);
 
   // Stale exactly when both digests are known and differ; unknown (either
@@ -244,15 +236,12 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       setRunWarningIssues([]);
       return;
     }
-    let cancelled = false;
     const firstSeen = formatClockTime();
-    fetchRunWarnings(activeProjectId, activeScenarioId).then((warnings) => {
-      if (cancelled) return;
-      setRunWarningIssues(runWarningsToIssues(warnings, firstSeen));
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      fetchRunWarnings(activeProjectId, activeScenarioId),
+      (warnings) =>
+        setRunWarningIssues(runWarningsToIssues(warnings, firstSeen)),
+    );
   }, [activeProjectId, activeScenarioId, resultGeneration]);
 
   // Derive live issues from runtime/task/network signals. This keeps the
@@ -452,23 +441,22 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       setResultMetaLoading(false);
       return;
     }
-    let cancelled = false;
     setResultMetaLoading(true);
-    loadResultMeta(activeProjectId, activeScenarioId)
-      .then((meta) => {
-        if (!cancelled) {
-          setResultMeta(meta);
-          setResultGeneration((g) => g + 1);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setResultMetaLoading(false);
-      });
-    getPumpEnergy(activeProjectId, activeScenarioId).then((energy) => {
-      if (!cancelled) setPumpEnergy(energy);
-    });
+    const cancelMeta = fetchInto(
+      loadResultMeta(activeProjectId, activeScenarioId),
+      (meta) => {
+        setResultMeta(meta);
+        setResultGeneration((g) => g + 1);
+        setResultMetaLoading(false);
+      },
+    );
+    const cancelEnergy = fetchInto(
+      getPumpEnergy(activeProjectId, activeScenarioId),
+      setPumpEnergy,
+    );
     return () => {
-      cancelled = true;
+      cancelMeta();
+      cancelEnergy();
     };
   }, [activeProjectId, activeScenarioId]);
 

@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
+import { fetchInto } from "../../hooks/fetchInto";
 import { tryInvokeOr } from "../../hooks/ipc";
 import { useUnitSystem } from "../../units";
 import { BlockPanel } from "./FragmentView";
@@ -57,29 +58,30 @@ export function BlockAnalysisView({
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   useEffect(() => {
     if (!activeProjectId) return;
-    let cancelled = false;
+    let cancel = () => {};
     const handle = window.setTimeout(
       () => {
-        void tryInvokeOr<AnalysisBlock[]>(
-          "get_analysis_blocks",
-          {
-            projectId: activeProjectId,
-            scenarioId: activeScenarioId,
-            unitSystem,
-            criteria: criteriaKey === null ? null : JSON.parse(criteriaKey),
-          },
-          [],
-        ).then((b) => {
-          if (!cancelled) setBlocks(b);
-        });
+        cancel = fetchInto(
+          tryInvokeOr<AnalysisBlock[]>(
+            "get_analysis_blocks",
+            {
+              projectId: activeProjectId,
+              scenarioId: activeScenarioId,
+              unitSystem,
+              criteria: criteriaKey === null ? null : JSON.parse(criteriaKey),
+            },
+            [],
+          ),
+          setBlocks,
+        );
       },
       // Only edits debounce; the first load and target switches fetch at
       // once, because there the wait would just be a blank page.
       blocks === null ? 0 : REFETCH_DEBOUNCE_MS,
     );
     return () => {
-      cancelled = true;
       window.clearTimeout(handle);
+      cancel();
     };
   }, [
     activeProjectId,

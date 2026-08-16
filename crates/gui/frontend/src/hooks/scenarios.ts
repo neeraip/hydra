@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { fetchInto } from "./fetchInto";
 import { invoke, tryInvoke, tryInvokeOr } from "./ipc";
 
 /** Flat DTO returned by `list_scenarios` / `create_scenario`. */
@@ -32,13 +33,10 @@ export function useScenarios(
       setScenarios([]);
       return;
     }
-    let cancelled = false;
-    tryInvoke<ScenarioDto[]>("list_scenarios", { projectId }).then((rows) => {
-      if (!cancelled) setScenarios(rows ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      tryInvoke<ScenarioDto[]>("list_scenarios", { projectId }),
+      (rows) => setScenarios(rows ?? []),
+    );
   }, [projectId, version]);
 
   return scenarios;

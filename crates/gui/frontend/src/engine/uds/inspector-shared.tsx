@@ -27,6 +27,7 @@ import {
   getElementSeries,
   useNetworkData,
 } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { Sparkline } from "../../pages/project/AnalysisPanel/charts";
 import { useUnitSystem } from "../../units";
 import type { GenericElementValue } from "../registry";
@@ -101,20 +102,16 @@ export function GenericTimeSeriesCard({
       setLoading(false);
       return;
     }
-    let cancelled = false;
     setSeries(null);
     setLoading(true);
-    getElementSeries(projectId, activeScenarioId ?? null, kind, index).then(
+    return fetchInto(
+      getElementSeries(projectId, activeScenarioId ?? null, kind, index),
       (s) => {
-        if (cancelled) return;
         seriesCache.set(key, s);
         setSeries(s);
         setLoading(false);
       },
     );
-    return () => {
-      cancelled = true;
-    };
   }, [
     enabled,
     projectId,

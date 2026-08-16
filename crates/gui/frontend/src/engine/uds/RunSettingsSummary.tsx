@@ -5,22 +5,18 @@
 import { useEffect, useState } from "react";
 import { SummaryRows } from "../../components/modals/RunModal/helpers";
 import { getSimSummaryPairs, type SimSummaryPair } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import type { RunSettingsSummaryProps } from "../registry";
 
 export function UdsRunSettingsSummary({ projectId }: RunSettingsSummaryProps) {
   const [pairs, setPairs] = useState<SimSummaryPair[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    let cancelled = false;
     setLoading(true);
-    void getSimSummaryPairs(projectId).then((p) => {
-      if (cancelled) return;
+    return fetchInto(getSimSummaryPairs(projectId), (p) => {
       setPairs(p);
       setLoading(false);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [projectId]);
 
   if (pairs.length > 0)

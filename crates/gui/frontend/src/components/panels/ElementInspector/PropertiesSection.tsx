@@ -28,6 +28,7 @@ import {
   useElementAttributes,
   useReferenceIds,
 } from "../../../hooks";
+import { fetchInto } from "../../../hooks/fetchInto";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementAttributeWrite } from "../../../hooks/useAttributeWrite";
 import { compareNatural } from "../../../naturalOrder";
@@ -127,16 +128,17 @@ export function useElementDetails(
       return;
     }
     setRows(null);
-    let cancelled = false;
-    getElementDetails(project.id, activeScenarioId, elementId, kind).then(
-      (r) => {
-        if (r) cacheAt(version).set(key, r);
-        if (!cancelled) setRows(r);
-      },
+    return fetchInto(
+      getElementDetails(project.id, activeScenarioId, elementId, kind).then(
+        (r) => {
+          // On the promise, not in the guarded apply: a cancelled fetch
+          // still warms the cache for whoever asks next.
+          if (r) cacheAt(version).set(key, r);
+          return r;
+        },
+      ),
+      setRows,
     );
-    return () => {
-      cancelled = true;
-    };
   }, [project?.id, activeScenarioId, elementId, kind, key, version]);
   return { rows, schema, elementId, kind, onEdited };
 }

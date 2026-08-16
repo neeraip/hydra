@@ -19,6 +19,7 @@ import {
   useEngines,
   useProject,
 } from "./hooks";
+import { fetchInto } from "./hooks/fetchInto";
 import { formatIpcError, onIpcError } from "./hooks/ipc";
 import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
@@ -758,17 +759,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const id = restoreProjectId();
     if (!id) return;
-    let cancelled = false;
-    fetchProjectsShared().then((rows) => {
-      if (cancelled || rows === null) return;
-      if (!rows.some((p) => p.id === id)) {
+    return fetchInto(fetchProjectsShared(), (rows) => {
+      if (rows !== null && !rows.some((p) => p.id === id)) {
         localStorage.removeItem(STORAGE_LAST_PROJECT);
         setPage("projects");
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, [setPage]);
 
   const createProject = useCallback(

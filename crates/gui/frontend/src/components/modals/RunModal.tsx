@@ -11,6 +11,7 @@ import {
   type SimParams,
   useScenarios,
 } from "../../hooks";
+import { fetchInto } from "../../hooks/fetchInto";
 import { formatIpcError } from "../../hooks/ipc";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
@@ -189,13 +190,7 @@ export function RunModal() {
   // edited them since last open) and when the active project changes.
   useEffect(() => {
     if (!runModalOpen || !activeProjectId) return;
-    let cancelled = false;
-    void getSimParams(activeProjectId).then((p) => {
-      if (!cancelled) setParams(p);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getSimParams(activeProjectId), setParams);
   }, [runModalOpen, activeProjectId]);
 
   // Blocking validation errors per scenario id. A scenario the solver would
@@ -209,21 +204,16 @@ export function RunModal() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `networkVersion` is an intentional retrigger — revalidate after structural edits.
   useEffect(() => {
     if (!runModalOpen || !activeProjectId) return;
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(
+    return fetchInto(
+      Promise.all(
         scenarioIds.map(async (id) => {
           const findings = await fetchValidationFindings(activeProjectId, id);
           const errors = findings.filter((f) => f.severity === "error").length;
           return [id, errors] as const;
         }),
-      );
-      if (cancelled) return;
-      setErrorCounts(new Map(entries));
-    })();
-    return () => {
-      cancelled = true;
-    };
+      ),
+      (entries) => setErrorCounts(new Map(entries)),
+    );
   }, [runModalOpen, activeProjectId, scenarioIds, networkVersion]);
 
   const errorsFor = useCallback(

@@ -10,6 +10,7 @@ import {
 } from "../../../canvas/coords";
 import { useCanvasStatus } from "../../../canvas/status-context";
 import { type Link, listCrsCatalogPage, type Node } from "../../../hooks";
+import { fetchInto } from "../../../hooks/fetchInto";
 import type { Region } from "../../../types";
 
 /** Coverage of real map coordinates across the network's nodes. */
@@ -92,17 +93,14 @@ export function useCrsReprojection({
       setCrsResolving(false);
       return;
     }
-    let cancelled = false;
     setCrsResolving(true);
-    void (async () => {
-      try {
-        const page = await listCrsCatalogPage({
-          query: sourceCrs,
-          page: 0,
-          pageSize: 100,
-        });
-        if (cancelled) return;
-        const entry = page.items.find(
+    return fetchInto(
+      listCrsCatalogPage({ query: sourceCrs, page: 0, pageSize: 100 })
+        // A failed catalog read resolves the spinner the way the old
+        // `finally` did; the def simply stays unregistered.
+        .catch(() => null),
+      (page) => {
+        const entry = page?.items.find(
           (e) => normalizeEpsgCode(e.epsg) === sourceCrs,
         );
         if (entry?.proj4?.trim()) {
@@ -110,13 +108,9 @@ export function useCrsReprojection({
           // Re-run the reprojection memo now that the def is registered.
           setCrsDefsVersion((v) => v + 1);
         }
-      } finally {
-        if (!cancelled) setCrsResolving(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+        setCrsResolving(false);
+      },
+    );
   }, [sourceCrs]);
 
   // Raw positional nodes (no pressure/demand merged yet) used for CRS sniffing

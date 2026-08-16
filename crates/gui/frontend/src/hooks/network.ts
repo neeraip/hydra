@@ -8,6 +8,7 @@ import type { GenericQuantity } from "./results";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
+import { fetchInto } from "./fetchInto";
 import { invoke, isTauri, tryInvoke, tryInvokeOr } from "./ipc";
 import type { ValidationFinding } from "./issues";
 import type { NetworkSummary } from "./NetworkDataContext";
@@ -844,13 +845,9 @@ function useVersionedRows<T>(cmd: string, version: number): T[] {
     // Both versions are pure refetch triggers.
     void ctxVersion;
     void version;
-    let cancelled = false;
-    tryInvoke<T[]>(cmd).then((next) => {
-      if (!cancelled && next !== null) setRows(next);
+    return fetchInto(tryInvoke<T[]>(cmd), (next) => {
+      if (next !== null) setRows(next);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [cmd, ctxVersion, version]);
   return rows;
 }
@@ -1251,22 +1248,13 @@ export function useInletCouplings(
       setState({ couplings: EMPTY_COUPLINGS, resolved: true });
       return;
     }
-    let cancelled = false;
     setState({ couplings: EMPTY_COUPLINGS, resolved: false });
-    void getInletCouplings(projectId, scenarioId)
-      .then((c) => {
-        if (!cancelled) setState({ couplings: c, resolved: true });
-      })
-      .catch(() => {
-        // A failed read is still an answer: draw the network without
-        // couplings rather than never drawing it.
-        if (!cancelled) {
-          setState({ couplings: EMPTY_COUPLINGS, resolved: true });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+    // A failed read is still an answer: draw the network without
+    // couplings rather than never drawing it.
+    return fetchInto(
+      getInletCouplings(projectId, scenarioId).catch(() => EMPTY_COUPLINGS),
+      (c) => setState({ couplings: c, resolved: true }),
+    );
   }, [projectId, scenarioId]);
   return state;
 }
@@ -1435,13 +1423,10 @@ export function useCollectionDetail(
       setDetail(EMPTY_DETAIL);
       return;
     }
-    let cancelled = false;
-    void getCollectionDetail(projectId, scenarioId, kind, id).then((d) => {
-      if (!cancelled) setDetail(d);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      getCollectionDetail(projectId, scenarioId, kind, id),
+      setDetail,
+    );
   }, [projectId, scenarioId, kind, id, version]);
   return { detail, refetch };
 }
@@ -1481,13 +1466,7 @@ export function useKindCounts(
       setCounts({});
       return;
     }
-    let cancelled = false;
-    void getKindCounts(projectId, scenarioId).then((c) => {
-      if (!cancelled) setCounts(c);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getKindCounts(projectId, scenarioId), setCounts);
   }, [projectId, scenarioId, version]);
   return counts;
 }
@@ -1514,18 +1493,15 @@ export function useReferenceIds(
       setIds({});
       return;
     }
-    let cancelled = false;
-    void Promise.all(
-      key.split("\u0000").map(async (kind) => {
-        const elements = await getKindElements(projectId, scenarioId, kind);
-        return [kind, elements.ids] as const;
-      }),
-    ).then((pairs) => {
-      if (!cancelled) setIds(Object.fromEntries(pairs));
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      Promise.all(
+        key.split("\u0000").map(async (kind) => {
+          const elements = await getKindElements(projectId, scenarioId, kind);
+          return [kind, elements.ids] as const;
+        }),
+      ),
+      (pairs) => setIds(Object.fromEntries(pairs)),
+    );
   }, [projectId, scenarioId, key]);
   return ids;
 }
@@ -1559,13 +1535,7 @@ export function useKindElements(
       setElements(EMPTY_KIND_ELEMENTS);
       return () => {};
     }
-    let cancelled = false;
-    void getKindElements(projectId, scenarioId, kind).then((e) => {
-      if (!cancelled) setElements(e);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getKindElements(projectId, scenarioId, kind), setElements);
   }, [projectId, scenarioId, kind, version]);
   useEffect(load, [load]);
   return { elements, refetch: load };

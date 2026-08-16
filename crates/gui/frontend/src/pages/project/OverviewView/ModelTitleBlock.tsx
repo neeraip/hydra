@@ -2,6 +2,7 @@ import { CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../../AppContext";
 import { engineComponents } from "../../../engine/registry";
+import { fetchInto } from "../../../hooks/fetchInto";
 import { formatIpcError } from "../../../hooks/ipc";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
@@ -33,14 +34,7 @@ export function ModelTitleBlock() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is an intentional retrigger — refetch the title after the network changes (import, edit, undo).
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const t = await getNetworkTitle();
-      if (!cancelled) setLines(t);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(getNetworkTitle(), setLines);
   }, [version]);
 
   useEffect(() => {

@@ -25,6 +25,7 @@ import {
   type RecordSet,
   useReferenceIds,
 } from "../../../hooks";
+import { fetchInto } from "../../../hooks/fetchInto";
 import { formatIpcError } from "../../../hooks/ipc";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementRecordsWrite } from "../../../hooks/useAttributeWrite";
@@ -76,15 +77,10 @@ export function useElementRecords(
       setSets([]);
       return;
     }
-    let cancelled = false;
-    void getElementRecords(project.id, activeScenarioId, elementId, kind).then(
-      (r) => {
-        if (!cancelled) setSets(r);
-      },
+    return fetchInto(
+      getElementRecords(project.id, activeScenarioId, elementId, kind),
+      setSets,
     );
-    return () => {
-      cancelled = true;
-    };
   }, [project?.id, activeScenarioId, elementId, kind, version]);
   return { sets, refetch };
 }

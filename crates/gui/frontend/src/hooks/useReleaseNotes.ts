@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchInto } from "./fetchInto";
 import { getVersions } from "./projects";
 
 const RELEASES_URL = "https://api.github.com/repos/neeraip/hydra/releases";
@@ -282,9 +283,7 @@ export function useReleaseNotes(): ReleaseNotes {
   });
 
   useEffect(() => {
-    let cancelled = false;
-    void fetchGuiReleases().then((list) => {
-      if (cancelled) return;
+    return fetchInto(fetchGuiReleases(), (list) => {
       if (list && list.length > 0) {
         writeCachedReleases(list);
         setNotes({ status: "loaded", releases: list });
@@ -296,9 +295,6 @@ export function useReleaseNotes(): ReleaseNotes {
         );
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   return notes;
@@ -343,19 +339,15 @@ export function useLastSeenGuiVersion(): {
   // mark the entire history unseen.
   useEffect(() => {
     if (lastSeen !== null) return;
-    let cancelled = false;
-    getVersions()
-      .then((v) => {
-        if (cancelled || !v.app || v.app === "0.0.0") return;
+    return fetchInto(
+      // Leave unseeded on failure — unseen stays empty.
+      getVersions().catch(() => null),
+      (v) => {
+        if (!v?.app || v.app === "0.0.0") return;
         writeLastSeen(v.app);
         setLastSeen(v.app);
-      })
-      .catch(() => {
-        // Leave unseeded — unseen stays empty.
-      });
-    return () => {
-      cancelled = true;
-    };
+      },
+    );
   }, [lastSeen]);
 
   const markSeen = useCallback((version: string) => {

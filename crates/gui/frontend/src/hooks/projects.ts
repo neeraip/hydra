@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { UnitSystem } from "../units";
+import { fetchInto } from "./fetchInto";
 import {
   invoke,
   isTauri,
@@ -36,17 +37,13 @@ export function useModelUnitSystem(
       setSystem(null);
       return;
     }
-    let cancelled = false;
-    void tryInvoke<string | null>("get_model_unit_system", {
-      projectId,
-      scenarioId: scenarioId ?? null,
-    }).then((v) => {
-      if (cancelled) return;
-      setSystem(v === "si" || v === "us" ? v : null);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return fetchInto(
+      tryInvoke<string | null>("get_model_unit_system", {
+        projectId,
+        scenarioId: scenarioId ?? null,
+      }),
+      (v) => setSystem(v === "si" || v === "us" ? v : null),
+    );
   }, [projectId, scenarioId]);
   return system;
 }
@@ -170,13 +167,9 @@ export function useProjects(_version: number = 0): Project[] {
   useEffect(() => {
     // `_version` is a caller-controlled refetch counter.
     void _version;
-    let cancelled = false;
-    fetchProjectsShared().then((rows) => {
-      if (!cancelled && rows !== null) setProjects(rows);
+    return fetchInto(fetchProjectsShared(), (rows) => {
+      if (rows !== null) setProjects(rows);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [_version]);
 
   return projects;
