@@ -15,7 +15,7 @@ import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
 import { loadSettingsContent, whenIdle } from "./lazyChunks";
 import { startMainThreadStallWatch } from "./perfTrace";
-import type { ProjectView } from "./projectConfig";
+import { VIEW_SHORTCUTS } from "./projectConfig";
 import {
   isEditableEventTarget,
   PROJECTS_SEARCH_INPUT_ID,
@@ -78,13 +78,6 @@ const ProjectsPage = lazy(() =>
 const PAGE_ORDER: Page[] = ["home", "projects", "project"];
 
 // ⌘1–⌘4 project view shortcuts (also advertised in CommandPalette hints).
-const VIEW_SHORTCUTS: Record<string, ProjectView> = {
-  "1": "overview",
-  "2": "canvas",
-  "3": "editor",
-  "4": "analysis",
-};
-
 export function App() {
   const {
     page,

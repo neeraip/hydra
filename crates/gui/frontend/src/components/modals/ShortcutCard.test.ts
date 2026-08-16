@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { shortcutSections } from "./ShortcutCard";
+import { PROJECT_VIEWS, VIEW_SHORTCUTS } from "../../projectConfig";
+import { shortcutSections, viewRows } from "./ShortcutCard";
 
 /**
  * The card is a hand-written list sitting beside a hand-written switch of
@@ -81,5 +82,62 @@ describe("the shortcut card", () => {
     expect(combos).toContain("⌘+,");
     expect(combos).toContain("⌘+F");
     expect(combos).toContain("?");
+  });
+});
+
+/**
+ * The rows the card no longer writes by hand.
+ *
+ * Both defects these prevent were invisible for the same reason: nobody
+ * who knows a shortcut reads the card, so a wrong row survives until it
+ * misleads someone who is not in a position to notice.
+ */
+describe("the view rows", () => {
+  it("names each view as the app names it", () => {
+    // ⌘4 was captioned "Go to Analysis" after that view had been
+    // relabelled "Results" in PROJECT_VIEWS. The card and the activity
+    // bar disagreed about what one screen was called.
+    const rows = viewRows("⌘");
+    for (const r of rows) {
+      const label = r.action.replace("Go to ", "");
+      expect(PROJECT_VIEWS.map((v) => v.label)).toContain(label);
+    }
+  });
+
+  it("lists exactly the views a number key reaches", () => {
+    const digits = viewRows("⌘").map((r) => r.keys[1]);
+    expect(digits).toEqual(Object.keys(VIEW_SHORTCUTS).sort());
+  });
+
+  it("claims no shortcut for a view that has none", () => {
+    // Nothing is in that state today — every view has a key. The rule
+    // still holds the line the other way: a row the handler would ignore
+    // is the same drift as a missing one, and the Report view spent its
+    // whole life on the wrong side of it because this list was typed by
+    // hand and stopped at four.
+    const named = viewRows("⌘").map((r) => r.action);
+    const unreachable = PROJECT_VIEWS.filter(
+      (v) => !Object.values(VIEW_SHORTCUTS).includes(v.id),
+    );
+    for (const v of unreachable) {
+      expect(named).not.toContain(`Go to ${v.label}`);
+    }
+  });
+
+  it("reaches every view the activity bar draws", () => {
+    const named = viewRows("⌘").map((r) => r.action);
+    for (const v of PROJECT_VIEWS) {
+      expect(named).toContain(`Go to ${v.label}`);
+    }
+  });
+
+  it("shows no save shortcut", () => {
+    // An edit is part of the model when the operation returns, so there
+    // is nothing to save. ⌘S is swallowed to keep the browser's dialog
+    // away, and the card advertised it as an action for months after
+    // the staged editors it belonged to were deleted.
+    const combos = allRows.map((r) => combo(r.keys));
+    expect(combos).not.toContain("⌘+S");
+    expect(allRows.map((r) => r.action).join(" ")).not.toMatch(/\bSave\b/);
   });
 });

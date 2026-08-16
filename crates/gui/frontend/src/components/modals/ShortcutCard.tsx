@@ -1,3 +1,4 @@
+import { PROJECT_VIEWS, VIEW_SHORTCUTS } from "../../projectConfig";
 import { primaryModifierLabel, shiftModifierLabel } from "../../shortcuts";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
@@ -12,12 +13,34 @@ export interface ShortcutSection {
 }
 
 /**
+ * One row per view the number keys reach, named as the app names it.
+ *
+ * In digit order rather than catalog order, because the reader is
+ * scanning the keys. A view with no number key gets no row: the card
+ * says what the app listens for, and inventing a row for the Report view
+ * would be the drift this function exists to remove, pointing the other
+ * way.
+ */
+export function viewRows(modifier: string): ShortcutRow[] {
+  return Object.entries(VIEW_SHORTCUTS)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([digit, view]) => {
+      const spec = PROJECT_VIEWS.find((v) => v.id === view);
+      return spec
+        ? [{ action: `Go to ${spec.label}`, keys: [modifier, digit] }]
+        : [];
+    });
+}
+
+/**
  * Everything the card claims this app listens for.
  *
  * Separated from the component so it can be checked. It is a hand-written
  * list beside a hand-written switch of key handlers, which is a pairing
  * that drifts — and the drift is invisible, because a card is only ever
- * read by someone who does not already know the answer.
+ * read by someone who does not already know the answer. The rows that can
+ * be derived from what the app actually routes with now are, which is the
+ * only fix for that pairing rather than a warning about it.
  *
  * The modifier labels are parameters rather than being read here, so a test
  * does not depend on which platform it runs on.
@@ -33,7 +56,11 @@ export function shortcutSections(
         { action: "Command palette", keys: [modifier, "K"] },
         { action: "Settings", keys: [modifier, ","] },
         { action: "Run simulation", keys: [modifier, "R"] },
-        { action: "Save editor changes", keys: [modifier, "S"] },
+        // No save row. An edit is part of the model when the operation
+        // returns (hydra-common §4.5.5), so there is nothing to save and
+        // ⌘S is swallowed only to keep the browser's own dialog away.
+        // The card listed it for as long as the staged editors existed
+        // and for a while after they were deleted.
         { action: "Undo network edit", keys: [modifier, "Z"] },
         { action: "Redo network edit", keys: [modifier, shift, "Z"] },
         // One key, one meaning, two things to search: the projects list
@@ -51,10 +78,11 @@ export function shortcutSections(
         { action: "Fit network", keys: [modifier, "0"] },
         { action: "Toggle issues panel", keys: [modifier, shift, "M"] },
         { action: "Keyboard shortcuts", keys: ["?"] },
-        { action: "Go to Overview", keys: [modifier, "1"] },
-        { action: "Go to Canvas", keys: [modifier, "2"] },
-        { action: "Go to Editor", keys: [modifier, "3"] },
-        { action: "Go to Analysis", keys: [modifier, "4"] },
+        // Built from the map the key handler routes with and the labels
+        // the activity bar draws, so a view cannot be listed under a name
+        // it no longer answers to. It was: ⌘4 was captioned "Go to
+        // Analysis" after that view had been relabelled "Results".
+        ...viewRows(modifier),
       ],
     },
     {

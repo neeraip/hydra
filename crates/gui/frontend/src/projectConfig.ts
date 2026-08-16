@@ -57,3 +57,26 @@ export const PROJECT_VIEWS: ProjectViewSpec[] = [
   { id: "analysis", label: "Results", icon: ChartBarSquareIcon, ready: true },
   { id: "report", label: "Report", icon: DocumentTextIcon, ready: true },
 ];
+
+/**
+ * The number key that jumps to each view.
+ *
+ * Beside the view list rather than in `App.tsx`, because two places read
+ * it and they had drifted: the key handler routed ⌘4 to `analysis` while
+ * the shortcut card called that view "Analysis", a name it stopped having
+ * when it was relabelled "Results" here. A card is only ever read by
+ * someone who does not already know the answer, so a wrong row is
+ * believed.
+ *
+ * Every view in `PROJECT_VIEWS` has a key, in the order the activity bar
+ * draws them. The Report view went without one for as long as it existed,
+ * which nothing caught because the card listing these was written by hand
+ * and simply stopped at four.
+ */
+export const VIEW_SHORTCUTS: Record<string, ProjectView> = {
+  "1": "overview",
+  "2": "canvas",
+  "3": "editor",
+  "4": "analysis",
+  "5": "report",
+};
