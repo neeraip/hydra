@@ -22,6 +22,12 @@
 - [Migrating from EPANET](reference/migrating-from-epanet.md)
 - [Performance](reference/performance.md)
 
+# Urban Drainage Reference
+- [INP Format Support](reference/drainage/inp-format.md)
+- [Output Files](reference/drainage/output-files.md)
+- [Diagnostics & Errors](reference/drainage/diagnostics.md)
+- [Migrating from SWMM](reference/drainage/migrating-from-swmm.md)
+
 # SDK
 - [Overview](sdk/overview.md)
 - [Examples](sdk/examples.md)

@@ -2,6 +2,8 @@
 
 Hydra parses the EPANET `.inp` file format. This page documents which sections and keywords are supported, which are silently ignored, and where Hydra's behaviour differs from or extends the standard.
 
+> `.inp` belongs to both EPANET and SWMM. For SWMM models see [INP Format Support (Drainage)](drainage/inp-format.md).
+
 ## Supported EPANET versions
 
 **Any EPANET 2.x file.** The tables below are written against **EPANET 2.3**,
@@ -92,7 +94,7 @@ be a flawless model in the tool that owns them:
 | Surface | Behaviour |
 |---|---|
 | CLI | With engine detection (the default), a SWMM model simply routes to the [urban drainage engine](../engines.md) and runs. Forcing `--engine wds` on it produces diagnostic code `input/engine`, exit code `1`: *this is a SWMM model, not an EPANET one (it declares a `[SUBCATCHMENTS]` section)* |
-| GUI | An engine-mismatch message naming the tool and the giveaway section, pointing at the CLI — the GUI cannot edit urban drainage models yet |
+| GUI | An engine-mismatch message naming the tool and the giveaway section. When the tool's engine is GUI-openable (SWMM is: urban drainage), it says to create a project under that engine and import the file; otherwise it points at the CLI, which runs every available engine |
 | SDK | `io::ReadError::ForeignDialect { tool, section }` — matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it; `hydra_sdk::engines::route` does exactly that |
 
 ---

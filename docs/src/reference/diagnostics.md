@@ -1,6 +1,8 @@
 # Diagnostics & Errors
 
-Hydra reports problems in three ways: **exit codes** (CLI process status), **structured diagnostics** (machine-readable JSON lines on stderr), and **warnings** (non-fatal issues recorded during a run). This page catalogues each.
+Hydra reports problems in three ways: **exit codes** (CLI process status), **structured diagnostics** (machine-readable JSON lines on stderr), and **warnings** (non-fatal issues recorded during a run). This page catalogues each, for the water distribution engine.
+
+> For the drainage engine's own import and validation diagnostics see [Diagnostics & Errors (Drainage)](drainage/diagnostics.md).
 
 > **Scope.** The structured diagnostics below are emitted by the simulation
 > command (`hydra <input>`). The `hydra report` subcommand shares the same exit

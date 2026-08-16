@@ -1,6 +1,8 @@
 # Output Files
 
-Hydra produces three output files. Only one of them holds full time-series results; the other two are summaries of the same run.
+Hydra produces three output files for a water distribution run. Only one of them holds full time-series results; the other two are summaries of the same run.
+
+> For a drainage run see [Output Files (Drainage)](drainage/output-files.md), which are written in SWMM's layouts.
 
 | File | Format | Contents | Use it for |
 |---|---|---|---|
