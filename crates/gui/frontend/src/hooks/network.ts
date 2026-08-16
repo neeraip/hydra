@@ -616,6 +616,14 @@ export interface PatchElementsResult {
   errors: string[];
 }
 
+/** One field change, addressed by kind and id. */
+export interface PatchItem {
+  kind: string;
+  id: string;
+  field: string;
+  value: number | string;
+}
+
 /**
  * Apply a batch of field changes in a single backend call: one IPC round
  * trip and one `network-changed` event for the whole batch, instead of one
@@ -754,27 +762,9 @@ export async function renameElement(
   await invoke<void>("rename_element", { kind, oldId, newId });
 }
 
-export interface PatchItem {
-  kind: string;
-  id: string;
-  field: string;
-  value: number | string;
-}
-
-/**
- * Apply patches to a temporary clone of the in-memory network and return the
- * resulting INP text without mutating backend state.
- * Used by the diff preview dialog to show what the file would look like after saving.
- */
-export async function previewPatches(
-  patches: PatchItem[],
-): Promise<string | null> {
-  return tryInvokeOr<string | null>("preview_patches", { patches }, null);
-}
-
 // ── Network change events ──────────────────────────────────────────────────
 
-export const NETWORK_CHANGED_EVENT = "network-changed";
+const NETWORK_CHANGED_EVENT = "network-changed";
 
 /**
  * Delta payload of a `network-changed` event. Element-scoped edits
@@ -869,144 +859,6 @@ export function usePatterns(_version = 0): Pattern[] {
   return useVersionedRows<Pattern>("get_patterns", _version);
 }
 
-// ── Curve / pattern editor types ───────────────────────────────────────────
-
-/**
- * One sample on a curve, in the SI display units of its curve's axes.
- *
- * Named `x`/`y` because only the curve knows what they are: flow and head
- * on a pump curve, level and volume on a tank curve, a valve position and
- * a loss ratio on a PCV curve. They were `flow`/`head`, which made every
- * curve read as a pump curve and every axis label a lie for four of the
- * six kinds.
- */
-export interface CurvePoint {
-  x: number;
-  y: number;
-}
-
-/** What one axis of a curve measures, and in what — engine-authored. */
-export interface CurveAxis {
-  label: string;
-  /** §5 quantity for this axis's values; absent = unitless. */
-  quantity?: GenericQuantity;
-}
-
-interface CurveKindAxesDto {
-  kind: string;
-  axes: [CurveAxis, CurveAxis];
-}
-
-/**
- * Axes for a curve whose kind is not (yet) known, or whose engine
- * publishes none: two bare magnitudes, converted by nothing.
- *
- * Deliberately not pump-head axes. A wrong unit is worse than no unit —
- * it invites the reader to trust a number that has not been converted,
- * and this is exactly what a value typed into a not-yet-created curve
- * used to be stored as.
- */
-export const UNKNOWN_CURVE_AXES: [CurveAxis, CurveAxis] = [
-  { label: "X" },
-  { label: "Y" },
-];
-
-/**
- * The engine's curve axes by kind, keyed for lookup.
- *
- * Static per engine — a property of the domain, not of any model — so one
- * fetch serves every curve, saved or staged. Empty before it resolves, and
- * for engines whose curves this GUI does not edit.
- */
-export function useCurveAxes(
-  engineKey: string | null | undefined,
-): Record<string, [CurveAxis, CurveAxis]> {
-  const [byKind, setByKind] = useState<Record<string, [CurveAxis, CurveAxis]>>(
-    {},
-  );
-  useEffect(() => {
-    if (!engineKey) {
-      setByKind({});
-      return;
-    }
-    let cancelled = false;
-    void tryInvokeOr<CurveKindAxesDto[]>(
-      "list_curve_axes",
-      { engine: engineKey },
-      [],
-    ).then((rows) => {
-      if (cancelled) return;
-      setByKind(Object.fromEntries(rows.map((r) => [r.kind, r.axes])));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [engineKey]);
-  return byKind;
-}
-export interface PumpCurve {
-  id: string;
-  pumpId: string;
-  /**
-   * What the curve is for, as the engine classified it from the model's
-   * own references: `pump-head`, `pump-efficiency`, `tank-volume`,
-   * `gpv-headloss`, `pcv-loss-ratio`, or `generic` for one nothing
-   * references.
-   *
-   * This replaced a `curveType` field that was not a type at all — it
-   * held `single-point`/`three-point`/`multi-point`, a restatement of
-   * `points.length` under a name that read as the curve's role, while the
-   * engine's actual role travelled in the same payload and was dropped.
-   */
-  role: string;
-  points: CurvePoint[];
-  notes?: string;
-}
-export interface TimePattern {
-  id: string;
-  label: string;
-  multipliers: number[];
-  stepHours: number;
-}
-
-/** Raw curve DTO mirroring the Rust `CurveDto`. */
-interface NetworkCurveDto {
-  id: string;
-  kind: string;
-  x: number[];
-  y: number[];
-}
-
-/**
- * Returns the curves of the loaded network as `PumpCurve[]`.
- * Derives `pumpId` by cross-referencing the link list (the pump that
- * references each curve by ID). Non-pump-head curves (tank-volume, etc.)
- * are included with `pumpId = ""`.
- */
-export function useCurves(version = 0): PumpCurve[] {
-  const dtos = useVersionedRows<NetworkCurveDto>("get_curves", version);
-  const links = useLinks(version);
-
-  return useMemo<PumpCurve[]>(() => {
-    const pumpByCurveId = new Map<string, string>();
-    for (const l of links) {
-      if (l.pumpCurve) pumpByCurveId.set(l.pumpCurve, l.id);
-    }
-    return dtos.map((d) => {
-      const points: CurvePoint[] = d.x.map((x, i) => ({
-        x,
-        y: d.y[i] ?? 0,
-      }));
-      return {
-        id: d.id,
-        pumpId: pumpByCurveId.get(d.id) ?? "",
-        role: d.kind,
-        points,
-      };
-    });
-  }, [dtos, links]);
-}
-
 export function useLinksConnectedTo(nodeId: string | null | undefined) {
   const links = useLinks();
   return useMemo(
@@ -1016,81 +868,6 @@ export function useLinksConnectedTo(nodeId: string | null | undefined) {
         : [],
     [nodeId, links],
   );
-}
-
-// ── Controls & rules ────────────────────────────────────────────────────────
-
-/** Mirrors the Rust `ControlDto`. Addressed by array position — there is no
- *  natural ID for simple controls in the INP format. */
-export interface SimpleControlDto {
-  linkId: string;
-  /** "open" | "closed"; `null` when only `actionSetting` is used. */
-  actionStatus: "open" | "closed" | null;
-  /** Display-unit setting value; `null` when only `actionStatus` is used. */
-  actionSetting: number | null;
-  triggerKind: "timer" | "clocktime" | "hiLevel" | "loLevel";
-  /** Seconds — elapsed sim time for "timer", seconds-from-midnight for "clocktime". */
-  triggerSeconds: number | null;
-  /** Trigger node ID for "hiLevel"/"loLevel". */
-  triggerNodeId: string | null;
-  /** Display-unit threshold (m) for "hiLevel"/"loLevel". */
-  triggerValue: number | null;
-  enabled: boolean;
-}
-
-export type RulePremiseAttribute =
-  | "head"
-  | "pressure"
-  | "demand"
-  | "level"
-  | "flow"
-  | "status"
-  | "setting"
-  | "power"
-  | "fillTime"
-  | "drainTime"
-  | "clockTime"
-  | "time";
-export type RulePremiseOperator = "eq" | "neq" | "lt" | "gt" | "le" | "ge";
-
-/** Mirrors the Rust `RulePremiseDto`. */
-export interface RulePremiseDto {
-  object: "node" | "link" | "clock";
-  nodeId: string | null;
-  linkId: string | null;
-  attribute: RulePremiseAttribute;
-  operator: RulePremiseOperator;
-  /** Display-unit threshold; ignored when `attribute === "status"`. */
-  value: number;
-  /** Only meaningful when `attribute === "status"`. */
-  statusValue: "open" | "closed" | "active" | null;
-  connective: "and" | "or" | null;
-}
-
-/** Mirrors the Rust `RuleActionDto`. */
-export interface RuleActionDto {
-  linkId: string;
-  status: "open" | "closed" | null;
-  setting: number | null;
-}
-
-/** Mirrors the Rust `RuleDto`. `name` is a display-only label ("R1", "R2", …)
- *  synthesised from array position — rule-based controls have no persisted
- *  name in the engine's data model. Addressed by array position. */
-export interface RuleDto {
-  name: string;
-  priority: number;
-  premises: RulePremiseDto[];
-  thenActions: RuleActionDto[];
-  elseActions: RuleActionDto[];
-}
-
-export function useControls(version = 0): SimpleControlDto[] {
-  return useVersionedRows<SimpleControlDto>("get_controls", version);
-}
-
-export function useRules(version = 0): RuleDto[] {
-  return useVersionedRows<RuleDto>("get_rules", version);
 }
 
 /** Return the loaded network's `[TITLE]` lines (empty outside Tauri or when
@@ -1445,7 +1222,7 @@ export interface InletCoupling {
 }
 
 /** Inlet couplings for a target; empty for engines that have none. */
-export async function getInletCouplings(
+async function getInletCouplings(
   projectId: string,
   scenarioId?: string | null,
 ): Promise<InletCoupling[]> {
@@ -1565,7 +1342,7 @@ const EMPTY_KIND_ELEMENTS: KindElements = {
   ends: [],
 };
 
-export async function getKindElements(
+async function getKindElements(
   projectId: string,
   scenarioId: string | null | undefined,
   kind: string,
@@ -1619,7 +1396,7 @@ const EMPTY_DETAIL: CollectionDetail = {
   editable: false,
 };
 
-export async function getCollectionDetail(
+async function getCollectionDetail(
   projectId: string,
   scenarioId: string | null | undefined,
   kind: string,
@@ -1670,7 +1447,7 @@ export function useCollectionDetail(
 }
 
 /** How many elements each declared kind holds, keyed by kind id. */
-export async function getKindCounts(
+async function getKindCounts(
   projectId: string,
   scenarioId: string | null | undefined,
 ): Promise<Record<string, number>> {

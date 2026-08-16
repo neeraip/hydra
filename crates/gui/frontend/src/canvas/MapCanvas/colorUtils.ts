@@ -159,7 +159,7 @@ export function verdictCss(v: Verdict): string {
 }
 
 /** Under-service is the failure; over-pressure is worth noticing. */
-export function pressureVerdict(
+function pressureVerdict(
   p: number,
   bands: { low: number; required: number; high: number },
 ): Verdict {
@@ -170,7 +170,7 @@ export function pressureVerdict(
 }
 
 /** Stagnation is worth noticing; scour and headloss are the failure. */
-export function velocityVerdict(
+function velocityVerdict(
   v: number,
   bands: { low: number; target: number; high: number },
 ): Verdict {
@@ -386,7 +386,7 @@ export const BAND_STEPS: readonly [number, number, number][] = [
  * spaced around the wheel and avoid the pure red/green pairing that
  * colour-vision deficiency collapses.
  */
-export const CATEGORY_STEPS: readonly [number, number, number][] = [
+const CATEGORY_STEPS: readonly [number, number, number][] = [
   [120, 150, 185],
   [212, 160, 23],
   [176, 106, 92],
@@ -536,7 +536,7 @@ export function flowMagnitudeRgba(
  * copy of it elsewhere is how the hover chip came to report every open link
  * as "cv".
  */
-export const STATUS_LABELS: Readonly<Record<number, string>> = {
+const STATUS_LABELS: Readonly<Record<number, string>> = {
   0: "Closed (XHead)",
   1: "Temp Closed",
   2: "Closed",

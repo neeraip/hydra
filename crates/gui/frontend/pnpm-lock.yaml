@@ -60,9 +60,6 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.7
         version: 2.5.7
-      '@esri/proj-codes':
-        specifier: ^3.7.0
-        version: 3.7.0
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.2.1(@types/node@25.9.5)(esbuild@0.27.7)(jiti@2.7.0))
@@ -401,9 +398,6 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
-
-  '@esri/proj-codes@3.7.0':
-    resolution: {integrity: sha512-xUVxFOiQrBvCO8bFjDkX4IjABkZkT5OAO3v6aP5w21ZsjLSpralvlK5hVBpyL0r1PCQjD5/tAfyHgS6cqi38Qw==}
 
   '@exodus/bytes@1.15.1':
     resolution: {integrity: sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q==}
@@ -2138,8 +2132,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.27.7':
     optional: true
-
-  '@esri/proj-codes@3.7.0': {}
 
   '@exodus/bytes@1.15.1': {}
 

@@ -109,15 +109,14 @@ export function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-export const SIM_STATE_META: Record<string, { label: string; color: string }> =
-  {
-    simulated: { label: "Simulated", color: "var(--status-success, #22c55e)" },
-    running: { label: "Running…", color: "var(--accent, #4a90d9)" },
-    queued: { label: "Queued", color: "var(--text-tertiary)" },
-    stale: { label: "Edited", color: "#f59e0b" },
-    failed: { label: "Failed", color: "var(--status-error, #ef4444)" },
-    "not-run": { label: "Not run", color: "var(--text-tertiary)" },
-  };
+const SIM_STATE_META: Record<string, { label: string; color: string }> = {
+  simulated: { label: "Simulated", color: "var(--status-success, #22c55e)" },
+  running: { label: "Running…", color: "var(--accent, #4a90d9)" },
+  queued: { label: "Queued", color: "var(--text-tertiary)" },
+  stale: { label: "Edited", color: "#f59e0b" },
+  failed: { label: "Failed", color: "var(--status-error, #ef4444)" },
+  "not-run": { label: "Not run", color: "var(--text-tertiary)" },
+};
 
 export function SimStateBadge({ state }: { state: string }) {
   const meta = SIM_STATE_META[state] ?? {
@@ -195,7 +194,7 @@ function fmtClock(seconds: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-export function stripTrailingZeros(n: number): string {
+function stripTrailingZeros(n: number): string {
   return n.toFixed(3).replace(/\.?0+$/, "");
 }
 

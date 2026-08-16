@@ -65,10 +65,6 @@ export function aspectScales(sliderValue: number): { x: number; y: number } {
 // The track arithmetic is shared with the node-size slider: same range,
 // same neutral midpoint, same inverted drag. Re-exported so callers that
 // think in aspect terms need not know where it lives.
-export {
-  clampSliderValue,
-  sliderValueFromPointer,
-  thumbOffsetPercent,
-} from "./verticalSlider";
+export { clampSliderValue, sliderValueFromPointer } from "./verticalSlider";
 
 import { clampSliderValue } from "./verticalSlider";

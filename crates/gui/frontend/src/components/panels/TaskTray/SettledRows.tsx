@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { Task } from "../../../hooks";
 import { PhaseBar } from "./RunningCard";
 
-export function formatEventTime(ms: number): string {
+function formatEventTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",

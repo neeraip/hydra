@@ -67,7 +67,7 @@ export function BlockPanel({ block }: { block: AnalysisBlock }) {
   );
 }
 
-export function FragmentBody({ fragment }: { fragment: Fragment }) {
+function FragmentBody({ fragment }: { fragment: Fragment }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {fragment.items.map((item, i) => {

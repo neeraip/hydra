@@ -48,7 +48,7 @@ import { useUnitSystem } from "../../../units";
  * an empty editable set — the headings and the add button are how the
  * first row is entered, so that table is an offer rather than a blank.
  */
-export function hasContentsToShow(detail: Detail, canWrite: boolean): boolean {
+function hasContentsToShow(detail: Detail, canWrite: boolean): boolean {
   return (
     detail.rows.length > 0 ||
     detail.lines.length > 0 ||

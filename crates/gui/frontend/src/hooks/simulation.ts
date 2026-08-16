@@ -14,7 +14,7 @@ import { invoke, tryInvokeOr } from "./ipc";
 
 // ── Simulation progress events ─────────────────────────────────────────────
 
-export const SIMULATION_PROGRESS_EVENT = "simulation_progress";
+const SIMULATION_PROGRESS_EVENT = "simulation_progress";
 
 export interface SimulationProgressEvent {
   /** The run-queue item UUID. Every run is queued, so this is always set;

@@ -48,7 +48,7 @@ import {
  */
 export type Placing = "at" | "between" | "named";
 
-export function placingOf(klass: ElementClass): Placing {
+function placingOf(klass: ElementClass): Placing {
   if (klass === "polyline") return "between";
   if (klass === "collection") return "named";
   return "at";

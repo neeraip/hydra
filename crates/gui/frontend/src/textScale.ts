@@ -13,7 +13,7 @@
  */
 
 /** Persisted alongside the other accessibility preferences in `main.tsx`. */
-export const TEXT_SCALE_KEY = "hydra2-text-scale";
+const TEXT_SCALE_KEY = "hydra2-text-scale";
 
 export interface TextScaleOption {
   value: number;

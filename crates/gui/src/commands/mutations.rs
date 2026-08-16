@@ -21,7 +21,6 @@ const NETWORK_CHANGED_EVENT: &str = "network-changed";
 
 /// Apply a single field mutation to a `Network` in place. Shared between
 /// `patch_elements` (which commits to state) and
-/// `preview_patches` (dry-run, never touches state).
 ///
 /// `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"` | `"valve"`
 /// `id`    — element ID as it appears in the INP
@@ -1793,7 +1792,7 @@ fn pattern_references(network: &hydra::Network, id: &str) -> Vec<String> {
     referenced_by
 }
 
-/// A single patch entry passed to `preview_patches`.
+/// A single patch entry passed to `patch_elements`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchItem {
@@ -1801,48 +1800,6 @@ pub struct PatchItem {
     pub id: String,
     pub field: String,
     pub value: serde_json::Value,
-}
-
-/// Apply a list of patches to a temporary clone of the in-memory network and
-/// return the resulting INP text, **without** mutating `NetworkState`.
-///
-/// Used by the "Preview changes" diff dialog so the frontend can show a diff
-/// between the on-disk file and what would be written after saving.
-#[tauri::command(async)]
-/// Return the INP text that would result from applying pending patches.
-pub fn preview_patches(
-    state: tauri::State<'_, NetworkState>,
-    patches: Vec<PatchItem>,
-) -> Result<String, String> {
-    // A genuine deep copy: the preview mutates a throwaway network and must
-    // never touch the cached one.
-    let mut network: hydra::Network = {
-        let guard = state.0.lock();
-        match &*guard {
-            NetworkStateInner::Loaded { network, .. } => (**network).clone(),
-            NetworkStateInner::LoadedUds { .. } => {
-                return Err(
-                    "This project's engine is read-only in the GUI — editing is not \
-                     available yet."
-                        .into(),
-                )
-            }
-            NetworkStateInner::Empty => return Err("no network loaded".into()),
-        }
-    };
-
-    for patch in patches {
-        apply_patch_to_network(
-            &mut network,
-            &patch.kind,
-            &patch.id,
-            &patch.field,
-            patch.value,
-        )?;
-    }
-
-    let new_bytes = hydra::write_inp(&network);
-    String::from_utf8(new_bytes).map_err(|e| e.to_string())
 }
 
 /// One finding returned by `validate_network`.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export const inputStyle: React.CSSProperties = {
+const inputStyle: React.CSSProperties = {
   background: "var(--bg-panel)",
   border: "1px solid var(--border)",
   borderRadius: 4,

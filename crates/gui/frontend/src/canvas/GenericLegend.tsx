@@ -165,7 +165,7 @@ function LocateRow({ onLocate }: { onLocate: (which: "min" | "max") => void }) {
  * registry entry naming one variable too many should read as a shorter
  * sentence, not as an offer of something that is not there.
  */
-export function animatedVariableLabels(
+function animatedVariableLabels(
   classes: readonly { variables: readonly GenericVariable[] }[],
   appliesTo: readonly string[],
 ): string[] {

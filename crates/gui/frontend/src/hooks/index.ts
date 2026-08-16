@@ -17,40 +17,15 @@
 export type { ProjectView } from "../projectConfig";
 // Engine constants and view config.
 export { ACCENT, PROJECT_VIEWS } from "../projectConfig";
-export type {
-  Command,
-  CommandCategory,
-  Link,
-  LinkType,
-  Node,
-  NodeType,
-  Pattern,
-  Task,
-  TaskStatus,
-} from "../types";
-// Re-export pure helpers and constants — no hook needed.
-export {
-  deltaColor,
-  PRESSURE_MAX,
-  PRESSURE_MIN,
-  PRESSURE_THRESHOLD,
-  pressureColor,
-} from "../types";
+export type { Link, Node, Pattern, Task } from "../types";
 export * from "./basemapProviders";
 export * from "./criteria";
 export {
   type ElementAttributeInfo,
   type ElementClass,
   type ElementKindInfo,
-  type ElementRole,
   type EngineInfo,
-  type EngineStatus,
-  elementClassHeading,
   engineByKey,
-  FALLBACK_ENGINES,
-  getElementKinds,
-  getEngines,
-  type ImportFormat,
   importExtensionLabel,
   isEngineAvailable,
   isEngineGuiOpenable,
@@ -60,10 +35,7 @@ export {
 } from "./engines";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";
-export {
-  NetworkDataProvider,
-  useNetworkData,
-} from "./NetworkDataContext";
+export { useNetworkData } from "./NetworkDataContext";
 // Re-export so callers only need to import from the data seam.
 export { useNetworkVersion } from "./NetworkVersionContext";
 export * from "./network";

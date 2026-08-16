@@ -14,7 +14,7 @@ import type { BasemapProvider } from "../hooks/basemapProviders";
 /** Open string type: a legacy id or `provider:{providerId}:{styleId}`. */
 export type BasemapId = string;
 
-export const LEGACY_BASEMAP_IDS = ["streets", "light", "dark", "none"] as const;
+const LEGACY_BASEMAP_IDS = ["streets", "light", "dark", "none"] as const;
 export type LegacyBasemapId = (typeof LEGACY_BASEMAP_IDS)[number];
 
 export function isLegacyBasemapId(id: string): id is LegacyBasemapId {
@@ -194,7 +194,7 @@ export interface BasemapVisibility {
  * network is the first thing most people reach for, so it earns its place
  * in the picker without being asked for.
  */
-export const DEFAULT_VISIBLE_PROVIDER_STYLES: ReadonlySet<string> = new Set([
+const DEFAULT_VISIBLE_PROVIDER_STYLES: ReadonlySet<string> = new Set([
   "provider:esri:world-imagery",
 ]);
 

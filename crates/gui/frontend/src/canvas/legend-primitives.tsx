@@ -32,7 +32,7 @@ export const PICKER_BTN_STYLE: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-export const PICKER_LIST_STYLE: CSSProperties = {
+const PICKER_LIST_STYLE: CSSProperties = {
   position: "absolute",
   bottom: "calc(100% + 6px)",
   left: 0,

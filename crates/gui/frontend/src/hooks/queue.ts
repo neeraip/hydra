@@ -27,7 +27,7 @@ export interface RunQueueItem {
   error: string | null;
 }
 
-export const RUN_QUEUE_UPDATE_EVENT = "run_queue_update";
+const RUN_QUEUE_UPDATE_EVENT = "run_queue_update";
 
 /** Enqueue simulation runs for `projectId`.
  *  `targets` is a list where `null` = base model and a UUID string = scenario.

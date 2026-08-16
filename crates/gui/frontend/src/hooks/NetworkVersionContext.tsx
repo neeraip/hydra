@@ -1,9 +1,9 @@
 /**
  * Minimal context that tracks how many times the network in Tauri managed
  * state has structurally changed. `NetworkDataProvider` re-fetches the full
- * snapshot, and version-keyed hooks (`usePatterns` / `useCurves` /
- * `useControls` / `useRules`) re-fetch their rows, whenever the version
- * bumps.
+ * snapshot, and version-keyed hooks (`usePatterns`, `useKindElements`,
+ * `useKindCounts`, `useCollectionDetail`) re-fetch their rows, whenever the
+ * version bumps.
  *
  * Also tracks which scenario IDs have had their network edited since the last
  * successful simulation run, so the canvas can show a "stale results" warning.

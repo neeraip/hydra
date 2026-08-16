@@ -90,7 +90,7 @@ export function unitOf(row: Row, sys: "si" | "us"): string {
 
 /** Width of the badge lane, which every row reserves whether or not its
  *  kind has a badge to put there. */
-export const BADGE_COL_WIDTH = 28;
+const BADGE_COL_WIDTH = 28;
 
 /**
  * One row of the finder.

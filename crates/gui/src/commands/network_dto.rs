@@ -150,21 +150,6 @@ pub struct PatternDto {
     pub multipliers: Vec<f64>,
 }
 
-/// One axis of a curve: what it measures, and in what.
-///
-/// Serialize-only, like every DTO that embeds an engine `QuantityDescriptor`
-/// (the descriptor is authored by the engine and only ever travels outward).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CurveAxisDto {
-    /// Human label for this axis, e.g. "Flow" or "Surface area".
-    pub label: String,
-    /// §5 quantity for the values on this axis; absent = unitless, or a
-    /// curve whose purpose (and therefore units) the model never declares.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quantity: Option<hydra::common::QuantityDescriptor>,
-}
-
 /// Serialisable curve sent to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,7 +162,7 @@ pub struct CurveDto {
     /// since that is what an unrecognised purpose already means here.
     pub kind: String,
     /// x-axis values, in the SI display unit of this kind's first axis
-    /// (see `list_curve_axes`).
+    /// (see `curve_axes`).
     pub x: Vec<f64>,
     /// y-axis values, in the SI display unit of this kind's second axis.
     pub y: Vec<f64>,
@@ -835,7 +820,7 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .map(|c| {
             let kind = curve_kind_id(c.kind);
             // Values are scaled here; what the axes *are* is served once
-            // per engine by `list_curve_axes`, keyed on this `kind`, rather
+            // per engine from `curve_axes`, keyed on this `kind`, rather
             // than repeated on every curve in the network.
             let [ax, ay] = curve_axes(c.kind);
             let (xs, ys): (Vec<f64>, Vec<f64>) = c
@@ -901,15 +886,6 @@ impl CurveAxis {
         self.scale
     }
 
-    fn dto(&self) -> CurveAxisDto {
-        CurveAxisDto {
-            label: self.label.to_string(),
-            quantity: self
-                .quantity
-                .and_then(|k| hydra::descriptors::QUANTITIES.iter().find(|q| q.key == k))
-                .copied(),
-        }
-    }
 }
 
 const fn axis(label: &'static str, quantity: Option<&'static str>, scale: f64) -> CurveAxis {
@@ -920,7 +896,7 @@ const fn axis(label: &'static str, quantity: Option<&'static str>, scale: f64) -
     }
 }
 
-/// Wire id for a curve kind — the key `list_curve_axes` is looked up by.
+/// Wire id for a curve kind — the key axes are looked up by.
 pub(crate) fn curve_kind_id(kind: hydra::CurveKind) -> &'static str {
     use hydra::CurveKind::*;
     match kind {
@@ -934,48 +910,6 @@ pub(crate) fn curve_kind_id(kind: hydra::CurveKind) -> &'static str {
         // already denotes — unlabelled, unscaled axes rather than a guess.
         _ => "generic",
     }
-}
-
-/// The axes of every curve kind this engine's models can contain.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CurveKindAxesDto {
-    /// Matches `CurveDto.kind`.
-    pub kind: String,
-    pub axes: [CurveAxisDto; 2],
-}
-
-/// What each curve kind's axes are — served once per engine rather than
-/// repeated on every curve.
-///
-/// Keyed by kind because that is what determines the answer, which also
-/// means the editor can ask about a curve that does not exist yet: a curve
-/// staged in the draft has no server-side counterpart to read axes from,
-/// and hand-writing them in the frontend meant a newly created curve
-/// rendered without units and stored what the user typed as though it were
-/// already SI.
-///
-/// Empty for engines whose curves this GUI does not edit. Drainage serves
-/// its curve axes alongside the values, in `get_collection_detail` — it can,
-/// because those curves are only ever read.
-#[tauri::command]
-pub fn list_curve_axes(engine: String) -> Vec<CurveKindAxesDto> {
-    if engine != "wds" {
-        return Vec::new();
-    }
-    // The engine's own list, not a copy of it: `CurveKind` is
-    // `#[non_exhaustive]`, so a kind added there would never make the
-    // compiler look at this function.
-    hydra::CurveKind::ALL
-        .iter()
-        .map(|&k| {
-            let [x, y] = curve_axes(k);
-            CurveKindAxesDto {
-                kind: curve_kind_id(k).to_string(),
-                axes: [x.dto(), y.dto()],
-            }
-        })
-        .collect()
 }
 
 /// What a curve's two axes are, by what the curve is *for*.
@@ -1728,13 +1662,12 @@ Duration  0
 mod curve_axis_boundary {
     use super::*;
 
-    fn axes_of(kind: hydra::CurveKind) -> [CurveAxisDto; 2] {
-        let [x, y] = curve_axes(kind);
-        [x.dto(), y.dto()]
+    fn axes_of(kind: hydra::CurveKind) -> [CurveAxis; 2] {
+        curve_axes(kind)
     }
 
-    fn quantity_key(a: &CurveAxisDto) -> Option<&str> {
-        a.quantity.as_ref().map(|q| q.key)
+    fn quantity_key(a: &CurveAxis) -> Option<&str> {
+        a.quantity()
     }
 
     /// The whole point of serving axes: what a curve's numbers *are*
@@ -1805,57 +1738,31 @@ mod curve_axis_boundary {
         assert_eq!(curve_kind_id(hydra::CurveKind::Generic), "generic");
     }
 
-    /// The command the frontend actually reads: one entry per kind a model
-    /// can contain, keyed by the same string `CurveDto.kind` carries — so a
-    /// curve staged in the draft, which has no DTO at all, resolves its
-    /// axes exactly as a saved one does.
+    /// One id per kind, and the ids are distinct — which is the assertion
+    /// that actually catches a kind this crate has not labelled yet, now
+    /// that `#[non_exhaustive]` has taken that job from the compiler.
+    /// `curve_kind_id` routes an unrecognised kind to "generic", so an
+    /// unlabelled kind cannot fail a coverage loop; what it cannot do is
+    /// avoid colliding with the real generic entry.
     #[test]
-    fn the_served_table_covers_every_kind_a_curve_dto_can_report() {
-        let served = list_curve_axes("wds".into());
-        let keys: Vec<&str> = served.iter().map(|r| r.kind.as_str()).collect();
-        // Driven by the engine's list rather than a copy of it.
+    fn every_curve_kind_has_its_own_id_and_axes() {
+        let mut keys: Vec<&str> = hydra::CurveKind::ALL
+            .iter()
+            .map(|&k| curve_kind_id(k))
+            .collect();
+        // Every kind answers for its axes without panicking.
         for &kind in hydra::CurveKind::ALL {
-            let id = curve_kind_id(kind);
-            assert!(keys.contains(&id), "{id} is missing from the served table");
-        }
-
-        // And the keys are distinct — which is the assertion that actually
-        // catches a kind this crate has not labelled yet, now that
-        // `#[non_exhaustive]` has taken that job from the compiler. The
-        // loop above cannot: `curve_kind_id` routes an unrecognised kind to
-        // "generic", so an unlabelled kind would find that key already
-        // present and pass. What it cannot do is avoid colliding with the
-        // real generic entry.
-        let mut distinct = keys.clone();
-        distinct.sort_unstable();
-        distinct.dedup();
-        assert_eq!(
-            distinct.len(),
-            keys.len(),
-            "two kinds served under one key — a new `CurveKind` needs an id \
-             and axes in this crate"
-        );
-
-        // Each entry says what `curve_axes` says — one authority, two
-        // readers (the DTO's value scaling and this table's labels).
-        for row in &served {
-            let kind = hydra::CurveKind::ALL
-                .iter()
-                .find(|&&k| curve_kind_id(k) == row.kind)
-                .copied()
-                .expect("served kind is one the engine publishes");
             let [x, y] = curve_axes(kind);
-            assert_eq!(row.axes[0].label, x.dto().label);
-            assert_eq!(row.axes[1].label, y.dto().label);
+            assert!(!x.label().is_empty() && !y.label().is_empty());
         }
-    }
-
-    /// Engines whose curves this GUI does not edit publish none, and must
-    /// say so as an empty list rather than by serving wds's table.
-    #[test]
-    fn engines_without_editable_curves_serve_no_axes() {
-        assert!(list_curve_axes("uds".into()).is_empty());
-        assert!(list_curve_axes("och".into()).is_empty());
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(
+            keys.len(),
+            hydra::CurveKind::ALL.len(),
+            "two kinds share one id — a new `CurveKind` needs an id and \
+             axes in this crate"
+        );
     }
 
     /// A US reader must see the number their own file carries. An INP

@@ -118,7 +118,7 @@ export const BASE_CHIP_RADIUS = 8;
  * an accent-dim fill and accent text. Weight was a fourth signal and the
  * only one that costs layout.
  */
-export const CHIP_WEIGHT = 500;
+const CHIP_WEIGHT = 500;
 
 const STATE_COLOR: Record<ScenarioState, string> = {
   "not-run": "#6b7480",

@@ -92,10 +92,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
  * `editing` capabilities already carry, and one nothing in the app read.
  * It went on saying drainage was read-only for as long as it existed,
  * which is what an unread copy does. */
-export const GUI_OPENABLE_ENGINES: ReadonlySet<string> = new Set([
-  "wds",
-  "uds",
-]);
+const GUI_OPENABLE_ENGINES: ReadonlySet<string> = new Set(["wds", "uds"]);
 
 /** Whether this build of Hydra can simulate `engine`'s models at all
  * (registry status — not the same as being usable in this GUI). */
@@ -120,7 +117,7 @@ export function importExtensionLabel(engine: EngineInfo): string {
 // The registry is static per build — one fetch per session.
 let cached: EngineInfo[] | null = null;
 
-export async function getEngines(): Promise<EngineInfo[]> {
+async function getEngines(): Promise<EngineInfo[]> {
   if (cached) return cached;
   const engines = await tryInvokeOr<EngineInfo[]>(
     "list_engines",
@@ -193,9 +190,7 @@ export interface ElementKindInfo {
 // Static per engine — a property of the domain, not of any model.
 const kindCache = new Map<string, ElementKindInfo[]>();
 
-export async function getElementKinds(
-  engine: string,
-): Promise<ElementKindInfo[]> {
+async function getElementKinds(engine: string): Promise<ElementKindInfo[]> {
   const hit = kindCache.get(engine);
   if (hit) return hit;
   const kinds = await tryInvokeOr<ElementKindInfo[]>(

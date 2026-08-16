@@ -73,11 +73,8 @@ async function applyRecreate(spec: RecreateSpec): Promise<void> {
 }
 
 /** Apply one edit set in recreate → patch → delete order. Throws on the
- *  first failed step. Exported for tests. */
-export async function applyEditSet(
-  set: EditSet,
-  projectId: string,
-): Promise<void> {
+ *  first failed step. */
+async function applyEditSet(set: EditSet, projectId: string): Promise<void> {
   // Contract operations first: they are the ones any engine understands,
   // and an entry that mixes them with the water-distribution editor's own
   // sets does not exist — a surface captures one vocabulary or the other.

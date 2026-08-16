@@ -1,7 +1,7 @@
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import type { Task } from "../../../hooks";
 
-export function formatSimClock(s: number): string {
+function formatSimClock(s: number): string {
   const total = Math.max(0, Math.round(s));
   const hh = Math.floor(total / 3600);
   const mm = Math.floor((total % 3600) / 60);
@@ -10,13 +10,7 @@ export function formatSimClock(s: number): string {
 }
 
 /** Spinning or stopped ring icon used by running / queued tasks. */
-export function RingIcon({
-  percent,
-  color,
-}: {
-  percent: number;
-  color: string;
-}) {
+function RingIcon({ percent, color }: { percent: number; color: string }) {
   const RING_R = 6;
   const RING_C = 2 * Math.PI * RING_R;
   return (

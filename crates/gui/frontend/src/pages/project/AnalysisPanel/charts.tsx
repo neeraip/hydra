@@ -3,69 +3,8 @@
 import { type CSSProperties, useState } from "react";
 import { formatDecimal, rangeDecimals } from "../../../numberFormat";
 
-export function NoDataCard({ message }: { message: string }) {
-  return (
-    <div
-      style={{
-        background: "var(--bg-card)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        padding: 24,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "var(--text-tertiary)",
-        fontSize: "var(--text-lg)",
-      }}
-    >
-      {message}
-    </div>
-  );
-}
-
-export function AuditMetric({
-  value,
-  label,
-  valueColor,
-}: {
-  value: string;
-  label: string;
-  valueColor?: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: 7,
-        padding: "8px 10px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "var(--text-xl)",
-          fontWeight: 600,
-          color: valueColor ?? "var(--text-primary)",
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        {value}
-      </div>
-      <div
-        style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-tertiary)",
-          marginTop: 2,
-        }}
-      >
-        {label}
-      </div>
-    </div>
-  );
-}
-
 /** Format a simulation time in seconds as `h:mm` (hours may exceed 24). */
-export function formatSimTime(seconds: number): string {
+function formatSimTime(seconds: number): string {
   const totalMinutes = Math.round(seconds / 60);
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;

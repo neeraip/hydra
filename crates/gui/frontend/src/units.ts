@@ -374,25 +374,12 @@ export function formatQtyValue(
 }
 
 /**
- * Format a raw `[COORDINATES]` value for a table cell.
- *
- * Coordinates are not a unit `Quantity` — they are plain numbers in whatever
- * CRS the project declares — but they still need a fixed decimal count, or a
- * right-aligned column renders "6594418.2" next to "6594308.45" with nothing
- * lined up. Two decimals is well inside the precision of any projected CRS
- * Hydra supports and comfortably sub-millimetre for degrees.
- */
-export function formatCoordValue(v: number): string {
-  return Number.isFinite(v) ? v.toFixed(2) : "";
-}
-
-/**
  * Format a WGS84 position for display, latitude first: `42.36789, -71.05673`.
  *
  * Five decimals is ~1.1 m of latitude — finer than the click that produced the
- * point, and short enough to sit two of them side by side. `formatCoordValue`
- * cannot be reused: its two decimals are sub-millimetre in the projected CRS
- * units it was written for, but in degrees they are over a kilometre.
+ * point, and short enough to sit two of them side by side. A projected-CRS
+ * decimal count cannot be reused here: two decimals are sub-millimetre in
+ * metres, but in degrees they are over a kilometre.
  */
 export function formatLatLng(lng: number, lat: number): string {
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) return "—";

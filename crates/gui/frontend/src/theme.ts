@@ -26,7 +26,7 @@ const FALLBACK: ResolvedTheme = "dark";
 
 /** Interpret the attribute's value. Anything unexpected reads as the app's
  *  own default rather than throwing at render time. */
-export function resolvedThemeFrom(attribute: string | null): ResolvedTheme {
+function resolvedThemeFrom(attribute: string | null): ResolvedTheme {
   return attribute === "light" ? "light" : FALLBACK;
 }
 

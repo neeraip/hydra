@@ -376,7 +376,7 @@ export function RowActionsCell({
  * filter becomes the bottleneck, re-scanning the whole list on the UI
  * thread at every keystroke.
  */
-export const REF_DATALIST_MAX_OPTIONS = 5000;
+const REF_DATALIST_MAX_OPTIONS = 5000;
 
 /**
  * Whether to offer completions for this many ids.
