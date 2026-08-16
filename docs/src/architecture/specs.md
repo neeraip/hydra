@@ -9,7 +9,7 @@ implementation disagree, the spec wins.
 
 | Document | Scope |
 |---|---|
-| [`crates/common/src/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/common/src/spec.md) | Foundation contracts: engine identity, the reportable-output contract |
+| [`crates/common/src/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/common/src/spec.md) | Foundation contracts: engine identity and registry, the reportable-output contract, and the element, quantity, result-variable, criteria and editing contracts |
 | [`crates/report/src/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/report/src/spec.md) | Report templates, document model, and the txt/csv/html renderer formats |
 
 ## Water Distribution (`wds`)
@@ -20,7 +20,7 @@ implementation disagree, the spec wins.
 | [`crates/engine-wds/src/hydraulics/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/hydraulics/spec.md) | Hydraulic engine: GGA solver, sparse Cholesky, valves, demands |
 | [`crates/engine-wds/src/quality/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/quality/spec.md) | Quality engine: transport, mixing, reactions, source injection |
 | [`crates/engine-wds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/simulation/spec.md) | Simulation orchestrator: controls, timestep, accounting, session API |
-| [`crates/engine-wds/src/analysis/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/analysis/spec.md) | Post-simulation analytics: demand reliability, service compliance, distributions, the report-block catalog, and the analysis artifact |
+| [`crates/engine-wds/src/analysis/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/analysis/spec.md) | Post-simulation analytics: demand reliability, service compliance, distributions, and the report-block catalog |
 
 ## Urban Drainage (`uds`)
 
@@ -32,6 +32,7 @@ implementation disagree, the spec wins.
 | [`crates/engine-uds/src/hydraulics/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/hydraulics/spec.md) | Section geometry, dynamic-wave routing, structures, street inlets |
 | [`crates/engine-uds/src/transport/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/transport/spec.md) | Pollutant buildup, washoff, treatment, network transport |
 | [`crates/engine-uds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/simulation/spec.md) | Controls, orchestration, accounting, statistics, session API |
+| [`crates/engine-uds/src/report_blocks/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/report_blocks/spec.md) | Post-simulation analytics: report-block catalog, derivations, options |
 | [`crates/engine-uds/src/interop/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/interop/spec.md) | Predecessor file formats: INP import, interface files, OUT/RPT output, recognition |
 
 <!-- PLANNED-ENGINE: och — replace this section with the engine's real spec table as it lands. -->

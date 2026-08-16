@@ -23,9 +23,9 @@ These require a project to be open.
 | Go to Overview | ⌘1 | Ctrl+1 |
 | Go to Canvas | ⌘2 | Ctrl+2 |
 | Go to Editor | ⌘3 | Ctrl+3 |
-| Go to Analysis | ⌘4 | Ctrl+4 |
+| Go to Results | ⌘4 | Ctrl+4 |
+| Go to Report | ⌘5 | Ctrl+5 |
 | Toggle the Issues panel | ⌘⇧M | Ctrl+Shift+M |
-| Save staged editor drafts | ⌘S | Ctrl+S |
 | Undo network edit | ⌘Z | Ctrl+Z |
 | Redo network edit | ⌘⇧Z | Ctrl+Shift+Z |
 

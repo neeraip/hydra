@@ -1,7 +1,7 @@
 # GUI
 
 <!-- PLANNED-ENGINE: och — drop the last sentence when the open channel engine ships. -->
-Hydra's desktop application lets you load, run, and explore simulations without using the command line. It is the front end to every available Hydra [engine](../engines.md): water distribution models can be created and edited here, and drainage models are imported, run and explored but not yet edited. Planned engines appear in the app but cannot be used.
+Hydra's desktop application lets you load, run, and explore simulations without using the command line. It is the front end to every available Hydra [engine](../engines.md): water distribution models can be created and edited here; drainage models start from an imported SWMM model and are then edited, run and explored. Planned engines appear in the app but cannot be used.
 
 ## Download and Install
 
@@ -25,7 +25,7 @@ Download the installer for your platform from the [releases page](https://github
 
 Hydra organises work into **projects**. Each project holds a network model and one or more **scenarios** — independent parameter sets you can run and compare.
 
-1. **Create a project** — on the Projects screen, click **New Project**. The wizard asks for the **engine** first, then project details, then a review. Choosing the engine up front is deliberate: `.inp` belongs to both EPANET and SWMM, so the file extension cannot decide the modelling domain on your behalf. Planned engines are shown but cannot be selected, and read "Coming soon". <!-- PLANNED-ENGINE: och — drop the preceding sentence once every registered engine is selectable. --> With Water Distribution chosen, either import an existing EPANET `.inp` file or start from a blank network. Urban Drainage has no blank-network option, since the app does not build drainage models: choose it and import a SWMM `.inp`.
+1. **Create a project** — on the Projects screen, click **New Project**. The wizard asks for the **engine** first, then project details, then a review. Choosing the engine up front is deliberate: `.inp` belongs to both EPANET and SWMM, so the file extension cannot decide the modelling domain on your behalf. Planned engines are shown but cannot be selected, and read "Coming soon". <!-- PLANNED-ENGINE: och — drop the preceding sentence once every registered engine is selectable. --> With Water Distribution chosen, either import an existing EPANET `.inp` file or start from a blank network. Urban Drainage has no blank-network option: choose it and import a SWMM `.inp`. That is not a limit on editing — a drainage model is edited like any other once it is open — but on starting from nothing. Hydra cannot represent a network with no elements at all, so a blank project opens onto a smallest-valid starter model, and only water distribution has one.
 2. **Configure and run** — press **⌘R** (macOS) or **Ctrl+R** (Windows/Linux), or click the **Simulate** button in the scenario strip at the bottom of the screen. Select which scenarios to run and confirm.
 3. **Explore results** — after the simulation completes, the network map updates with colour-coded results. Click any node or link to inspect its time-series values (pressure, head, flow, velocity, water age, etc.). Use the timeline scrubber to step through reporting periods.
 
@@ -37,30 +37,56 @@ Beyond ⌘R (simulate), ⌘K (command palette), and ⌘Z / ⇧⌘Z (undo/redo), 
 
 | Shortcut | Action |
 |---|---|
-| ⌘1 – ⌘4 | Switch between the Overview, Canvas, Editor, and Analysis views |
+| ⌘1 – ⌘5 | Switch between the Overview, Canvas, Editor, Results, and Report views |
 | ⌘M | Toggle the geographic ↔ orthogonal (schematic) canvas layout |
 | ⌘F | Search projects |
 | ⌘⇧M | Toggle the Issues panel |
 | ⌘= / ⌘- / ⌘0 | Zoom in / zoom out / fit to view |
-| ⌘S | Save drafts |
 
 On the canvas, single-key tools select elements and add or measure geometry (select, edit, add node, add link, measure), and annotations can be placed on the map.
 
 ## Editing the Network
 
-The **Network** tab provides editable tables for junctions, reservoirs, tanks, pipes, pumps, and valves, including each pipe's initial status. Links are drawn as polylines, and their intermediate vertices are preserved and rendered on the canvas; dragging a node moves the link's endpoint while the intermediate vertices stay fixed. Committed edits can be undone and redone with **⌘Z** / **⇧⌘Z** (Ctrl+Z / Ctrl+Shift+Z).
+The **Editor** tab holds one table per kind of element, listed down a rail on the left. Both engines are edited here and the screen is the same for each: the rail, the columns, the units and which values may be changed all come from the engine itself, so a water distribution model and a drainage model are edited the same way rather than through two editors that drift apart.
+
+- **Change a value** by typing in its cell. There is no save step — an edit is part of the model when it lands, and the file on disk is written straight away.
+- **Add an element** with the **Add** button above the table. The dialog offers only the kinds that engine can create and asks for exactly what that kind needs; a kind that cannot be created yet is absent, with the reason given.
+- **Rename or delete** an element from the actions at the end of its row. A deletion says what else went with it, and one that something still points at is refused by name rather than left half-done.
+- **Undo and redo** with **⌘Z** / **⇧⌘Z** (Ctrl+Z / Ctrl+Shift+Z), or from the history control in the top bar, which lists what each step will undo.
+
+Some elements hold more than a row of values, and those appear beneath the table when the element is selected:
+
+- **Contents** — a curve's points, a pattern's multipliers, a transect's survey points.
+- **Records** — a junction's demand categories, a control measure's layers, a snow pack's surfaces, a unit hydrograph's monthly responses.
+
+On the canvas, links are drawn as polylines and their intermediate vertices are preserved; dragging a node moves the link's endpoint while the vertices stay fixed.
 
 The **Issues** panel collects network validation findings (structural problems detected before a run) and warnings produced by the last simulation run, with links to the affected elements.
-
-Dedicated editors are available for curves, patterns, and controls.
 
 If a model's coordinates use a projected coordinate system, the CRS picker on the canvas can scan the network's coordinates and suggest matching coordinate reference systems so the network lines up with the basemap. You can also define and save custom CRS entries.
 
 ## Scenarios and Comparison
 
-Scenarios let you keep independent parameter sets side by side within one project. On the canvas, a comparison overlay can display the delta between the active scenario's results and a baseline (the base model or another scenario).
+Scenarios let you keep independent parameter sets side by side within one project. Each is run on its own and its results are read on its own; there is no side-by-side overlay of one scenario against another.
 
-The **Analysis** tab includes a system summary (key metric chips), result histograms, pipe criticality, pump energy, audit panels, and tank level charts.
+The **Results** tab includes a system summary (key metric chips), result histograms, pipe criticality, pump energy, audit panels, and tank level charts.
+
+## Reports
+
+The **Report** tab builds a document from the run. A report is an ordered list of **sections**, each one a block the engine publishes — a balance, a summary table, a chart — so the sections on offer are the ones that engine can actually produce for the model you have open.
+
+Add sections from the palette. A block that cannot be produced for this scenario is shown with the reason instead of being hidden, so a section missing from your report is missing for a stated cause rather than silently. Sections can be reordered, and one that accepts options exposes them beside it.
+
+The arrangement is saved with the project as a template, so the same report can be regenerated after the next run without rebuilding it.
+
+Export from the tab in any of four formats:
+
+| Format | Use |
+|---|---|
+| `txt` | Plain text, in the layout the CLI's own report uses |
+| `csv` | The tables, for a spreadsheet |
+| `html` | A self-contained page, charts included |
+| `pdf` | The same document, paginated |
 
 ## Units
 
@@ -76,7 +102,7 @@ Hydra GUI is tuned to stay responsive on larger models.
 
 ## Exporting and Output Files
 
-Hydra saves simulation results inside the project folder on disk. To open the folder for a scenario, go to the **Scenarios** panel and click the **Open in Finder** icon next to the scenario name; it reveals the folder in your platform's file manager (Finder, Explorer, or the Linux equivalent). The folder contains `results.out` — EPANET-compatible binary output, readable by post-processing tools.
+Hydra saves simulation results inside the project folder on disk. To open the folder for a scenario, go to the **Scenarios** panel and click the **Open in Finder** icon next to the scenario name; it reveals the folder in your platform's file manager (Finder, Explorer, or the Linux equivalent). The folder contains `results.out` — binary output in the format of the model's own engine, EPANET-compatible for a water distribution model and SWMM-compatible for a drainage one, readable by post-processing tools built for either.
 
 Other formats are available from the command palette (**⌘K** / **Ctrl+K**):
 
@@ -88,7 +114,7 @@ For a plain-text `.rpt` report, run the exported `.inp` through the [CLI](cli.md
 
 ## Supported Networks
 
-Any EPANET `.inp` file works directly — any 2.x release, no conversion needed. See [INP Format Support](../reference/inp-format.md) for the full coverage list.
+Any EPANET `.inp` file works directly — any 2.x release, no conversion needed. See [INP Format Support](../reference/inp-format.md) for the full coverage list. SWMM `.inp` files open the same way, into a drainage project.
 
 ## Troubleshooting
 

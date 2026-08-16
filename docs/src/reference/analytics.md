@@ -4,9 +4,9 @@ After a run, Hydra can derive higher-level metrics from the saved results. There
 
 - **Programmatic analytics** (SDK) — two on-demand modules, *demand reliability* and *service compliance*, that read a saved `.out` file and return a structured report.
 - **Report blocks** (SDK) — a catalog of named, self-contained content blocks that render into txt/csv/html/PDF documents. Several of them are built *on* the two modules above, which is how those metrics reach a generated report. See [SDK Overview](../sdk/overview.md#reports).
-- **The GUI Analysis tab** — an interactive dashboard computed separately from the same results.
+- **The GUI Results tab** — an interactive dashboard computed separately from the same results.
 
-The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-started/cli.md#generating-a-report)) but not the two modules directly. The GUI uses report blocks for its generated reports, while its Analysis tab computes its own dashboard rather than calling the two modules.
+The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-started/cli.md#generating-a-report)) but not the two modules directly. The GUI uses report blocks for its generated reports, while its Results tab computes its own dashboard rather than calling the two modules.
 
 ---
 
@@ -149,9 +149,9 @@ The summary aggregates these across all junctions and periods and reports a **co
 
 ---
 
-## The GUI Analysis tab
+## The GUI Results tab
 
-The **Analysis** tab computes its own dashboard from the scenario's results (a histogram/summary pass, independent of the two SDK modules above). It has six panels:
+The **Results** tab computes its own dashboard from the scenario's results (a histogram/summary pass, independent of the two SDK modules above). It has six panels:
 
 | Panel | Shows |
 |---|---|
@@ -166,7 +166,7 @@ The **Analysis** tab computes its own dashboard from the scenario's results (a h
 
 ## Availability
 
-| Surface | Reliability / compliance modules | Report blocks | GUI Analysis dashboard |
+| Surface | Reliability / compliance modules | Report blocks | GUI Results dashboard |
 |---|---|---|---|
 | SDK (`hydra-sdk`) | ✅ direct | ✅ | — |
 | CLI | ✅ via report blocks | ✅ `hydra report` | — |
