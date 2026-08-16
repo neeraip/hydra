@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::network_dto::{
     format_read_error, link_to_dto, network_to_dto, node_to_dto, LinkDto, NetworkDto, NetworkState,
-    NetworkStateInner, NodeDto, M3S_TO_LPS, M_TO_MM,
+    NetworkStateInner, NodeDto, LPS_TO_M3S, MM_TO_M,
 };
 use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
@@ -55,13 +55,6 @@ pub(crate) fn apply_patch_to_network(
     field: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    // Display → internal. The engine stores SI, so lengths need no factor
-    // at all; only the two quantities whose display unit differs from the
-    // SI base unit do. These must stay the exact inverses of
-    // `network_dto`'s outbound scales.
-    const LPS_TO_M3S: f64 = 1.0 / M3S_TO_LPS;
-    const MM_TO_M: f64 = 1.0 / M_TO_MM;
-
     let as_f64 = |v: &serde_json::Value| -> Result<f64, String> {
         v.as_f64()
             .ok_or_else(|| format!("expected number, got {v}"))

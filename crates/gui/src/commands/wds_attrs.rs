@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use hydra::{LinkKind, NodeKind};
 
 use super::element_attrs::{rows_from_schema, ElementAttributeDto};
-use super::network_dto::{M3S_TO_LPS, M_TO_MM};
+use super::network_dto::{LPS_TO_M3S, M3S_TO_LPS, MM_TO_M, M_TO_MM};
 use super::uds_attrs::{AttrValue, CollectionDetailDto, KindColumnDto, KindElementsDto};
 
 /// The §4.4 property rows for one water-distribution element.
@@ -571,12 +571,6 @@ pub(crate) fn collection_detail(
         _ => CollectionDetailDto::default(),
     }
 }
-
-/// The inverses of the two factors the read applies. Named here rather
-/// than inlined so a reader can see that there are exactly two, and that
-/// each is the reciprocal of the one above.
-const LPS_TO_M3S: f64 = 1.0 / M3S_TO_LPS;
-const MM_TO_M: f64 = 1.0 / M_TO_MM;
 
 /// Write one attribute, addressed by the schema key the read served.
 ///

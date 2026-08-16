@@ -28,6 +28,12 @@ use serde::{Deserialize, Serialize};
 pub(crate) const M_TO_MM: f64 = 1000.0;
 pub(crate) const M3S_TO_LPS: f64 = 1000.0;
 
+/// The inverses, beside the factors they invert. They were derived
+/// locally in each file that wrote a value back, which is two chances to
+/// derive one of them from the wrong base once a third factor exists.
+pub(crate) const MM_TO_M: f64 = 1.0 / M_TO_MM;
+pub(crate) const LPS_TO_M3S: f64 = 1.0 / M3S_TO_LPS;
+
 // ── Network load commands ─────────────────────────────────────────────────────
 
 /// Serialisable node sent to the frontend.
@@ -885,7 +891,6 @@ impl CurveAxis {
     pub(crate) fn scale(&self) -> f64 {
         self.scale
     }
-
 }
 
 const fn axis(label: &'static str, quantity: Option<&'static str>, scale: f64) -> CurveAxis {
