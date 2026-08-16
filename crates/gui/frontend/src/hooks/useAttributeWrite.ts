@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useAppState } from "../AppContext";
+import { formatIpcError } from "./ipc";
 import { useNetworkVersion } from "./NetworkVersionContext";
 import {
   deleteElement,
@@ -181,7 +182,7 @@ export function useCollectionContentsWrite(): (
         // Rethrown without a toast: the panel shows the reason beside
         // the table it is about, and "a curve's first column has to
         // increase" says nothing useful floating in a corner.
-        showToast(typeof err === "string" ? err : String(err), "error");
+        showToast(formatIpcError(err), "error");
         throw err;
       }
       if (previous) {
@@ -263,7 +264,7 @@ export function useElementRecordsWrite(): (
       try {
         await setElementRecords(activeProjectId, elementId, set, rows, kind);
       } catch (err) {
-        showToast(typeof err === "string" ? err : String(err), "error");
+        showToast(formatIpcError(err), "error");
         throw err;
       }
       if (previous) {
@@ -313,7 +314,7 @@ export function useElementMoveWrite(): (
       try {
         await patchNodePosition(elementId, x, y);
       } catch (err) {
-        showToast(typeof err === "string" ? err : String(err), "error");
+        showToast(formatIpcError(err), "error");
         throw err;
       }
       const entry = moveEntry(elementId, before, x, y, kind);

@@ -25,6 +25,7 @@ import {
   type RecordSet,
   useReferenceIds,
 } from "../../../hooks";
+import { formatIpcError } from "../../../hooks/ipc";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { useElementRecordsWrite } from "../../../hooks/useAttributeWrite";
 import { compareNatural } from "../../../naturalOrder";
@@ -190,7 +191,7 @@ function RecordTable({
     })
       .then(() => onEdited?.())
       .catch((e: unknown) => {
-        setRefused(typeof e === "string" ? e : String(e));
+        setRefused(formatIpcError(e));
       });
   };
 

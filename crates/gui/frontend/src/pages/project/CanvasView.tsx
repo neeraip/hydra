@@ -69,6 +69,7 @@ import {
 } from "../../hooks";
 import { useCriteriaCatalog } from "../../hooks/criteriaCatalog";
 import { useCriteriaValuation } from "../../hooks/criteriaValuation";
+import { formatIpcError } from "../../hooks/ipc";
 import {
   clearStacks,
   pushUndoEntry,
@@ -2163,7 +2164,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     } catch (err) {
       // A refused delete must surface, not vanish as an unhandled
       // rejection with the element silently still present.
-      showToast(`Could not delete ${id}: ${err}`, "error");
+      showToast(`Could not delete ${id}: ${formatIpcError(err)}`, "error");
       return;
     }
     if (recreates) {

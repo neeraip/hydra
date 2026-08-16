@@ -30,6 +30,7 @@ import {
   formatGenericValue,
   genericUnitLabel,
 } from "../../../hooks";
+import { formatIpcError } from "../../../hooks/ipc";
 import { useUnitSystem } from "../../../units";
 
 /**
@@ -86,7 +87,7 @@ export function CollectionDetail({
   const send = (rows: number[][]) => {
     setRefused(null);
     return Promise.resolve(onWrite?.(rows)).catch((e: unknown) => {
-      setRefused(typeof e === "string" ? e : String(e));
+      setRefused(formatIpcError(e));
     });
   };
 

@@ -2,6 +2,7 @@ import { CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../../AppContext";
 import { engineComponents } from "../../../engine/registry";
+import { formatIpcError } from "../../../hooks/ipc";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
 import {
@@ -61,7 +62,7 @@ export function ModelTitleBlock() {
       setEditing(false);
       showToast("Model description saved", "success");
     } catch (err) {
-      showToast(`Could not save description: ${String(err)}`, "error");
+      showToast(`Could not save description: ${formatIpcError(err)}`, "error");
     }
   }
 

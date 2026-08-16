@@ -35,6 +35,7 @@ import {
   useKindElements,
   useReferenceIds,
 } from "../../../hooks";
+import { formatIpcError } from "../../../hooks/ipc";
 import { clearStacks, stackKey } from "../../../hooks/undoStack";
 import {
   useCollectionContentsWrite,
@@ -524,7 +525,10 @@ export function ElementsView() {
             if (summary) showToast(summary, "info");
             refetch();
           } catch (err) {
-            showToast(`Could not delete ${target}: ${err}`, "error");
+            showToast(
+              `Could not delete ${target}: ${formatIpcError(err)}`,
+              "error",
+            );
           }
         }}
         onCancel={() => setDeleting(null)}
