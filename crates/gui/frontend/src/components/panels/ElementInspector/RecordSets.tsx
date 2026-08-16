@@ -112,25 +112,37 @@ export const RECORD_COLUMN_WIDTH = 190;
 export const RECORD_ACTION_WIDTH = 40;
 
 /**
- * How wide a record table may grow, by what it holds.
+ * How wide a record table may grow.
  *
- * `width: 100%` alone was the right answer in the inspector rail and the
- * wrong one everywhere wider: each set divided the Editor's full panel
- * by its own column count, so a five-column surface layer and a
- * seven-column soil layer under it agreed on no column edge, the inputs
- * floated in empty space, and a row's delete icon sat at the far edge of
- * the panel, nowhere near the row it deletes.
+ * `columns` is the *panel's* widest set, not this table's own count.
+ * Sizing each table to itself put every delete icon at a different x —
+ * a five-column layer ended 380px left of a seven-column one — and a
+ * rail of actions should be a rail. Every set is laid out on the widest
+ * set's grid instead: same width, same column shares, ghost columns
+ * padding the narrower sets, and the action column at one shared right
+ * edge.
  *
- * Capping the table at one fixed share per column gives every section
- * the same rhythm — column k starts at the same x in every set — and
- * leaves narrow containers exactly as they were, because the cap only
- * binds where there is room to spare.
+ * The cap still binds only where there is room to spare: a narrow
+ * inspector rail divides its full width exactly as before.
  */
 export function recordTableMaxWidth(
   columns: number,
   editable: boolean,
 ): number {
   return columns * RECORD_COLUMN_WIDTH + (editable ? RECORD_ACTION_WIDTH : 0);
+}
+
+/** The widest set of the panel — the grid every set is laid out on. */
+export function sharedColumnCount(sets: RecordSet[]): number {
+  return Math.max(0, ...sets.map((s) => s.columns.length));
+}
+
+/** Stable keys for the ghost cells padding `set` out to the grid. */
+function ghostKeys(set: RecordSet, gridColumns: number): string[] {
+  return Array.from(
+    { length: Math.max(0, gridColumns - set.columns.length) },
+    (_, i) => `ghost-${i}`,
+  );
 }
 
 export function RecordSets({
@@ -149,6 +161,7 @@ export function RecordSets({
 }) {
   const shown = shownRecordSets(sets);
   if (shown.length === 0) return null;
+  const gridColumns = sharedColumnCount(shown);
   return (
     <>
       {shown.map((set) => (
@@ -157,6 +170,7 @@ export function RecordSets({
           elementId={elementId}
           kind={kind}
           set={set}
+          gridColumns={gridColumns}
           onEdited={onEdited}
         />
       ))}
@@ -168,11 +182,14 @@ function RecordTable({
   elementId,
   kind,
   set,
+  gridColumns,
   onEdited,
 }: {
   elementId: string;
   kind?: string;
   set: RecordSet;
+  /** The panel's widest set — see {@link sharedColumnCount}. */
+  gridColumns: number;
   onEdited?: () => void;
 }) {
   const sys = useUnitSystem();
@@ -232,9 +249,10 @@ function RecordTable({
         style={{
           width: "100%",
           // See `recordTableMaxWidth`: equal fixed columns under a cap,
-          // so every set in a wide panel shares one column rhythm and a
-          // narrow rail divides its width exactly as before.
-          maxWidth: recordTableMaxWidth(set.columns.length, set.editable),
+          // on the panel's shared grid — every set the same width, so
+          // the action rail is one vertical line; a narrow rail divides
+          // its width exactly as before.
+          maxWidth: recordTableMaxWidth(gridColumns, set.editable),
           tableLayout: "fixed",
           borderCollapse: "collapse",
           // Tightened only where the add button sits under it.
@@ -269,6 +287,11 @@ function RecordTable({
                 </th>
               );
             })}
+            {ghostKeys(set, gridColumns).map((k) => (
+              // Padding to the shared grid, so a narrower set's action
+              // column lands on the same right edge as the widest one's.
+              <th key={k} />
+            ))}
             {set.editable && <th style={{ width: RECORD_ACTION_WIDTH }} />}
           </tr>
         </thead>
@@ -324,6 +347,9 @@ function RecordTable({
                   </td>
                 );
               })}
+              {ghostKeys(set, gridColumns).map((k) => (
+                <td key={k} />
+              ))}
               {set.editable && (
                 <td style={{ padding: "0 4px" }}>
                   <ActionIcon

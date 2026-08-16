@@ -161,19 +161,48 @@ describe("RecordSets", () => {
     expect(write.mock.calls[1][2]).toEqual([[2.5, "", ""]]);
   });
 
-  it("caps its stretch so every set shares one column rhythm", () => {
-    // In the Editor's full-width panel each set divided the width by its
-    // own column count: a five-column layer and a seven-column layer
-    // agreed on no column edge, and a row's delete icon sat at the far
-    // edge of the panel. The cap binds only where there is room — a
-    // narrow inspector rail still divides its width exactly as before.
-    const { container } = renderSet();
-    const table = container.querySelector("table") as HTMLTableElement;
-    expect(table.style.maxWidth).toBe(`${recordTableMaxWidth(3, true)}px`);
-    expect(table.style.tableLayout).toBe("fixed");
-    // The action column is one icon wide; the data columns split the
-    // remainder equally, which is what makes the rhythm.
-    const actionTh = table.querySelectorAll("th")[3] as HTMLElement;
+  it("lays every set out on the widest set's grid", () => {
+    // Two failures, one cause each. Sized to the panel, each set divided
+    // the full width by its own column count and no column edge lined
+    // up. Sized to itself, each table ended at its own last column and
+    // the delete icons staggered — a five-column layer's icon sat 380px
+    // left of a seven-column one's. The widest set's grid fixes both:
+    // same width, same shares, ghost cells padding the narrower sets,
+    // one right edge for the action rail.
+    const wide: RecordSet = {
+      ...DEMANDS,
+      key: "wider",
+      label: "Wider",
+      columns: [
+        ...DEMANDS.columns,
+        { key: "a", label: "A", kind: NUMBER },
+        { key: "b", label: "B", kind: NUMBER },
+      ],
+      rows: [[1, "", "", 2, 3]],
+    };
+    const { container } = render(
+      <RecordSets elementId="J1" kind="junction" sets={[DEMANDS, wide]} />,
+    );
+    const tables = [...container.querySelectorAll("table")];
+    expect(tables).toHaveLength(2);
+    for (const t of tables) {
+      // Both capped by the five-column set, whichever holds fewer.
+      expect((t as HTMLTableElement).style.maxWidth).toBe(
+        `${recordTableMaxWidth(5, true)}px`,
+      );
+      expect((t as HTMLTableElement).style.tableLayout).toBe("fixed");
+      // Same column count too: 5 data shares (ghosts included) + action.
+      expect(t.querySelectorAll("thead th")).toHaveLength(6);
+    }
+    // The narrower set pads with empty ghost headers; the wider one
+    // needs none.
+    const empties = (t: Element) =>
+      [...t.querySelectorAll("thead th")].filter((h) => !h.textContent).length;
+    // Demands: 2 ghosts + the action column's own empty th.
+    expect(empties(tables[0])).toBe(3);
+    expect(empties(tables[1])).toBe(1);
+    // The action column is one icon wide in both.
+    const actionTh = tables[0].querySelectorAll("thead th")[5] as HTMLElement;
     expect(actionTh.style.width).toBe(`${RECORD_ACTION_WIDTH}px`);
   });
 
