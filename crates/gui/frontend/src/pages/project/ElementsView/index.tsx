@@ -45,6 +45,7 @@ import {
   useElementRemoveWrite,
 } from "../../../hooks/useAttributeWrite";
 import { useElementRename } from "../../../hooks/useElementRename";
+import { firstFreeId } from "../../../ids";
 import { compareNatural } from "../../../naturalOrder";
 import { deletionSummary } from "../CanvasView/deletionSummary";
 import {
@@ -260,15 +261,8 @@ export function ElementsView() {
 
   /** A free id for a new element of `newKind`, from the ids in view. */
   const suggestId = useCallback(
-    (newKind: string) => {
-      const prefix = newKind.slice(0, 1).toUpperCase();
-      const taken = new Set(elements.ids);
-      for (let i = 1; i <= 9999; i += 1) {
-        const candidate = `${prefix}${i}`;
-        if (!taken.has(candidate)) return candidate;
-      }
-      return `${prefix}${elements.ids.length + 1}`;
-    },
+    (newKind: string) =>
+      firstFreeId(newKind.slice(0, 1).toUpperCase(), new Set(elements.ids)),
     [elements.ids],
   );
 

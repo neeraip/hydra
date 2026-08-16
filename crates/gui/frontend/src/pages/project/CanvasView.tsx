@@ -82,6 +82,7 @@ import {
 } from "../../hooks/useAttributeWrite";
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
+import { firstFreeId } from "../../ids";
 import type { Link, Node, Region } from "../../types/network";
 import { type Quantity, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
@@ -2218,30 +2219,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Accepts the node kind ("junction" | "reservoir" | "tank") and picks the
   // appropriate prefix automatically.
   const suggestNodeId = useCallback(
-    (kind: string) => {
-      const prefix = NODE_KIND_PREFIX[kind] ?? "N";
-      const existing = new Set(allNodes.map((n) => n.id));
-      for (let i = 1; i <= 9999; i++) {
-        const id = `${prefix}${i}`;
-        if (!existing.has(id)) return id;
-      }
-      return `${prefix}${Date.now()}`;
-    },
+    (kind: string) =>
+      firstFreeId(
+        NODE_KIND_PREFIX[kind] ?? "N",
+        new Set(allNodes.map((n) => n.id)),
+      ),
     [allNodes],
   );
 
   const suggestLinkId = useCallback(
-    (kind: string) => {
-      // Same table shape as the node prefixes, and the same reason for
-      // being flat: a suggestion, with a workable fallback.
-      const prefix = LINK_KIND_PREFIX[kind] ?? "L";
-      const existing = new Set(allLinks.map((l) => l.id));
-      for (let i = 1; i <= 9999; i++) {
-        const id = `${prefix}${i}`;
-        if (!existing.has(id)) return id;
-      }
-      return `${prefix}${Date.now()}`;
-    },
+    (kind: string) =>
+      firstFreeId(
+        LINK_KIND_PREFIX[kind] ?? "L",
+        new Set(allLinks.map((l) => l.id)),
+      ),
     [allLinks],
   );
 
