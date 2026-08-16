@@ -56,6 +56,7 @@ import {
 import { CollectionDetail } from "./CollectionDetail";
 import { ElementRecordsPanel } from "./ElementRecordsPanel";
 import { railHeadings } from "./railGroups";
+import { recordsPanelElement } from "./recordsPanelElement";
 
 export function ElementsView() {
   const { project } = useActiveProject();
@@ -431,10 +432,20 @@ export function ElementsView() {
               same slot a container's contents use — a junction's demand
               categories showed in the canvas inspector and nowhere here,
               which is the same value giving two answers depending on
-              which surface you asked. */}
-          {spatial && selectedId && (
+              which surface you asked.
+
+              For a container as well as for a spatial element. The gate
+              read `spatial && selectedId`, and a control measure is a
+              collection — so its six layers, a snow pack's surfaces and
+              a unit hydrograph's responses were served by the backend,
+              had a panel able to draw them, and appeared nowhere in the
+              running app. A container has no canvas selection either,
+              which is why nothing showed them anywhere. */}
+          {recordsPanelElement(spatial, selectedId, openContainer) && (
             <ElementRecordsPanel
-              elementId={selectedId}
+              elementId={
+                recordsPanelElement(spatial, selectedId, openContainer) ?? ""
+              }
               kind={kind ?? undefined}
             />
           )}
