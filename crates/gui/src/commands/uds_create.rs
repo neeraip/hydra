@@ -374,9 +374,9 @@ pub(crate) fn curve_kind(name: &str) -> Option<hydra::uds::model::CurveKind> {
 /// The eight the reader accepts, in its own order — the same list the
 /// catalog offers, so a type this dialog shows is a type the file can be
 /// written with.
-pub(crate) fn lid_kind(name: &str) -> Option<hydra::uds::model::LidKind> {
+const LID_KINDS: [(&str, hydra::uds::model::LidKind); 8] = {
     use hydra::uds::model::LidKind as K;
-    const KINDS: [(&str, K); 8] = [
+    [
         ("BC", K::BioRetention),
         ("RG", K::RainGarden),
         ("GR", K::GreenRoof),
@@ -385,11 +385,27 @@ pub(crate) fn lid_kind(name: &str) -> Option<hydra::uds::model::LidKind> {
         ("RB", K::RainBarrel),
         ("VS", K::VegetativeSwale),
         ("RD", K::RooftopDisconnection),
-    ];
-    KINDS
+    ]
+};
+
+pub(crate) fn lid_kind(name: &str) -> Option<hydra::uds::model::LidKind> {
+    LID_KINDS
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(name))
         .map(|(_, v)| *v)
+}
+
+/// The file's keyword for a kind — the inverse of [`lid_kind`], from the
+/// same table so the two cannot drift. The read serves this, the choice
+/// offers it, and the write takes it back; the enum's own spelling
+/// ("BioRetention") is for programmers and appears nowhere a modeller
+/// reads.
+pub(crate) fn lid_keyword(kind: hydra::uds::model::LidKind) -> &'static str {
+    LID_KINDS
+        .iter()
+        .find(|(_, v)| *v == kind)
+        .map(|(k, _)| *k)
+        .unwrap_or("BC")
 }
 
 /// The `GrateKind` a keyword names, or `None` for one no reader knows.

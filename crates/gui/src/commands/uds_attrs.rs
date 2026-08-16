@@ -1040,7 +1040,14 @@ fn collection_rows(
             .map(|c| {
                 let mut m = HashMap::new();
                 if let Some(k) = &c.kind {
-                    m.insert("lidType", Text(format!("{k:?}")));
+                    // The file's keyword, not the enum's spelling: the
+                    // choice offers BC/RG/…, and a value the list does
+                    // not contain would be shown beside them as a
+                    // phantom ninth option.
+                    m.insert(
+                        "lidType",
+                        Text(super::uds_create::lid_keyword(*k).to_string()),
+                    );
                 }
                 let layers = [
                     c.surface.is_some(),
