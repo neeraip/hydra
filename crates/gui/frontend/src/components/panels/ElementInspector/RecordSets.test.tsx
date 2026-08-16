@@ -15,7 +15,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RecordSet } from "../../../hooks";
 import type { RecordWriteContext } from "../../../hooks/useAttributeWrite";
-import { RecordSets, shownRecordSets } from "./RecordSets";
+import {
+  RECORD_ACTION_WIDTH,
+  RecordSets,
+  recordTableMaxWidth,
+  shownRecordSets,
+} from "./RecordSets";
 
 const NUMBER = { type: "number", default: null, min: null, max: null } as const;
 const TEXT = { type: "text", default: null } as const;
@@ -154,6 +159,29 @@ describe("RecordSets", () => {
 
     fireEvent.click(screen.getAllByLabelText("Remove record")[0]);
     expect(write.mock.calls[1][2]).toEqual([[2.5, "", ""]]);
+  });
+
+  it("caps its stretch so every set shares one column rhythm", () => {
+    // In the Editor's full-width panel each set divided the width by its
+    // own column count: a five-column layer and a seven-column layer
+    // agreed on no column edge, and a row's delete icon sat at the far
+    // edge of the panel. The cap binds only where there is room — a
+    // narrow inspector rail still divides its width exactly as before.
+    const { container } = renderSet();
+    const table = container.querySelector("table") as HTMLTableElement;
+    expect(table.style.maxWidth).toBe(`${recordTableMaxWidth(3, true)}px`);
+    expect(table.style.tableLayout).toBe("fixed");
+    // The action column is one icon wide; the data columns split the
+    // remainder equally, which is what makes the rhythm.
+    const actionTh = table.querySelectorAll("th")[3] as HTMLElement;
+    expect(actionTh.style.width).toBe(`${RECORD_ACTION_WIDTH}px`);
+  });
+
+  it("gives a read-only set no action column and no room for one", () => {
+    const { container } = renderSet({ ...DEMANDS, editable: false });
+    const table = container.querySelector("table") as HTMLTableElement;
+    expect(table.style.maxWidth).toBe(`${recordTableMaxWidth(3, false)}px`);
+    expect(table.querySelectorAll("th")).toHaveLength(3);
   });
 
   it("stops offering a record once the set is full", () => {

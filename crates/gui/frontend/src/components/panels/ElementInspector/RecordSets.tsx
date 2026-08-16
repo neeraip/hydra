@@ -106,6 +106,33 @@ export function shownRecordSets(sets: RecordSet[]): RecordSet[] {
   return sets.filter((set) => set.rows.length > 0 || set.editable);
 }
 
+/** One column's share of a record table, and the cap on its stretch. */
+export const RECORD_COLUMN_WIDTH = 190;
+/** The action column: room for one icon button, no more. */
+export const RECORD_ACTION_WIDTH = 40;
+
+/**
+ * How wide a record table may grow, by what it holds.
+ *
+ * `width: 100%` alone was the right answer in the inspector rail and the
+ * wrong one everywhere wider: each set divided the Editor's full panel
+ * by its own column count, so a five-column surface layer and a
+ * seven-column soil layer under it agreed on no column edge, the inputs
+ * floated in empty space, and a row's delete icon sat at the far edge of
+ * the panel, nowhere near the row it deletes.
+ *
+ * Capping the table at one fixed share per column gives every section
+ * the same rhythm — column k starts at the same x in every set — and
+ * leaves narrow containers exactly as they were, because the cap only
+ * binds where there is room to spare.
+ */
+export function recordTableMaxWidth(
+  columns: number,
+  editable: boolean,
+): number {
+  return columns * RECORD_COLUMN_WIDTH + (editable ? RECORD_ACTION_WIDTH : 0);
+}
+
 export function RecordSets({
   elementId,
   kind,
@@ -204,6 +231,11 @@ function RecordTable({
       <table
         style={{
           width: "100%",
+          // See `recordTableMaxWidth`: equal fixed columns under a cap,
+          // so every set in a wide panel shares one column rhythm and a
+          // narrow rail divides its width exactly as before.
+          maxWidth: recordTableMaxWidth(set.columns.length, set.editable),
+          tableLayout: "fixed",
           borderCollapse: "collapse",
           // Tightened only where the add button sits under it.
           marginBottom: canAddRecord(set) ? 4 : 14,
@@ -222,17 +254,22 @@ function RecordTable({
                   key={c.key}
                   style={{
                     textAlign: "left",
-                    padding: "2px 0",
+                    padding: "2px 8px 2px 0",
                     fontSize: "var(--text-sm)",
                     fontWeight: 500,
                     color: "var(--text-tertiary)",
+                    // Fixed layout would otherwise clip a long heading;
+                    // wrapping keeps "Regeneration interval" readable in
+                    // its 190px share.
+                    whiteSpace: "normal",
+                    overflowWrap: "break-word",
                   }}
                 >
                   {unit ? `${c.label} (${unit})` : c.label}
                 </th>
               );
             })}
-            {set.editable && <th style={{ width: 1 }} />}
+            {set.editable && <th style={{ width: RECORD_ACTION_WIDTH }} />}
           </tr>
         </thead>
         <tbody>
