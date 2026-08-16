@@ -6,10 +6,10 @@ The GUI is engine-aware: it resolves a project's engine through `hydra-common`'s
 registry rather than assuming water distribution.
 
 <!-- PLANNED-ENGINE: och — drop this paragraph when the open channel engine ships. -->
-An engine the GUI cannot edit offers no starter network, so its projects can
-only begin from an imported model — which is how a drainage project starts
-today. A planned engine appears in the registry with no implementation behind
-it, and cannot be selected at all.
+An engine the GUI has no starter network for begins its projects from an
+imported model — which is how a drainage project starts today; once imported,
+it is edited like any other. A planned engine appears in the registry with no
+implementation behind it, and cannot be selected at all.
 
 ## Developer diagnostics
 

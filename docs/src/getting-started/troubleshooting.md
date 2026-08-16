@@ -48,9 +48,9 @@ them apart — only the parser can. Hydra detected a section the EPANET data mod
 has no concept of and stopped rather than misreading the file.
 
 Nothing is wrong with the file. It belongs to the
-[urban drainage engine](../engines.md), which the GUI cannot edit yet — run it
-with the CLI instead: `hydra run model.inp` routes it to that engine
-automatically. See
+[urban drainage engine](../engines.md): create a new urban drainage project and
+import the file there, or run it with the CLI — `hydra run model.inp` routes it
+to that engine automatically. See
 [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
 
 ### Canvas features disappear after changing basemap

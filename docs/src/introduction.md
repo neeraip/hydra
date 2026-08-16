@@ -55,7 +55,7 @@ See [INP Format Support](reference/inp-format.md) for current EPANET input cover
 
 ## Urban Drainage Engine
 
-Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model. Available from the `hydra` CLI, the Rust SDK, and the desktop app, where a drainage model is imported, run and explored but not yet edited.
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model. Available from the `hydra` CLI, the Rust SDK, and the desktop app, where a drainage model is imported, then edited, run and explored.
 
 - **Hydrology**: rainfall-runoff on subcatchments with Horton, Green-Ampt, and Curve Number infiltration; LID controls; snowmelt; groundwater; RDII unit hydrographs; climate files and the Hargreaves evaporation relation
 - **Hydraulics**: Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, and outlets; storage nodes, flow dividers, and HEC-22 street inlets

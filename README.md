@@ -19,7 +19,7 @@ Correctness is defined by conservation laws and Hydra's own convergence criteria
 <!-- PLANNED-ENGINE: och — revise the table's Status column and drop this paragraph as each engine ships. -->
 A planned engine is registered in the shared engine registry, so its key and crate name are reserved and the applications can present the full modelling scope — but it carries no implementation, and Hydra refuses to create projects or run simulations for it.
 
-Every available engine runs from all three surfaces. Model *editing* in the desktop app is water distribution only for now: a drainage project is created by importing a SWMM model, and is then browsed, simulated and read like any other.
+Every available engine runs from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model and, since GUI 2.17.0, is edited like any other — network elements, hydrology, pollutants and LID controls.
 
 **[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/)**
 
@@ -39,7 +39,7 @@ Inputs are EPANET `.inp` files (local or via HTTP URL) — any 2.x release, sinc
 
 Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
 
-Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. Available from the CLI (`hydra run model.inp` — the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, run and explored but not yet edited.
+Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. Available from the CLI (`hydra run model.inp` — the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
 
 ## Install
 

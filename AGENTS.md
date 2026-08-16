@@ -2,7 +2,7 @@
 
 Hydra is a water infrastructure simulation platform written in Rust, built as a suite of domain engines behind one shared toolchain (CLI, desktop GUI, Rust SDK).
 
-Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, and water quality on the SWMM data model; it is available from the CLI, the SDK, and the GUI, where a drainage model is imported, run and explored but not yet editable. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, and water quality on the SWMM data model; it is available from the CLI, the SDK, and the GUI, where a drainage model is imported, then edited, run and explored. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
 
 **Open channel** (`och`, HEC-RAS data model) is registered in `hydra-common`'s engine registry as `Planned` — its crate name and engine key are reserved, but it is neither specced nor implemented. Never write copy that presents Hydra as one or two engines only by design, and never write copy that implies `och` already works.
 
