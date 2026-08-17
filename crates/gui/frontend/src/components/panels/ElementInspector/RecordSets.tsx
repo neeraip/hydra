@@ -246,6 +246,7 @@ function RecordTable({
         </datalist>
       ))}
       <table
+        className="record-table"
         style={{
           width: "100%",
           // See `recordTableMaxWidth`: equal fixed columns under a cap,

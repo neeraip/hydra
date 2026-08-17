@@ -950,6 +950,18 @@ ol {
 .record-row td {
   border-top: 1px solid var(--border);
 }
+/* Horizontal inset, headers included so a label stays over its input.
+   On the table's first and last cells rather than the row, because a
+   <tr> cannot carry padding — the band spans the full width and its
+   content sits 8px inside each edge. */
+.record-table th:first-child,
+.record-table td:first-child {
+  padding-left: 8px;
+}
+.record-table th:last-child,
+.record-table td:last-child {
+  padding-right: 8px;
+}
 .record-row:hover {
   background: var(--nav-hover);
 }

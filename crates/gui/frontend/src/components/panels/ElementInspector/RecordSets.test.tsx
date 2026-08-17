@@ -154,6 +154,8 @@ describe("RecordSets", () => {
     const rows = container.querySelectorAll("tbody tr.record-row");
     expect(rows).toHaveLength(2);
     expect(rows[0].querySelector("td.record-remove")).not.toBeNull();
+    // The horizontal inset targets the table class.
+    expect(container.querySelector("table.record-table")).not.toBeNull();
   });
 
   it("adds and removes a record by writing the set that results", () => {
