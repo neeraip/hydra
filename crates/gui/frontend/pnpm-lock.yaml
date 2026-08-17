@@ -42,8 +42,8 @@ importers:
         specifier: ^6.3.0
         version: 6.3.0
       proj4:
-        specifier: ^2.20.9
-        version: 2.20.9
+        specifier: ^2.21.0
+        version: 2.21.0
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -1615,8 +1615,8 @@ packages:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
     engines: {node: ^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0}
 
-  proj4@2.20.9:
-    resolution: {integrity: sha512-GLBGqXaTcdWnppre3o1sMmy4DcMGSGq/ng+9k2MTNddarRK6SveINqlqYzi3xEXuy06ljY1TTrC6H9C4f360IQ==}
+  proj4@2.21.0:
+    resolution: {integrity: sha512-33HfDftqw8kY+Cl1dcL16SJuqTSzYxmz4re7Nmhk+fs1/N1fFrAkkF579msQTR/4fLeJVSNne8/gpoCz0fk1uw==}
     peerDependencies:
       geotiff: '*'
     peerDependenciesMeta:
@@ -1919,8 +1919,8 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
-  wkt-parser@1.5.5:
-    resolution: {integrity: sha512-/zMYi94/7D7fxcOSlVmWn6vnOMj3Gq5d1xvVjaYOS9n6h0qOJ4I7YYVxBWYcH1vq9+suhqzXkn05Yx47zQNUIA==}
+  wkt-parser@1.5.6:
+    resolution: {integrity: sha512-cqHU3lzGt/gt2OqIORP0uVy5yeOX43WABmgFkmJsmcqH3HhQo9PiJG6ftytwGKmpQUbegeX7+pQc2BuNCRfcrw==}
 
   ws@8.21.2:
     resolution: {integrity: sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==}
@@ -3464,10 +3464,10 @@ snapshots:
       ansi-styles: 5.2.0
       react-is: 17.0.2
 
-  proj4@2.20.9:
+  proj4@2.21.0:
     dependencies:
       mgrs: 1.0.0
-      wkt-parser: 1.5.5
+      wkt-parser: 1.5.6
 
   property-information@7.2.0: {}
 
@@ -3786,7 +3786,7 @@ snapshots:
       siginfo: 2.0.0
       stackback: 0.0.2
 
-  wkt-parser@1.5.5: {}
+  wkt-parser@1.5.6: {}
 
   ws@8.21.2: {}
 
