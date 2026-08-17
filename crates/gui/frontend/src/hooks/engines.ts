@@ -52,7 +52,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     pill: "WD",
     accent: "#4a90d9",
     summary:
-      "Pressurized water distribution network simulation — hydraulics, water quality, and energy on the EPANET data model.",
+      "Pressurized water distribution network simulation: hydraulics, water quality, and energy on the EPANET data model.",
     status: "available",
     import: [{ label: "EPANET input file", extensions: ["inp"] }],
   },
@@ -62,24 +62,9 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     pill: "UD",
     accent: "#7a6ff0",
     summary:
-      "Stormwater and wastewater collection network simulation — runoff, routing, and water quality on the SWMM data model.",
+      "Stormwater and wastewater collection network simulation: runoff, routing, and water quality on the SWMM data model.",
     status: "available",
     import: [{ label: "SWMM input file", extensions: ["inp"] }],
-  },
-  {
-    key: "och",
-    label: "Open Channel",
-    pill: "OC",
-    accent: "#2f9e9e",
-    summary:
-      "River and open-channel hydraulics — steady and unsteady flow on the HEC-RAS data model.",
-    status: "planned",
-    import: [
-      {
-        label: "HEC-RAS project archive",
-        extensions: ["zip", "7z", "tar", "gz", "tgz"],
-      },
-    ],
   },
 ];
 

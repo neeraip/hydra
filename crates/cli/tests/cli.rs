@@ -196,19 +196,22 @@ fn engines_lists_the_registry_with_status() {
         .assert()
         .success()
         .stdout(predicate::str::contains("wds"))
-        .stdout(predicate::str::contains("available"))
-        .stdout(predicate::str::contains("planned"));
+        .stdout(predicate::str::contains("uds"))
+        .stdout(predicate::str::contains("available"));
 }
 
 #[test]
-fn a_planned_engine_is_refused_rather_than_run() {
+fn a_withdrawn_engine_key_is_refused_as_unknown() {
+    // `och` was withdrawn from the registry (2D overland flow is planned
+    // as future uds functionality instead); the key must refuse cleanly
+    // rather than run anything.
     hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
         .arg("--engine")
         .arg("och")
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("unknown engine"));
 }
 
 #[test]
@@ -536,7 +539,7 @@ fn a_20013_results_file_is_refused_by_name() {
         .assert()
         .code(1)
         .stderr(predicate::str::contains("20013"))
-        .stderr(predicate::str::contains("re-run the simulation"));
+        .stderr(predicate::str::contains("Re-run the simulation"));
 }
 
 #[test]

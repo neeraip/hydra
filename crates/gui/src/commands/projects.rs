@@ -134,7 +134,7 @@ pub(crate) fn require_gui_openable_engine(
     key: &str,
 ) -> Result<&'static hydra::common::EngineDescriptor, String> {
     let descriptor = hydra::common::engine_by_key(key)
-        .map_err(|_| format!("unknown engine {key:?} — this build of Hydra does not have it"))?;
+        .map_err(|_| format!("unknown engine {key:?}: this build of Hydra does not have it"))?;
     if !descriptor.is_available() {
         return Err(format!(
             "{} modelling is not available yet in this build of Hydra",
@@ -143,7 +143,7 @@ pub(crate) fn require_gui_openable_engine(
     }
     if !GUI_OPENABLE_ENGINES.contains(&descriptor.key) {
         return Err(format!(
-            "{} projects are not supported in the Hydra GUI yet — run these \
+            "{} projects are not supported in the Hydra GUI yet. Run these \
              models with the hydra CLI",
             descriptor.label
         ));
@@ -1342,7 +1342,7 @@ fn scenario_source_model(
         return Err(match parent_scenario_id {
             Some(_) => "That scenario has no network to branch from".to_string(),
             None => {
-                "This project has no network yet — import or build one before creating scenarios"
+                "This project has no network yet. Import or build one before creating scenarios"
                     .to_string()
             }
         });
@@ -1730,7 +1730,7 @@ fn ensure_uds_reporting(
         widened,
         reparsed,
         Some(
-            "Selected all elements for reporting — the model selected none, \
+            "Selected all elements for reporting because the model selected none, \
              so the run would have produced no per-element results"
                 .into(),
         ),
@@ -2071,13 +2071,13 @@ pub(crate) fn attach_aux_bytes(
         .find(|s| super::aux_files::aux_basename(&s.file).eq_ignore_ascii_case(&base));
     let Some(reference) = reference else {
         return Err(format!(
-            "the model does not reference a file named {base:?} — check the \
+            "the model does not reference a file named {base:?}. Check the \
              model's [RAINGAGES] and climate declarations for the expected name"
         ));
     };
     if !reference.supported {
         return Err(format!(
-            "{} is declared by the model, but this format is not served yet — \
+            "{} is declared by the model, but this format is not served yet, so \
              attaching it would change nothing",
             reference.label
         ));
@@ -2440,7 +2440,7 @@ pub async fn export_project_inp(
             // model — but say so in the user's terms rather than handing them
             // a raw errno for a project they simply have not built yet.
             read_model_bytes(&path)?
-                .ok_or("This project has no network yet — import or build one before exporting")?
+                .ok_or("This project has no network yet. Import or build one before exporting")?
         }
     };
 
@@ -3094,20 +3094,14 @@ mod tests {
         assert!(engine_has_starter_model("wds"));
         assert!(!engine_has_starter_model("uds"));
 
-        // Registered but not openable — planned engines. The wizard disables
-        // these cards; this is the backstop for a caller that ignores the
-        // card state.
-        let err = require_gui_openable_engine("och").unwrap_err();
-        assert!(
-            err.contains("not available yet") || err.contains("not supported in the Hydra GUI"),
-            "och rejection should say why it cannot back a project, got: {err}"
-        );
-        assert!(!err.contains("unknown engine"), "got: {err}");
-
-        // Unknown: a different failure with a different remedy (upgrade).
-        let err = require_gui_openable_engine("zzz").unwrap_err();
-        assert!(err.contains("unknown engine"), "got: {err}");
-        assert!(!err.contains("not available yet"), "got: {err}");
+        // Unknown: a distinct failure whose remedy is upgrading Hydra. The
+        // withdrawn `och` key lands here too — it left the registry when 2D
+        // overland flow was re-planned as future uds functionality.
+        for key in ["zzz", "och"] {
+            let err = require_gui_openable_engine(key).unwrap_err();
+            assert!(err.contains("unknown engine"), "got: {err}");
+            assert!(!err.contains("not available yet"), "got: {err}");
+        }
     }
 
     /// The wds Editor's rail is declared by hand rather than built from

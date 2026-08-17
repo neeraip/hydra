@@ -32,14 +32,11 @@ describe("engine registry fallback", () => {
     expect(engineByKey(FALLBACK_ENGINES, "")).toBeNull();
   });
 
-  it("registers an engine this GUI cannot open, so the wizard can present it", () => {
-    // Unopenable ≠ unknown (hydra-common spec §2.3): a planned engine
-    // resolves and carries full identity, so its card can be drawn and
-    // disabled, but it must never back a project here.
-    const engine = engineByKey(FALLBACK_ENGINES, "och");
-    if (engine === null) throw new Error("och must be registered");
-    expect(engine.pill).toHaveLength(2);
-    expect(isEngineGuiOpenable(engine)).toBe(false);
+  it("treats the withdrawn och key as unknown", () => {
+    // `och` was withdrawn from the registry (2D overland flow is planned
+    // as future uds functionality instead). The key stays reserved and
+    // must resolve as unknown, never as a default engine.
+    expect(engineByKey(FALLBACK_ENGINES, "och")).toBeNull();
   });
 
   it("opens a project for every implemented engine", () => {
@@ -57,7 +54,7 @@ describe("engine registry fallback", () => {
     // The fallback stands in for `list_engines` outside a Tauri shell — a
     // divergence here would make the wizard's card order depend on how the
     // app was launched.
-    expect(FALLBACK_ENGINES.map((e) => e.key)).toEqual(["wds", "uds", "och"]);
+    expect(FALLBACK_ENGINES.map((e) => e.key)).toEqual(["wds", "uds"]);
   });
 
   it("every engine declares importable formats", () => {
@@ -76,9 +73,13 @@ describe("engine registry fallback", () => {
 
   it("renders extension hints with dots and no duplicates", () => {
     expect(importExtensionLabel(FALLBACK_ENGINES[0])).toBe(".inp");
-    const och = engineByKey(FALLBACK_ENGINES, "och");
-    if (och === null) throw new Error("och must be registered");
-    expect(importExtensionLabel(och)).toBe(".zip, .7z, .tar, .gz, .tgz");
+    // No registered engine imports more than one extension today, so the
+    // multi-extension join is pinned with a synthetic descriptor.
+    const archival = {
+      ...FALLBACK_ENGINES[0],
+      import: [{ label: "Archive", extensions: ["zip", "7z", "tar"] }],
+    };
+    expect(importExtensionLabel(archival)).toBe(".zip, .7z, .tar");
   });
 
   it("wds and uds share the .inp extension", () => {
