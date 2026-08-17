@@ -8,30 +8,43 @@
       name="description"
       content="Water infrastructure simulation, written in Rust. A suite of domain engines behind one toolchain: desktop app, CLI, and Rust SDK."
     />
+    <meta property="og:title" content="Hydra" />
+    <meta
+      property="og:description"
+      content="Water infrastructure simulation, written in Rust. EPANET-compatible water distribution and SWMM-compatible urban drainage, from one toolchain."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://neeraip.github.io/hydra/" />
     <link
       rel="icon"
-      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" fill="%234aa3ff"/></svg>'
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAARGVYSWZNTQAqAAAACAABh2kABAAAAAEAAAAaAAAAAAADoAEAAwAAAAEAAQAAoAIABAAAAAEAAABAoAMABAAAAAEAAABAAAAAAEZRQrAAAAWHSURBVHgB7VpLSCRHGP6nexwf+Lj4QkxCNhuZNahBRU8T0UNiyEEl5BQTUAg5eM1e9+xBcBESQRFCkCAbwYMYMODJ6Ekwh0gUo+4lxFWW9cGuOs505fvHnWYe3WN3TTdOZ6eg6arq//l1Pf6/q4nyJY9AHoE8Am8wAr5sfRdEPghRs5Ujww/dUejGTb5IAVBcXPx2JBL5WNO0EGnafY2oXAghJUvWdJ/PJxSic1KUvxVFWVNV9bfLy8sDWXmW+IqKit5RVeV7KH8OBkY+Zy7Y9EJVlOnCwsL3LDljlwgIfwEl/+SS00a2wMZngYA6aNe/jPQFBQUjEBwxUpijfZrf73+Y0SmrDwOBwOeg9ZLz8WmpFajqV1b9NKTDYvcW3vy/eBgX6qk7bH+ONeG+oXNWOrGo/OBV5+N2Y4f4yYqvaTSv3/5JXJBX7xgFLzEK3k9z8HUHtlLjEomEP8HeXmH81Du98KFEu77+zMxiUwA0TXxkxuS1fk2IkJnNZgD4SBPyi4eZtjvqR6R6D6oNffWb2KRGhSg3eZaxG4sOkgMfYejF7tFoNCP9bQ9ZHheOs3kLQvjNTVsFtgTAwILSmM0AsKUgkXhycpI6Ozt1AObm5mh0dDSRxHK9rq6O5ufnqaS4OJZybW1t0eDgYEy2ZSE3hIydYXEcgGAwSC0tLbqyzc1NvW63gtWb2tvbCZGoXVbL9IbzwjK3ASGyxKTe1HbSw1saPI3CV1c61fX1tV53quI4AE4Zpsvhrw0ultwHwEXnWXQeAJcBznnxro8AXshyuTgOwNHRUZK/paWlSe1cazgOwPLycpKPoVCIKisrk/pyqeE4AAsLC7Szs6P7WF9fT9PT01RTU6P3Wa1wGM1htZvF8Ujw9PSURkZGaHFxkfBNIWZ7f38/tba20urqKp2fnVEU8TyvDRzXs5N85zZfFxcXtLu7S2tra3RwcEDMOzY2Rs3NzW7ikCabgfkTl/QnsIGBAYH1AD7JlZOTEzE1NSWqq6tFWVmZWFpaEsgFBEaEjE3si62XLQUAvsSK2tpa3cCGhgYxMzMjjp7JA4FRIDo6OgRGk0BSJZAf6PJtvCBTAMwmGAPwB64PcFkuODugX548ofHHj2PDPc5YW1NLwQdBqqqqIqbhoitOmeMVFRXU29tLfX19cXY6PDykrq4u2t/fj00XiZR4C8I+xJWcqOga0itSIwBixMbGhuDhOzw8LJDLy7ytGM/Q0JC4urrS5w92l2zkmY6AdNdveqQBWF9f141eWVkRjY2N0iBMTEzosrjS3d0tK8sUAMe3wUREe3p6qK2tLbHLVn12djbpC1DitLAlKAOxqwCw3my+BxwfHxNOfHXzm5qa9LpTFdcByMbQ1CCovLzc8cAopwHIBjyrvK4DgLXLqi13QpcHwG3Y37gRgN9okjBFeJzUttPgRbCkpERniSdXeocDFXnrTJTz3o1gCDEh5j4c2N7eNqG8vZszy/HxccJPGjHivb29WMZ4O2f2FNKRIFTLRmtu8t1NJJj9e3Bfguu7gPsuWNKgJ5+p1GYARLEAnacSe7UNX/hMLe1kmP0xAwCpp2/Pqw4b2P0UfbYAIGTyqwaCPNml+ny/2zacf4vF0DkDo5urs+uy4cMrbKNB2wAwA77oTHsdAPgwJ+U8M2EUvAsEj70KAmw/xdt/IA0AM+LH4y9x4wXE9eHqtA78WfINZGZf/H7lO0jxFACw+VH2nidIwI/HX3thOsDGF3jz3yaY7lwVhxIN+H/4RyjhICmnRgRseokzh58x522dZZiGiJlgYyBwOPGppkVCONa7h5z/Jl3LxOTCMzgdRiT3FPc1xe//NRwO/2VXjRQAKUo4mjSLKFNIHW/y4mwY4TmuKS8wj0AegTwC/0cE/gOp7iTaIVMrGAAAAABJRU5ErkJggg=="
     />
+    <link rel="stylesheet" href="hydra-theme.css" />
     <link rel="stylesheet" href="site.css" />
   </head>
   <body>
     <div class="aurora" aria-hidden="true"></div>
 
-    <nav class="nav">
-      <div class="nav-inner">
-        <a class="wordmark" href="#">
-          <svg viewBox="0 0 100 100" aria-hidden="true">
-            <path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" />
-          </svg>
+    <nav class="hydra-nav">
+      <div class="hydra-nav-inner">
+        <input class="hydra-nav-toggle" type="checkbox" id="hydra-nav-toggle" aria-hidden="true" />
+        <a class="hydra-wordmark" href="#">
+          <span class="hydra-glyph" aria-hidden="true"></span><span class="hydra-sep" aria-hidden="true"></span>
           Hydra
         </a>
-        <div class="nav-links">
+        <label class="hydra-nav-burger" for="hydra-nav-toggle" aria-label="Menu">
+          <svg class="open-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          <svg class="close-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </label>
+        <div class="hydra-nav-links">
+          <a href="#why">Use cases</a>
           <a href="#engines">Engines</a>
           <a href="#toolchain">Toolchain</a>
-          <a href="docs/">Docs</a>
-          <a href="https://github.com/neeraip/hydra">GitHub</a>
+          <a href="#features">Features</a>
+          <a href="#download">Download</a>
+          <a href="#faq">FAQ</a>
+          <a class="hydra-cta" href="try/">Try it in your browser</a>
         </div>
-        <a class="button primary small" href="try/">Try it in your browser</a>
       </div>
     </nav>
 
@@ -90,7 +103,7 @@
         </p>
         <nav class="cta" aria-label="Primary">
           <a class="button primary" href="try/">Try it in your browser</a>
-          <a class="button" href="docs/">Read the docs</a>
+          <a class="ext button" href="docs/" target="_blank" rel="noopener">Read the docs</a>
           <a class="button" href="https://github.com/neeraip/hydra/releases/latest">Download</a>
         </nav>
 
@@ -109,7 +122,7 @@
       <section class="stats reveal" aria-label="At a glance">
         <div class="stat">
           <span class="stat-n">2</span>
-          <strong>engines available today</strong>
+          <strong>engines, one for each network</strong>
           <span class="stat-d">Water distribution and urban drainage, each owning its data model end to end.</span>
         </div>
         <div class="stat">
@@ -124,9 +137,54 @@
         </div>
       </section>
 
+      <section id="why" class="reveal" aria-labelledby="why-h">
+        <p class="eyebrow">Use cases</p>
+        <h2 id="why-h">What is this for?</h2>
+        <p class="section-lede">
+          Every city runs on two buried networks: one delivers drinking
+          water under pressure, the other carries rain and wastewater away.
+          Both are expensive to dig up and impossible to experiment on, so
+          engineers answer their questions on a model first. Hydra is where
+          those questions get asked: try things against the physics before
+          committing to concrete.
+        </p>
+        <div class="feature-grid">
+          <div class="feature">
+            <h3>Will pressure hold at peak demand?</h3>
+            <p>Morning showers and lawn watering pull hard on a network. Simulation shows the pressure at every junction, hour by hour, before anyone's tap runs weak.</p>
+          </div>
+          <div class="feature">
+            <h3>Can hydrants deliver during a fire?</h3>
+            <p>Fire flow is the stress test of a water network. Run it on the model instead of finding out during the emergency.</p>
+          </div>
+          <div class="feature">
+            <h3>Is the water still fresh at the edge of town?</h3>
+            <p>Water ages in pipes and disinfectant decays along the way. Trace age and chlorine all the way to the last house on the line.</p>
+          </div>
+          <div class="feature">
+            <h3>Which streets flood in a heavy storm?</h3>
+            <p>Feed a design storm to the drainage model and see where the system backs up and overflows, before it happens outside.</p>
+          </div>
+          <div class="feature">
+            <h3>Can the sewers take a new development?</h3>
+            <p>New rooftops and parking lots shed more water, faster. Check the downstream pipes before approving the plans.</p>
+          </div>
+          <div class="feature">
+            <h3>Do rain gardens pay off?</h3>
+            <p>Model green infrastructure on the catchments and read how much runoff it actually keeps out of the sewers.</p>
+          </div>
+        </div>
+        <p class="note">
+          These are the daily questions of water utilities, city public
+          works departments, engineering consultancies, and the researchers
+          and students learning the field. Hydra gives them one open,
+          modern toolchain for both buried networks.
+        </p>
+      </section>
+
       <section id="engines" class="reveal" aria-labelledby="engines-h">
         <p class="eyebrow">The engines</p>
-        <h2 id="engines-h">Two engines today, a third planned</h2>
+        <h2 id="engines-h">One engine for each network</h2>
         <p class="section-lede">
           Each engine owns its data model end to end: reader, solver, and
           report. Correctness is defined by Hydra's own convergence criteria
@@ -135,10 +193,7 @@
         </p>
         <div class="cards">
           <article class="card">
-            <div class="card-top">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C9 7.5 6 11 6 14.5a6 6 0 0 0 12 0C18 11 15 7.5 12 3z" fill="none" stroke-width="1.6" stroke-linejoin="round"/></svg>
-              <span class="pill ok"><span class="pip"></span>Available</span>
-            </div>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C9 7.5 6 11 6 14.5a6 6 0 0 0 12 0C18 11 15 7.5 12 3z" fill="none" stroke-width="1.6" stroke-linejoin="round"/></svg>
             <h3>Water distribution</h3>
             <p class="model">EPANET data model</p>
             <p>
@@ -149,10 +204,7 @@
             </p>
           </article>
           <article class="card">
-            <div class="card-top">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4.5 4.5 0 1 1 .8-8.9A5.5 5.5 0 0 1 18.6 8 3.5 3.5 0 0 1 17 15z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
-              <span class="pill ok"><span class="pip"></span>Available</span>
-            </div>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4.5 4.5 0 1 1 .8-8.9A5.5 5.5 0 0 1 18.6 8 3.5 3.5 0 0 1 17 15z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
             <h3>Urban drainage</h3>
             <p class="model">SWMM data model</p>
             <p>
@@ -161,19 +213,42 @@
               snowmelt, groundwater, pollutant transport.
             </p>
           </article>
-          <!-- PLANNED-ENGINE: och — reword this card when the open channel engine ships. -->
-          <article class="card planned">
-            <div class="card-top">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-2.5 6-2.5 9 0s6 2.5 9 0M3 14c3-2.5 6-2.5 9 0s6 2.5 9 0" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
-              <span class="pill"><span class="pip"></span>Planned</span>
-            </div>
-            <h3>Open channel</h3>
-            <p class="model">HEC-RAS data model</p>
+        </div>
+
+        <div class="anchor" id="compat">
+          <h3 class="sub-h">Bring the models you already have</h3>
+          <div class="compat-grid">
+          <div class="compat-item">
+            <h3>Reads your files</h3>
             <p>
-              The next engine on the roadmap. Its place in the toolchain is
-              reserved; it is not yet implemented.
+              Any EPANET 2.x <code>.inp</code> and SWMM <code>.inp</code>
+              file opens as-is. The engine is detected from the model's own
+              contents, never its file extension.
             </p>
-          </article>
+          </div>
+          <div class="compat-item">
+            <h3>Writes their formats</h3>
+            <p>
+              Results land as EPANET- and SWMM-compatible binary
+              <code>.out</code> files and text reports, so your existing
+              post-processing tools keep working.
+            </p>
+          </div>
+          <div class="compat-item">
+            <h3>Repairs on import</h3>
+            <p>
+              Provably safe fixes are applied automatically on import,
+              never destructively, and every repair is reported so you can
+              review what changed.
+            </p>
+          </div>
+        </div>
+        <p class="note">
+          Moving over? See
+          <a class="ext" href="docs/reference/migrating-from-epanet.html" target="_blank" rel="noopener">Migrating from EPANET</a>
+          and
+          <a class="ext" href="docs/reference/drainage/migrating-from-swmm.html" target="_blank" rel="noopener">Migrating from SWMM</a>.
+        </p>
         </div>
       </section>
 
@@ -218,6 +293,294 @@
             </p>
           </article>
         </div>
+
+        <!-- Wireframe placeholders, clearly labelled. Swap each .shot-body
+             for an <img> when real captures exist; keep the frame. -->
+        <div class="anchor" id="app">
+          <h3 class="sub-h">The desktop app, up close</h3>
+          <p class="sub-lede">
+            Import a model, edit it on the canvas, run scenarios in a
+            background queue, and play results back over the network.
+          </p>
+          <figure class="shot big">
+          <div class="shot-bar">
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+            <span class="shot-title">Hydra</span>
+          </div>
+          <div class="shot-body">
+            <svg viewBox="0 0 900 460" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+              <g class="wire">
+                <rect x="16" y="16" width="180" height="428" rx="6" />
+                <rect x="28" y="32" width="120" height="10" rx="4" />
+                <rect x="28" y="56" width="156" height="8" rx="4" />
+                <rect x="28" y="74" width="156" height="8" rx="4" />
+                <rect x="28" y="92" width="156" height="8" rx="4" />
+                <rect x="28" y="110" width="156" height="8" rx="4" />
+                <rect x="704" y="16" width="180" height="240" rx="6" />
+                <rect x="716" y="32" width="120" height="10" rx="4" />
+                <rect x="716" y="56" width="156" height="8" rx="4" />
+                <rect x="716" y="74" width="156" height="8" rx="4" />
+                <rect x="716" y="92" width="100" height="8" rx="4" />
+                <rect x="216" y="408" width="468" height="36" rx="6" />
+              </g>
+              <g class="wire-net">
+                <path d="M250 320 L340 220 L470 260 L560 160 L660 220" />
+                <path d="M340 220 L400 120 L560 160" />
+                <path d="M250 320 L400 360 L560 340 L660 220" />
+                <path d="M470 260 L400 360" />
+                <circle cx="250" cy="320" r="7" />
+                <circle cx="340" cy="220" r="7" />
+                <circle cx="470" cy="260" r="7" />
+                <circle cx="560" cy="160" r="7" />
+                <circle cx="660" cy="220" r="7" />
+                <circle cx="400" cy="120" r="7" />
+                <circle cx="400" cy="360" r="7" />
+                <circle cx="560" cy="340" r="7" />
+              </g>
+            </svg>
+            <span class="shot-soon">Screenshot coming soon</span>
+          </div>
+          <figcaption>The canvas: the network over a basemap, results played back in time.</figcaption>
+        </figure>
+        <div class="shot-row">
+          <figure class="shot">
+            <div class="shot-body small">
+              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+                <g class="wire">
+                  <rect x="14" y="14" width="372" height="24" rx="5" />
+                  <rect x="14" y="48" width="372" height="18" rx="4" />
+                  <rect x="14" y="72" width="372" height="18" rx="4" />
+                  <rect x="14" y="96" width="372" height="18" rx="4" />
+                  <rect x="14" y="120" width="372" height="18" rx="4" />
+                  <rect x="14" y="144" width="372" height="18" rx="4" />
+                  <rect x="14" y="168" width="372" height="18" rx="4" />
+                </g>
+              </svg>
+              <span class="shot-soon">Screenshot coming soon</span>
+            </div>
+            <figcaption>The editor: every element in tables built for bulk edits.</figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="shot-body small">
+              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+                <g class="wire">
+                  <rect x="14" y="14" width="200" height="10" rx="4" />
+                  <rect x="14" y="36" width="372" height="8" rx="4" />
+                  <rect x="14" y="54" width="372" height="8" rx="4" />
+                  <rect x="14" y="72" width="280" height="8" rx="4" />
+                  <rect x="24" y="110" width="30" height="76" rx="3" />
+                  <rect x="64" y="130" width="30" height="56" rx="3" />
+                  <rect x="104" y="96" width="30" height="90" rx="3" />
+                  <rect x="144" y="120" width="30" height="66" rx="3" />
+                  <rect x="184" y="104" width="30" height="82" rx="3" />
+                  <rect x="240" y="96" width="146" height="90" rx="5" />
+                </g>
+              </svg>
+              <span class="shot-soon">Screenshot coming soon</span>
+            </div>
+            <figcaption>The report builder: charts and tables from saved templates.</figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="shot-body small">
+              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+                <g class="wire">
+                  <rect x="14" y="14" width="240" height="12" rx="4" />
+                  <rect x="14" y="40" width="372" height="30" rx="5" />
+                  <rect x="14" y="78" width="372" height="30" rx="5" />
+                  <rect x="14" y="116" width="372" height="30" rx="5" />
+                  <rect x="14" y="154" width="230" height="30" rx="5" />
+                </g>
+              </svg>
+              <span class="shot-soon">Screenshot coming soon</span>
+            </div>
+            <figcaption>Scenarios: variants of one model, queued and compared.</figcaption>
+          </figure>
+        </div>
+</div>
+
+        <!-- The SDK quick start from crates/sdk/README.md, abridged. -->
+        <div class="code-split">
+          <div class="code-copy">
+            <h3>Build on Hydra</h3>
+            <p>
+              Everything the official apps do goes through
+              <code>hydra-sdk</code>, and your code gets the same contract:
+              parse a model, run it, read any result at any time.
+            </p>
+            <p>
+              <a class="ext" href="docs/sdk/overview.html" target="_blank" rel="noopener">SDK documentation</a>
+            </p>
+          </div>
+          <div class="term-wrap code-card">
+            <div class="term-bar">
+              <span class="cmd">main.rs</span>
+            </div>
+            <pre class="term code"><span><span class="kw">use</span> hydra_sdk::{io, Simulation, NodeQuantity};</span><span></span><span><span class="kw">let</span> network = io::parse(&amp;bytes)?;</span><span><span class="kw">let mut</span> sim = Simulation::create();</span><span>sim.load(network)?;</span><span>sim.run()?;</span><span></span><span><span class="kw">for</span> t <span class="kw">in</span> sim.snapshot_times() {</span><span>    <span class="kw">let</span> head = sim.get_node_result(<span class="st">"J1"</span>, NodeQuantity::Head, t)?;</span><span>    println!(<span class="st">"t={t:.0}s  head={head:.3}"</span>);</span><span>}</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="reveal" aria-labelledby="features-h">
+        <p class="eyebrow">Features</p>
+        <h2 id="features-h">Everything in the box</h2>
+        <div class="feature-grid">
+          <div class="feature">
+            <h3>Scenarios and run queue</h3>
+            <p>Variants of one model, simulated in a background queue while you keep working.</p>
+          </div>
+          <div class="feature">
+            <h3>Report builder</h3>
+            <p>Saved templates rendered to text, CSV, HTML, or PDF, with charts.</p>
+          </div>
+          <div class="feature">
+            <h3>Post-run analytics</h3>
+            <p>Demand reliability, service compliance, rankings, and distributions computed from results.</p>
+          </div>
+          <div class="feature">
+            <h3>Map canvas</h3>
+            <p>Basemap providers, a coordinate-system catalog, and timeline playback over the network.</p>
+          </div>
+          <div class="feature">
+            <h3>Controls and rules</h3>
+            <p>Simple and rule-based controls in both engines, honoring each predecessor's semantics.</p>
+          </div>
+          <div class="feature">
+            <h3>Hydrology in depth</h3>
+            <p>Infiltration families, LID controls, snowmelt, groundwater, and RDII for drainage models.</p>
+          </div>
+          <div class="feature">
+            <h3>Water quality</h3>
+            <p>Constituent transport, age, and source tracing; buildup, washoff, and treatment.</p>
+          </div>
+          <div class="feature">
+            <h3>Self-updating app</h3>
+            <p>The desktop app checks for signed updates and installs them in place.</p>
+          </div>
+          <div class="feature">
+            <h3>Open source</h3>
+            <p>AGPL-3.0, developed in the open, with a commercial license available.</p>
+          </div>
+        </div>
+
+        <div class="anchor" id="performance">
+          <h3 class="sub-h">Benchmarks, coming soon</h3>
+          <p class="sub-lede">
+            Speed is a design goal: Rust, a sparse solver, and a release
+            build tuned for it. Published numbers deserve a benchmark with
+            real standing, so we are not claiming any here yet.
+          </p>
+          <div class="perf-grid">
+          <div class="perf-card tbd" aria-hidden="true">
+            <span class="skel skel-n"></span>
+            <span class="skel skel-a"></span>
+            <span class="skel skel-b"></span>
+          </div>
+          <div class="perf-card tbd" aria-hidden="true">
+            <span class="skel skel-n"></span>
+            <span class="skel skel-a"></span>
+            <span class="skel skel-b"></span>
+          </div>
+          <div class="perf-card tbd" aria-hidden="true">
+            <span class="skel skel-n"></span>
+            <span class="skel skel-a"></span>
+            <span class="skel skel-b"></span>
+          </div>
+          <span class="tbd-pill">Benchmarks coming soon</span>
+        </div>
+        <p class="note">
+          Until then, measure it yourself: the repo ships a reproducible
+          harness (<code>just bench-report</code>) that times full runs on
+          your own machine and your own models.
+        </p>
+        </div>
+      </section>
+
+      <section id="download" class="reveal" aria-labelledby="download-h">
+        <p class="eyebrow">Download</p>
+        <h2 id="download-h">Runs where you work</h2>
+        <div class="cards">
+          <article class="card dl">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.8-2-1.6-.2-3.1 1-3.9 1s-2-1-3.4-1c-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.4-.8s2 .8 3.4.8c1.4 0 2.3-1.3 3.2-2.5 1-1.5 1.4-2.9 1.4-3-.1 0-2.8-1.1-2.8-4zM13.7 4.6c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.2 1.1.1 2.3-.6 3-1.5z"/></svg>
+            <h3>macOS</h3>
+            <p><code>.dmg</code> disk image, Apple Silicon and Intel.</p>
+          </article>
+          <article class="card dl">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM12 4.3L21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z"/></svg>
+            <h3>Windows</h3>
+            <p><code>.msi</code> installer.</p>
+          </article>
+          <article class="card dl">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-2 0-3.5 1.6-3.5 3.6 0 1.3.2 2.3-.4 3.5-.9 1.7-2.6 3.2-3.1 5.3-.4 1.7.2 3.4 1.5 4.4.9-1.5 2.3-.7 3.5-.3 1.3.4 2.7.4 4 0 1.2-.4 2.6-1.2 3.5.3 1.3-1 1.9-2.7 1.5-4.4-.5-2.1-2.2-3.6-3.1-5.3-.6-1.2-.4-2.2-.4-3.5C15.5 3.6 14 2 12 2z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10.2" cy="7.5" r=".9"/><circle cx="13.8" cy="7.5" r=".9"/></svg>
+            <h3>Linux</h3>
+            <p><code>.AppImage</code> or <code>.deb</code> package.</p>
+          </article>
+        </div>
+        <nav class="cta center" aria-label="Download">
+          <a class="button primary" href="https://github.com/neeraip/hydra/releases/latest">Download the desktop app</a>
+        </nav>
+        <p class="note center">
+          Prefer the terminal? <code>cargo install hydra-cli</code> puts the
+          same engines behind one command.
+        </p>
+      </section>
+
+      <section id="faq" class="reveal" aria-labelledby="faq-h">
+        <p class="eyebrow">FAQ</p>
+        <h2 id="faq-h">Questions, answered plainly</h2>
+        <div class="faq-list">
+          <details>
+            <summary>Does my model ever leave my machine?</summary>
+            <p>
+              No. The desktop app, the CLI, and the SDK run entirely on your
+              machine. The browser demo runs the engines in your own tab and
+              uploads nothing.
+            </p>
+          </details>
+          <details>
+            <summary>Do I have to convert my EPANET or SWMM files?</summary>
+            <p>
+              No. Hydra reads any EPANET 2.x <code>.inp</code> and SWMM
+              <code>.inp</code> file directly, and writes results in their
+              compatible binary and text formats.
+            </p>
+          </details>
+          <details>
+            <summary>Is Hydra free?</summary>
+            <p>
+              Yes: free software under AGPL-3.0. Commercial products that do
+              not want AGPL obligations can use a separate
+              <a href="https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md">commercial license</a>.
+            </p>
+          </details>
+          <details>
+            <summary>What platforms does the desktop app support?</summary>
+            <p>
+              macOS (Apple Silicon and Intel), Windows, and Linux. The CLI
+              additionally installs anywhere Rust does, with
+              <code>cargo install hydra-cli</code>.
+            </p>
+          </details>
+          <details>
+            <summary>Can the browser demo handle large models?</summary>
+            <p>
+              Small and medium models run fine. But the demo lives in one
+              browser tab, and browsers cap what a tab can hold, so a large
+              network with captured <code>.out</code> results will hit
+              limits the native builds do not have. The desktop app, the
+              CLI, and the Rust SDK stream results from disk. Use the demo
+              to try Hydra, and run big models natively.
+            </p>
+          </details>
+          <details>
+            <summary>Can I build my own tools on Hydra?</summary>
+            <p>
+              Yes. The <code>hydra-sdk</code> crate is the public API the
+              official apps are built on, and the
+              <a class="ext" href="docs/sdk/overview.html" target="_blank" rel="noopener">SDK documentation</a> covers
+              it end to end. It compiles to WebAssembly too.
+            </p>
+          </details>
+        </div>
       </section>
 
       <section class="closer reveal" aria-label="Get started">
@@ -228,32 +591,55 @@
         </p>
         <nav class="cta center" aria-label="Get started">
           <a class="button primary" href="try/">Try it in your browser</a>
-          <a class="button" href="docs/getting-started/installation.html">Install Hydra</a>
+          <a class="ext button" href="docs/getting-started/installation.html" target="_blank" rel="noopener">Install Hydra</a>
         </nav>
       </section>
     </main>
 
     <footer>
       <div class="foot-inner">
-        <div>
-          <span class="wordmark">
-            <svg viewBox="0 0 100 100" aria-hidden="true">
-              <path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" />
-            </svg>
+        <div class="foot-brand">
+          <span class="hydra-wordmark">
+            <span class="hydra-glyph" aria-hidden="true"></span><span class="hydra-sep" aria-hidden="true"></span>
             Hydra
           </span>
           <p class="dim">Water infrastructure simulation, written in Rust.</p>
         </div>
-        <div class="foot-links">
-          <a href="docs/">Documentation</a>
+        <div class="foot-col">
+          <h4>Product</h4>
           <a href="try/">Browser demo</a>
-          <a href="https://github.com/neeraip/hydra">Source</a>
-          <a href="https://github.com/neeraip/hydra/blob/main/LICENSE">AGPL-3.0</a>
+          <a href="https://github.com/neeraip/hydra/releases/latest">Download</a>
+          <a href="https://github.com/neeraip/hydra/releases">Release notes</a>
+        </div>
+        <div class="foot-col">
+          <h4>Documentation</h4>
+          <a class="ext" href="docs/getting-started/installation.html" target="_blank" rel="noopener">Getting started</a>
+          <a class="ext" href="docs/sdk/overview.html" target="_blank" rel="noopener">Rust SDK</a>
+          <a class="ext" href="docs/reference/performance.html" target="_blank" rel="noopener">Performance</a>
+          <a class="ext" href="docs/reference/migrating-from-epanet.html" target="_blank" rel="noopener">Migrating from EPANET</a>
+          <a class="ext" href="docs/reference/drainage/migrating-from-swmm.html" target="_blank" rel="noopener">Migrating from SWMM</a>
+        </div>
+        <div class="foot-col">
+          <h4>Project</h4>
+          <a href="https://github.com/neeraip/hydra">GitHub</a>
+          <a href="https://github.com/neeraip/hydra/discussions">Discussions</a>
+          <a href="https://github.com/neeraip/hydra/issues/new?template=bug_report.yml">Report a bug</a>
+          <a href="https://github.com/neeraip/hydra/blob/main/LICENSE">AGPL-3.0 license</a>
         </div>
       </div>
     </footer>
 
     <script>
+      // Close the mobile drawer when a navigation choice is made; without
+      // this the checkbox stays checked and the panel covers the section
+      // just scrolled to.
+      const navToggle = document.getElementById("hydra-nav-toggle");
+      document.querySelectorAll(".hydra-nav-links a").forEach((a) =>
+        a.addEventListener("click", () => {
+          navToggle.checked = false;
+        }),
+      );
+
       // Scroll-reveal, skipped entirely when the visitor prefers less motion.
       if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
         const io = new IntersectionObserver(

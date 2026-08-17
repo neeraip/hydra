@@ -27,7 +27,7 @@ Usage:
     python3 scripts/build-wasm-single.py [--out PATH]
 
 Expects `wasm-pack build --target no-modules` to have run already; `just
-wasm-single` does both.
+demo-single` does both.
 """
 
 from __future__ import annotations
@@ -40,8 +40,12 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-WWW = REPO / "crates" / "wasm" / "www"
+WWW = REPO / "crates" / "demo" / "www"
 PKG = WWW / "pkg-nomodules"
+# The shared web theme is sourced from site/ (its single source of truth)
+# rather than from a build-time copy in www/, so this script needs no
+# prior copy step.
+THEME = REPO / "site" / "hydra-theme.css"
 DEFAULT_OUT = WWW / "hydra.html"
 
 
@@ -62,7 +66,7 @@ def guard_script_end(js: str) -> str:
 
 
 def external_references(html: str) -> list[str]:
-    """Every `src`/`href` in `html` that points outside the file itself.
+    """Every `src`/`href` in `html` that the page needs and cannot have.
 
     This is what "portable" means, and it is the claim most easily broken by
     accident: adding a font, an icon or a stylesheet to the served page
@@ -70,7 +74,11 @@ def external_references(html: str) -> list[str]:
     machine it was mailed to. The page does not fail — it renders wrong, or
     silently misses a script, which is worse.
 
-    `data:` URIs are inside the file, and so is a bare `#` fragment.
+    `data:` URIs are inside the file, and so is a bare `#` fragment. An
+    absolute `http(s)` URL on an `<a>` is navigation, not an asset — the
+    offline page renders whole without it, and clicking it is an ordinary
+    trip to the web — so the site nav is allowed. A *relative* `<a>` is
+    still reported: from `file://` it points at nothing.
     """
     out = []
     for attr in ("src", "href"):
@@ -80,6 +88,9 @@ def external_references(html: str) -> list[str]:
             value = html[i + len(needle) : html.index('"', i + len(needle))]
             start = i + len(needle)
             if value.startswith(("data:", "#")) or not value:
+                continue
+            tag = html[html.rfind("<", 0, i) + 1 :].split(None, 1)[0]
+            if tag == "a" and value.startswith(("http://", "https://")):
                 continue
             out.append(value)
     return out
@@ -129,11 +140,12 @@ def build(out: Path) -> Path:
         if not (PKG / name).exists():
             sys.exit(
                 f"missing {PKG / name}\n"
-                "run: wasm-pack build crates/wasm --target no-modules "
+                "run: wasm-pack build crates/demo --target no-modules "
                 "--out-dir www/pkg-nomodules --out-name hydra"
             )
 
     html = (WWW / "index.html").read_text()
+    theme = THEME.read_text()
     css = (WWW / "app.css").read_text()
     app = (WWW / "app.js").read_text()
     glue = (PKG / "hydra.js").read_text()
@@ -143,6 +155,10 @@ def build(out: Path) -> Path:
     # replaced wholesale; everything between them is the same markup.
     head_open = html.index("<head>")
     body = html[head_open:]
+    body = body.replace(
+        '    <link rel="stylesheet" href="hydra-theme.css" />\n',
+        f"    <style>\n{theme}\n    </style>\n",
+    )
     body = body.replace(
         '    <link rel="stylesheet" href="app.css" />\n',
         f"    <style>\n{css}\n    </style>\n",

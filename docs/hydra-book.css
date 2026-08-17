@@ -1,0 +1,112 @@
+/* Hydra's mdbook skin: recolors the book to the shared web theme
+   (hydra-theme.css, copied beside this file by `just docs-build`) so
+   /docs reads as the same website as / and /try.
+
+   The book is pinned to the `navy` theme (book.toml sets default and
+   preferred-dark and the picker is hidden below), and navy's variables
+   are re-pointed at the shared tokens here. Written against mdbook
+   0.5.4's variables.css; the Site workflow pins that mdbook version. */
+
+.navy {
+  --bg: var(--hy-bg);
+  --fg: var(--hy-text);
+
+  --sidebar-bg: #0e1219;
+  --sidebar-fg: var(--hy-dim);
+  --sidebar-active: var(--hy-accent);
+  --sidebar-spacer: rgba(255, 255, 255, 0.07);
+
+  --scrollbar: #2b313b;
+
+  --icons: var(--hy-dim);
+  --icons-hover: var(--hy-text);
+
+  --links: var(--hy-accent);
+
+  --inline-code-color: var(--hy-text);
+
+  --theme-popup-bg: #151a22;
+  --theme-popup-border: rgba(255, 255, 255, 0.16);
+  --theme-hover: #1b212b;
+
+  --quote-bg: rgba(255, 255, 255, 0.04);
+  --quote-border: rgba(255, 255, 255, 0.1);
+
+  --table-border-color: rgba(255, 255, 255, 0.1);
+  --table-header-bg: #1a2029;
+  --table-alternate-bg: rgba(255, 255, 255, 0.025);
+
+  --searchbar-border-color: rgba(255, 255, 255, 0.16);
+  --searchbar-bg: #151a22;
+  --searchbar-fg: var(--hy-text);
+  --searchbar-shadow-color: transparent;
+  --searchresults-header-fg: var(--hy-dim);
+  --searchresults-border-color: rgba(255, 255, 255, 0.12);
+  --searchresults-li-bg: #12161d;
+  --search-mark-bg: #2f5b8a;
+
+  --overlay-bg: rgba(5, 8, 12, 0.5);
+
+  --sidebar-header-border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* One committed look: the theme picker would advertise five palettes the
+   rest of the site does not have. */
+#mdbook-theme-toggle {
+  display: none;
+}
+
+/* ── The menu bar, styled as the site nav ────────────────────────────── */
+
+#mdbook-menu-bar,
+#mdbook-menu-bar.sticky {
+  background: rgba(11, 14, 20, 0.7);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--hy-border);
+}
+
+.menu-title .hydra-wordmark {
+  font: 650 17px/1.2 var(--hy-sans);
+  color: var(--hy-text);
+}
+
+.menu-title .hydra-wordmark:hover {
+  text-decoration: none;
+}
+
+.menu-title .hydra-glyph {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+.hydra-book-links {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin: 0 8px 0 auto;
+}
+
+.hydra-book-links a {
+  font: 400 14px/1.2 var(--hy-sans);
+  color: var(--hy-dim);
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+
+.hydra-book-links a:hover {
+  color: var(--hy-text);
+  text-decoration: none;
+}
+
+/* The links sit where mdbook floats its icon buttons; keep the icons on
+   the right edge beside them. */
+#mdbook-menu-bar .right-buttons {
+  margin-left: 0;
+}
+
+@media (max-width: 640px) {
+  .hydra-book-links {
+    display: none;
+  }
+}

@@ -79,6 +79,14 @@ class ExternalReferences(unittest.TestCase):
     def test_a_fragment_is_inside_the_file(self):
         self.assertEqual(external_references('<a href="#top">top</a>'), [])
 
+    def test_an_absolute_nav_link_is_navigation_not_an_asset(self):
+        html = '<a class="x" href="https://neeraip.github.io/hydra/">Home</a>'
+        self.assertEqual(external_references(html), [])
+
+    def test_a_relative_nav_link_is_still_reported(self):
+        # From file:// a relative link points at nothing.
+        self.assertEqual(external_references('<a href="docs/">Docs</a>'), ["docs/"])
+
     def test_an_inlined_page_has_none(self):
         html = "<style>body{}</style><script>const a = 1;</script>"
         self.assertEqual(external_references(html), [])
@@ -112,7 +120,7 @@ class EmbedPayload(unittest.TestCase):
 class BuiltArtifact(unittest.TestCase):
     """Assertions against the real file, when one has been built.
 
-    Skipped rather than failed where it has not: `just wasm-single` is not
+    Skipped rather than failed where it has not: `just demo-single` is not
     part of the CI gate, and a demo artifact missing from a fresh checkout
     is the normal case rather than a fault.
     """
@@ -120,7 +128,7 @@ class BuiltArtifact(unittest.TestCase):
     def setUp(self):
         self.page = ROOT / "crates" / "wasm" / "www" / "hydra.html"
         if not self.page.exists():
-            self.skipTest("run `just wasm-single` to build the portable page")
+            self.skipTest("run `just demo-single` to build the portable page")
 
     def test_it_references_nothing_outside_itself(self):
         self.assertEqual(external_references(self.page.read_text()), [])

@@ -424,12 +424,16 @@ __screenshots__/
 .vitest-attachments/
 
 # Built by `just wasm` (wasm-pack also drops its own .gitignore inside).
-crates/wasm/www/pkg/
+# Build-time copies of site/hydra-theme.css (the source of truth)
+docs/hydra-theme.css
+crates/demo/www/hydra-theme.css
+
+crates/demo/www/pkg/
 
 # Built by `just wasm-single`.
-crates/wasm/www/pkg-nomodules/
-crates/wasm/www/hydra.html
+crates/demo/www/pkg-nomodules/
+crates/demo/www/hydra.html
 
 # The bundled Simulation1 declares SAVE HOTSTART, so running the CLI on it
 # in place writes this beside the model. A run artifact, never a source.
-crates/wasm/models/*.hsf
+crates/demo/models/*.hsf

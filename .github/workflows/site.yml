@@ -8,7 +8,7 @@ on:
     paths:
       - 'site/**'
       - 'docs/**'
-      - 'crates/wasm/**'
+      - 'crates/demo/**'
       - 'scripts/build-wasm-single.py'
       - '.github/workflows/site.yml'
   # Engine changes alter what /try computes but do not trigger a deploy —
@@ -39,8 +39,11 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.21.1
 
+      # mdBook is pinned: docs/theme/index.hbs and docs/hydra-book.css are
+      # written against this version's template and variables. Bump the pin
+      # and re-diff the theme override together.
       - name: Install mdBook and wasm-pack
-        run: cargo binstall mdbook wasm-pack --no-confirm
+        run: cargo binstall mdbook@0.5.4 wasm-pack --no-confirm
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -49,30 +52,29 @@ jobs:
           cache: false
 
       - name: Build docs
-        run: mdbook build docs
+        run: |
+          cp site/hydra-theme.css docs/hydra-theme.css
+          mdbook build docs
 
       # The browser demo, deployed at /try. Everything runs client-side —
       # a model opened there is read, solved and reported in the visitor's
-      # own tab, and never leaves it.
+      # own tab, and never leaves it. (The offline single-file build is a
+      # release asset, not part of the site; draft-release.yml builds it.)
       - name: Build the browser demo
-        run: |
-          wasm-pack build crates/wasm --target web --out-dir www/pkg --out-name hydra
-          wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
-          python3 scripts/build-wasm-single.py
+        run: wasm-pack build crates/demo --target web --out-dir www/pkg --out-name hydra
 
-      # The marketing page at /, the book at /docs, the demo at /try.
+      # The marketing page at /, the book at /docs, the demo at /try —
+      # every surface carrying site/hydra-theme.css, the shared skin.
       # `just site` assembles the identical layout locally — keep the two
-      # in agreement. The no-modules bundle exists only to assemble
-      # hydra.html and does not ship; hydra.html itself does, as the
-      # offline download the demo page offers.
+      # in agreement.
       - name: Assemble the site (just site)
         run: |
           mkdir -p _site/try
           cp -R site/. _site/
           cp -R docs/book _site/docs
-          cp crates/wasm/www/index.html crates/wasm/www/app.js crates/wasm/www/app.css \
-             crates/wasm/www/hydra.html _site/try/
-          cp -R crates/wasm/www/pkg _site/try/pkg
+          cp crates/demo/www/index.html crates/demo/www/app.js crates/demo/www/app.css \
+             site/hydra-theme.css _site/try/
+          cp -R crates/demo/www/pkg _site/try/pkg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5.0.0

@@ -9,6 +9,13 @@ src = "src"
 git-repository-url = "https://github.com/neeraip/hydra"
 git-repository-icon = "fab-github"
 edit-url-template = "https://github.com/neeraip/hydra/edit/main/docs/{path}"
+# One committed look, shared with the rest of the site: hydra-book.css
+# re-points the navy theme's variables at the shared tokens, and the
+# theme picker is hidden. hydra-theme.css is copied in from site/ by
+# `just docs-build` (gitignored here; site/ is the source of truth).
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["hydra-theme.css", "hydra-book.css"]
 # The book is deployed under /docs on the Pages site (see
 # .github/workflows/docs.yml); mdbook needs the full prefix for its 404
 # page's asset links.

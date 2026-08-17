@@ -35,7 +35,8 @@ setup-tools:
     @command -v cargo-tauri >/dev/null 2>&1 || cargo binstall tauri-cli --no-confirm
     @command -v cargo-deny >/dev/null 2>&1 || cargo binstall cargo-deny --no-confirm
     @command -v cargo-audit >/dev/null 2>&1 || cargo binstall cargo-audit --no-confirm
-    @command -v mdbook >/dev/null 2>&1 || cargo binstall mdbook --no-confirm
+    # mdbook is pinned: docs/theme/ overrides its template (see site.yml).
+    @command -v mdbook >/dev/null 2>&1 || cargo binstall mdbook@0.5.4 --no-confirm
     @command -v cargo-llvm-cov >/dev/null 2>&1 || cargo binstall cargo-llvm-cov --no-confirm
     @command -v wasm-pack >/dev/null 2>&1 || cargo binstall wasm-pack --no-confirm
 
@@ -89,7 +90,7 @@ setup-layout-tests:
 # itself), unlike the layout tests, which drive Playwright's own download.
 # Run the engines in a real browser
 test-wasm:
-    wasm-pack test --headless --chrome crates/wasm --test browser
+    wasm-pack test --headless --chrome crates/demo --test browser
 
 # Run Python script unit tests
 test-scripts:
@@ -220,7 +221,7 @@ check:
 #     Guarded by nothing yet — only running the engine in a real browser
 #     would see it.
 #
-# Checks the SDK rather than crates/wasm because the SDK is the whole engine
+# Checks the SDK rather than crates/demo because the SDK is the whole engine
 # surface, and it is the layer a third party would compile for wasm too.
 # Check that the engines still compile for WebAssembly
 check-wasm:
@@ -260,32 +261,33 @@ release-native: build-frontend
 bundle:
     cd crates/gui && cargo tauri build
 
-# ── WebAssembly ───────────────────────────────────────────────────────────────
+# ── Browser demo ──────────────────────────────────────────────────────────────
 
 # Deliberately outside `just ci`: the wasm bundle is a demo artifact, and CI
 # already covers the crate's logic through the ordinary workspace test run
-# (`crates/wasm` is a member, and every decision in it is plain Rust). What CI
-# does not cover is that the module loads in a browser — run `just wasm-serve`
+# (`crates/demo` is a member, and every decision in it is plain Rust). What CI
+# does not cover is that the module loads in a browser — run `just demo-serve`
 # for that.
 
-# Build the WebAssembly bundle into crates/wasm/www/pkg
-wasm:
-    wasm-pack build crates/wasm --target web --out-dir www/pkg --out-name hydra
+# Build the demo's WebAssembly bundle into crates/demo/www/pkg
+demo:
+    wasm-pack build crates/demo --target web --out-dir www/pkg --out-name hydra
 
 # The no-modules target rather than the web one: a file:// document has an
 # opaque origin, so it can neither import an ES module nor fetch the wasm.
 # See scripts/build-wasm-single.py for the rest of that story.
 # Build the whole demo as one portable HTML file that runs from file://
-wasm-single:
-    wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
+demo-single:
+    wasm-pack build crates/demo --target no-modules --out-dir www/pkg-nomodules --out-name hydra
     python3 scripts/build-wasm-single.py
 
 # Needs a server rather than a file:// open — ES modules and WebAssembly
 # streaming instantiation both require an http origin.
 # Build the wasm bundle and serve the demo page at http://localhost:8000
-wasm-serve: wasm
+demo-serve: demo
+    cp site/hydra-theme.css crates/demo/www/hydra-theme.css
     @echo "Hydra in the browser: http://localhost:8000"
-    cd crates/wasm/www && python3 -m http.server 8000
+    cd crates/demo/www && python3 -m http.server 8000
 
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
@@ -293,12 +295,17 @@ wasm-serve: wasm
 docs-api:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
+# The copy step first: the book links the shared web theme
+# (site/hydra-theme.css is the source of truth; docs/hydra-theme.css is
+# gitignored build input).
 # Build the mdbook docs
 docs-build:
+    cp site/hydra-theme.css docs/hydra-theme.css
     mdbook build docs
 
 # Serve the mdbook docs locally with live reload
 docs:
+    cp site/hydra-theme.css docs/hydra-theme.css
     mdbook serve docs --open
 
 # ── Site ──────────────────────────────────────────────────────────────────────
@@ -308,14 +315,14 @@ docs:
 # The workflow (.github/workflows/docs.yml) runs the same steps inline —
 # keep the two in agreement.
 # Assemble the whole Pages site into target/site
-site: docs-build wasm wasm-single
+site: docs-build demo
     rm -rf target/site
     mkdir -p target/site/try
     cp -R site/. target/site/
     cp -R docs/book target/site/docs
-    cp crates/wasm/www/index.html crates/wasm/www/app.js crates/wasm/www/app.css \
-       crates/wasm/www/hydra.html target/site/try/
-    cp -R crates/wasm/www/pkg target/site/try/pkg
+    cp crates/demo/www/index.html crates/demo/www/app.js crates/demo/www/app.css \
+       site/hydra-theme.css target/site/try/
+    cp -R crates/demo/www/pkg target/site/try/pkg
 
 # Assemble the site and serve it at http://localhost:8000
 site-serve: site
