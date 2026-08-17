@@ -245,6 +245,16 @@ build-frontend: regen-crs-catalog
 dev:
     cd crates/gui && cargo tauri dev
 
+# Stage a network as a project and open the app on it, landed on a view, for
+# marketing screenshots. The engine is recognised from the file (--engine
+# overrules). Stages into the real profile so basemap tokens and prefs apply;
+# --isolate uses a scratch HOME instead (no keychain there, so no tokened
+# basemaps). Only marker-bearing bundles are ever listed or reset.
+# Usage: just screenshots <model.inp> [--view overview|canvas|editor|analysis|report]
+#        just screenshots            (list staged)  |  --reset <model.inp|all>
+screenshots *args:
+    @python3 scripts/screenshot-stage.py {{args}}
+
 # Depends on build-frontend so the GUI embeds a current dist, and enables
 # hydra-gui/custom-protocol — without that feature a release binary loads the
 # dev-server URL and shows a white window (tauri: `dev = !custom-protocol`).

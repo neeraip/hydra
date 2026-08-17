@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { bootOverride } from "./bootOverride";
 import {
   type EngineInfo,
   engineByKey,
@@ -369,10 +370,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Session restore: launch straight into the last-open project. The
     // network-load effect keys on activeProjectId, so seeding it here loads
     // the model automatically; a deleted project falls back to Home via the
-    // validation effect below.
-    const restoreId = restoreProjectId();
+    // validation effect below. In dev builds the screenshot driver's boot
+    // override (bootOverride.ts) takes precedence over the stored session,
+    // without writing to it: a staged launch must not become the session
+    // the next real launch restores.
+    const boot = bootOverride(import.meta.env);
+    const restoreId = boot ? boot.projectId : restoreProjectId();
     if (!restoreId) return base;
-    const projectView = readProjectView(restoreId) ?? "canvas";
+    const projectView = boot?.view ?? readProjectView(restoreId) ?? "canvas";
     return {
       ...base,
       page: "project",
