@@ -311,10 +311,12 @@ docs:
 
 # ── Site ──────────────────────────────────────────────────────────────────────
 
-# The assembled layout is what the Docs workflow deploys to GitHub Pages:
+# The assembled layout is what the Site workflow deploys to GitHub Pages:
 # the marketing page at /, the mdbook at /docs, the browser demo at /try.
-# The workflow (.github/workflows/docs.yml) runs the same steps inline —
-# keep the two in agreement.
+# One deliberate difference: CI builds /try from the latest library
+# release tag (visitors try released engines), while this recipe builds
+# it from the working tree for local preview. Keep the assembly steps in
+# agreement with .github/workflows/site.yml.
 # Assemble the whole Pages site into target/site
 site: docs-build demo
     rm -rf target/site

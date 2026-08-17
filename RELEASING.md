@@ -29,11 +29,10 @@ just bump minor
 # 2. Review and publish the library draft release from the GitHub releases page
 # 3. Publishing triggers the publish-crates workflow — wait for it to go green
 #    (hydra-sdk must be on crates.io before the CLI publish can succeed)
-# 4. Run the Site workflow by hand if the hosted demo should show this
-#    release. The release asset above is built at the tag, but the copy on
-#    the Pages site is not: site.yml deliberately ignores engine changes so
-#    Pages is not rebuilt on every solver commit, so /try keeps running the
-#    previous engine until someone dispatches it.
+# 4. Publishing the library release also redeploys the Pages site: /try
+#    is built from the latest v* tag (page, theme, and wasm together), so
+#    the hosted demo updates to this release on its own. No manual
+#    dispatch needed.
 
 just bump-cli minor
 just bump-gui minor

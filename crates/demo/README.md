@@ -15,10 +15,11 @@ server beyond the one handing over the static files. A uds model's
 `SAVE HOTSTART` ends as a download under the name the model declared.
 
 The demo deploys to GitHub Pages at
-[`/try`](https://neeraip.github.io/hydra/try/) (the Site workflow rebuilds
-it on demo, docs or site changes, or on manual dispatch), and every library
-release attaches the single-file build as `hydra-try-<version>.html`,
-pinned to that release's engines.
+[`/try`](https://neeraip.github.io/hydra/try/), built from the latest
+library release tag rather than from main: publishing a library release
+redeploys it, and demo work on main stays invisible there until it is
+released. Every library release also attaches the single-file build as
+`hydra-try-<version>.html`, pinned to that release's engines.
 
 ## The portable file
 

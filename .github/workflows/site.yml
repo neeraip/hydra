@@ -1,5 +1,14 @@
 # The whole GitHub Pages site: the marketing page at /, the mdbook docs at
 # /docs, and the browser demo at /try.
+#
+# Two cadences share this deploy. The marketing page and the docs are
+# content: they build from main and ship on push, because a typo fix or a
+# doc update should not wait on a release. The demo is product: /try is
+# built wholesale (page, theme, and wasm together, so nothing skews) from
+# the latest library release tag, and a published library release
+# redeploys the site so /try updates itself the moment the release is
+# real. Demo work on main therefore stays invisible on /try until it is
+# released, which is the point: visitors try released engines.
 name: Site
 
 on:
@@ -8,13 +17,9 @@ on:
     paths:
       - 'site/**'
       - 'docs/**'
-      - 'crates/demo/**'
-      - 'scripts/build-wasm-single.py'
       - '.github/workflows/site.yml'
-  # Engine changes alter what /try computes but do not trigger a deploy —
-  # redeploying the demo on every solver commit would rebuild Pages far more
-  # often than it informs anyone. Dispatch manually after an engine release
-  # worth showing off.
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -29,12 +34,31 @@ concurrency:
 jobs:
   build:
     name: Build
+    # CLI and GUI releases publish through the same event but change
+    # nothing on the site; only library tags (v*) rebuild /try.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     # The wasm release build is the long pole (fat LTO on the engines).
     timeout-minutes: 25
 
     steps:
+      # Full history so the latest library tag is resolvable.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the released demo source
+        id: release
+        run: |
+          tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          test -n "$tag" || { echo "no library release tag found"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "/try builds from $tag"
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: release
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.21.1
@@ -56,25 +80,36 @@ jobs:
           cp site/hydra-theme.css docs/hydra-theme.css
           mdbook build docs
 
-      # The browser demo, deployed at /try. Everything runs client-side —
-      # a model opened there is read, solved and reported in the visitor's
-      # own tab, and never leaves it. (The offline single-file build is a
-      # release asset, not part of the site; draft-release.yml builds it.)
-      - name: Build the browser demo
-        run: wasm-pack build crates/demo --target web --out-dir www/pkg --out-name hydra
-
-      # The marketing page at /, the book at /docs, the demo at /try —
-      # every surface carrying site/hydra-theme.css, the shared skin.
-      # `just site` assembles the identical layout locally — keep the two
-      # in agreement.
-      - name: Assemble the site (just site)
+      # The browser demo, deployed at /try, from the release checkout.
+      # Everything runs client-side — a model opened there is read, solved
+      # and reported in the visitor's own tab, and never leaves it. (The
+      # offline single-file build is a release asset, not part of the
+      # site; draft-release.yml builds it.) The crate was named
+      # hydra-wasm before v13, hence the directory probe.
+      - name: Build the browser demo at the release tag
         run: |
+          demo="release/crates/demo"
+          test -d "$demo" || demo="release/crates/wasm"
+          echo "demo crate: $demo"
+          wasm-pack build "$demo" --target web --out-dir www/pkg --out-name hydra
+
+      # The marketing page at /, the book at /docs, the demo at /try. The
+      # demo's page files come from the release checkout too, so its
+      # markup, theme, and wasm can never skew apart. `just site`
+      # assembles the same layout from the working tree for local
+      # preview; only the /try provenance differs.
+      - name: Assemble the site
+        run: |
+          demo="release/crates/demo"
+          test -d "$demo" || demo="release/crates/wasm"
           mkdir -p _site/try
           cp -R site/. _site/
           cp -R docs/book _site/docs
-          cp crates/demo/www/index.html crates/demo/www/app.js crates/demo/www/app.css \
-             site/hydra-theme.css _site/try/
-          cp -R crates/demo/www/pkg _site/try/pkg
+          cp "$demo/www/index.html" "$demo/www/app.js" "$demo/www/app.css" _site/try/
+          if [ -f release/site/hydra-theme.css ]; then
+            cp release/site/hydra-theme.css _site/try/
+          fi
+          cp -R "$demo/www/pkg" _site/try/pkg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5.0.0
