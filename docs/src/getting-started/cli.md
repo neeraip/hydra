@@ -103,9 +103,9 @@ Both `http://` and `https://` are accepted. The fetch follows up to 10 redirects
 | Flag | Description |
 |---|---|
 | `<MODEL>` | Path or `http(s)://` URL of the model to run. The only positional |
-| `--engine <KEY>` | Run with a named engine (`wds`). Omit to detect it from the model |
+| `--engine <KEY>` | Run with a named engine (`wds`, `uds`). Omit to detect it from the model |
 | `--results <PATH>` | Binary time-series results (`.out`). Omitted, none is written |
-| `--summary <PATH>` | Run summary in the engine's native format (`.rpt`, or `.json` when the path ends in `.json`). Omitted, it goes to stdout |
+| `--summary <PATH>` | Run summary in the engine's native format (`.rpt`; the water engine also writes `.json` when the path ends in `.json`, the drainage engine refuses it for now). Omitted, it goes to stdout |
 
 ### Global
 

@@ -56,7 +56,7 @@ hydra run network.inp
 # Write the summary and the binary time-series results
 hydra run network.inp --summary report.rpt --results output.out
 
-# JSON summary (chosen by the .json suffix)
+# JSON summary, water engine only for now (chosen by the .json suffix)
 hydra run network.inp --summary report.json
 
 # Accept an HTTP URL as the model (redirects followed, up to 10; plain
