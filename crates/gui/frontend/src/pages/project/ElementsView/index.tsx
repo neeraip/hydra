@@ -229,9 +229,16 @@ export function ElementsView() {
       if (activeClass === "point") selectNode(id);
       else if (activeClass === "polyline") selectLink(id);
       else if (activeClass === "region") selectRegion(id);
-      else if (kind) setOpenContainer({ kind, id });
+      else if (kind) {
+        // One selection at a time. A container taking the selection
+        // releases the canvas's, or the status bar goes on naming a
+        // junction while a time series' contents are open — two things
+        // in hand, which is one more than "selected" means.
+        clearSelection();
+        setOpenContainer({ kind, id });
+      }
     },
-    [activeClass, kind, selectNode, selectLink, selectRegion],
+    [activeClass, kind, selectNode, selectLink, selectRegion, clearSelection],
   );
 
   // The row actions: find it, name it, remove it. Each is the same
@@ -278,6 +285,16 @@ export function ElementsView() {
     null,
   );
   const openContainerId = openContainerOn(openContainer, kind);
+  // The other half of one-selection-at-a-time: a canvas selection
+  // landing — from this view's tables or from the canvas view, which
+  // stays mounted behind this one — takes the selection from any open
+  // container. Watching the ids rather than clearing in `select` covers
+  // both doors with one rule.
+  useEffect(() => {
+    if (selectedNodeId || selectedLinkId || selectedRegionId) {
+      setOpenContainer(null);
+    }
+  }, [selectedNodeId, selectedLinkId, selectedRegionId]);
 
   // Two marks, answering different questions: a rule where the kinds
   // stop being on the map, and the engine's own heading wherever a group
