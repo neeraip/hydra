@@ -14,6 +14,11 @@
       content="Water infrastructure simulation, written in Rust. EPANET-compatible water distribution and SWMM-compatible urban drainage, from one toolchain."
     />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://neeraip.github.io/hydra/og-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Hydra" />
+    <meta name="twitter:image" content="https://neeraip.github.io/hydra/og-card.png" />
+    <link rel="canonical" href="https://neeraip.github.io/hydra/" />
     <meta property="og:url" content="https://neeraip.github.io/hydra/" />
     <link
       rel="icon"
@@ -23,6 +28,7 @@
     <link rel="stylesheet" href="site.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Skip to content</a>
     <div class="aurora" aria-hidden="true"></div>
 
     <nav class="hydra-nav">
@@ -118,7 +124,7 @@
       </div>
     </header>
 
-    <main>
+    <main id="main">
       <section class="stats reveal" aria-label="At a glance">
         <div class="stat">
           <span class="stat-n">2</span>
@@ -141,9 +147,10 @@
         <p class="eyebrow">Use cases</p>
         <h2 id="why-h">What is this for?</h2>
         <p class="section-lede">
-          Every city runs on two buried networks: one delivers drinking
-          water under pressure, the other carries rain and wastewater away.
-          Both are expensive to dig up and impossible to experiment on, so
+          Every city runs on buried networks: one delivers drinking water
+          under pressure, and drainage systems carry rain and wastewater
+          away. All are expensive to dig up and impossible to experiment
+          on, so
           engineers answer their questions on a model first. Hydra is where
           those questions get asked: try things against the physics before
           committing to concrete.
@@ -155,15 +162,15 @@
           </div>
           <div class="feature">
             <h3>Can hydrants deliver during a fire?</h3>
-            <p>Fire flow is the stress test of a water network. Run it on the model instead of finding out during the emergency.</p>
+            <p>Fire flow is the stress test of a water network. Add the fire demand at the hydrant's junction and rerun; pressure-driven analysis shows the residual pressures and the shortfall honestly.</p>
           </div>
           <div class="feature">
             <h3>Is the water still fresh at the edge of town?</h3>
-            <p>Water ages in pipes and disinfectant decays along the way. Trace age and chlorine all the way to the last house on the line.</p>
+            <p>Water ages in pipes and disinfectant decays along the way. Run a water-age analysis, model chlorine decay, or trace the share of water arriving from any source, out to the farthest junctions.</p>
           </div>
           <div class="feature">
             <h3>Which streets flood in a heavy storm?</h3>
-            <p>Feed a design storm to the drainage model and see where the system backs up and overflows, before it happens outside.</p>
+            <p>Feed a design storm to the drainage model and see where the network surcharges and floods, and how much water it loses, before it happens outside.</p>
           </div>
           <div class="feature">
             <h3>Can the sewers take a new development?</h3>
@@ -186,10 +193,13 @@
         <p class="eyebrow">The engines</p>
         <h2 id="engines-h">One engine for each network</h2>
         <p class="section-lede">
-          Each engine owns its data model end to end: reader, solver, and
-          report. Correctness is defined by Hydra's own convergence criteria
-          and physical conservation laws, with file-level compatibility with
-          each engine's predecessor.
+          Hydra reimplements the models behind EPANET and SWMM with its
+          own solvers. Each engine owns its data model end to end: reader,
+          solver, and report. Correctness is defined by
+          <a class="ext" href="docs/architecture/solvers.html" target="_blank" rel="noopener">Hydra's own convergence criteria</a>
+          and physical conservation laws, and because the outputs are
+          file-compatible, you can run Hydra beside your current tool on
+          your own models and diff the results.
         </p>
         <div class="cards">
           <article class="card">
@@ -208,9 +218,10 @@
             <h3>Urban drainage</h3>
             <p class="model">SWMM data model</p>
             <p>
-              Rainfall-runoff hydrology, dynamic-wave routing, and water
-              quality on the SWMM data model: infiltration, LID controls,
-              snowmelt, groundwater, pollutant transport.
+              Rainfall-runoff hydrology, Preissmann-slot dynamic-wave
+              routing of the Saint-Venant equations, and water quality on
+              the SWMM data model: infiltration, LID controls, snowmelt,
+              groundwater, pollutant transport.
             </p>
           </article>
         </div>
@@ -221,17 +232,20 @@
           <div class="compat-item">
             <h3>Reads your files</h3>
             <p>
-              Any EPANET 2.x <code>.inp</code> and SWMM <code>.inp</code>
-              file opens as-is. The engine is detected from the model's own
-              contents, never its file extension.
+              Any EPANET 2.x <code>.inp</code> file opens as-is, and SWMM 5
+              models open directly; the engine is detected from the model's
+              contents, never its file extension. Drainage models built for
+              steady or kinematic-wave routing run under the full
+              dynamic-wave solver, and the import says so.
             </p>
           </div>
           <div class="compat-item">
             <h3>Writes their formats</h3>
             <p>
               Results land as EPANET- and SWMM-compatible binary
-              <code>.out</code> files and text reports, so your existing
-              post-processing tools keep working.
+              <code>.out</code> files, faithful to the byte layout, so
+              tools that read them keep working. Text reports follow the
+              predecessors' layout with documented differences.
             </p>
           </div>
           <div class="compat-item">
@@ -270,8 +284,9 @@
             <h3>CLI</h3>
             <p>
               Run <code>hydra run model.inp</code>. The model's own sections
-              identify the engine, and one command produces the report, the
-              binary results, and the analytics.
+              identify the engine, and the run writes the report and the
+              binary results; <code>hydra report</code> renders analytics
+              from them.
             </p>
           </article>
           <article class="card">
@@ -288,8 +303,10 @@
             <h3>Browser</h3>
             <p>
               The real engines, compiled to WebAssembly.
-              <a href="try/">Drop a model on the demo</a>. It is read,
-              solved and reported in your tab, and never uploaded.
+              <a href="try/">Drop a model on the demo</a>, or run one of
+              its bundled examples. It prints the engine's report in your
+              tab and uploads nothing; the map and editor live in the
+              desktop app.
             </p>
           </article>
         </div>
@@ -442,11 +459,11 @@
           </div>
           <div class="feature">
             <h3>Controls and rules</h3>
-            <p>Simple and rule-based controls in both engines, honoring each predecessor's semantics.</p>
+            <p>Simple and rule-based controls in the water engine; SWMM control rules with PID-modulated actions in the drainage engine. Deliberate deviations are documented and flagged at import.</p>
           </div>
           <div class="feature">
             <h3>Hydrology in depth</h3>
-            <p>Infiltration families, LID controls, snowmelt, groundwater, and RDII for drainage models.</p>
+            <p>Infiltration families, green-infrastructure (LID) controls, snowmelt, groundwater, and rainfall-derived inflow (RDII) for drainage models.</p>
           </div>
           <div class="feature">
             <h3>Water quality</h3>
@@ -502,24 +519,27 @@
           <article class="card dl">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.8-2-1.6-.2-3.1 1-3.9 1s-2-1-3.4-1c-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.4-.8s2 .8 3.4.8c1.4 0 2.3-1.3 3.2-2.5 1-1.5 1.4-2.9 1.4-3-.1 0-2.8-1.1-2.8-4zM13.7 4.6c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.2 1.1.1 2.3-.6 3-1.5z"/></svg>
             <h3>macOS</h3>
-            <p><code>.dmg</code> disk image, Apple Silicon and Intel.</p>
+            <p><code>.dmg</code> disk image or portable <code>.app.tar.gz</code>, Apple Silicon and Intel.</p>
           </article>
           <article class="card dl">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM12 4.3L21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z"/></svg>
             <h3>Windows</h3>
-            <p><code>.msi</code> installer.</p>
+            <p><code>.msi</code> installer or portable <code>.exe</code>.</p>
           </article>
           <article class="card dl">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-2 0-3.5 1.6-3.5 3.6 0 1.3.2 2.3-.4 3.5-.9 1.7-2.6 3.2-3.1 5.3-.4 1.7.2 3.4 1.5 4.4.9-1.5 2.3-.7 3.5-.3 1.3.4 2.7.4 4 0 1.2-.4 2.6-1.2 3.5.3 1.3-1 1.9-2.7 1.5-4.4-.5-2.1-2.2-3.6-3.1-5.3-.6-1.2-.4-2.2-.4-3.5C15.5 3.6 14 2 12 2z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10.2" cy="7.5" r=".9"/><circle cx="13.8" cy="7.5" r=".9"/></svg>
             <h3>Linux</h3>
-            <p><code>.AppImage</code> or <code>.deb</code> package.</p>
+            <p><code>.AppImage</code>, <code>.deb</code>, or <code>.rpm</code> package.</p>
           </article>
         </div>
         <nav class="cta center" aria-label="Download">
           <a class="button primary" href="https://github.com/neeraip/hydra/releases/latest">Download the desktop app</a>
         </nav>
         <p class="note center">
-          Prefer the terminal? <code>cargo install hydra-cli</code> puts the
+          Current desktop release: GUI v2.18, on the
+          <a href="https://github.com/neeraip/hydra/releases">release notes</a>
+          page. Prefer the terminal? <code>cargo install hydra-cli</code>
+          (needs Rust; prebuilt binaries are on the releases page) puts the
           same engines behind one command.
         </p>
       </section>
@@ -547,9 +567,14 @@
           <details>
             <summary>Is Hydra free?</summary>
             <p>
-              Yes: free software under AGPL-3.0. Commercial products that do
-              not want AGPL obligations can use a separate
-              <a href="https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md">commercial license</a>.
+              Yes: free software under AGPL-3.0. Products that do not want
+              AGPL obligations can use a separate
+              <a href="https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md">commercial license</a>,
+              priced per deal by seats, term, and support tier, with
+              priority support under a negotiated service level. Enquire at
+              <a href="mailto:matthew@neer.ai">matthew@neer.ai</a>;
+              community support lives in
+              <a href="https://github.com/neeraip/hydra/discussions">GitHub Discussions</a>.
             </p>
           </details>
           <details>
@@ -558,6 +583,43 @@
               macOS (Apple Silicon and Intel), Windows, and Linux. The CLI
               additionally installs anywhere Rust does, with
               <code>cargo install hydra-cli</code>.
+            </p>
+          </details>
+          <details>
+            <summary>Can my firm use Hydra on client projects?</summary>
+            <p>
+              Yes, with nothing owed: running Hydra on client work and
+              delivering the results, models, or reports is not
+              distribution, so the AGPL asks nothing of you. The line is
+              distributing Hydra itself or serving it to others over a
+              network; embed it in a product you ship and the
+              <a href="https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md">commercial license</a>
+              is for you.
+            </p>
+          </details>
+          <details>
+            <summary>I'm learning water modelling. Is Hydra for me?</summary>
+            <p>
+              Yes. Hydra speaks the industry-standard EPANET and SWMM
+              formats and models the same physics, so everything you learn
+              here transfers directly to the tools utilities and
+              consultancies already run, and it costs nothing. Start with
+              the demo's bundled examples, then
+              <a class="ext" href="docs/getting-started/concepts.html" target="_blank" rel="noopener">Key Concepts</a>
+              in the docs. Questions are welcome in
+              <a href="https://github.com/neeraip/hydra/discussions">Discussions</a>.
+            </p>
+          </details>
+          <details>
+            <summary>Who builds Hydra?</summary>
+            <p>
+              One engineer: Matthew Downs, at NEER AI, building in the
+              open. That cuts both ways, so the project is structured so
+              nothing depends on trusting one person: the full source is
+              public and forkable, every solver behaviour is written down
+              in specifications, and your models stay in standard EPANET
+              and SWMM files that any tool can read. If Hydra vanished
+              tomorrow, you would keep everything.
             </p>
           </details>
           <details>
@@ -586,7 +648,8 @@
       <section class="closer reveal" aria-label="Get started">
         <h2>Run your first model in the next minute</h2>
         <p class="section-lede">
-          No install, no account, no upload. The demo runs the real engines
+          No install, no account, no upload, and no model needed: the demo
+          ships classic EPANET and SWMM examples. It runs the real engines
           on your machine.
         </p>
         <nav class="cta center" aria-label="Get started">
@@ -604,6 +667,7 @@
             Hydra
           </span>
           <p class="dim">Water infrastructure simulation, written in Rust.</p>
+          <p class="dim">Built in the open by Matthew Downs · © NEER AI</p>
         </div>
         <div class="foot-col">
           <h4>Product</h4>
@@ -625,11 +689,16 @@
           <a href="https://github.com/neeraip/hydra/discussions">Discussions</a>
           <a href="https://github.com/neeraip/hydra/issues/new?template=bug_report.yml">Report a bug</a>
           <a href="https://github.com/neeraip/hydra/blob/main/LICENSE">AGPL-3.0 license</a>
+          <a href="mailto:matthew@neer.ai">matthew@neer.ai</a>
         </div>
       </div>
     </footer>
 
     <script>
+      // Reveal animations exist only once JS is known to be running, so
+      // no-JS readers see every section.
+      document.documentElement.classList.add("js");
+
       // Close the mobile drawer when a navigation choice is made; without
       // this the checkbox stays checked and the panel covers the section
       // just scrolled to.
@@ -637,7 +706,16 @@
       document.querySelectorAll(".hydra-nav-links a").forEach((a) =>
         a.addEventListener("click", () => {
           navToggle.checked = false;
+          navToggle.dispatchEvent(new Event("change"));
         }),
+      );
+
+      // Mirror the checkbox drawer's state for assistive tech.
+      const burger = document.querySelector(".hydra-nav-burger");
+      burger.setAttribute("role", "button");
+      burger.setAttribute("aria-expanded", "false");
+      navToggle.addEventListener("change", () =>
+        burger.setAttribute("aria-expanded", String(navToggle.checked)),
       );
 
       // Scroll-reveal, skipped entirely when the visitor prefers less motion.

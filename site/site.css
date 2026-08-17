@@ -436,19 +436,21 @@ h2 {
 
 /* Scroll reveal — sections drift up as they arrive. The observer adds
    .in; visitors preferring less motion get everything visible at once. */
-.reveal {
+/* Scoped under .js (set by the page script) so no-JS readers see every
+   section instead of permanent opacity 0. */
+.js .reveal {
   opacity: 0;
   transform: translateY(16px);
   transition: opacity 500ms ease, transform 500ms ease;
 }
 
-.reveal.in {
+.js .reveal.in {
   opacity: 1;
   transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .reveal {
+  .js .reveal {
     opacity: 1;
     transform: none;
     transition: none;

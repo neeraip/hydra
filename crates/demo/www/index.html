@@ -49,8 +49,8 @@
         <p><strong>Drop a model here</strong>, or click to choose one.</p>
         <p class="dim">
           An EPANET or SWMM <code>.inp</code> file. Drop auxiliary files
-          (climate, hotstart, routing inflows) alongside it and they will be
-          matched by name.
+          (climate, hotstart saved as version 3 or later, routing inflows)
+          alongside it and they will be matched by name.
         </p>
         <input id="file" type="file" multiple hidden />
       </section>
@@ -112,7 +112,16 @@
       document.querySelectorAll(".hydra-nav-links a").forEach((a) =>
         a.addEventListener("click", () => {
           navToggle.checked = false;
+          navToggle.dispatchEvent(new Event("change"));
         }),
+      );
+
+      // Mirror the checkbox drawer's state for assistive tech.
+      const burger = document.querySelector(".hydra-nav-burger");
+      burger.setAttribute("role", "button");
+      burger.setAttribute("aria-expanded", "false");
+      navToggle.addEventListener("change", () =>
+        burger.setAttribute("aria-expanded", String(navToggle.checked)),
       );
     </script>
 
