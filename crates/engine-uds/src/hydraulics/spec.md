@@ -278,8 +278,9 @@ import (§14). Everything below specifies the full dynamic treatment.
 A closed channel flowing full has no free surface, and the equations of §6.1
 presuppose one. This engine closes the gap with a single device, applied
 uniformly: every closed cross-section carries a narrow hypothetical **slot**
-above its crown, so that depth may exceed the crown height and the
-free-surface equations remain valid in every regime. There is no separate
+(the *Preissmann slot* of the open-channel literature) above its crown, so
+that depth may exceed the crown height and the free-surface equations remain
+valid in every regime. There is no separate
 surcharge equation branch, no free-surface/pressurised state machine, and no
 transition band: one equation set governs everywhere.
 
