@@ -380,6 +380,10 @@ button:not(:disabled):hover {
   min-height: 1.45em;
 }
 
+.term .trim-note {
+  font-style: italic;
+}
+
 .term .stderr {
   color: var(--dim);
 }

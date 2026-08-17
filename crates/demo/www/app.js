@@ -48,11 +48,40 @@ function startHydraDemo(hydra) {
 
   /** Append a line. Returns it, so a progress line can be rewritten in place
    *  rather than repeated — the page's carriage return. */
+  /* The DOM is the browser-limit surface here: a big model's report is
+   * tens of thousands of lines, and a span each would weigh the tab down
+   * long before the engine does. The terminal keeps the newest lines and
+   * counts the trimmed ones in a notice; "Copy report" is unaffected,
+   * because it copies the engine's own string, never the DOM.
+   * `?maxlines=N` exists so a small model can exercise the trim in tests. */
+  const MAX_TERM_LINES =
+    Number(new URLSearchParams(location.search).get("maxlines")) || 4000;
+  let trimmedCount = 0;
+  let trimNote = null;
+
+  function trimTerm() {
+    while (term.childElementCount - (trimNote ? 1 : 0) > MAX_TERM_LINES) {
+      if (!trimNote) {
+        trimNote = document.createElement("span");
+        trimNote.className = "dim trim-note";
+        term.prepend(trimNote);
+      }
+      term.removeChild(trimNote.nextSibling);
+      trimmedCount += 1;
+    }
+    if (trimNote) {
+      trimNote.textContent = `\u22ef ${trimmedCount.toLocaleString()} earlier line${
+        trimmedCount === 1 ? "" : "s"
+      } hidden to keep this tab light. "Copy report" still has the full text.`;
+    }
+  }
+
   function line(text, className) {
     const el = document.createElement("span");
     if (className) el.className = className;
     el.textContent = text;
     term.appendChild(el);
+    trimTerm();
     term.scrollTop = term.scrollHeight;
     return el;
   }
@@ -62,6 +91,8 @@ function startHydraDemo(hydra) {
   }
 
   function clearTerm() {
+    trimmedCount = 0;
+    trimNote = null;
     term.textContent = "";
   }
 
