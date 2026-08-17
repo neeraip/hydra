@@ -21,7 +21,7 @@ authors = ["Matthew Downs <matthew@neer.ai>"]
 license = "AGPL-3.0-only"
 repository = "https://github.com/neeraip/hydra"
 homepage = "https://github.com/neeraip/hydra"
-documentation = "https://neeraip.github.io/hydra/"
+documentation = "https://neeraip.github.io/hydra/docs/"
 
 
 # Optimise the engines even in dev/test builds so that the test suite — and any

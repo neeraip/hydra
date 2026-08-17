@@ -21,7 +21,7 @@ A planned engine is registered in the shared engine registry, so its key and cra
 
 Every available engine runs from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model and, since GUI 2.17.0, is edited like any other — network elements, hydrology, pollutants and LID controls.
 
-**[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/)**
+**[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/docs/)**
 
 The browser demo runs the real engines, compiled to WebAssembly: drop an EPANET or SWMM model (or pick a bundled example) and read the same report the CLI prints. Everything runs in your tab — models are never uploaded. Each library release also attaches it as a single `hydra-try-<version>.html` you can keep and run offline.
 
@@ -84,7 +84,7 @@ sim.load(network)?;
 sim.run()?;
 ```
 
-See the [SDK documentation](https://neeraip.github.io/hydra/sdk/overview.html) for a full usage guide.
+See the [SDK documentation](https://neeraip.github.io/hydra/docs/sdk/overview.html) for a full usage guide.
 
 ## Build from source
 
@@ -104,11 +104,11 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the full development setup.
 
 | | |
 |---|---|
-| [Engines](https://neeraip.github.io/hydra/engines.html) | The domain engines, what each covers, and what ships today |
-| [Getting Started](https://neeraip.github.io/hydra/getting-started/installation.html) | Installation, build, CLI, GUI |
-| [SDK](https://neeraip.github.io/hydra/sdk/overview.html) | Library usage and examples |
-| [Architecture](https://neeraip.github.io/hydra/architecture/crates.html) | Crate layout and specifications |
-| [Reference](https://neeraip.github.io/hydra/reference/inp-format.html) | INP format, performance, EPANET migration |
+| [Engines](https://neeraip.github.io/hydra/docs/engines.html) | The domain engines, what each covers, and what ships today |
+| [Getting Started](https://neeraip.github.io/hydra/docs/getting-started/installation.html) | Installation, build, CLI, GUI |
+| [SDK](https://neeraip.github.io/hydra/docs/sdk/overview.html) | Library usage and examples |
+| [Architecture](https://neeraip.github.io/hydra/docs/architecture/crates.html) | Crate layout and specifications |
+| [Reference](https://neeraip.github.io/hydra/docs/reference/inp-format.html) | INP format, performance, EPANET migration |
 
 ## Contributing
 

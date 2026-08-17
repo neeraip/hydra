@@ -10,7 +10,7 @@ Water infrastructure simulation — EPANET-compatible water distribution and SWM
 <!-- PLANNED-ENGINE: och — revise this paragraph when the open channel engine ships. -->
 Hydra is built as a suite of domain engines. Water distribution (`wds`) and urban drainage (`uds`) are implemented today; open channel (`och`) is registered in the engine registry as **planned** — reserved and presentable, but with no implementation behind it. When it lands, it joins this same umbrella crate.
 
-**[→ Full documentation](https://neeraip.github.io/hydra/sdk/overview.html)**
+**[→ Full documentation](https://neeraip.github.io/hydra/docs/sdk/overview.html)**
 
 ## Install
 

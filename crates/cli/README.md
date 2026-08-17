@@ -5,7 +5,7 @@
 
 Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform. It drives Hydra's simulation engines: reads model files (EPANET or SWMM `.inp`) from local paths or HTTP URLs, runs the engine the model belongs to — water distribution for EPANET models, urban drainage for SWMM models — and writes results to `.rpt` and `.out` files in that engine's native formats. The engine is detected from the model's contents, never its extension; `--engine wds|uds` names one explicitly. <!-- PLANNED-ENGINE: och — mention the open channel engine here when it becomes reachable from the CLI. -->Hydra's open channel engine is planned and not yet available.
 
-**[→ Full documentation](https://neeraip.github.io/hydra/getting-started/cli.html)**
+**[→ Full documentation](https://neeraip.github.io/hydra/docs/getting-started/cli.html)**
 
 ## Breaking changes in 3.0
 
