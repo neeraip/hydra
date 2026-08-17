@@ -161,7 +161,7 @@ const STATIC_COMMANDS: DynamicCommand[] = [
 ];
 
 /** Hydra documentation site — opened by the "Open documentation" command. */
-const DOCS_URL = "https://neeraip.github.io/hydra/";
+const DOCS_URL = "https://neeraip.github.io/hydra/docs/";
 
 export function CommandPalette() {
   const sys = useUnitSystem();

@@ -266,7 +266,7 @@ function statusStyle(tone: StatusTone): React.CSSProperties {
 const HELP_LINKS = [
   {
     label: "Documentation",
-    url: "https://neeraip.github.io/hydra/",
+    url: "https://neeraip.github.io/hydra/docs/",
   },
   {
     label: "Community",
