@@ -902,12 +902,16 @@ mod tests {
         let mut removable = Vec::new();
         let mut refused = Vec::new();
 
+        let mut absent: Vec<&str> = Vec::new();
         for kind in hydra::uds::descriptors::ELEMENT_KINDS {
             let Some(id) = crate::commands::uds_attrs::kind_elements(&net, kind.id)
                 .ids
                 .first()
                 .cloned()
             else {
+                // Recorded, not skipped — a silent skip is how a kind's
+                // removal goes unverified for the life of a build.
+                absent.push(kind.id);
                 continue;
             };
             let mut draft = net.clone();
@@ -926,6 +930,12 @@ mod tests {
             }
         }
 
+        assert!(
+            absent.is_empty(),
+            "the fixture has no element of: {absent:?} — those kinds' removals \
+             are unverified"
+        );
+
         // Two outcomes now, and both are about the model.
         //
         // Nothing refuses because a removal is unbuilt. What refuses,
@@ -934,13 +944,19 @@ mod tests {
         // needs — which is a refusal a modeller can act on, and the
         // message names what to detach.
         assert!(
-            refused
-                .iter()
-                .all(|(_, e)| e.contains("detach it first") || e.contains("drains to it")),
+            refused.iter().all(|(_, e)| e.contains("detach it first")
+                || e.contains("drains to it")
+                || e.contains("names it")),
             "a refusal that is not about the network: {refused:?}"
         );
+        // J1 is named by rule R1 now, so the first junction refuses — the
+        // spatial kinds' plain removals are carried by the outfall and
+        // the conduit. The rule itself goes: a control is deletable even
+        // though its text is not otherwise editable.
         assert!(
-            removable.contains(&"junction") && removable.contains(&"conduit"),
+            removable.contains(&"outfall")
+                && removable.contains(&"conduit")
+                && removable.contains(&"rule"),
             "the spatial kinds still go: {removable:?}"
         );
         // Every container in this model is attached to something, which
@@ -1089,6 +1105,14 @@ O1 70 FREE NO
 O2 50 FREE NO S2
 [DIVIDERS]
 D1 90 C3 CUTOFF 1.0 4 0 0 0
+[STORAGE]
+SU1 55 4 0 FUNCTIONAL 1000 0 0
+[PUMPS]
+PU1 SU1 SEW PC1 ON 0 0
+[ORIFICES]
+OR1 J2 J3 SIDE 0 0.6 NO 0
+[WEIRS]
+W1 J2 J3 TRANSVERSE 0.5 3.33 NO 0 0
 [CONDUITS]
 C1 J1 J2 400 0.013 0 0 0 0
 C2 J1 D1 300 0.013 0 0 0 0
@@ -1105,6 +1129,8 @@ C3 CIRCULAR 1.5 0 0 0
 C4 IRREGULAR TR1
 GUT1 STREET ST1
 SEW1 CIRCULAR 1.5 0 0 0
+OR1 CIRCULAR 0.5 0 0 0
+W1 RECT_OPEN 0.5 1 0 0
 [TRANSECTS]
 NC 0.02 0.02 0.016
 X1 TR1 3 0 0 0 0 0 0 0
@@ -1167,6 +1193,12 @@ J3 TSS R = 0.5
 [CURVES]
 RC1 RATING 0 0
 RC1 1 5
+PC1 PUMP4 0 10
+PC1 1 8
+[CONTROLS]
+RULE R1
+IF NODE J1 DEPTH > 2
+THEN PUMP PU1 STATUS = ON
 [TIMESERIES]
 TS1 0:00 1.0
 TS1 1:00 2.0
@@ -1488,9 +1520,9 @@ S2 10 20
         // `also` is what cascades with the element, which the twin model
         // must therefore be missing too.
         for (id, also) in [
-            // J2 now carries an outlet as well as a conduit, and both
-            // go with it.
-            ("J2", vec!["C1", "OL1"]),
+            // J2 carries an orifice, a weir, a conduit and an outlet,
+            // and all four go with it.
+            ("J2", vec!["OR1", "W1", "C1", "OL1"]),
             ("C2", vec![]),
             // S3 rather than S1 or S2: both of those are referred to by
             // something and refuse (asserted separately).

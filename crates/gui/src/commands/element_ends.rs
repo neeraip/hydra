@@ -156,6 +156,52 @@ O1 100 0
     /// The reconnection both engines have to perform identically: the
     /// same call, the same refusals, and a model that still writes.
     #[test]
+    fn every_drainage_polyline_kind_reconnects() {
+        // The §4.5.2 ends write, for every kind of the polyline class in
+        // the catalog — one arm serves them all, and this holds that no
+        // kind ever grows an exception the read does not declare. The
+        // absence list is asserted so a kind the fixture lacks cannot be
+        // skipped in silence.
+        let (net, diags) =
+            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+
+        let mut reconnected = 0;
+        let mut absent: Vec<&str> = Vec::new();
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS
+            .iter()
+            .filter(|k| k.class == hydra::common::ElementClass::Polyline)
+        {
+            let ids = crate::commands::uds_attrs::kind_elements(&net, kind.id).ids;
+            let Some(id) = ids.first() else {
+                absent.push(kind.id);
+                continue;
+            };
+            let mut draft = net.clone();
+            set_uds_ends(&mut draft, id, "J1", "O1")
+                .unwrap_or_else(|e| panic!("{}.{id} refused new ends: {e}", kind.id));
+            let moved = draft
+                .links
+                .iter()
+                .find(|l| l.id == *id)
+                .expect("the link survives");
+            assert_eq!(draft.vertices[moved.from].id, "J1");
+            assert_eq!(draft.vertices[moved.to].id, "O1");
+            reconnected += 1;
+        }
+        assert!(
+            absent.is_empty(),
+            "the fixture has no element of: {absent:?} — those kinds' ends \
+             are unverified"
+        );
+        // Conduit, pump, orifice, weir, outlet — the polyline class whole.
+        assert!(
+            reconnected >= 5,
+            "only {reconnected} link kinds reconnected"
+        );
+    }
+
+    #[test]
     fn an_end_moves_to_another_element() {
         let mut net = uds_model();
         set_uds_ends(&mut net, "C1", "J2", "O1").expect("reconnect");

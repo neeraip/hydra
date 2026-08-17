@@ -1009,6 +1009,68 @@ mod tests {
     use super::*;
     use crate::commands::test_fixtures::TEST_INP;
 
+    /// Whatever record set the read serves as editable, the write takes
+    /// back — and whatever it serves read-only, the write refuses — for
+    /// every element of every kind in the catalog.
+    ///
+    /// The same invariant the contents sweep holds, for §4.5.2.3: a set
+    /// served editable with no write arm behind it is an add button that
+    /// can only refuse, and a set served read-only that the write took
+    /// would let an application reach a state the read said was closed.
+    /// The fixture carries one element of every kind and the absence
+    /// list is asserted empty, so no kind is skipped in silence.
+    #[test]
+    fn every_record_set_agrees_with_its_write_for_every_kind() {
+        let (net, diags) =
+            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+
+        let mut editable = Vec::new();
+        let mut read_only = Vec::new();
+        let mut absent = Vec::new();
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let ids = crate::commands::uds_attrs::kind_elements(&net, kind.id).ids;
+            let Some(id) = ids.first() else {
+                absent.push(kind.id);
+                continue;
+            };
+            for set in uds_records(&net, id) {
+                let mut draft = net.clone();
+                let write = set_uds_records(&mut draft, id, &set.key, &set.rows);
+                let name = format!("{}.{}", kind.id, set.key);
+                if set.editable {
+                    write.unwrap_or_else(|e| panic!("{name} is served editable but: {e}"));
+                    editable.push(name);
+                } else {
+                    assert!(
+                        write.is_err(),
+                        "{name} is served read-only, but the write took it"
+                    );
+                    read_only.push(name);
+                }
+            }
+        }
+        assert!(
+            absent.is_empty(),
+            "the fixture has no element of: {absent:?} — those kinds' record \
+             sets are unverified"
+        );
+        // The sweep has to have seen the sets that exist, or it proves
+        // nothing — a fixture change that dropped them would pass.
+        for want in ["lidcontrol.surface", "snowpack.surfaces"] {
+            assert!(
+                editable.iter().any(|e| e == want),
+                "the sweep never exercised editable {want}; saw {editable:?}"
+            );
+        }
+        for want in ["hydrograph.responses", "junction.dryWeather"] {
+            assert!(
+                read_only.iter().any(|e| e == want),
+                "the sweep never exercised read-only {want}; saw {read_only:?}"
+            );
+        }
+    }
+
     /// A junction and a pipe that share an id, which EPANET allows.
     const COLLIDING_INP: &str = "\
 [JUNCTIONS]
