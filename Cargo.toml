@@ -3,7 +3,6 @@ members = [
     "crates/common",
     "crates/engine-wds",
     "crates/engine-uds",
-    "crates/engine-och",
     "crates/engines",
     "crates/report",
     "crates/sdk",

@@ -87,7 +87,7 @@ pub struct ImportFormat {
 #[serde(rename_all = "camelCase")]
 pub struct EngineDescriptor {
     /// Stable machine identifier: lowercase ASCII domain-umbrella
-    /// abbreviation (`wds`, `uds`, `och`).
+    /// abbreviation (`wds`, `uds`).
     pub key: &'static str,
     /// Human-facing product name (e.g. "Water Distribution").
     pub label: &'static str,
@@ -129,7 +129,7 @@ pub const ENGINES: &[EngineDescriptor] = &[
         label: "Water Distribution",
         pill: "WD",
         accent: "#4a90d9",
-        summary: "Pressurized water distribution network simulation — hydraulics, \
+        summary: "Pressurized water distribution network simulation: hydraulics, \
                   water quality, and energy on the EPANET data model.",
         status: EngineStatus::Available,
         import: &[ImportFormat {
@@ -142,25 +142,12 @@ pub const ENGINES: &[EngineDescriptor] = &[
         label: "Urban Drainage",
         pill: "UD",
         accent: "#7a6ff0",
-        summary: "Stormwater and wastewater collection network simulation — \
+        summary: "Stormwater and wastewater collection network simulation: \
                   runoff, routing, and water quality on the SWMM data model.",
         status: EngineStatus::Available,
         import: &[ImportFormat {
             label: "SWMM input file",
             extensions: &["inp"],
-        }],
-    },
-    EngineDescriptor {
-        key: "och",
-        label: "Open Channel",
-        pill: "OC",
-        accent: "#2f9e9e",
-        summary: "River and open-channel hydraulics — steady and unsteady flow \
-                  on the HEC-RAS data model.",
-        status: EngineStatus::Planned,
-        import: &[ImportFormat {
-            label: "HEC-RAS project archive",
-            extensions: &["zip", "7z", "tar", "gz", "tgz"],
         }],
     },
 ];
@@ -204,9 +191,9 @@ mod tests {
     }
 
     #[test]
-    fn registry_lists_the_three_domain_engines_in_order() {
+    fn registry_lists_the_domain_engines_in_order() {
         let keys: Vec<_> = ENGINES.iter().map(|e| e.key).collect();
-        assert_eq!(keys, ["wds", "uds", "och"]);
+        assert_eq!(keys, ["wds", "uds"]);
     }
 
     #[test]
@@ -221,7 +208,6 @@ mod tests {
             .map(|e| e.key)
             .collect();
         assert_eq!(available, ["wds", "uds"]);
-        assert_eq!(engine_by_key("och").unwrap().status, EngineStatus::Planned);
     }
 
     #[test]
@@ -309,11 +295,10 @@ mod tests {
     }
 
     #[test]
-    fn a_planned_engine_resolves_rather_than_erroring() {
-        // Spec §2.3: "planned" and "unknown" are distinct states. Conflating
-        // them would make a planned engine indistinguishable from one this
-        // build has never heard of.
-        assert!(engine_by_key("och").is_ok());
-        assert!(!engine_by_key("och").unwrap().is_available());
+    fn a_withdrawn_key_is_unknown_rather_than_registered() {
+        // Spec §2.3: `och` was withdrawn when 2D overland flow was
+        // re-planned as future `uds` functionality. The key stays reserved
+        // (never reused for a different domain) but resolves as unknown.
+        assert!(engine_by_key("och").is_err());
     }
 }

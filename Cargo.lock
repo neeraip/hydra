@@ -2500,8 +2500,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "hydra-engine-och"
+name = "hydra-demo"
 version = "12.0.0"
+dependencies = [
+ "hydra-sdk",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
 
 [[package]]
 name = "hydra-engine-uds"
@@ -2586,17 +2593,6 @@ dependencies = [
  "hydra-engine-wds",
  "hydra-engines",
  "hydra-report",
-]
-
-[[package]]
-name = "hydra-wasm"
-version = "12.0.0"
-dependencies = [
- "hydra-sdk",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-test",
 ]
 
 [[package]]

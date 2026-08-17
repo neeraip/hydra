@@ -85,7 +85,7 @@ Every engine publishes one immutable descriptor:
 
 | Field | Meaning | Constraints |
 |---|---|---|
-| `key` | Stable machine identifier | Lowercase ASCII, short domain-umbrella abbreviation (`wds`, `uds`, `och`). **Never changes once released** — it is persisted in project metadata and report templates. |
+| `key` | Stable machine identifier | Lowercase ASCII, short domain-umbrella abbreviation (`wds`, `uds`). **Never changes once released** — it is persisted in project metadata and report templates. |
 | `label` | Human-facing product name | Practitioner-familiar term (e.g. "Water Distribution"). May be revised between releases. |
 | `pill` | Two-character badge | Uppercase, exactly 2 characters (e.g. "WD"). |
 | `accent` | Brand color for this engine | `#rrggbb` hex string. |
@@ -156,9 +156,12 @@ Applications must treat an unknown key (e.g. a project created by a newer
 Hydra carrying an engine this build lacks) as an explicit unsupported
 state, never as a fallback to a default engine.
 
-The registry holds three registered engines — `wds` (available), `uds`
-(available), and `och` (planned) — in that order. `uds` shipped planned
-through v1 and became available with its engine implementation.
+The registry holds two registered engines, `wds` (available) and `uds`
+(available), in that order. `uds` shipped planned through v1 and became
+available with its engine implementation; `och` (open channel) was
+registered as planned from v1 through v12 and was withdrawn when 2D
+overland flow was re-planned as future functionality of `uds` instead of
+a separate engine. Neither key may be reused for a different domain.
 
 ### 2.5 Recognition
 

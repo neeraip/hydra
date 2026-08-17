@@ -178,13 +178,12 @@ COMMIT_COLOR = {"dev": "2", "mixed": "33"}
 # track and produce no bump signal at all. `test_library_track_covers_every_
 # workspace_versioned_crate` enforces this against the actual manifests.
 #
-# `crates/wasm` inherits the version but sets `publish = false`, so it is
+# `crates/demo` inherits the version but sets `publish = false`, so it is
 # deliberately absent: it releases nothing, and listing it would make a change
 # to the browser demo ask for a library bump that publishes no new code.
 LIBRARY_PATHS = [
     "Cargo.toml",
     "crates/common",
-    "crates/engine-och",
     "crates/engine-uds",
     "crates/engine-wds",
     "crates/engines",

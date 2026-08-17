@@ -7,13 +7,8 @@
 //! Hydra is a suite of domain engines. Water distribution (`wds`) is the
 //! original engine and the source of every unprefixed simulation type
 //! re-exported below; urban drainage ([`uds`], SWMM data model) ships as a
-//! namespaced module. Open channel (`och`) is registered in
-//! [`common::ENGINES`] as [`common::EngineStatus::Planned`] — reserved and
-//! presentable, but with no implementation behind it. Resolve an engine
-//! through the registry rather than assuming which one a project uses.
-//!
-//! PLANNED-ENGINE: och — revise the paragraph above when the open channel
-//! engine ships.
+//! namespaced module. Resolve an engine through the registry
+//! ([`common::ENGINES`]) rather than assuming which one a project uses.
 //!
 //! # Quick start
 //!
