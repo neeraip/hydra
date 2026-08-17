@@ -4,56 +4,45 @@ Hydra is a water infrastructure simulation platform written in Rust, built as a 
 
 Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, and water quality on the SWMM data model; it is available from the CLI, the SDK, and the GUI, where a drainage model is imported, then edited, run and explored. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
 
-**Open channel** (`och`, HEC-RAS data model) is registered in `hydra-common`'s engine registry as `Planned` — its crate name and engine key are reserved, but it is neither specced nor implemented. Never write copy that presents Hydra as one or two engines only by design, and never write copy that implies `och` already works.
+**2D overland flow** is planned as future functionality of the `uds` engine,
+not as a separate engine: SWMM's own data model is gaining 2D simulation
+upstream (SWMM6) on the same input format, so Hydra's path to 2D is growing
+`uds`, spec-first, when that work begins. There was once a third planned
+engine — **open channel** (`och`, HEC-RAS data model) — withdrawn in favour
+of this plan. Its registry key and crate name (`hydra-engine-och`, published
+as an empty scaffold through workspace v12) stay reserved and must never be
+reused for a different domain. Never write copy that implies `uds` simulates
+2D overland flow today, and never resurrect `och` in docs or interfaces.
 
-### The `PLANNED-ENGINE` tag
-
-Every disclaimer that exists **only** because an engine is unimplemented carries
-a `PLANNED-ENGINE` tag naming the engine keys it is waiting on, so the full set
-is one grep away when an engine ships:
-
-```sh
-grep -rn "PLANNED-ENGINE" --exclude-dir=target --exclude-dir=node_modules .
-grep -rn "PLANNED-ENGINE: och" .    # just the open-channel ones
-```
-
-Use the comment syntax of the host file — `<!-- … -->` in Markdown, `//` in Rust
-and TypeScript, `#` in TOML — and say what to do when the engine lands, not just
-that the disclaimer exists:
-
-```
-<!-- PLANNED-ENGINE: och — drop this paragraph when the open channel engine ships. -->
-// PLANNED-ENGINE: och — revise the paragraph above as each engine ships.
-```
-
-Tag the *temporary* statement, not the permanent one. "Planned engines cannot be
-selected" is tagged; the engine registry's `EngineStatus::Planned` variant is
-not — it is permanent machinery, and its own tests already guard the status
-values. When adding a disclaimer anywhere, tag it; when shipping an engine,
-start from this grep.
+The engine registry's `EngineStatus::Planned` variant is permanent machinery
+and stays, even while no planned engine is registered.
 
 ---
 
 ## Crate Responsibilities
+
+Crates are named for what they *are*, never for the technology they use:
+`hydra-gui`, not `hydra-tauri`; `hydra-demo`, not `hydra-wasm` (its name
+until v12). The technology is an implementation detail; the purpose is the
+identity.
 
 | Crate | Owns | Does not own |
 |---|---|---|
 | `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry), the reportable-output contract (block catalog, neutral fragment model), and — since a second engine exists to validate them — the element-taxonomy, quantity, and result-variable contracts (spec §4–§6: engine-authored catalogs, opaque ids). Depends on nothing in the workspace | Any engine logic; presentation/rendering; a cross-engine simulation session contract (still deferred — only its dispatch home is assigned, spec §2.6) |
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-engine-uds` | Complete urban-drainage engine: SWMM data model; INP import and OUT/RPT writers; rainfall-runoff hydrology (infiltration, LID, snow, groundwater, RDII); dynamic-wave routing; structures and inlets; pollutant transport; controls; session API (`simulation::engine::Simulation`); local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`, §14.9) | Interface logic; network I/O; any other filesystem I/O (model text and auxiliary-file contents are supplied in memory by callers) |
-| `hydra-engine-och` | Nothing yet — a published scaffold for the future open-channel engine, so its crate name and versions track the workspace from the start | Any functionality (deliberately empty until its development begins) |
 | `hydra-engines` | Engine dispatch, implemented once for every application: the routing policy of the `hydra-common` recognition contract (§2.5.1) and the uniform run surface of §2.6 (`EngineSession` — open a model for its engine, step it, observe progress, persist results, collect warnings). Depends on `hydra-common` and every engine — the only layer that sees both | Any recognition logic of its own (each engine judges its own models); any solver logic (it drives sessions, never computes) |
 | `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
 | `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
-| `hydra-wasm` | The engines in a browser: a `wasm_bindgen` surface over the SDK's run path, and a demo page that runs a dropped model and prints what the CLI prints. Not published — the artifact is the built bundle | All simulation logic; any output format of its own (the report and the diagnostics are the engine's and the CLI's) |
+| `hydra-demo` | The engines in a browser: a `wasm_bindgen` surface over the SDK's run path, and a demo page that runs a dropped model and prints what the CLI prints. Not published — the artifact is the built bundle | All simulation logic; any output format of its own (the report and the diagnostics are the engine's and the CLI's) |
 
 **Each engine crate is a self-contained black box.** `hydra-engine-wds`'s internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail; callers depend only on its public re-export surface. `hydra-engine-uds` is likewise self-contained (`hydrology/`, `hydraulics/`, `transport/`, `simulation/`, `model/`, `io/`, with specs additionally under `interop/`).
 
 **`hydra-sdk` is Hydra's public API, not an in-house convenience layer.** Its surface is sized by what a third-party integrator building on Hydra needs — never by what the official applications happen to use. Do not propose narrowing a re-export because the in-house apps don't exercise it; wholesale module re-exports (e.g. the engine's `io`) are correct when the module is genuinely public-facing.
 
-**`hydra-cli`, `hydra-gui` and `hydra-wasm` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
+**`hydra-cli`, `hydra-gui` and `hydra-demo` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
 
 **The engines must keep working on `wasm32-unknown-unknown`.** They have no threads and no filesystem calls outside test code and `io::out_reader`, which is what makes a browser build possible at all. Three things break it, and only the first is caught by compiling:
 
@@ -63,7 +52,7 @@ start from this grep.
 | A host call that compiles and panics at runtime | `SystemTime::now()` | the engines' `clippy.toml` |
 | A dependency that compiles and panics at runtime | `chrono` without `wasmbind` | `just test-wasm` |
 
-Only the first is visible to a compiler. `just test-wasm` (`crates/wasm/tests/browser.rs`) runs a model in headless Chrome, and is the only check that executes engine code on wasm at all — both bugs found while bringing the browser build up compiled cleanly and passed every host test. It needs a **system Chrome**, unlike the layout tests, which drive Playwright's own download.
+Only the first is visible to a compiler. `just test-wasm` (`crates/demo/tests/browser.rs`) runs a model in headless Chrome, and is the only check that executes engine code on wasm at all — both bugs found while bringing the browser build up compiled cleanly and passed every host test. It needs a **system Chrome**, unlike the layout tests, which drive Playwright's own download.
 
 Keep that file small. Everything it could assert about behaviour is already asserted on the host, where a failure names a line instead of a trap; it exists to answer one question, which is whether the engine survives a real run.
 
