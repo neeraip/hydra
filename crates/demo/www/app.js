@@ -76,10 +76,15 @@ function startHydraDemo(hydra) {
     for (const l of text.split("\n")) line(l, className);
   }
 
-  /** A diagnostic, printed as the CLI writes it and coloured by level. */
+  /** A diagnostic from the CLI's stderr stream, rendered as a readable
+   *  line rather than its raw JSON: level, code, and message, with the
+   *  element prefixed only when the message does not already carry it. */
   function diagnostic(d) {
-    const json = JSON.stringify(d);
-    line(json, d.level === "error" ? "error" : "warn");
+    const message = String(d.message ?? "");
+    const id =
+      d.object_id && !message.startsWith(String(d.object_id)) ? `${d.object_id}: ` : "";
+    const at = d.time_step == null ? "" : `  (t=${d.time_step}s)`;
+    line(`${d.level}  [${d.code}]  ${id}${message}${at}`, d.level === "error" ? "error" : "warn");
   }
 
   /** Pull the diagnostics JSON out of a rejected call. `HydraRun` rejects

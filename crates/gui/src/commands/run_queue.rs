@@ -524,7 +524,7 @@ pub(crate) fn open_uds_with_aux(
 
     let (mut sim, _diags, _findings) =
         hydra::uds::simulation::Simulation::open_with_files(text, climate_records, rain_files)
-            .map_err(|e| format!("Cannot open the model: {e:?}"))?;
+            .map_err(|e| format!("Cannot open the model: {e}"))?;
 
     // Post-open auxiliary state, mirroring the CLI: a declared hotstart
     // or routing-inflows file is loaded from aux/, and its absence is an
@@ -572,7 +572,7 @@ async fn run_sim_for_queue(
 ) -> Result<QueueRunResult, String> {
     use hydra::{QualityMode, Simulation};
 
-    let app_data = app.path().app_data_dir().map_err(|e| format!("{e:?}"))?;
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let raw_bytes: Vec<u8> = match scenario_id {
         Some(sid) => {
             let path = bundle::scenario_model_path(&app_data, project_id, sid);
@@ -598,7 +598,7 @@ async fn run_sim_for_queue(
             // and no longer carries Hydra's own fields (model spec §4.4.1).
             let network_digest = hydra::compute_network_digest(&network);
             let mut sim = Simulation::create();
-            sim.load(network).map_err(|e| format!("{e:?}"))?;
+            sim.load(network).map_err(|e| e.to_string())?;
             (
                 hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
                 Some(network_digest),
@@ -670,7 +670,7 @@ async fn run_sim_for_queue(
         )
     })
     .await
-    .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
+    .map_err(|e| format!("Simulation task panicked: {e}"))?;
 
     tracing::info!(
         run_id,

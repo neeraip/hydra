@@ -67,7 +67,7 @@ and exit classification.
 | Resolves auxiliary files against the model's directory | Matched by name among the other dropped files |
 | Writes `.out` to `--results` | Captured in memory, offered as a download |
 | Writes the summary to stdout or `--summary` | Printed to the page |
-| Writes diagnostics to stderr | Printed to the page, one JSON line each |
+| Writes diagnostics to stderr | Rendered on the page as readable lines |
 
 ## What it is not
 
