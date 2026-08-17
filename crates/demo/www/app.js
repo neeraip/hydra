@@ -148,18 +148,38 @@ function startHydraDemo(hydra) {
    *
    *  Largest rather than first because a drop arrives in no defined order,
    *  and a SWMM model's climate file can also be named `.inp` — between two
-   *  candidates the model is the one with the sections in it. */
+   *  candidates the model is the one with the sections in it. Auxiliary
+   *  files carry whatever names the model declares, so only the model is
+   *  extension-checked; a set with no `.inp` is either extra auxiliaries
+   *  for the model already loaded, or a mistake worth saying out loud. */
   function sortFiles(files) {
     const inps = files.filter((f) => f.name.toLowerCase().endsWith(".inp"));
-    const chosen = inps.length
-      ? inps.reduce((a, b) => (b.size > a.size ? b : a))
-      : files[0];
+    if (!inps.length) return { model: null, aux: files };
+    const chosen = inps.reduce((a, b) => (b.size > a.size ? b : a));
     return { model: chosen, aux: files.filter((f) => f !== chosen) };
   }
 
   async function accept(files) {
     if (!files.length) return;
     const sorted = sortFiles(files);
+    if (!sorted.model && !model) {
+      line(
+        "None of that is a model: pick an EPANET or SWMM .inp file. " +
+          "Auxiliary files are read alongside a model, matched by the names it declares.",
+        "warn",
+      );
+      return;
+    }
+    if (!sorted.model) {
+      // Auxiliaries for the model already loaded; newest name wins.
+      for (const f of sorted.aux) {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        auxFiles = auxFiles.filter((a) => a.name !== f.name);
+        auxFiles.push({ name: f.name, bytes });
+        line(`  + ${f.name}  ${bytes.length.toLocaleString()} bytes`, "dim");
+      }
+      return;
+    }
     model = { name: sorted.model.name, bytes: new Uint8Array(await sorted.model.arrayBuffer()) };
     auxFiles = [];
     for (const f of sorted.aux) {
