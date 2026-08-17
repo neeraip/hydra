@@ -537,6 +537,19 @@ pub struct CollectionDetailDto {
     /// with the engine's own reader. Serving the text to be read is
     /// worth doing whether or not it can be rewritten.
     pub editable: bool,
+    /// The column whose values must strictly advance down the table, or
+    /// `None` when no column has to.
+    ///
+    /// A curve's abscissae ascend, a transect's stations advance, a
+    /// series' times increase — and the write refuses a table that does
+    /// not. The consumer needs to know *which* column that is for one
+    /// reason: seeding a new row. A row of zeros under a table whose
+    /// advancing column has passed zero is a row the write can only
+    /// refuse, which made the add button a button that always failed.
+    /// Which column advances is the engine's knowledge, not something a
+    /// consumer can guess from headings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advances: Option<usize>,
     /// Why there is nothing, when there is nothing (§4.5.2.2).
     ///
     /// Empty contents are two different answers. A pollutant has none —
@@ -587,7 +600,12 @@ pub fn get_collection_detail(
 
 /// Pure form of [`get_collection_detail`].
 pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetailDto {
-    let pair = |columns: [&str; 2], quantities: [Option<&str>; 2], rows: Vec<Vec<f64>>| {
+    // `advances` names the column the write requires to increase, if any
+    // — see the DTO field.
+    let pair = |columns: [&str; 2],
+                quantities: [Option<&str>; 2],
+                rows: Vec<Vec<f64>>,
+                advances: Option<usize>| {
         CollectionDetailDto {
             columns: columns.iter().map(|c| (*c).to_string()).collect(),
             quantities: quantities
@@ -599,6 +617,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
             // Every tabular container is a table of numbers under
             // engine-named headings, which is the shape the write takes.
             editable: true,
+            advances,
             note: None,
         }
     };
@@ -636,6 +655,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                     columns,
                     quantities,
                     c.points.iter().map(|(x, y)| vec![*x, *y]).collect(),
+                    Some(0),
                 )
             })
             .unwrap_or_default(),
@@ -694,6 +714,8 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                     ["Elevation", "Station"],
                     [Some("elevation"), Some("length")],
                     t.stations.iter().map(|(e, x)| vec![*e, *x]).collect(),
+                    // The station, which is the second value here.
+                    Some(1),
                 )
             })
             .unwrap_or_default(),
@@ -711,6 +733,9 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                         // 1-based: a modeller counts hour 1, not hour 0.
                         .map(|(i, f)| vec![(i + 1) as f64, *f])
                         .collect(),
+                    // The interval column counts, but the write ignores
+                    // it — the read renumbers — so nothing has to advance.
+                    None,
                 )
             })
             .unwrap_or_default(),
@@ -736,6 +761,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                             // Dated readings render as text, and text is
                             // not what the row write takes.
                             editable: false,
+                            advances: None,
                             lines: pts
                                 .iter()
                                 .map(|p| match &p.time {
@@ -769,6 +795,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                                     vec![s / 3600.0, p.value]
                                 })
                                 .collect(),
+                            Some(0),
                         )
                     }
                 }
@@ -801,6 +828,7 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 // with the engine's own reader, which this path does not
                 // reach — so it is served to be read and not rewritten.
                 editable: false,
+                advances: None,
                 lines: r.lines.clone(),
                 note: None,
             })

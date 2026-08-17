@@ -517,6 +517,8 @@ pub(crate) fn collection_detail(
                         .collect(),
                     lines: Vec::new(),
                     editable: true,
+                    // The abscissae, which the write requires to ascend.
+                    advances: Some(0),
                     note: None,
                 }
             })
@@ -539,6 +541,9 @@ pub(crate) fn collection_detail(
                     .collect(),
                 lines: Vec::new(),
                 editable: true,
+                // The interval column counts, but the write ignores it —
+                // the read renumbers — so nothing has to advance.
+                advances: None,
                 note: None,
             })
             .unwrap_or_default(),

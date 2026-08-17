@@ -1361,6 +1361,12 @@ export interface CollectionDetail {
    * §4.5.2.2). Advisory — the write is the authority — and false for
    * contents that are language rather than a table of numbers. */
   editable: boolean;
+  /** The column whose values must strictly advance down the table, when
+   * one has to — a curve's abscissae, a series' times, a transect's
+   * stations. The engine's knowledge, served so a new row can be seeded
+   * past the last one instead of at zero, where the write could only
+   * refuse it. */
+  advances?: number;
   /**
    * Why there is nothing, when there is nothing (hydra-common §4.5.2.2).
    *

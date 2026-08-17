@@ -145,6 +145,59 @@ pub(crate) fn set_uds_contents(
             pattern.factors = factors;
             Ok(())
         }
+        "timeseries" => {
+            // One reading at least: the file writer emits a line per
+            // point, so a series written empty would vanish at the next
+            // save — the same reason a new one is created with two.
+            let readings = pairs(rows, 1)?;
+            let series = net
+                .timeseries
+                .iter_mut()
+                .find(|t| t.id.eq_ignore_ascii_case(id))
+                .ok_or_else(|| format!("no time series '{id}'"))?;
+            // The two shapes the read serves as something other than this
+            // table stay unwritable from this side too. Dated readings
+            // render as text because a date cannot go in the numeric time
+            // column, and an external series' values live in a file this
+            // crate never reads — accepting rows for either would quietly
+            // replace what the reader was just shown with something else.
+            match &series.source {
+                hydra::uds::model::TimeSeriesSource::External { file } => {
+                    return Err(format!("'{id}' is read from '{file}', not from the model"));
+                }
+                hydra::uds::model::TimeSeriesSource::Points(pts)
+                    if pts.iter().any(|p| {
+                        matches!(p.time, hydra::uds::model::SeriesTime::Absolute { .. })
+                    }) =>
+                {
+                    return Err(format!("'{id}' carries dated readings, which this table of elapsed hours cannot hold"));
+                }
+                hydra::uds::model::TimeSeriesSource::Points(_) => {}
+            }
+            // Interpolation brackets a run time between neighbouring
+            // points, so the times must advance — the same rule a curve's
+            // abscissae follow.
+            for w in readings.windows(2) {
+                if w[1].0 <= w[0].0 {
+                    return Err(format!(
+                        "a series' times have to increase: {} does not follow {}",
+                        w[1].0, w[0].0
+                    ));
+                }
+            }
+            series.source = hydra::uds::model::TimeSeriesSource::Points(
+                readings
+                    .into_iter()
+                    // Back through the same unit the read served: hours
+                    // in the table, seconds in the model.
+                    .map(|(hours, value)| hydra::uds::model::TimeSeriesPoint {
+                        time: hydra::uds::model::SeriesTime::Elapsed(hours * 3600.0),
+                        value,
+                    })
+                    .collect(),
+            );
+            Ok(())
+        }
         other => Err(not_tabular(other)),
     }
 }
@@ -233,6 +286,9 @@ ST1 STORAGE 0 100
 ST1 1 150
 [PATTERNS]
 P1 HOURLY 1 1.2 0.8 1 1 1
+[TIMESERIES]
+TS1 0:00 0.0
+TS1 1:00 0.5
 ";
 
     fn uds() -> hydra::uds::model::Network {
@@ -357,6 +413,206 @@ P1 HOURLY 1 1.2 0.8 1 1 1
         let long: Vec<Vec<f64>> = (0..30).map(|i| vec![f64::from(i), 1.0]).collect();
         set_wds_contents(&mut network, "pattern", "PA1", &long).expect("no period");
         assert_eq!(network.patterns[0].factors.len(), 30);
+    }
+
+    /// A time series' readings reach the model in the unit the table
+    /// shows: hours in the column, seconds in the model. Asserted against
+    /// the model's own value *and* back through the read, because a
+    /// conversion error cancels itself over a round trip — which is how
+    /// it survives.
+    #[test]
+    fn a_time_series_takes_a_new_table_of_readings() {
+        let mut net = uds();
+        set_uds_contents(
+            &mut net,
+            "timeseries",
+            "TS1",
+            &[vec![0.0, 0.0], vec![0.5, 2.0], vec![2.0, 0.0]],
+        )
+        .expect("set");
+        let hydra::uds::model::TimeSeriesSource::Points(pts) = &net.timeseries[0].source else {
+            panic!("not points");
+        };
+        assert_eq!(pts.len(), 3);
+        assert_eq!(
+            pts[1].time,
+            hydra::uds::model::SeriesTime::Elapsed(1800.0),
+            "half an hour is 1800 seconds"
+        );
+        assert_eq!(pts[1].value, 2.0);
+
+        // And the read agrees with the write.
+        let served = super::super::uds_attrs::collection_detail(&net, "timeseries", "TS1");
+        assert_eq!(
+            served.rows,
+            vec![vec![0.0, 0.0], vec![0.5, 2.0], vec![2.0, 0.0]]
+        );
+        assert!(served.editable);
+        // And names its time column as the one that must advance, which
+        // is what the panel seeds a new row by.
+        assert_eq!(served.advances, Some(0));
+    }
+
+    /// Interpolation brackets a run time between neighbouring points, so
+    /// a series whose times do not advance cannot be evaluated — refused,
+    /// changing nothing, like a curve that does not ascend.
+    #[test]
+    fn a_series_whose_times_do_not_advance_is_refused() {
+        let mut net = uds();
+        let err = set_uds_contents(
+            &mut net,
+            "timeseries",
+            "TS1",
+            &[vec![1.0, 0.0], vec![1.0, 2.0]],
+        )
+        .expect_err("equal times");
+        assert!(err.contains("increase"), "{err}");
+        let hydra::uds::model::TimeSeriesSource::Points(pts) = &net.timeseries[0].source else {
+            panic!("not points");
+        };
+        assert_eq!(pts.len(), 2, "a refusal changed the model");
+
+        assert!(
+            set_uds_contents(&mut net, "timeseries", "TS1", &[]).is_err(),
+            "a series written empty would vanish at the next save"
+        );
+    }
+
+    /// The two shapes the read serves as something other than an elapsed
+    /// table are the two this write refuses: dated readings and an
+    /// external file. The read already marks both uneditable; the write
+    /// refusing too is what keeps the rule enforced on both doors.
+    #[test]
+    fn a_dated_or_external_series_is_refused_by_name() {
+        let mut net = uds();
+        net.timeseries.push(hydra::uds::model::TimeSeries {
+            id: "DATED".into(),
+            source: hydra::uds::model::TimeSeriesSource::Points(vec![
+                hydra::uds::model::TimeSeriesPoint {
+                    time: hydra::uds::model::SeriesTime::Absolute {
+                        date: hydra::uds::io::options::Date {
+                            year: 2026,
+                            month: 8,
+                            day: 1,
+                        },
+                        seconds: 0.0,
+                    },
+                    value: 1.0,
+                },
+            ]),
+        });
+        net.timeseries.push(hydra::uds::model::TimeSeries {
+            id: "EXT".into(),
+            source: hydra::uds::model::TimeSeriesSource::External {
+                file: "rain.dat".into(),
+            },
+        });
+
+        let err = set_uds_contents(&mut net, "timeseries", "DATED", &[vec![0.0, 1.0]])
+            .expect_err("dated");
+        assert!(err.contains("dated"), "{err}");
+        assert!(
+            !super::super::uds_attrs::collection_detail(&net, "timeseries", "DATED").editable,
+            "the read offers what the write just refused"
+        );
+
+        let err =
+            set_uds_contents(&mut net, "timeseries", "EXT", &[vec![0.0, 1.0]]).expect_err("file");
+        assert!(err.contains("rain.dat"), "{err}");
+    }
+
+    /// Whatever the read serves as editable, the write takes back — and
+    /// takes one more row of, seeded the way the panel seeds one — for
+    /// every collection kind, in both engines.
+    ///
+    /// This is the invariant that broke, twice over: a time series was
+    /// served as an editable table while the write had no arm for it, so
+    /// the panel offered an edit that could only ever refuse — and the
+    /// panel's add button seeded a row of zeros, which a table whose
+    /// advancing column has passed zero can also only refuse. The catalog
+    /// is the loop's spine so the next collection kind is enrolled by
+    /// existing, and the exercised list is asserted so a fixture missing
+    /// its elements cannot quietly hollow the test out.
+    #[test]
+    fn every_container_served_editable_is_one_the_write_takes() {
+        let mut net = uds();
+        net.transects.push(hydra::uds::model::Transect {
+            id: "TR1".into(),
+            n_left: 0.03,
+            n_right: 0.03,
+            n_channel: 0.02,
+            x_left: 0.0,
+            x_right: 0.0,
+            meander_factor: 1.0,
+            stations: vec![(2.0, 0.0), (0.0, 5.0), (2.0, 10.0)],
+        });
+        let wds_net = wds();
+
+        let mut exercised = Vec::new();
+        for (engine, catalog) in [
+            ("uds", hydra::uds::descriptors::ELEMENT_KINDS),
+            ("wds", hydra::descriptors::ELEMENT_KINDS),
+        ] {
+            for kind in catalog
+                .iter()
+                .filter(|k| k.class == hydra::common::ElementClass::Collection)
+            {
+                let ids = if engine == "uds" {
+                    super::super::uds_attrs::kind_elements(&net, kind.id).ids
+                } else {
+                    super::super::wds_attrs::kind_elements(&wds_net, kind.id).ids
+                };
+                for id in ids {
+                    let detail = if engine == "uds" {
+                        super::super::uds_attrs::collection_detail(&net, kind.id, &id)
+                    } else {
+                        super::super::wds_attrs::collection_detail(&wds_net, kind.id, &id)
+                    };
+                    if !detail.editable {
+                        continue;
+                    }
+                    let write = |rows: &[Vec<f64>]| {
+                        if engine == "uds" {
+                            set_uds_contents(&mut net.clone(), kind.id, &id, rows)
+                        } else {
+                            set_wds_contents(&mut wds_net.clone(), kind.id, &id, rows)
+                        }
+                    };
+                    write(&detail.rows).unwrap_or_else(|e| {
+                        panic!("{engine}.{} '{id}' is served editable but: {e}", kind.id)
+                    });
+                    // And one more row, seeded the way the panel seeds
+                    // one: the last row copied, its advancing column
+                    // moved on.
+                    let mut seeded = detail.rows.last().cloned().unwrap_or_default();
+                    if let Some(col) = detail.advances {
+                        seeded[col] += 1.0;
+                    }
+                    let mut added = detail.rows.clone();
+                    added.push(seeded);
+                    write(&added).unwrap_or_else(|e| {
+                        panic!(
+                            "{engine}.{} '{id}' refuses the panel's added row: {e}",
+                            kind.id
+                        )
+                    });
+                    exercised.push(format!("{engine}.{}", kind.id));
+                }
+            }
+        }
+        for want in [
+            "uds.curve",
+            "uds.pattern",
+            "uds.timeseries",
+            "uds.transect",
+            "wds.curve",
+            "wds.pattern",
+        ] {
+            assert!(
+                exercised.iter().any(|e| e == want),
+                "the fixture no longer exercises {want}"
+            );
+        }
     }
 
     /// A transect's survey points, which are the same table shape as a

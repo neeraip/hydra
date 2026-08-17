@@ -32,13 +32,14 @@ import {
 } from "../../../hooks";
 import { formatIpcError } from "../../../hooks/ipc";
 import { useUnitSystem } from "../../../units";
+import { nextRow } from "./nextRow";
 
 /**
  * Whether the panel has anything to draw.
  *
  * Not every collection kind has contents. A pollutant, a land use and an
- * aquifer are their attributes and nothing further, and a LID control's
- * layers cannot be read yet. All six reached this panel and it drew
+ * aquifer are their attributes and nothing further, and a control
+ * measure's layers live in the records panel. All six reached this panel and it drew
  * itself anyway, under a sentence written for one other case entirely —
  * "this entry's contents are held outside the model file", which is true
  * of an external time series and false of every one of them.
@@ -225,12 +226,11 @@ export function CollectionDetail({
           </table>
         )}
 
-        {/* Adding a row is the one edit a cell cannot express, and it
-            lands at the end rather than in sorted position: where a point
-            belongs is the modeller's judgement, and a table that moved it
-            for them would answer a question they were in the middle of
-            asking. A curve refuses until the abscissa is right, which is
-            the refusal shown below. */}
+        {/* Adding a row is the one edit a cell cannot express. It lands
+            at the end, seeded past the last row in the column the engine
+            says must advance — a row of zeros under a curve or a series
+            was one the write could only refuse, so the button always
+            failed. */}
         {editable && (
           <div style={{ padding: "6px 12px" }}>
             <ActionIcon
@@ -238,8 +238,7 @@ export function CollectionDetail({
               onClick={() =>
                 send([
                   ...detail.rows,
-                  detail.rows[detail.rows.length - 1]?.map(() => 0) ??
-                    detail.columns.map(() => 0),
+                  nextRow(detail.rows, detail.columns.length, detail.advances),
                 ])
               }
             >

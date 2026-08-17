@@ -107,6 +107,9 @@ describe("CollectionDetail", () => {
       [1, 150],
     ],
     editable: true,
+    // The engine's declaration that the depth column must ascend, which
+    // is what the added row is seeded by.
+    advances: 0,
   };
 
   it("sends the whole table when one cell changes", () => {
@@ -133,13 +136,14 @@ describe("CollectionDetail", () => {
     const { rerender } = render(
       <CollectionDetail elementId="ST1" detail={curve} onWrite={onWrite} />,
     );
-    // A new row lands at the end, not in sorted position: where a point
-    // belongs is the modeller's judgement.
+    // A new row lands at the end, seeded past the last one in the
+    // column the engine says must advance — a row of zeros was one the
+    // write could only refuse, so the button always failed.
     fireEvent.click(screen.getByLabelText("Add row"));
     expect(onWrite).toHaveBeenCalledWith([
       [0, 100],
       [1, 150],
-      [0, 0],
+      [2, 150],
     ]);
 
     rerender(
