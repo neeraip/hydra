@@ -334,6 +334,10 @@ const UDS: EngineComponents = {
   // never the reason, and hiding the affordance for a viewer confused "you
   // cannot change this" with "you cannot find this".
   editorFocusesElements: true,
+  // Not "settings are read-only" — they stopped being that when the
+  // drainage settings body gained its own Save. This flag only adds the
+  // modal footer's wds-shaped Save button, and the drainage body owns
+  // its save instead.
   settingsEditable: false,
   // A drainage removal takes inflows and treatments with it, and
   // nothing in the create vocabulary puts those back.

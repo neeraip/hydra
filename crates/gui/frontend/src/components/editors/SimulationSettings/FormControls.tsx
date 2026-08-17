@@ -178,6 +178,31 @@ export function TimeInput({
   );
 }
 
+export function DateInput({
+  value,
+  onChange,
+}: {
+  /** A calendar date; the control edits it whole. */
+  value: { year: number; month: number; day: number };
+  onChange: (v: { year: number; month: number; day: number }) => void;
+}) {
+  const formatted = `${String(value.year).padStart(4, "0")}-${String(
+    value.month,
+  ).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
+  return (
+    <input
+      type="date"
+      value={formatted}
+      onChange={(e) => {
+        const [y, m, d] = e.target.value.split("-").map(Number);
+        if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d))
+          onChange({ year: y, month: m, day: d });
+      }}
+      style={inputStyle}
+    />
+  );
+}
+
 export function TextInput({
   value,
   onChange,

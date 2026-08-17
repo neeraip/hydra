@@ -122,6 +122,63 @@ export async function updateSimParams(
   await invoke("update_sim_params", { projectId, params });
 }
 
+// ── Drainage simulation parameters (uds [OPTIONS], INP-canonical) ──────────
+
+/** A calendar date as the drainage options hold it. */
+export interface UdsDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** Mirrors the backend `UdsSimParamsDto`: the run's timing and the three
+ * global choices, all editable. The choices travel as file keywords; the
+ * write refuses an infiltration flip across parameter families while
+ * subcatchments carry typed parameters for the old relation. */
+export interface UdsSimParams {
+  startDate: UdsDate;
+  /** Seconds since midnight. */
+  startTime: number;
+  endDate: UdsDate;
+  /** Seconds since midnight. */
+  endTime: number;
+  reportStep: number;
+  routingStep: number;
+  wetStep: number;
+  dryStep: number;
+
+  flowUnits: "CFS" | "GPM" | "MGD" | "CMS" | "LPS" | "MLD";
+  routing: "STEADY" | "KINWAVE" | "DYNWAVE";
+  infiltration:
+    | "HORTON"
+    | "MODIFIED_HORTON"
+    | "GREEN_AMPT"
+    | "MODIFIED_GREEN_AMPT"
+    | "CURVE_NUMBER";
+}
+
+/** A drainage project's simulation parameters; `null` for other engines
+ * and for draft projects with no model. */
+export async function getUdsSimParams(
+  projectId: string,
+): Promise<UdsSimParams | null> {
+  return tryInvokeOr<UdsSimParams | null>(
+    "get_uds_sim_params",
+    { projectId },
+    null,
+  );
+}
+
+/** Persist new drainage sim params: rewrites base + every scenario INP.
+ * Rejects with the backend's sentence — "the run has to end after it
+ * starts" — so the dialog can show it beside the fields it is about. */
+export async function updateUdsSimParams(
+  projectId: string,
+  params: UdsSimParams,
+): Promise<void> {
+  await invoke("update_uds_sim_params", { projectId, params });
+}
+
 /**
  * React hook that tracks simulation parameters for `projectId`. Returns
  * `null` until the first fetch resolves or when `projectId` is absent.

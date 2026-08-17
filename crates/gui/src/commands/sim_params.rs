@@ -532,6 +532,315 @@ pub fn update_sim_params(
     Ok(())
 }
 
+// ── Drainage simulation parameters (uds [OPTIONS], INP-canonical) ─────────────
+//
+// The same shape as the wds surface above, for the drainage engine: the
+// base model.inp is canonical, the editable subset travels as a DTO, and
+// an update rewrites the base and every scenario INP in lockstep. The
+// subset is the run's timing plus the three global choices — flow units,
+// routing form, infiltration relation. Flow units is a lossless
+// re-serialisation here (the model holds SI; the writer converts on the
+// way out), routing is a request the solver already substitutes for, and
+// infiltration is editable within a parameter family: a subcatchment's
+// parameters are typed to their relation, so Horton ↔ modified Horton is
+// an option flip while Horton → Green-Ampt would need every subcatchment
+// re-described — that one refuses, saying so.
+
+/// A calendar date on the wire, as the drainage options hold it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UdsDateDto {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+}
+
+impl From<hydra::uds::io::options::Date> for UdsDateDto {
+    fn from(d: hydra::uds::io::options::Date) -> Self {
+        Self {
+            year: d.year,
+            month: d.month,
+            day: d.day,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdsSimParamsDto {
+    // ── Editable: the run's timing ──
+    pub start_date: UdsDateDto,
+    /// Start time of day (seconds since midnight).
+    pub start_time: f64,
+    pub end_date: UdsDateDto,
+    /// End time of day (seconds since midnight).
+    pub end_time: f64,
+    /// Reporting step (s).
+    pub report_step: f64,
+    /// Routing step cap (s).
+    pub routing_step: f64,
+    /// Wet hydrology step (s).
+    pub wet_step: f64,
+    /// Dry hydrology step (s).
+    pub dry_step: f64,
+
+    /// File keyword: `CFS | GPM | MGD | CMS | LPS | MLD`.
+    pub flow_units: String,
+    /// File keyword: `STEADY | KINWAVE | DYNWAVE`.
+    pub routing: String,
+    /// File keyword: `HORTON | MODIFIED_HORTON | GREEN_AMPT |
+    /// MODIFIED_GREEN_AMPT | CURVE_NUMBER`.
+    pub infiltration: String,
+}
+
+fn uds_options_to_dto(o: &hydra::uds::io::options::AnalysisOptions) -> UdsSimParamsDto {
+    use hydra::uds::io::options::{InfiltrationModel, RoutingRequest};
+    UdsSimParamsDto {
+        start_date: o.start_date.into(),
+        start_time: o.start_time,
+        end_date: o.end_date.into(),
+        end_time: o.end_time,
+        report_step: o.report_step,
+        routing_step: o.routing_step,
+        wet_step: o.wet_step,
+        dry_step: o.dry_step,
+        flow_units: format!("{:?}", o.flow_units).to_uppercase(),
+        routing: match o.routing_request {
+            RoutingRequest::Steady => "STEADY",
+            RoutingRequest::KinematicWave => "KINWAVE",
+            RoutingRequest::DynamicWave => "DYNWAVE",
+        }
+        .to_string(),
+        infiltration: match o.infiltration {
+            InfiltrationModel::Horton => "HORTON",
+            InfiltrationModel::ModifiedHorton => "MODIFIED_HORTON",
+            InfiltrationModel::GreenAmpt => "GREEN_AMPT",
+            InfiltrationModel::ModifiedGreenAmpt => "MODIFIED_GREEN_AMPT",
+            InfiltrationModel::CurveNumber => "CURVE_NUMBER",
+        }
+        .to_string(),
+    }
+}
+
+/// Which parameter set an infiltration relation reads (§3.3): Horton's
+/// family, Green-Ampt's, or the curve number's. A subcatchment's stored
+/// parameters are typed to the family, so a within-family flip is an
+/// option change while a cross-family one would orphan every parameter
+/// set in the model.
+fn infiltration_family(m: hydra::uds::io::options::InfiltrationModel) -> u8 {
+    use hydra::uds::io::options::InfiltrationModel::*;
+    match m {
+        Horton | ModifiedHorton => 0,
+        GreenAmpt | ModifiedGreenAmpt => 1,
+        CurveNumber => 2,
+    }
+}
+
+/// The moment a date-and-time names, as an epoch the two ends can be
+/// compared on. Refuses an impossible calendar date rather than guessing.
+fn uds_epoch(date: &UdsDateDto, time: f64, which: &str) -> Result<f64, String> {
+    use chrono::NaiveDate;
+    let d = NaiveDate::from_ymd_opt(date.year, date.month, date.day).ok_or_else(|| {
+        format!(
+            "the {which} date {:02}/{:02}/{} is not a calendar date",
+            date.month, date.day, date.year
+        )
+    })?;
+    Ok(d.and_hms_opt(0, 0, 0)
+        .map(|dt| dt.and_utc().timestamp() as f64)
+        .unwrap_or(0.0)
+        + time)
+}
+
+/// Apply the editable subset onto a parsed drainage network in place.
+///
+/// Two rules with stories behind them. **The run has to end after it
+/// starts:** the engine happily runs for zero seconds — it completes at
+/// once and writes a results file with no reporting periods, which
+/// surfaces as an empty canvas and a RESULTS-EMPTY warning. This door is
+/// where that state stops being reachable through the GUI. And **the
+/// infiltration relation moves only within its parameter family** while
+/// subcatchments carry typed parameters for the old one — a cross-family
+/// flip is a model edit this dialog does not make, and it says so.
+fn apply_uds_dto(
+    net: &mut hydra::uds::model::Network,
+    dto: &UdsSimParamsDto,
+) -> Result<(), String> {
+    use hydra::uds::io::options::{FlowUnits, InfiltrationModel, RoutingRequest};
+
+    let start = uds_epoch(&dto.start_date, dto.start_time, "start")?;
+    let end = uds_epoch(&dto.end_date, dto.end_time, "end")?;
+    if end <= start {
+        return Err("the run has to end after it starts".into());
+    }
+    for (step, name) in [
+        (dto.report_step, "report step"),
+        (dto.routing_step, "routing step"),
+        (dto.wet_step, "wet step"),
+        (dto.dry_step, "dry step"),
+    ] {
+        if !step.is_finite() || step <= 0.0 {
+            return Err(format!("the {name} has to be a positive number of seconds"));
+        }
+    }
+
+    let flow_units = match dto.flow_units.as_str() {
+        "CFS" => FlowUnits::Cfs,
+        "GPM" => FlowUnits::Gpm,
+        "MGD" => FlowUnits::Mgd,
+        "CMS" => FlowUnits::Cms,
+        "LPS" => FlowUnits::Lps,
+        "MLD" => FlowUnits::Mld,
+        s => return Err(format!("unknown flow units '{s}'")),
+    };
+    let routing = match dto.routing.as_str() {
+        "STEADY" => RoutingRequest::Steady,
+        "KINWAVE" => RoutingRequest::KinematicWave,
+        "DYNWAVE" => RoutingRequest::DynamicWave,
+        s => return Err(format!("unknown routing form '{s}'")),
+    };
+    let infiltration = match dto.infiltration.as_str() {
+        "HORTON" => InfiltrationModel::Horton,
+        "MODIFIED_HORTON" => InfiltrationModel::ModifiedHorton,
+        "GREEN_AMPT" => InfiltrationModel::GreenAmpt,
+        "MODIFIED_GREEN_AMPT" => InfiltrationModel::ModifiedGreenAmpt,
+        "CURVE_NUMBER" => InfiltrationModel::CurveNumber,
+        s => return Err(format!("unknown infiltration relation '{s}'")),
+    };
+    if infiltration_family(infiltration) != infiltration_family(net.options.infiltration)
+        && net.parcels.iter().any(|p| p.infiltration.is_some())
+    {
+        return Err(format!(
+            "switching to {} would orphan every subcatchment's infiltration \
+             parameters, which are entered for {} — re-describe the \
+             subcatchments first",
+            dto.infiltration,
+            uds_options_to_dto(&net.options).infiltration
+        ));
+    }
+
+    let o = &mut net.options;
+    o.flow_units = flow_units;
+    o.routing_request = routing;
+    o.infiltration = infiltration;
+    o.start_date = hydra::uds::io::options::Date {
+        year: dto.start_date.year,
+        month: dto.start_date.month,
+        day: dto.start_date.day,
+    };
+    o.start_time = dto.start_time;
+    o.end_date = hydra::uds::io::options::Date {
+        year: dto.end_date.year,
+        month: dto.end_date.month,
+        day: dto.end_date.day,
+    };
+    o.end_time = dto.end_time;
+    o.report_step = dto.report_step;
+    o.routing_step = dto.routing_step;
+    o.wet_step = dto.wet_step;
+    o.dry_step = dto.dry_step;
+    Ok(())
+}
+
+/// A drainage project's simulation parameters, or `None` for a project of
+/// another engine or one with no model yet.
+#[tauri::command(async)]
+pub fn get_uds_sim_params(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+) -> Result<Option<UdsSimParamsDto>, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(None);
+    }
+    match super::results::uds_network_for_target(&app_data, &state, &project_id, None) {
+        Ok(network) => Ok(Some(uds_options_to_dto(&network.options))),
+        // No model yet is the draft-project case, not an error.
+        Err(_) => Ok(None),
+    }
+}
+
+/// Persist new drainage sim params to the base and every scenario INP —
+/// the same contract as [`update_sim_params`], through the drainage
+/// engine's own reader and writer.
+#[tauri::command(async)]
+pub fn update_uds_sim_params(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    params: UdsSimParamsDto,
+) -> Result<(), String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    // Guarded here, not just in the frontend: this path serialises with
+    // the drainage writer, and rewriting another engine's model with it
+    // would destroy the file.
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Err("this command edits drainage models only".into());
+    }
+
+    let rewrite = |path: &std::path::Path| -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&bytes);
+        // Tolerant by construction — the drainage reader always yields a
+        // network plus diagnostics, so options are editable regardless of
+        // whether the model is finished.
+        let (mut network, _diagnostics) = hydra::uds::io::objects::parse_network(&text);
+        apply_uds_dto(&mut network, &params)?;
+        let new_text =
+            hydra::uds::io::inp_writer::write_inp(&network).map_err(|e| e.to_string())?;
+        bundle::atomic_write(path, new_text.as_bytes()).map_err(|e| e.to_string())
+    };
+
+    // 1) Base model — a failure here is the caller's answer.
+    let base_path = bundle::base_model_path(&app_data, &project_id);
+    if !base_path.exists() {
+        return Err("project has no base model".into());
+    }
+    rewrite(&base_path)?;
+
+    // Keep a loaded copy of this project in lockstep, and mark it dirty so
+    // the next raw-bytes consumer re-serialises from the cache — the same
+    // race-closing rule the wds path documents.
+    {
+        let mut guard = state.0.lock();
+        if let super::network_dto::NetworkStateInner::LoadedUds {
+            dirty,
+            network,
+            owner_project_id: Some(owner),
+            ..
+        } = &mut *guard
+        {
+            if *owner == project_id {
+                // Validation is all-or-nothing, so a refusal leaves the
+                // cached network untouched.
+                if apply_uds_dto(std::sync::Arc::make_mut(network), &params).is_ok() {
+                    *dirty = true;
+                }
+            }
+        }
+    }
+
+    // 2) Every scenario's INP — best-effort, as the wds path is: one bad
+    //    scenario must not block updating the base.
+    for sc_id in list_scenario_ids(&app_data, &project_id) {
+        let path = bundle::scenario_model_path(&app_data, &project_id, &sc_id);
+        if !path.exists() {
+            continue;
+        }
+        if let Err(e) = rewrite(&path) {
+            tracing::warn!(
+                scenario_id = %sc_id,
+                error = %e,
+                "uds sim-params propagation skipped scenario"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,6 +914,198 @@ mod tests {
         let mut back_empty = hydra::SimulationOptions::default();
         apply_dto_to_options(&mut back_empty, &dto_empty).unwrap();
         assert_eq!(back_empty.energy_price_pattern, None);
+    }
+
+    // ── Drainage params ───────────────────────────────────────────────────
+
+    fn uds_net() -> hydra::uds::model::Network {
+        hydra::uds::io::objects::parse_network(
+            "[OPTIONS]\nFLOW_UNITS CFS\nSTART_DATE 01/01/2004\nSTART_TIME 00:00:00\n\
+             END_DATE 01/01/2004\nEND_TIME 00:00:00\nREPORT_STEP 00:15:00\nROUTING_STEP 20\n\
+             [JUNCTIONS]\nJ1 100 4 0 0 0\n\
+             [OUTFALLS]\nO1 97 FREE NO\n\
+             [CONDUITS]\nC1 J1 O1 300 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n",
+        )
+        .0
+    }
+
+    /// A model whose subcatchment carries Horton parameters, for the
+    /// infiltration family rule.
+    fn uds_net_with_parcel() -> hydra::uds::model::Network {
+        hydra::uds::io::objects::parse_network(
+            "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nSTART_DATE 01/01/2004\n\
+             START_TIME 00:00:00\nEND_DATE 01/01/2004\nEND_TIME 06:00:00\n\
+             [RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+             [TIMESERIES]\nTS1 0:00 1.0\nTS1 1:00 0.0\n\
+             [JUNCTIONS]\nJ1 100 4 0 0 0\n\
+             [OUTFALLS]\nO1 97 FREE NO\n\
+             [CONDUITS]\nC1 J1 O1 300 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n\
+             [SUBCATCHMENTS]\nS1 RG1 J1 5 25 500 0.5 0\n\
+             [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+             [INFILTRATION]\nS1 3.0 0.5 4 7 0\n",
+        )
+        .0
+    }
+
+    /// The infiltration relation moves freely within its parameter
+    /// family, and refuses to cross families while subcatchments carry
+    /// typed parameters for the old one.
+    #[test]
+    fn uds_infiltration_moves_within_its_family_and_refuses_across() {
+        let mut net = uds_net_with_parcel();
+        assert!(
+            net.parcels[0].infiltration.is_some(),
+            "fixture has Horton data"
+        );
+        let dto = uds_options_to_dto(&net.options);
+
+        // Horton → modified Horton: same parameter set, an option flip.
+        let mut within = dto.clone();
+        within.infiltration = "MODIFIED_HORTON".into();
+        apply_uds_dto(&mut net, &within).expect("within the family");
+        assert_eq!(
+            net.options.infiltration,
+            hydra::uds::io::options::InfiltrationModel::ModifiedHorton
+        );
+
+        // Horton → Green-Ampt: every subcatchment's parameters would be
+        // orphaned, so it refuses and names the problem.
+        let mut across = dto.clone();
+        across.infiltration = "GREEN_AMPT".into();
+        let err = apply_uds_dto(&mut net, &across).expect_err("across families");
+        assert!(err.contains("subcatchment"), "{err}");
+
+        // With no subcatchment parameters in the model, the same flip is
+        // just an option change.
+        let mut bare = uds_net();
+        let mut dto = uds_options_to_dto(&bare.options);
+        dto.end_time = 21_600.0;
+        dto.infiltration = "GREEN_AMPT".into();
+        apply_uds_dto(&mut bare, &dto).expect("nothing to orphan");
+    }
+
+    /// Flow units is a re-serialisation, not a reinterpretation: the
+    /// model holds SI, so the same physics comes back out of a file
+    /// written in the other system.
+    #[test]
+    fn uds_flow_units_flip_preserves_the_model() {
+        let mut net = uds_net_with_parcel();
+        let invert_si = net
+            .vertices
+            .iter()
+            .find(|v| v.id == "J1")
+            .expect("J1")
+            .invert;
+
+        let mut dto = uds_options_to_dto(&net.options);
+        dto.flow_units = "CMS".into();
+        dto.routing = "KINWAVE".into();
+        apply_uds_dto(&mut net, &dto).expect("apply");
+
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        assert_eq!(
+            reparsed.options.flow_units,
+            hydra::uds::io::options::FlowUnits::Cms
+        );
+        assert_eq!(
+            reparsed.options.routing_request,
+            hydra::uds::io::options::RoutingRequest::KinematicWave
+        );
+        let back = reparsed
+            .vertices
+            .iter()
+            .find(|v| v.id == "J1")
+            .expect("J1")
+            .invert;
+        assert!(
+            (back - invert_si).abs() < 1e-6,
+            "the invert moved: {invert_si} became {back}"
+        );
+    }
+
+    /// The editable subset reaches the options and comes back, and the
+    /// write survives the engine's own writer — which is the whole route
+    /// an update takes.
+    #[test]
+    fn uds_params_round_trip_through_dto_and_writer() {
+        let mut net = uds_net();
+        let mut dto = uds_options_to_dto(&net.options);
+        assert_eq!(dto.flow_units, "CFS");
+
+        dto.end_date = UdsDateDto {
+            year: 2004,
+            month: 1,
+            day: 1,
+        };
+        dto.end_time = 6.0 * 3600.0;
+        apply_uds_dto(&mut net, &dto).expect("apply");
+        assert!((net.options.end_time - 21_600.0).abs() < 1e-9);
+
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        assert!((reparsed.options.end_time - 21_600.0).abs() < 1e-9);
+        assert_eq!(reparsed.options.end_date.day, 1);
+    }
+
+    /// The rule this surface exists to enforce: a run spanning no time
+    /// completes at once and writes a results file with no periods, so
+    /// the write refuses it — changing nothing.
+    #[test]
+    fn a_uds_run_that_ends_before_it_starts_is_refused() {
+        let mut net = uds_net();
+        let dto = uds_options_to_dto(&net.options);
+
+        // The fixture's own state: end equals start.
+        let err = apply_uds_dto(&mut net, &dto).expect_err("zero duration");
+        assert!(err.contains("end after it starts"), "{err}");
+
+        // Ends the day before it starts.
+        let mut backwards = dto.clone();
+        backwards.end_date = UdsDateDto {
+            year: 2003,
+            month: 12,
+            day: 31,
+        };
+        assert!(apply_uds_dto(&mut net, &backwards).is_err());
+
+        // A calendar date that does not exist is named, not guessed at.
+        let mut impossible = dto.clone();
+        impossible.end_date = UdsDateDto {
+            year: 2004,
+            month: 2,
+            day: 30,
+        };
+        let err = apply_uds_dto(&mut net, &impossible).expect_err("Feb 30");
+        assert!(err.contains("not a calendar date"), "{err}");
+
+        // And crossing midnight is a longer run, not a backwards one:
+        // end 01:00 next day beats start 23:00.
+        let mut overnight = dto.clone();
+        overnight.start_time = 23.0 * 3600.0;
+        overnight.end_date = UdsDateDto {
+            year: 2004,
+            month: 1,
+            day: 2,
+        };
+        overnight.end_time = 3600.0;
+        apply_uds_dto(&mut net, &overnight).expect("overnight run");
+    }
+
+    #[test]
+    fn a_uds_step_that_is_not_positive_is_refused() {
+        let mut net = uds_net();
+        let mut dto = uds_options_to_dto(&net.options);
+        dto.end_time = 21_600.0;
+        dto.report_step = 0.0;
+        let err = apply_uds_dto(&mut net, &dto).expect_err("zero step");
+        assert!(err.contains("report step"), "{err}");
+        assert!(
+            (net.options.report_step - 900.0).abs() < 1e-9,
+            "a refusal changed the model"
+        );
     }
 
     #[test]
