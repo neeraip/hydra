@@ -610,7 +610,7 @@ fn render_for_target(
     let out_path = results_path_for(&app_data, project_id, scenario_id);
     if !out_path.exists() {
         return Err(
-            "No simulation results exist for this target — run a simulation first".to_string(),
+            "No simulation results exist for this target. Run a simulation first".to_string(),
         );
     }
     // Existing is not the same as readable. Every block reads this one file,

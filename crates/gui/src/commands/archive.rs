@@ -210,7 +210,7 @@ fn archive_kind(path: &std::path::Path) -> Result<ArchiveKind, String> {
         Ok(ArchiveKind::Tar)
     } else {
         Err(format!(
-            "{name:?} is not a supported archive — this import reads \
+            "{name:?} is not a supported archive. This import reads \
              .zip, .7z, .tar, and .tar.gz"
         ))
     }
@@ -270,7 +270,7 @@ fn read_bounded(
 ) -> Result<Vec<u8>, String> {
     if declared > MAX_ENTRY_BYTES {
         return Err(format!(
-            "entry is {declared} bytes decompressed — larger than any model \
+            "entry is {declared} bytes decompressed, larger than any model \
              this import accepts"
         ));
     }

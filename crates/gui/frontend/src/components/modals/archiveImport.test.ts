@@ -153,6 +153,6 @@ describe("unsupported references", () => {
       },
     ]);
     expect(note?.tone).toBe("warn");
-    expect(note?.text).toContain("not supported yet");
+    expect(note?.text).toContain("Not supported yet");
   });
 });

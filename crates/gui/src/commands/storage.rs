@@ -66,7 +66,7 @@ pub fn open_log_folder(
     use tauri_plugin_opener::OpenerExt;
     let Some(dir) = location.0.clone() else {
         return Err(
-            "This run is not writing a log file — the log folder could not be created.".into(),
+            "This run is not writing a log file: the log folder could not be created.".into(),
         );
     };
     // The newest file rather than the folder it is in: a week of dated

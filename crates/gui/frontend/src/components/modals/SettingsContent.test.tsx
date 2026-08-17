@@ -124,7 +124,7 @@ describe("the launch update check", () => {
     render(<SettingsContent />);
     const row = screen.getByText("Check for updates automatically")
       .parentElement?.parentElement as HTMLElement;
-    expect(row.textContent).toContain("the button below still works");
+    expect(row.textContent).toContain("The button below still works");
     const toggle = row.querySelector(
       "input[type=checkbox]",
     ) as HTMLInputElement;

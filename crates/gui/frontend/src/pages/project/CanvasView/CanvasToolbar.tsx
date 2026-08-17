@@ -190,7 +190,7 @@ export function CanvasToolbar({
   const placementTooltip = (label: string) =>
     !placementOnly
       ? label
-      : "Not in the schematic — its positions are drawn, not the model's";
+      : "Not in the schematic: its positions are drawn, not the model's";
 
   return (
     <div
@@ -245,7 +245,7 @@ export function CanvasToolbar({
                 m === "schematic"
                   ? "Idealised orthogonal layout"
                   : localGrid
-                    ? "The model's own coordinates — its CRS is a local grid"
+                    ? "The model's own coordinates: its CRS is a local grid"
                     : "Geographic layout"
               }
               data-tooltip-pos="bottom"
@@ -535,7 +535,7 @@ export function CanvasToolbar({
               onClick={() => onToolChange("add-link")}
               data-tooltip={
                 placementOnly
-                  ? "Not in the schematic — draw links where the positions are real"
+                  ? "Not in the schematic. Draw links where the positions are real"
                   : "Add link (L)"
               }
               data-tooltip-pos="bottom"

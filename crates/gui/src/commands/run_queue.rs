@@ -538,7 +538,7 @@ pub(crate) fn open_uds_with_aux(
         let bytes = aux_bytes(name).ok_or_else(|| {
             format!(
                 "the model starts from hotstart file {name:?}, which was not \
-                 imported with it — re-import the model and locate the file"
+                 imported with it. Re-import the model and locate the file"
             )
         })?;
         sim.load_hotstart(&bytes)
@@ -550,7 +550,7 @@ pub(crate) fn open_uds_with_aux(
             .ok_or_else(|| {
                 format!(
                     "the model reads routing inflows file {name:?}, which was \
-                     not imported with it — re-import the model and locate the file"
+                     not imported with it. Re-import the model and locate the file"
                 )
             })?;
         sim.supply_routing_inflows(&text)

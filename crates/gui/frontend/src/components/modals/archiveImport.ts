@@ -113,7 +113,7 @@ export function sidecarNote(
   if (unsupported.length > 0) {
     return {
       tone: "warn",
-      text: `Uses ${unsupported.map((s) => s.label).join(", ")} — not supported yet; runs will refuse or read the data as empty`,
+      text: `Uses ${unsupported.map((s) => s.label).join(", ")}. Not supported yet: runs will refuse or read the data as empty`,
     };
   }
   const missing = sidecars.filter((s) => !s.carried);
@@ -125,7 +125,7 @@ export function sidecarNote(
   }
   return {
     tone: "warn",
-    text: `References ${missing.map((s) => s.label).join(", ")} — not in this archive; runs will refuse until the data is supplied`,
+    text: `References ${missing.map((s) => s.label).join(", ")}. Not in this archive: runs will refuse until the data is supplied`,
   };
 }
 
@@ -141,5 +141,5 @@ export function leftBehindSummary(others: string[]): string {
   if (others.length === 0) return "";
   const shown = others.slice(0, 3).join(", ");
   const more = others.length > 3 ? ` and ${others.length - 3} more` : "";
-  return `Other files in this archive: ${shown}${more} — imported only where a selected model reads them`;
+  return `Other files in this archive: ${shown}${more}. Imported only where a selected model reads them`;
 }

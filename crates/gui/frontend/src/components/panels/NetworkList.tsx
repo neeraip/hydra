@@ -689,7 +689,7 @@ export function NetworkList({
             aria-pressed={dimOffscreen}
             data-tooltip={
               dimOffscreen
-                ? "Showing all — elements off the map view are dimmed"
+                ? "Showing all. Elements off the map view are dimmed"
                 : "Dim elements outside the map view"
             }
             style={{

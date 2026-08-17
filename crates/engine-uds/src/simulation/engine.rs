@@ -1635,7 +1635,7 @@ impl Simulation {
         // misreading them would silently misalign every later record.
         if version < 3 {
             return Err(format!(
-                "hotstart version {version} is not supported — resave as version 3 or 4"
+                "hotstart version {version} is not supported. Resave as version 3 or 4"
             ));
         }
         let get_i = |pos: &mut usize| -> Result<i32, String> {
@@ -2332,8 +2332,8 @@ fn realise_file_gages(
             });
         let Some((_, readings)) = supplied else {
             return Err(SurfaceRefusal::Incomplete(format!(
-                "gage {}: external rain record {file:?} was not supplied — \
-                 provide the file, or inline the record as a [TIMESERIES] section",
+                "gage {}: external rain record {file:?} was not supplied. \
+                 Provide the file, or inline the record as a [TIMESERIES] section",
                 net.gages[gi].id
             )));
         };
@@ -2367,13 +2367,13 @@ fn realise_file_gages(
             return Err(SurfaceRefusal::Incomplete(if station.is_empty() {
                 format!(
                     "gage {}: its FILE line names no station, so no reading in \
-                     {file:?} can belong to it — name the station after the file",
+                     {file:?} can belong to it. Name the station after the file",
                     net.gages[gi].id
                 )
             } else {
                 format!(
-                    "gage {}: {file:?} holds no readings for station {station:?} — \
-                     check the station name, or supply the record that has it",
+                    "gage {}: {file:?} holds no readings for station {station:?}. \
+                     Check the station name, or supply the record that has it",
                     net.gages[gi].id
                 )
             }));

@@ -69,7 +69,7 @@ export function shortcutSections(
         // looked like before — they are the same shortcut doing the
         // obvious thing wherever you are.
         {
-          action: "Search — projects, or elements in a project",
+          action: "Search: projects, or elements in a project",
           keys: [modifier, "F"],
         },
         { action: "Toggle geographic/orthogonal", keys: [modifier, "M"] },

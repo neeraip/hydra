@@ -614,7 +614,7 @@ export function CrsPicker() {
                   {c.label}
                   {c.custom && (
                     <span
-                      data-tooltip="You defined this — not an entry from the standard catalogue"
+                      data-tooltip="You defined this. It is not from the standard catalogue"
                       style={{
                         fontSize: "var(--text-2xs)",
                         fontWeight: 700,
@@ -726,7 +726,7 @@ export function CrsPicker() {
               <textarea
                 value={defBody}
                 onChange={(e) => setDefBody(e.target.value)}
-                placeholder="proj4 string or WKT — whichever your source gave you"
+                placeholder="proj4 string or WKT, whichever your source gave you"
                 aria-label="Coordinate system definition"
                 spellCheck={false}
                 rows={3}
@@ -906,7 +906,7 @@ export function CrsPicker() {
                   fontFamily: "var(--font-ui)",
                 }}
               >
-                That longitude is in UTM zone {zoneHint.zone} — use{" "}
+                That longitude is in UTM zone {zoneHint.zone}. Use{" "}
                 {zoneHint.epsg} instead
               </button>
             )}

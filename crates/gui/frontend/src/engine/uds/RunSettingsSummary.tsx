@@ -27,7 +27,7 @@ export function UdsRunSettingsSummary({ projectId }: RunSettingsSummaryProps) {
     );
   return (
     <div style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}>
-      {loading ? "Loading…" : "Unavailable — this project has no model yet."}
+      {loading ? "Loading…" : "Unavailable: this project has no model yet."}
     </div>
   );
 }

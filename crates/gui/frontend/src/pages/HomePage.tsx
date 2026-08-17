@@ -417,7 +417,7 @@ function UpdateRow({
     updater.phase !== "installedNeedsRestart";
   const label =
     updater.phase === "available"
-      ? `Update available — v${updater.version}`
+      ? `Update available: v${updater.version}`
       : updater.phase === "downloading"
         ? `Downloading v${updater.version}…${
             updater.percent !== null ? ` ${updater.percent}%` : ""
@@ -427,8 +427,8 @@ function UpdateRow({
           : updater.phase === "installing"
             ? `Installing v${updater.version}…`
             : updater.phase === "installedNeedsRestart"
-              ? `v${updater.version} installed — reopen Hydra`
-              : "Update failed — retry";
+              ? `v${updater.version} installed. Reopen Hydra`
+              : "Update failed. Retry";
   const sublabel =
     updater.phase === "available"
       ? "Download and install"

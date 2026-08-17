@@ -271,7 +271,7 @@ function UpdatesRow() {
     <>
       <SettingRow
         label="Check for updates automatically"
-        description="Ask GitHub whether a newer version exists when Hydra starts. Turning this off leaves the check to you — the button below still works."
+        description="Ask GitHub whether a newer version exists when Hydra starts. Turning this off leaves the check to you. The button below still works."
       >
         <Toggle checked={autoCheck} onChange={setAutoCheck} />
       </SettingRow>
@@ -417,7 +417,7 @@ export function SettingsContent() {
     // them is read at startup by the module that owns it, and rebuilding
     // that here would be a second, quietly diverging copy of the defaults.
     if (cleared > 0) window.location.reload();
-    else setDataNote("Nothing to reset — everything is already at default.");
+    else setDataNote("Nothing to reset: everything is already at default.");
   }
 
   async function copyDiagnostics() {
@@ -580,7 +580,7 @@ export function SettingsContent() {
           reader's own map keys and, implicitly, where their network is. */}
       <SettingRow
         label="What Hydra sends"
-        description="Hydra asks GitHub for update information and release notes, and requests map tiles from whichever basemap provider you have chosen — those requests carry your key and the area you are looking at. Your models, results and reports are never uploaded anywhere."
+        description="Hydra asks GitHub for update information and release notes, and requests map tiles from whichever basemap provider you have chosen. Those requests carry your key and the area you are looking at. Your models, results and reports are never uploaded anywhere."
       >
         {null}
       </SettingRow>
@@ -590,7 +590,7 @@ export function SettingsContent() {
         label="Diagnostic log"
         description={
           logNote ??
-          "What Hydra recorded while running — the other half of a bug report. One file per day, the last seven kept."
+          "What Hydra recorded while running: the other half of a bug report. One file per day, the last seven kept."
         }
       >
         <button

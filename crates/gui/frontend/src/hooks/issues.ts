@@ -202,7 +202,7 @@ export function runWarningsToIssues(
       ? issue
       : {
           ...issue,
-          detail: `${issue.detail} — repeated at ${occurrences} report times`,
+          detail: `${issue.detail} (repeated at ${occurrences} report times)`,
         },
   );
 }

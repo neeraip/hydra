@@ -228,7 +228,7 @@ impl std::fmt::Display for DiagnosticKind {
                 lines_discarded,
             } => write!(
                 f,
-                "unrecognised section header {token:?} — {lines_discarded} line(s) discarded"
+                "unrecognised section header {token:?}: {lines_discarded} line(s) discarded"
             ),
             DiagnosticKind::Lex(e) => match e {
                 crate::io::lex::LexError::LineTooLong { effective_len } => {

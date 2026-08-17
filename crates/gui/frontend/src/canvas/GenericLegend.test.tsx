@@ -537,7 +537,7 @@ describe("motionExplanation", () => {
 
   it("states the rule and names what it applies to", () => {
     expect(motionExplanation(drainage, ["flow"])).toBe(
-      "Motion follows the water — Flow. Anything else on this map is a still reading.",
+      "Motion follows the water: Flow. Anything else on this map is a still reading.",
     );
   });
 
@@ -632,7 +632,7 @@ describe("motionExplanation", () => {
 
   it("states the rule and names what it applies to", () => {
     expect(motionExplanation(drainage, ["flow"])).toBe(
-      "Motion follows the water — Flow. Anything else on this map is a still reading.",
+      "Motion follows the water: Flow. Anything else on this map is a still reading.",
     );
   });
 

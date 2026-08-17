@@ -498,7 +498,7 @@ export function TaskTray() {
               >
                 …and {settledTasks.length - MAX_SETTLED_ROWS} older finished
                 task
-                {settledTasks.length - MAX_SETTLED_ROWS === 1 ? "" : "s"} — use
+                {settledTasks.length - MAX_SETTLED_ROWS === 1 ? "" : "s"}. Use
                 "Clear all" to reset the list
               </div>
             )}

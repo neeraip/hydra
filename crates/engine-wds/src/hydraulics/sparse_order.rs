@@ -526,7 +526,7 @@ pub(super) fn genmmd_order(
             loop_guard += 1;
             if loop_guard > max_loops {
                 return Err(format!(
-                    "genmmd_order: exceeded {max_loops} iterations — likely infinite loop"
+                    "genmmd_order: exceeded {max_loops} iterations, likely an infinite loop"
                 ));
             }
             while dhead[mdeg as usize] <= 0 {

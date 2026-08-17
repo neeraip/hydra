@@ -123,7 +123,7 @@ const CATALOG: &[BlockDescriptor] = &[
     BlockDescriptor {
         id: "wds.unit-headloss",
         title: "Unit Headloss",
-        summary: "Pipes ranked by peak headloss per unit length — the \
+        summary: "Pipes ranked by peak headloss per unit length: the \
                   undersized-main finder.",
         category: "Assets",
     },

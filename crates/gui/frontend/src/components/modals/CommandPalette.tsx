@@ -347,7 +347,7 @@ export function CommandPalette() {
           id: "n5",
           label: "Report",
           category: "Navigate",
-          description: "Open the report builder — and export from there",
+          description: "Open the report builder and export from there",
           action: "nav-report",
         },
       ];
@@ -521,7 +521,7 @@ export function CommandPalette() {
           id: "p-toggle-view",
           label: "Clear view / restore panels",
           description:
-            "Close everything covering the map — or bring the panels back",
+            "Close everything covering the map, or bring the panels back",
           category: "Page",
           action: "canvas-toggle-view",
         },

@@ -279,7 +279,7 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
           showToast(
             `Imported with ${result.repairs.length} repair${
               result.repairs.length === 1 ? "" : "s"
-            } — see the review step for what changed.`,
+            }. See the review step for what changed.`,
             "warn",
           );
         }
@@ -499,7 +499,7 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
               }}
             >
               {importRequired
-                ? `${engine.label} projects start from an imported model — add one to continue.`
+                ? `${engine.label} projects start from an imported model. Add one to continue.`
                 : "Skip this to start from a single reservoir and build the network in the editor."}
             </p>
 
@@ -817,8 +817,8 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
                     }}
                   >
                     {detectedSidecars.filter((s) => !s.carried).length === 1
-                      ? "1 referenced data file is still missing — simulations will refuse until it is supplied."
-                      : `${detectedSidecars.filter((s) => !s.carried).length} referenced data files are still missing — simulations will refuse until they are supplied.`}
+                      ? "1 referenced data file is still missing. Simulations will refuse until it is supplied."
+                      : `${detectedSidecars.filter((s) => !s.carried).length} referenced data files are still missing. Simulations will refuse until they are supplied.`}
                   </div>
                 )}
               </div>

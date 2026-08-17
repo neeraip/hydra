@@ -840,7 +840,7 @@ pub async fn export_results_csv(
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     if !out_path.exists() {
         return Err(
-            "No simulation results exist for this target — run a simulation first".to_string(),
+            "No simulation results exist for this target. Run a simulation first".to_string(),
         );
     }
     // Engine-dispatched: prepare a streaming job for this engine's reader,
@@ -858,7 +858,7 @@ pub async fn export_results_csv(
             if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
                 return Err(format!(
                     "results.out does not match the current model ({} nodes / {} links in results, \
-                     {} / {} in the model) — re-run the simulation before exporting",
+                     {} / {} in the model). Re-run the simulation before exporting",
                     out_meta.n_nodes,
                     out_meta.n_links,
                     network.nodes.len(),

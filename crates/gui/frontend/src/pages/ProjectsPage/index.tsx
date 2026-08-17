@@ -138,7 +138,7 @@ export function ProjectsPage() {
         );
       } else {
         showToast(
-          `${done} ${noun}, ${failures.length} failed — ${failures[0]}`,
+          `${done} ${noun}, ${failures.length} failed: ${failures[0]}`,
           "error",
         );
       }

@@ -375,7 +375,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         source: "data",
         code: "MODEL-LOAD-FAILED",
         title: "Model failed to load",
-        detail: `${networkLoadFailure} — the model file may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
+        detail: `${networkLoadFailure}. The model file may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
       });
     }
 

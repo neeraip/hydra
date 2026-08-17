@@ -21,7 +21,7 @@ export function WdsRunSettingsSummary({ projectId }: RunSettingsSummaryProps) {
   if (params) return <SummaryGrid params={params} />;
   return (
     <div style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}>
-      {loading ? "Loading…" : "Unavailable — this project has no network yet."}
+      {loading ? "Loading…" : "Unavailable: this project has no network yet."}
     </div>
   );
 }

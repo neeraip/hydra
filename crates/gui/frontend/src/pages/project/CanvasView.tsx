@@ -2123,7 +2123,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        showToast(`Move cancelled — ${msg}`, "error");
+        showToast(`Move cancelled: ${msg}`, "error");
         // `false` tells MapCanvas the move was not committed: it clears the
         // drag preview so the node snaps back to its stored position.
         return false;

@@ -571,7 +571,7 @@ export function RunModal() {
               <span style={{ color: "var(--text-secondary)" }}>
                 {runnableIds.length === 0
                   ? `${excludedCount === 1 ? "This model has" : "These models have"} errors and cannot be simulated`
-                  : `${runnableIds.length} of ${checkedIds.length} will run — ${excludedCount} ${excludedCount === 1 ? "has" : "have"} errors`}
+                  : `${runnableIds.length} of ${checkedIds.length} will run: ${excludedCount} ${excludedCount === 1 ? "has" : "have"} errors`}
               </span>
             )}
           </div>

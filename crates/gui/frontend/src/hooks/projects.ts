@@ -463,7 +463,7 @@ export async function getVersions(): Promise<Versions> {
  * and closing the app now loses it.
  */
 export const SAVE_FAILED_MESSAGE =
-  "That change is in the model but could not be written to disk — it will be lost if the app closes.";
+  "That change is in the model but could not be written to disk. It will be lost if the app closes.";
 
 /**
  * Persist after an edit, and say so when it could not.

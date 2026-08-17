@@ -43,7 +43,7 @@ const EXIT_INTERNAL: i32 = 4;
     name = "hydra",
     disable_version_flag = true,
     about,
-    long_about = "Hydra — water infrastructure simulation.\n\n\
+    long_about = "Hydra: water infrastructure simulation.\n\n\
                   Hydra is a suite of domain engines. The engine that owns a model is \
                   detected from the model itself, never from its file extension: `.inp` \
                   belongs to both EPANET and SWMM. Pass --engine to name one explicitly."
@@ -267,7 +267,7 @@ fn resolve_engine(
             // evidence routing lacked.
             let suggest = matches!(e, hydra::engines::RouteError::Ambiguous { .. });
             let message = if suggest {
-                format!("{e} — name one with --engine")
+                format!("{e}. Name one with --engine")
             } else {
                 e.to_string()
             };
@@ -696,7 +696,7 @@ pub(crate) fn write_report(
                 Ok(())
             }
             None => {
-                anyhow::bail!("JSON summaries are not available for this engine — use a .rpt path")
+                anyhow::bail!("JSON summaries are not available for this engine. Use a .rpt path")
             }
         },
         Some(p) => {

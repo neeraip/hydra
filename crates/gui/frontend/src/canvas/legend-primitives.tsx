@@ -236,7 +236,7 @@ export function PickerButton<T extends string>({
           dimmed
             ? `${pickerLabel} (hidden on the canvas)`
             : animating
-              ? `${pickerLabel} — animating`
+              ? `${pickerLabel}, animating`
               : (pickerLabel ?? "")
         }
         data-tooltip-pos="top"

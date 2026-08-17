@@ -218,7 +218,7 @@ export function motionExplanation(
     style: "long",
     type: "conjunction",
   }).format(names);
-  return `Motion follows the water — ${list}. Anything else on this map is a still reading.`;
+  return `Motion follows the water: ${list}. Anything else on this map is a still reading.`;
 }
 
 /**

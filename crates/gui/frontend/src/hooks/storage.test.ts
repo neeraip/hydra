@@ -74,10 +74,10 @@ describe("describeCleared", () => {
     // A silent partial clear is the worst outcome: the folder is smaller,
     // the reader believes it is empty, and nothing says otherwise.
     expect(describeCleared({ removed: 2, skipped: 1 })).toBe(
-      "2 results cleared. 1 project was left alone — a simulation is running.",
+      "2 results cleared. 1 project was left alone because a simulation is running.",
     );
     expect(describeCleared({ removed: 0, skipped: 3 })).toBe(
-      "0 results cleared. 3 projects were left alone — a simulation is running.",
+      "0 results cleared. 3 projects were left alone because a simulation is running.",
     );
   });
 });

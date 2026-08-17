@@ -193,7 +193,7 @@ export function CanvasSlider({
         aria-valuemax={SLIDER_MAX}
         aria-valuenow={Math.round(value)}
         aria-valuetext={readout}
-        data-tooltip={`${label} — ${readout}. ${hint}${value === SLIDER_DEFAULT ? "" : " (double-click to reset)"}`}
+        data-tooltip={`${label}: ${readout}. ${hint}${value === SLIDER_DEFAULT ? "" : " (double-click to reset)"}`}
         data-tooltip-pos="left"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

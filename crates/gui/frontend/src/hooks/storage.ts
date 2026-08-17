@@ -93,5 +93,5 @@ export function describeCleared(cleared: ClearedResults): string {
     cleared.skipped === 1
       ? "1 project was"
       : `${cleared.skipped} projects were`;
-  return `${removed}. ${projects} left alone — a simulation is running.`;
+  return `${removed}. ${projects} left alone because a simulation is running.`;
 }

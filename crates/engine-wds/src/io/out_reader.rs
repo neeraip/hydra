@@ -324,7 +324,7 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
             // results and needs to know they are re-runnable, not corrupt.
             detail: if version == 20_013 {
                 "results were written by Hydra 5.1 or earlier (.out version \
-                 20013), which this build cannot read — re-run the simulation \
+                 20013), which this build cannot read. Re-run the simulation \
                  to regenerate them"
                     .to_string()
             } else {
@@ -1843,7 +1843,7 @@ mod tests {
         assert_eq!(err.kind, OutValidityKind::Unsupported);
         assert!(err.detail.contains("20013"), "{}", err.detail);
         assert!(
-            err.detail.contains("re-run"),
+            err.detail.contains("Re-run"),
             "the message must say the results are recoverable: {}",
             err.detail
         );

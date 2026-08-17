@@ -711,7 +711,7 @@ fn apply_uds_dto(
     {
         return Err(format!(
             "switching to {} would orphan every subcatchment's infiltration \
-             parameters, which are entered for {} — re-describe the \
+             parameters, which are entered for {}. Re-describe the \
              subcatchments first",
             dto.infiltration,
             uds_options_to_dto(&net.options).infiltration

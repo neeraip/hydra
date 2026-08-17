@@ -315,7 +315,7 @@ impl std::fmt::Display for ValidationKind {
             ValidationKind::EmptyModel => {
                 write!(
                     f,
-                    "no conveyance nodes declared — likely not a drainage model"
+                    "no conveyance nodes declared, so this is likely not a drainage model"
                 )
             }
         }

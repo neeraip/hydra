@@ -482,7 +482,7 @@ pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
                     e.label
                 ),
                 None => {
-                    format!("The GUI cannot open {tool} models yet — the hydra CLI can run them.")
+                    format!("The GUI cannot open {tool} models yet. The hydra CLI can run them.")
                 }
             };
             format!(

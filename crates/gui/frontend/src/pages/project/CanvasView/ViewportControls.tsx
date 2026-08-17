@@ -133,8 +133,8 @@ export function ViewportControls({
         onClick={onToggleView}
         data-tooltip={
           viewAction === "restore"
-            ? "Restore panels — reopen the list and legend"
-            : "Clear view — close panels, overlays and measurements"
+            ? "Restore panels: reopen the list and legend"
+            : "Clear view: close panels, overlays and measurements"
         }
         data-tooltip-pos="left"
         aria-label={viewAction === "restore" ? "Restore panels" : "Clear view"}

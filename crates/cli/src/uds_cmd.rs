@@ -33,7 +33,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     {
         emit_error(
             "input/report",
-            "JSON summaries are not available for the uds engine yet — use a .rpt path",
+            "JSON summaries are not available for the uds engine yet. Use a .rpt path",
             None,
             None,
         );
@@ -165,7 +165,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     if iface.rainfall.is_some() || iface.runoff.is_some() || iface.rdii.is_some() {
         emit_warning(
             "input/unsupported",
-            "rainfall, runoff, and RDII interface files are not supported yet — ignored",
+            "rainfall, runoff, and RDII interface files are not supported yet and were ignored",
             None,
         );
     }
@@ -307,7 +307,7 @@ fn resolve_aux_path(model: &str, name: &str) -> Result<PathBuf, i32> {
             "input/aux-file",
             &format!(
                 "the model declares an auxiliary file ({name:?}), which cannot be \
-                 resolved for a model fetched over HTTP — run from a local path"
+                 resolved for a model fetched over HTTP. Run from a local path"
             ),
             None,
             None,
