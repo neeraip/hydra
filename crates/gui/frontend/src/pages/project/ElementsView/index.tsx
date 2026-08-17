@@ -55,6 +55,7 @@ import {
 } from "../EditorShell";
 import { CollectionDetail } from "./CollectionDetail";
 import { ElementRecordsPanel } from "./ElementRecordsPanel";
+import { type OpenContainer, openContainerOn } from "./openContainer";
 import { railHeadings } from "./railGroups";
 import { recordsPanelElement } from "./recordsPanelElement";
 
@@ -228,9 +229,9 @@ export function ElementsView() {
       if (activeClass === "point") selectNode(id);
       else if (activeClass === "polyline") selectLink(id);
       else if (activeClass === "region") selectRegion(id);
-      else setOpenContainer(id);
+      else if (kind) setOpenContainer({ kind, id });
     },
-    [activeClass, selectNode, selectLink, selectRegion],
+    [activeClass, kind, selectNode, selectLink, selectRegion],
   );
 
   // The row actions: find it, name it, remove it. Each is the same
@@ -269,8 +270,14 @@ export function ElementsView() {
 
   // A container's row reports only its size, so selecting one opens what
   // is actually inside it. A local selection, not the canvas's: a curve
-  // has no geometry to highlight.
-  const [openContainer, setOpenContainer] = useState<string | null>(null);
+  // has no geometry to highlight. The kind travels with the id
+  // (`OpenContainer`), so the selection answers only on the tab it was
+  // made on — a bare id kept a control measure's layers on screen from
+  // Curves through Inlet designs after a tab switch.
+  const [openContainer, setOpenContainer] = useState<OpenContainer | null>(
+    null,
+  );
+  const openContainerId = openContainerOn(openContainer, kind);
 
   // Two marks, answering different questions: a rule where the kinds
   // stop being on the map, and the engine's own heading wherever a group
@@ -293,7 +300,7 @@ export function ElementsView() {
   // and none to set — a curve is not a region, and routing it to one
   // would select an unrelated element on the map.
   const spatial = activeClass !== "collection";
-  const containerId = spatial ? null : openContainer;
+  const containerId = spatial ? null : openContainerId;
   const { detail, refetch: refetchDetail } = useCollectionDetail(
     project?.id,
     activeScenarioId,
@@ -316,7 +323,7 @@ export function ElementsView() {
   );
   const selectedId =
     activeClass === "collection"
-      ? openContainer
+      ? openContainerId
       : activeClass === "point"
         ? selectedNodeId
         : activeClass === "polyline"
@@ -441,10 +448,10 @@ export function ElementsView() {
               had a panel able to draw them, and appeared nowhere in the
               running app. A container has no canvas selection either,
               which is why nothing showed them anywhere. */}
-          {recordsPanelElement(spatial, selectedId, openContainer) && (
+          {recordsPanelElement(spatial, selectedId, openContainerId) && (
             <ElementRecordsPanel
               elementId={
-                recordsPanelElement(spatial, selectedId, openContainer) ?? ""
+                recordsPanelElement(spatial, selectedId, openContainerId) ?? ""
               }
               kind={kind ?? undefined}
             />
