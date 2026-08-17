@@ -246,7 +246,6 @@ function RecordTable({
         </datalist>
       ))}
       <table
-        className="record-table"
         style={{
           width: "100%",
           // See `recordTableMaxWidth`: equal fixed columns under a cap,
@@ -262,7 +261,7 @@ function RecordTable({
       >
         <thead>
           <tr>
-            {set.columns.map((c) => {
+            {set.columns.map((c, i) => {
               const unit = c.quantity
                 ? sys === "us"
                   ? c.quantity.usLabel
@@ -273,7 +272,10 @@ function RecordTable({
                   key={c.key}
                   style={{
                     textAlign: "left",
-                    padding: "2px 8px 2px 0",
+                    // Inset the label, not the row: the divider and the
+                    // hover band span the full width, and the content
+                    // sits 8px inside each edge.
+                    padding: `2px 8px 2px ${i === 0 ? 8 : 0}px`,
                     fontSize: "var(--text-sm)",
                     fontWeight: 500,
                     color: "var(--text-tertiary)",
@@ -318,7 +320,11 @@ function RecordTable({
                       // boxed inputs: the row is a visible band now
                       // (hover and danger tints), and a band whose
                       // contents touch its borders reads as cramped.
-                      padding: editor.kind === "none" ? "7px 0" : "4px 0",
+                      // The first column is inset from the band's left
+                      // edge the way its heading is.
+                      padding: `${editor.kind === "none" ? 7 : 4}px 0 ${
+                        editor.kind === "none" ? 7 : 4
+                      }px ${i === 0 ? 8 : 0}px`,
                       fontFamily: "var(--font-mono)",
                       fontSize: "var(--text-md)",
                     }}
@@ -356,7 +362,10 @@ function RecordTable({
                 <td key={k} />
               ))}
               {set.editable && (
-                <td className="record-remove" style={{ padding: "4px 4px" }}>
+                <td
+                  className="record-remove"
+                  style={{ padding: "4px 8px 4px 4px" }}
+                >
                   <ActionIcon
                     title="Remove row"
                     danger
