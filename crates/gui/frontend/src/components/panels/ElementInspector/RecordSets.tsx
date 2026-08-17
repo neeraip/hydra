@@ -107,7 +107,7 @@ export function shownRecordSets(sets: RecordSet[]): RecordSet[] {
 }
 
 /** One column's share of a record table, and the cap on its stretch. */
-export const RECORD_COLUMN_WIDTH = 190;
+const RECORD_COLUMN_WIDTH = 190;
 /** The action column: room for one icon button, no more. */
 export const RECORD_ACTION_WIDTH = 40;
 
@@ -133,7 +133,7 @@ export function recordTableMaxWidth(
 }
 
 /** The widest set of the panel — the grid every set is laid out on. */
-export function sharedColumnCount(sets: RecordSet[]): number {
+function sharedColumnCount(sets: RecordSet[]): number {
   return Math.max(0, ...sets.map((s) => s.columns.length));
 }
 

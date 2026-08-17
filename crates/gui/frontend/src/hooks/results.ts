@@ -204,16 +204,6 @@ export function genericToDisplay(
   return value * quantity.siToUsScale + quantity.siToUsOffset;
 }
 
-/** Inverse of [`genericToDisplay`]: a value the user typed, back to SI. */
-export function genericFromDisplay(
-  value: number,
-  quantity: GenericQuantity | undefined,
-  sys: "si" | "us",
-): number {
-  if (!quantity || sys === "si") return value;
-  return (value - quantity.siToUsOffset) / quantity.siToUsScale;
-}
-
 /** Unit label for the active display system, or undefined when unitless. */
 export function genericUnitLabel(
   quantity: GenericQuantity | undefined,

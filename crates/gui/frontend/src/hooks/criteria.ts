@@ -71,9 +71,7 @@ export const DEFAULT_CRITERIA: ProjectCriteria = {
 export type CriteriaFetch = ProjectCriteria | null | undefined;
 
 /** The project's saved criteria. See {@link CriteriaFetch} for the states. */
-export async function getProjectCriteria(
-  projectId: string,
-): Promise<CriteriaFetch> {
+async function getProjectCriteria(projectId: string): Promise<CriteriaFetch> {
   // `tryInvokeResult` rather than `tryInvokeOr`, so a command that answered
   // `null` stays distinct from one that could not be reached. Outside a
   // Tauri shell it reports unreachable too, which is the same "cannot say"
@@ -86,7 +84,7 @@ export async function getProjectCriteria(
   return read.ok ? read.value : undefined;
 }
 
-export async function updateProjectCriteria(
+async function updateProjectCriteria(
   projectId: string,
   criteria: ProjectCriteria,
 ): Promise<void> {
