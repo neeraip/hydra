@@ -317,6 +317,28 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    // Results exist but hold no reporting periods: the run completed and
+    // wrote nothing to chart or colour. A simulation whose end time equals
+    // its start does this — it finishes the moment it begins — and without
+    // this issue the only signs were an empty canvas and, formerly, a raw
+    // backend toast when the canvas asked the empty file for period 0.
+    if (
+      resultMeta != null &&
+      resultMeta.times.length === 0 &&
+      runningForProject.length === 0 &&
+      queuedForProject.length === 0
+    ) {
+      pushIssue({
+        id: `runtime-results-empty-${activeScenarioId ?? "base"}`,
+        severity: "warn",
+        source: "runtime",
+        code: "RESULTS-EMPTY",
+        title: "Last run produced no results",
+        detail:
+          "The simulation completed but wrote no reporting periods, so there is nothing to chart or colour. Check the run's start and end times and its report step in the simulation settings.",
+      });
+    }
+
     // Coordinates are presentation-only — the solver never reads them, so a
     // model without them simulates normally. Missing *some* coordinates is a
     // warning below; missing all of them is the same class of problem, not a

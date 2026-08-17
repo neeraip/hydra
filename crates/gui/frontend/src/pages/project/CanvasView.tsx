@@ -98,6 +98,7 @@ import { deletionSummary } from "./CanvasView/deletionSummary";
 import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
+import { periodToFetch } from "./CanvasView/periodToFetch";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { toolAllowedBy, toolAvailableIn } from "./CanvasView/toolAvailability";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
@@ -1069,13 +1070,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     const target = `${project.id}:${activeScenarioId ?? "base"}`;
     let cancelled = false;
-    // Clamp: on switching to a shorter result set this effect can run before
-    // the playhead-clamp effect corrects currentHour, and an out-of-range
-    // period would surface a spurious backend error.
-    const period = Math.max(
-      0,
-      Math.min(currentHour, (resultMeta?.times.length ?? 1) - 1),
-    );
+    // Clamped into the timeline, and null when the timeline is empty —
+    // a run spanning no time writes a results file with zero periods,
+    // and asking it for period 0 surfaced a backend refusal as a toast.
+    const period = periodToFetch(currentHour, resultMeta?.times.length ?? 0);
+    if (period == null) {
+      setFetchedPeriodResult(null);
+      setFetchedGenericValues(null);
+      loadedTargetRef.current = null;
+      return;
+    }
     if (periodPath === "generic") {
       // Generic-payload engine: same command, generic decoder. The wds
       // arrays stay null so the canvas renders through the generic
