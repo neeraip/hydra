@@ -47,6 +47,88 @@ pub enum OpenError {
     Transport(String),
 }
 
+/// One readable line per refusal, so applications can show the error
+/// without reaching for `Debug`. Multi-finding refusals name the first
+/// finding and count the rest; the full lists stay on the variants.
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn first_and_rest(
+            f: &mut std::fmt::Formatter<'_>,
+            what: &str,
+            shown: Option<String>,
+            total: usize,
+        ) -> std::fmt::Result {
+            match shown {
+                Some(first) if total > 1 => {
+                    write!(f, "{what}: {first} (and {} more findings)", total - 1)
+                }
+                Some(first) => write!(f, "{what}: {first}"),
+                None => write!(f, "{what}"),
+            }
+        }
+        match self {
+            OpenError::Parse(diags) => {
+                let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
+                first_and_rest(
+                    f,
+                    "the model was refused by parsing",
+                    errors.first().map(|d| d.to_string()),
+                    errors.len(),
+                )
+            }
+            OpenError::Validation(findings) => {
+                let errors: Vec<_> = findings.iter().filter(|v| v.kind.is_error()).collect();
+                first_and_rest(
+                    f,
+                    "the model was refused by validation",
+                    errors.first().map(|v| v.to_string()),
+                    errors.len(),
+                )
+            }
+            OpenError::Routing(r) => write!(f, "{r}"),
+            OpenError::Surface(s) => write!(f, "{s}"),
+            OpenError::Controls(msg) | OpenError::Transport(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}
+
+#[cfg(test)]
+mod open_error_display_tests {
+    use super::*;
+
+    /// The GUI shows these lines in toasts; a `Debug`-shaped string with
+    /// braces and variant names reaching a user is the defect this pins.
+    #[test]
+    fn every_variant_displays_as_prose() {
+        let cases: Vec<OpenError> = vec![
+            OpenError::Controls("rule R1 names a vanished element".into()),
+            OpenError::Transport("a treatment expression is not served yet".into()),
+        ];
+        for e in cases {
+            let line = e.to_string();
+            assert!(!line.contains('{') && !line.contains("(\""), "{line:?}");
+            assert!(!line.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_parse_refusal_displays_as_prose() {
+        let (_, diags) = parse_network("not a model at all");
+        let e = OpenError::Parse(diags);
+        let line = e.to_string();
+        assert!(
+            line.starts_with("the model was refused by parsing"),
+            "{line}"
+        );
+        assert!(
+            !line.contains("Diagnostic") && !line.contains('{'),
+            "{line}"
+        );
+    }
+}
+
 /// One recorded reporting boundary: the full §14.9 record set, by index
 /// into the model (§12.2 serves them by identity).
 #[derive(Debug, Clone)]
