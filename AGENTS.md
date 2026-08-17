@@ -291,6 +291,26 @@ here" — is describing, not identifying, and needs no glyph.
 
 ---
 
+## User-Facing Copy
+
+This section covers everything a person using Hydra reads: GUI text
+(labels, dialogs, toasts, refusal messages), CLI output and diagnostics,
+report text, the marketing site, the docs site, and the READMEs. It does
+not cover code comments, specs, commit messages, or chat replies, which
+have their own styles.
+
+**Write plain English.** Short sentences. Everyday words. One idea per
+sentence. Domain vocabulary is welcome when it is the precise term
+(infiltration, dynamic wave, hotstart). Rhetorical flourishes are not.
+If a sentence would sound like ad copy read aloud, rewrite it until it
+sounds like a person explaining something.
+
+**No em dashes.** Not one, anywhere in user-facing copy. Use a full
+stop, a comma, a colon, or parentheses instead. An em dash in a code
+comment or a spec is fine.
+
+---
+
 ## Regression Discipline
 
 Every defect that reaches the running app gets a test that would have
