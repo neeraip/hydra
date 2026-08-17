@@ -34,6 +34,7 @@
 
 # Architecture
 - [Crate Layout](architecture/crates.md)
+- [Numerical Methods](architecture/solvers.md)
 - [Specifications](architecture/specs.md)
 
 # Theory

@@ -43,7 +43,7 @@ jobs:
       # written against this version's template and variables. Bump the pin
       # and re-diff the theme override together.
       - name: Install mdBook and wasm-pack
-        run: cargo binstall mdbook@0.5.4 wasm-pack --no-confirm
+        run: cargo binstall mdbook@0.5.4 mdbook-katex@0.10.0 wasm-pack --no-confirm
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0

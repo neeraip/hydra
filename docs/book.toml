@@ -5,6 +5,10 @@ authors = ["NEER"]
 language = "en"
 src = "src"
 
+# Renders $…$ / $$…$$ in the theory pages and the solvers page. The
+# binary is pinned alongside mdbook in site.yml and just setup-tools.
+[preprocessor.katex]
+
 [output.html]
 git-repository-url = "https://github.com/neeraip/hydra"
 git-repository-icon = "fab-github"

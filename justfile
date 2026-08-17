@@ -37,6 +37,7 @@ setup-tools:
     @command -v cargo-audit >/dev/null 2>&1 || cargo binstall cargo-audit --no-confirm
     # mdbook is pinned: docs/theme/ overrides its template (see site.yml).
     @command -v mdbook >/dev/null 2>&1 || cargo binstall mdbook@0.5.4 --no-confirm
+    @command -v mdbook-katex >/dev/null 2>&1 || cargo binstall mdbook-katex@0.10.0 --no-confirm
     @command -v cargo-llvm-cov >/dev/null 2>&1 || cargo binstall cargo-llvm-cov --no-confirm
     @command -v wasm-pack >/dev/null 2>&1 || cargo binstall wasm-pack --no-confirm
 

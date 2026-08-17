@@ -14,9 +14,9 @@ Download the installer for your platform from the [releases page](https://github
 
 | Platform | Installer type |
 |---|---|
-| macOS (Apple Silicon / Intel) | `.dmg` disk image |
-| Windows | `.msi` installer |
-| Linux | `.AppImage` or `.deb` package |
+| macOS (Apple Silicon / Intel) | `.dmg` disk image, or portable `.app.tar.gz` |
+| Windows | `.msi` installer, or portable `.exe` |
+| Linux | `.AppImage`, `.deb`, or `.rpm` package |
 
 After installing, see [Troubleshooting](troubleshooting.md) if macOS blocks the app from opening.
 
