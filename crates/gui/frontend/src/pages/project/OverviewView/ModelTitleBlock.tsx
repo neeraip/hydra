@@ -6,6 +6,7 @@ import { fetchInto } from "../../../hooks/fetchInto";
 import { formatIpcError } from "../../../hooks/ipc";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
+import { persistOrSay } from "../../../hooks/projects";
 import {
   TITLE_DISPLAY_LINES,
   textToTitleLines,
@@ -19,13 +20,13 @@ import {
  * three lines is convention, so display clamps at three with "View more").
  */
 export function ModelTitleBlock() {
-  const { showToast } = useAppState();
+  const { showToast, activeProjectId, activeScenarioId } = useAppState();
   const { engine } = useActiveProject();
   // An engine whose title this GUI cannot rewrite shows it as plain
   // text: offering the gesture only to refuse on save is exactly what
   // the capability exists to prevent.
   const modelEditable = engineComponents(engine?.key).editing.title;
-  const { version } = useNetworkVersion();
+  const { version, markEdited } = useNetworkVersion();
   const [lines, setLines] = useState<string[] | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -52,6 +53,19 @@ export function ModelTitleBlock() {
     try {
       const next = textToTitleLines(draft);
       await updateNetworkTitle(next);
+      // A write is four things, and this one shipped as one: the title
+      // reached the in-memory model and stopped, so it was gone at the
+      // next open — for either engine — unless some later element edit
+      // happened to flush the dirty state alongside it. The same
+      // persist-and-mark every cosmetic write makes (a move is one too).
+      if (activeProjectId) {
+        await persistOrSay(
+          activeProjectId,
+          activeScenarioId ?? null,
+          showToast,
+        );
+        markEdited(activeProjectId, activeScenarioId ?? null);
+      }
       setLines(next);
       setEditing(false);
       showToast("Model description saved", "success");

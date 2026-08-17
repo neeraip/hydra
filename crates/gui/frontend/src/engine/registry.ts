@@ -343,20 +343,20 @@ const UDS: EngineComponents = {
   // nothing in the create vocabulary puts those back.
   undoableRemoval: false,
   hasStarterModel: false,
-  // Everything but the title. A drainage node's coordinate is a line in
-  // a preserved display section and its name appears in the control-rule
-  // text; the backend maintains both, finds every reference before it
-  // removes anything, and refuses the element kinds whose fields cannot
-  // be defaulted rather than inventing them.
-  //
-  // The title is a `[TITLE]` block of free text the importer keeps
-  // verbatim, and nothing writes it back yet.
+  // Everything. A drainage node's coordinate is a line in a preserved
+  // display section and its name appears in the control-rule text; the
+  // backend maintains both, finds every reference before it removes
+  // anything, and refuses the element kinds whose fields cannot be
+  // defaulted rather than inventing them. The title went last: its write
+  // shipped after the rest of the contract, and this flag said "nothing
+  // writes it back yet" for as long as nobody rechecked — the same
+  // staleness the settings dialog carried.
   editing: {
     geometry: true,
     rename: true,
     create: true,
     delete: true,
-    title: false,
+    title: true,
   },
   // Conduit flow and velocity are rates the pulse can carry directly.
   // Depth and capacity are states rather than rates — a full pipe is not a

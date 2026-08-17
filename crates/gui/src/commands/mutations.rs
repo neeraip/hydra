@@ -427,9 +427,14 @@ where
             *dto = network_to_dto(network);
             Ok(())
         }
-        NetworkStateInner::LoadedUds { .. } => Err(
-            "This project's engine is read-only in the GUI — editing is not available yet.".into(),
-        ),
+        // The inverse of `apply_uds_mutation`'s guard: a wds-shaped
+        // command reached a drainage model, which is a routing bug in the
+        // caller — drainage edits have their own paths. This used to say
+        // editing was "not available yet", which stopped being true in
+        // 2.17.0 and went on being said.
+        NetworkStateInner::LoadedUds { .. } => {
+            Err("this command is for water-distribution models".into())
+        }
         NetworkStateInner::Empty => Err("no network loaded".into()),
     }
 }
@@ -629,56 +634,56 @@ pub fn patch_elements(
 ) -> Result<PatchElementsResult, String> {
     // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
     let mut guard = state.0.lock();
-    let (result, elements) =
-        {
-            match &mut *guard {
-                NetworkStateInner::Loaded {
-                    dirty,
-                    network,
-                    dto,
-                    ..
-                } => {
-                    let mut applied = 0u32;
-                    let mut errors = Vec::new();
-                    // Unique (kind, id) pairs of successfully patched elements,
-                    // in first-touched order.
-                    let mut touched: Vec<(String, String)> = Vec::new();
-                    for patch in patches {
-                        match apply_patch_to_network(
-                            std::sync::Arc::make_mut(network),
-                            &patch.kind,
-                            &patch.id,
-                            &patch.field,
-                            patch.value,
-                        ) {
-                            Ok(()) => {
-                                applied += 1;
-                                *dirty = true;
-                                if !touched
-                                    .iter()
-                                    .any(|(k, i)| *k == patch.kind && *i == patch.id)
-                                {
-                                    touched.push((patch.kind, patch.id));
-                                }
+    let (result, elements) = {
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                dirty,
+                network,
+                dto,
+                ..
+            } => {
+                let mut applied = 0u32;
+                let mut errors = Vec::new();
+                // Unique (kind, id) pairs of successfully patched elements,
+                // in first-touched order.
+                let mut touched: Vec<(String, String)> = Vec::new();
+                for patch in patches {
+                    match apply_patch_to_network(
+                        std::sync::Arc::make_mut(network),
+                        &patch.kind,
+                        &patch.id,
+                        &patch.field,
+                        patch.value,
+                    ) {
+                        Ok(()) => {
+                            applied += 1;
+                            *dirty = true;
+                            if !touched
+                                .iter()
+                                .any(|(k, i)| *k == patch.kind && *i == patch.id)
+                            {
+                                touched.push((patch.kind, patch.id));
                             }
-                            Err(e) => errors.push(e),
                         }
+                        Err(e) => errors.push(e),
                     }
-                    let mut elements = Vec::with_capacity(touched.len());
-                    for (kind, id) in &touched {
-                        if let Ok(el) = refresh_element_dto(network, dto, kind, id) {
-                            elements.push(el);
-                        }
-                    }
-                    (PatchElementsResult { applied, errors }, elements)
                 }
-                NetworkStateInner::LoadedUds { .. } => return Err(
-                    "This project's engine is read-only in the GUI — editing is not available yet."
-                        .into(),
-                ),
-                NetworkStateInner::Empty => return Err("no network loaded".into()),
+                let mut elements = Vec::with_capacity(touched.len());
+                for (kind, id) in &touched {
+                    if let Ok(el) = refresh_element_dto(network, dto, kind, id) {
+                        elements.push(el);
+                    }
+                }
+                (PatchElementsResult { applied, errors }, elements)
             }
-        };
+            // See `apply_structural_mutation`: a wds-shaped command
+            // reached a drainage model.
+            NetworkStateInner::LoadedUds { .. } => {
+                return Err("this command is for water-distribution models".into())
+            }
+            NetworkStateInner::Empty => return Err("no network loaded".into()),
+        }
+    };
     if !elements.is_empty() {
         emit_or_warn(
             &app,
@@ -2064,6 +2069,22 @@ pub fn update_network_title(
     lines: Vec<String>,
 ) -> Result<(), String> {
     let normalized = normalize_title_lines(lines)?;
+    // Both engines' models carry a title, and `get_network_title` serves
+    // both — so both take the edit. The read offering what the write
+    // refused is exactly how the drainage title was broken: the Overview
+    // title block rendered, invited the edit, and the save refused with a
+    // sentence written before drainage editing existed.
+    {
+        let guard = state.0.lock();
+        if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
+            drop(guard);
+            let title = normalized;
+            return mutate_uds(&app, &state, |network| {
+                network.title = title;
+                Ok(())
+            });
+        }
+    }
     mutate_structural(&app, &state, |network| {
         network.title = normalized;
         Ok(())
@@ -2233,6 +2254,47 @@ mod tests {
         assert!(
             links.is_empty(),
             "cascaded link should be dropped: {links:?}"
+        );
+    }
+
+    /// The drainage title takes the edit too — through the drainage
+    /// mutation path, out through the drainage writer.
+    ///
+    /// The defect this guards: `get_network_title` served both engines'
+    /// titles, so the Overview title block rendered and invited the edit
+    /// for a drainage project — and the write refused with a sentence
+    /// written before drainage editing existed. A read offering what the
+    /// write refuses is the same shape the time-series contents bug had.
+    #[test]
+    fn a_drainage_title_takes_the_edit_too() {
+        let (net, _) = hydra::uds::io::objects::parse_network(
+            "[TITLE]\nOld\n[OPTIONS]\nFLOW_UNITS CMS\n\
+             [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+             [OUTFALLS]\nO1 8 FREE NO\n\
+             [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+             [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n",
+        );
+        let mut state = NetworkStateInner::LoadedUds {
+            raw_text: String::new(),
+            dirty: false,
+            network: std::sync::Arc::new(net),
+            aux_files: Vec::new(),
+            owner_project_id: Some("p".into()),
+            owner_scenario_id: None,
+        };
+        apply_uds_mutation(&mut state, |network| {
+            network.title = vec!["New title".into()];
+            Ok(())
+        })
+        .expect("a drainage title is editable");
+        let NetworkStateInner::LoadedUds { network, dirty, .. } = &state else {
+            panic!("state must stay loaded");
+        };
+        assert!(*dirty, "the edit must mark the state dirty");
+        let text = hydra::uds::io::inp_writer::write_inp(network).expect("write");
+        assert!(
+            text.contains("New title"),
+            "the title never reached the file"
         );
     }
 
