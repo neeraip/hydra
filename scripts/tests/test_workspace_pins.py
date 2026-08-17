@@ -6,7 +6,7 @@ local build. Cargo resolves the path and ignores the version until the
 requirement excludes what is there, so a stale pin sits harmless through
 every patch and minor and refuses the next major.
 
-That is exactly how it failed: hydra-wasm pinned `8.0.0` while the
+That is exactly how it failed: hydra-demo pinned `8.0.0` while the
 workspace moved to 8.1.0, resolved by luck because a caret admits later
 minors, and stopped the first major bump dead — halfway through, with the
 manifests already rewritten.

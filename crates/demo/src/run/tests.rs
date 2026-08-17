@@ -97,7 +97,7 @@ fn captured_results_are_a_readable_out_file() {
     let out = run.results_bytes().expect("captured results");
     assert!(out.len() > 1024, "an .out file should not be nearly empty");
 
-    let dir = std::env::temp_dir().join(format!("hydra-wasm-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("hydra-demo-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("captured.out");
     std::fs::write(&path, &out).expect("write");

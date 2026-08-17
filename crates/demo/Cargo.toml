@@ -1,5 +1,5 @@
 [package]
-name = "hydra-wasm"
+name = "hydra-demo"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

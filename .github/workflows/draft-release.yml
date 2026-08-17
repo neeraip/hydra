@@ -186,7 +186,7 @@ jobs:
       # consumes. The ES-module build is the /try deploy's concern.
       - name: Build the single-file page
         run: |
-          wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
+          wasm-pack build crates/demo --target no-modules --out-dir www/pkg-nomodules --out-name hydra
           python3 scripts/build-wasm-single.py
 
       - name: Upload to release
@@ -195,7 +195,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           asset="hydra-try-${version}.html"
-          cp crates/wasm/www/hydra.html "${asset}"
+          cp crates/demo/www/hydra.html "${asset}"
           # Retried like the others: this job races nothing, but a draft
           # lookup or a plain 5xx should not cost the release its demo.
           for attempt in 1 2 3 4 5; do

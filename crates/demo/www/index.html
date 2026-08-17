@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Try Hydra</title>
+    <link rel="icon" href="data:image/png;base64,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" />
+    <link rel="stylesheet" href="hydra-theme.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <!-- Absolute links so the same nav works on Pages, on a local dev
+         server, and inside the offline single-file build. -->
+    <nav class="hydra-nav">
+      <div class="hydra-nav-inner">
+        <input class="hydra-nav-toggle" type="checkbox" id="hydra-nav-toggle" aria-hidden="true" />
+        <a class="hydra-wordmark" href="https://neeraip.github.io/hydra/">
+          <span class="hydra-glyph" aria-hidden="true"></span><span class="hydra-sep" aria-hidden="true"></span>
+          Hydra
+        </a>
+        <label class="hydra-nav-burger" for="hydra-nav-toggle" aria-label="Menu">
+          <svg class="open-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          <svg class="close-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </label>
+        <div class="hydra-nav-links">
+          <a href="https://neeraip.github.io/hydra/#why">Use cases</a>
+          <a href="https://neeraip.github.io/hydra/#engines">Engines</a>
+          <a href="https://neeraip.github.io/hydra/#toolchain">Toolchain</a>
+          <a href="https://neeraip.github.io/hydra/#features">Features</a>
+          <a class="hydra-cta" href="https://github.com/neeraip/hydra/releases/latest">Download</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="aurora" aria-hidden="true"></div>
+
+    <header class="try-hero">
+      <p class="eyebrow">The browser demo</p>
+      <h1>Try <span class="grad">Hydra</span> <span id="version" class="ver"></span></h1>
+      <p class="lede">
+        The real engines, compiled to WebAssembly. Nothing is uploaded. The
+        model is read, solved and reported here.
+      </p>
+    </header>
+
+    <main>
+      <section id="drop" class="drop" tabindex="0" aria-label="Choose a model">
+        <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <p><strong>Drop a model here</strong>, or click to choose one.</p>
+        <p class="dim">
+          An EPANET or SWMM <code>.inp</code> file. Drop auxiliary files
+          (climate, hotstart, routing inflows) alongside it and they will be
+          matched by name.
+        </p>
+        <input id="file" type="file" multiple hidden />
+      </section>
+
+      <section class="examples" aria-label="Example models">
+        <span class="dim">No model to hand? Try one of these:</span>
+        <span id="examples"></span>
+      </section>
+
+      <section class="controls">
+        <label>
+          Engine
+          <select id="engine">
+            <option value="">detect from the model</option>
+          </select>
+        </label>
+        <label class="check">
+          <input id="capture" type="checkbox" />
+          Capture <code>.out</code> results
+          <span class="dim">(held in memory)</span>
+        </label>
+        <button id="run" type="button" disabled>Run</button>
+        <button id="clear" type="button">Clear</button>
+      </section>
+
+      <section class="term-wrap">
+        <div class="term-bar">
+          <span class="tdot red"></span><span class="tdot yellow"></span><span class="tdot green"></span>
+          <span id="cmd" class="dim">hydra run …</span>
+          <span class="spacer"></span>
+          <button id="hotstart" type="button" hidden>Download hotstart</button>
+          <button id="download" type="button" hidden>Download .out</button>
+          <button id="copy" type="button" hidden>Copy report</button>
+        </div>
+        <pre id="term" class="term" aria-live="polite"></pre>
+      </section>
+    </main>
+
+    <footer class="dim">
+      <p>
+        The report below is the engine's own summary: the same bytes
+        <code>hydra run model.inp</code> writes to stdout. Lines beginning
+        <code>{</code> are the diagnostics it writes to stderr. Models are
+        read, solved and reported in this tab; nothing is uploaded anywhere.
+      </p>
+      <p>
+        <strong>Browser limits apply.</strong> Everything here lives in this
+        tab's memory, which browsers cap (a hard 4 GB ceiling, in practice
+        far less). Capturing <code>.out</code> results for a large network
+        can exhaust it. The desktop app, the CLI, and the Rust SDK stream
+        results from disk and have no such limit: treat this page as a way
+        to try Hydra, and run large models natively.
+      </p>
+    </footer>
+
+    <script>
+      // Close the mobile drawer when a navigation choice is made.
+      const navToggle = document.getElementById("hydra-nav-toggle");
+      document.querySelectorAll(".hydra-nav-links a").forEach((a) =>
+        a.addEventListener("click", () => {
+          navToggle.checked = false;
+        }),
+      );
+    </script>
+
+    <!-- The demo first, as a classic script: classic scripts run before
+         deferred module ones, so `startHydraDemo` is defined by the time the
+         module below has a module to hand it. -->
+    <script src="app.js"></script>
+    <script type="module">
+      import init, {
+        HydraRun,
+        RunOptions,
+        engines,
+        versionInfo,
+        examples,
+        exampleModel,
+      } from "./pkg/hydra.js";
+      await init();
+      startHydraDemo({ HydraRun, RunOptions, engines, versionInfo, examples, exampleModel });
+    </script>
+  </body>
+</html>

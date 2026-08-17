@@ -68,7 +68,7 @@ jobs:
       - name: Lint (clippy)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # The engines run in a browser (crates/wasm). This catches a dependency
+      # The engines run in a browser (crates/demo). This catches a dependency
       # that will not build for this target at all; the runtime failures — a
       # host call or a dependency that compiles and then panics — are guarded
       # elsewhere or not yet. See the `check-wasm` recipe in the justfile.
@@ -95,7 +95,7 @@ jobs:
         run: command -v wasm-pack || cargo binstall wasm-pack --no-confirm --force
 
       - name: Test in a browser (just test-wasm)
-        run: wasm-pack test --headless --chrome crates/wasm --test browser
+        run: wasm-pack test --headless --chrome crates/demo --test browser
 
       - name: Check documentation
         run: cargo doc --workspace --no-deps

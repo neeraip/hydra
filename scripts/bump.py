@@ -25,7 +25,7 @@ from _release import commit_and_tag, maybe_push, next_version, parse_level_arg, 
 # Every manifest carrying intra-workspace dep pins. Used both to rewrite the
 # pins and to stage the result — see commit_and_tag below.
 #
-# Unpublished crates (hydra-gui, hydra-wasm) are absent on purpose: nothing
+# Unpublished crates (hydra-gui, hydra-demo) are absent on purpose: nothing
 # resolves them from a registry, so their path deps carry no version at all
 # and there is nothing here to rewrite.
 CRATE_MANIFESTS = (

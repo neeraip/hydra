@@ -29,8 +29,8 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use hydra_wasm::aux_files::AuxFiles;
-use hydra_wasm::run::{run_to_completion, OpenRequest};
+use hydra_demo::aux_files::AuxFiles;
+use hydra_demo::run::{run_to_completion, OpenRequest};
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
 wasm_bindgen_test_configure!(run_in_browser);

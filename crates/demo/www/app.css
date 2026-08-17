@@ -1,0 +1,406 @@
+/* A terminal on a page. The point of the demo is that the output is the
+   CLI's, so the surface it lands on should not dress it up as something
+   else — monospace, dark, fixed columns. */
+
+/* Local aliases over the shared theme tokens (hydra-theme.css, copied
+   in from site/ by the build). Panel/term surfaces are solid here rather
+   than translucent: the terminal is the page. */
+:root {
+  --bg: var(--hy-bg);
+  --bg-panel: #151a22;
+  --bg-term: var(--hy-bg-term);
+  --border: #2b313b;
+  --text: var(--hy-text);
+  --dim: var(--hy-dim);
+  --accent: var(--hy-accent);
+  --warn: var(--hy-warn);
+  --error: var(--hy-error);
+  --ok: var(--hy-ok);
+  --mono: var(--hy-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 24px 24px 48px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-x: hidden;
+}
+
+/* The same two light sources as the marketing page. */
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(600px 420px at 18% -8%, rgba(74, 144, 217, 0.14), transparent 65%),
+    radial-gradient(700px 500px at 85% 8%, rgba(122, 111, 240, 0.09), transparent 65%);
+}
+
+.try-hero {
+  padding: 30px 0 8px;
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.try-hero h1 {
+  margin: 0;
+  font-size: clamp(30px, 4.5vw, 42px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.grad {
+  background: linear-gradient(100deg, #79b8ff 0%, #6ba7ea 55%, #a49bf7 115%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The version arrives only once the wasm module has initialised, a few
+   hundred milliseconds after first paint. The slot is sized identically
+   empty and filled, so the centred heading never jumps: empty renders a
+   skeleton, and the arriving text fades in (keyed off :empty, no JS). */
+.try-hero .ver {
+  display: inline-block;
+  min-width: 4.6em;
+  text-align: left;
+  font-size: 0.45em;
+  font-weight: 550;
+  color: var(--dim);
+  vertical-align: 0.5em;
+  letter-spacing: 0;
+}
+
+.try-hero .ver:empty {
+  height: 0.95em;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  vertical-align: 0.65em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .try-hero .ver:not(:empty) {
+    animation: ver-in 400ms ease;
+  }
+
+  @keyframes ver-in {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
+.try-hero .lede {
+  margin: 14px auto 0;
+  max-width: 58ch;
+  font-size: 15.5px;
+  color: var(--dim);
+}
+
+header,
+main,
+footer {
+  max-width: 940px;
+  margin: 0 auto;
+}
+
+/* The sticky nav spans the viewport; pull it out of the body padding. */
+body>.hydra-nav {
+  margin: -24px -24px 24px;
+}
+
+
+
+.dim {
+  color: var(--dim);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+/* ── Drop target ─────────────────────────────────────────────────────── */
+
+.drop {
+  margin-top: 22px;
+  border: 1px dashed var(--hy-border-strong);
+  border-radius: 14px;
+  padding: 34px 20px 30px;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.drop-icon {
+  width: 30px;
+  height: 30px;
+  stroke: var(--accent);
+  margin-bottom: 8px;
+}
+
+.drop:hover {
+  transform: translateY(-1px);
+}
+
+.drop:hover,
+.drop:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.drop.over {
+  border-color: var(--accent);
+  background: #1d2836;
+}
+
+.drop p {
+  margin: 0 0 6px;
+}
+
+.drop p:last-child {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* ── Examples ────────────────────────────────────────────────────────── */
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.examples #examples {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  /* The chips arrive with the wasm module; the row must not grow when
+     they do. Sized to the chip height, with skeleton pills until then. */
+  min-height: 28px;
+  align-items: center;
+}
+
+#examples:empty::before,
+#examples:empty::after {
+  content: "";
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#examples:empty::before {
+  width: 8.5em;
+}
+
+#examples:empty::after {
+  width: 10em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #examples button {
+    animation: ver-in 400ms ease;
+  }
+}
+
+.examples button {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 12px;
+  border-radius: 999px;
+}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.controls .check {
+  gap: 6px;
+}
+
+/* The engine options arrive with the wasm module, and a select sizes
+   itself to its widest option; pinned so the row does not shift when
+   "Water Distribution (wds)" lands. */
+#engine {
+  width: 210px;
+}
+
+select,
+button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hy-border-strong);
+  border-radius: 9px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:not(:disabled):hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
+#run {
+  padding: 7px 20px;
+}
+
+#run:not(:disabled) {
+  background: var(--hy-brand-grad);
+  border-color: rgba(140, 140, 245, 0.55);
+  box-shadow: 0 4px 20px rgba(98, 118, 228, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+#run:not(:disabled):hover {
+  box-shadow: 0 6px 26px rgba(98, 118, 228, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* ── Terminal ────────────────────────────────────────────────────────── */
+
+.term-wrap {
+  border: 1px solid var(--hy-border-strong);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-term);
+  box-shadow:
+    0 24px 70px -18px rgba(30, 90, 170, 0.35),
+    0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+.tdot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tdot.red {
+  background: #ff5f57;
+}
+
+.tdot.yellow {
+  background: #febc2e;
+}
+
+.tdot.green {
+  background: #28c840;
+}
+
+.term-bar #cmd {
+  margin-left: 6px;
+}
+
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.term-bar .spacer {
+  flex: 1;
+}
+
+.term-bar button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.term {
+  margin: 0;
+  padding: 14px 16px;
+  min-height: 320px;
+  max-height: 60vh;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 8;
+}
+
+/* One span per line, so a redrawn progress line replaces exactly itself —
+   the page's equivalent of the CLI's carriage return.
+
+   A blank line in the report is an empty span, which would collapse to no
+   height and close up the spacing the report was written with. Reserving a
+   line here rather than putting a space in the text keeps the page's copy
+   of the report byte-identical to the engine's. */
+.term span {
+  display: block;
+  min-height: 1.45em;
+}
+
+.term .stderr {
+  color: var(--dim);
+}
+
+.term .warn {
+  color: var(--warn);
+}
+
+.term .error {
+  color: var(--error);
+}
+
+.term .ok {
+  color: var(--ok);
+}
+
+.term .accent {
+  color: var(--accent);
+}
+
+footer p {
+  margin: 18px 0 0;
+  font-size: 13px;
+}
