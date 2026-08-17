@@ -10,36 +10,32 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 
 Correctness is defined by conservation laws and Hydra's own convergence criteria rather than by agreement with a reference implementation. Where Hydra departs from the code its data model comes from, the departure is deliberate, documented in the owning specification, and explained.
 
-| Engine | Domain | Source model | Status |
-|---|---|---|---|
-| **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | **Available** |
-| **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
+| Engine | Domain | Source model |
+|---|---|---|
+| **Water Distribution** (`wds`) | Pressurised supply networks: hydraulics, water quality, energy | EPANET `.inp` (2.x) |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection: runoff, routing, quality | SWMM `.inp` |
 
-<!-- PLANNED-ENGINE: och — revise the table's Status column and drop this paragraph as each engine ships. -->
-A planned engine is registered in the shared engine registry, so its key and crate name are reserved and the applications can present the full modelling scope — but it carries no implementation, and Hydra refuses to create projects or run simulations for it.
-
-Every available engine runs from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model and, since GUI 2.17.0, is edited like any other — network elements, hydrology, pollutants and LID controls.
+Both engines run from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model and, since GUI 2.17.0, is edited like any other: network elements, hydrology, pollutants and LID controls.
 
 **[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/docs/)**
 
-The browser demo runs the real engines, compiled to WebAssembly: drop an EPANET or SWMM model (or pick a bundled example) and read the same report the CLI prints. Everything runs in your tab — models are never uploaded. Each library release also attaches it as a single `hydra-try-<version>.html` you can keep and run offline.
+The browser demo runs the real engines, compiled to WebAssembly: drop an EPANET or SWMM model (or pick a bundled example) and read the same report the CLI prints. Everything runs in your tab. Models are never uploaded. Each library release also attaches it as a single `hydra-try-<version>.html` you can keep and run offline.
 
 ## Water distribution engine
 
 Extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
 
-- **Hydraulics** — GGA solver, Hazen-Williams / Darcy-Weisbach / Chezy-Manning head loss, DDA and PDA demand models, pumps, all EPANET valve types, FAVAD leakage, rule-based controls
-- **Water quality** — chemical constituent, water age, source tracing; Lagrangian transport; bulk and wall reactions; all EPANET tank mixing models
-- **I/O** — all 11 EPANET flow unit systems; `.out` binary, `.rpt` text, `.json` report output
+- **Hydraulics:** GGA solver, Hazen-Williams / Darcy-Weisbach / Chezy-Manning head loss, DDA and PDA demand models, pumps, all EPANET valve types, FAVAD leakage, rule-based controls
+- **Water quality:** chemical constituent, water age, source tracing; Lagrangian transport; bulk and wall reactions; all EPANET tank mixing models
+- **I/O:** all 11 EPANET flow unit systems; `.out` binary, `.rpt` text, `.json` report output
 
-Inputs are EPANET `.inp` files (local or via HTTP URL) — any 2.x release, since the constructs 2.3 added are optional. Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
+Inputs are EPANET `.inp` files (local or via HTTP URL), any 2.x release, since the constructs 2.3 added are optional. Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
 
 ## Urban drainage engine
 
 Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
 
-Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. Available from the CLI (`hydra run model.inp` — the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
+Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. Available from the CLI (`hydra run model.inp`; the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
 
 ## Install
 
@@ -49,7 +45,7 @@ Download the installer for your platform from the [releases page](https://github
 
 ### CLI
 
-**Pre-built binary** (no Rust required) — download from the [releases page](https://github.com/neeraip/hydra/releases/latest).
+**Pre-built binary** (no Rust required): download from the [releases page](https://github.com/neeraip/hydra/releases/latest).
 
 **Cargo:**
 
@@ -120,16 +116,16 @@ Hydra is published under the [GNU Affero General Public License v3.0](LICENSE), 
 [commercial license](COMMERCIAL_LICENSE.md) available for the cases the AGPL does not fit.
 
 **Using Hydra asks nothing of you.** Run the CLI, drive it from a script, model in the desktop app,
-check its results against another engine, or change it for your own purposes — none of that carries
+check its results against another engine, or change it for your own purposes. None of that carries
 an obligation. Your models, your results, and whatever else you run alongside Hydra stay yours, and
 you may use them commercially.
 
 **Building Hydra into something you distribute is what the AGPL governs.** Link the crates into your
 own application and ship it, or run a modified Hydra as a network service, and that work carries the
-same license with its source made available. Calling `hydra` as a separate program — handing it a
-file, reading what it writes — is use, not incorporation.
+same license with its source made available. Calling `hydra` as a separate program (handing it a
+file, reading what it writes) is use, not incorporation.
 
-If reciprocity does not suit — a proprietary product, a hosted service you cannot open — the
+If reciprocity does not suit (a proprietary product, a hosted service you cannot open), the
 [commercial license](COMMERCIAL_LICENSE.md) grants those same rights without it.
 
 This is a summary and not legal advice: the [license text](LICENSE) is what governs, and a case near

@@ -6,7 +6,7 @@ This page is for engineers and developers switching from EPANET to Hydra. It cov
 
 ## Your `.inp` Files Work
 
-Hydra parses the EPANET `.inp` format directly — any 2.x release. No conversion is needed. Pass your existing `.inp` file to the CLI or the library and Hydra will run it.
+Hydra parses the EPANET `.inp` format directly: any 2.x release. No conversion is needed. Pass your existing `.inp` file to the CLI or the library and Hydra will run it.
 
 **The command line is Hydra's own, not EPANET's.** Hydra deliberately does not
 mimic `epanet input.inp report.rpt output.out`: that argument order encodes one
@@ -28,7 +28,7 @@ See [INP Format Support](inp-format.md) for the full section-by-section referenc
 | Format | Compatibility |
 |---|---|
 | `.out` binary | EPANET-compatible. Post-processing tools that read EPANET binary output files will work with Hydra's output. |
-| `.rpt` text report | EPANET-style **summary** report (header, input summary, warnings, analysis timestamps). It does not include per-node/link result tables — use the `.out` file for those. |
+| `.rpt` text report | EPANET-style **summary** report (header, input summary, warnings, analysis timestamps). It does not include per-node/link result tables; use the `.out` file for those. |
 | `.json` report | Hydra extension (not an EPANET format). |
 
 ---
@@ -58,7 +58,7 @@ compounds across periods. If your workflow depends on sub-percent quality agreem
 EPANET halts the simulation when a hydraulic step does not converge within the configured iteration limit (`UNBALANCED STOP`). Hydra honours this setting: when a hydraulic step is genuinely unbalanced (fails to converge), Hydra also halts and records an `UnbalancedHydraulics` warning. The `UNBALANCED CONTINUE N` option is also supported.
 
 Because the two engines follow independent numerical paths, the step at which
-non-convergence first occurs can differ — so the same model may halt at
+non-convergence first occurs can differ, so the same model may halt at
 different periods, or converge throughout in one engine and stop partway in the
 other, even though both apply the same rule.
 
@@ -75,19 +75,19 @@ This only matters for networks with very short hydraulic timesteps (well under 6
 
 ### FIFO tank quality while filling
 
-For a FIFO (plug-flow) tank that is filling, EPANET reports the tank node's quality as approximately the **inflow** concentration — even when the tank is still full of water at a different concentration. Hydra reports the concentration at the tank's **outlet end** (its oldest water): the water the tank would actually deliver to the network. During a long fill of a tank whose initial water differs from the inflow, the two reports diverge until the old water flushes through. Water delivered downstream is identical in both engines — only the reported tank-node value differs.
+For a FIFO (plug-flow) tank that is filling, EPANET reports the tank node's quality as approximately the **inflow** concentration, even when the tank is still full of water at a different concentration. Hydra reports the concentration at the tank's **outlet end** (its oldest water): the water the tank would actually deliver to the network. During a long fill of a tank whose initial water differs from the inflow, the two reports diverge until the old water flushes through. Water delivered downstream is identical in both engines; only the reported tank-node value differs.
 
 ---
 
 ## Newer EPANET Features Worth Knowing
 
-Both are fully supported by Hydra, and both are optional — a file that uses neither still loads and runs.
+Both are fully supported by Hydra, and both are optional: a file that uses neither still loads and runs.
 
-### FAVAD Leakage — OWA-EPANET 2.3
+### FAVAD Leakage (OWA-EPANET 2.3)
 
 Per-pipe background leakage is modelled using the FAVAD (Fixed and Variable Area Discharge) model, configured via a `[LEAKAGE]` section in the `.inp` file. This section is the one genuine 2.3 addition. Older files (without `[LEAKAGE]`) parse cleanly; leakage is simply zero for all pipes.
 
-### Pressure-Dependent Analysis — EPA EPANET 2.2
+### Pressure-Dependent Analysis (EPA EPANET 2.2)
 
 PDA is configured exactly as in EPANET (`DEMAND MODEL PDA` in `[OPTIONS]`, with `MINIMUM PRESSURE`, `REQUIRED PRESSURE`, and `PRESSURE EXPONENT`). No changes needed.
 

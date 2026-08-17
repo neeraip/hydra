@@ -2,7 +2,7 @@
 
 Every engine is specified subsystem by subsystem, alongside the cross-cutting
 specs for the shared foundation and the report layer. These documents are the
-authoritative definitions of Hydra's behaviour — where a spec and the
+authoritative definitions of Hydra's behaviour. Where a spec and the
 implementation disagree, the spec wins.
 
 ## Shared
@@ -34,12 +34,3 @@ implementation disagree, the spec wins.
 | [`crates/engine-uds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/simulation/spec.md) | Controls, orchestration, accounting, statistics, session API |
 | [`crates/engine-uds/src/report_blocks/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/report_blocks/spec.md) | Post-simulation analytics: report-block catalog, derivations, options |
 | [`crates/engine-uds/src/interop/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/interop/spec.md) | Predecessor file formats: INP import, interface files, OUT/RPT output, recognition |
-
-<!-- PLANNED-ENGINE: och — replace this section with the engine's real spec table as it lands. -->
-
-## Open Channel (`och`)
-
-Not yet written. The engine is [registered but planned](../engines.md) — no
-behaviour has been specified, so there is nothing yet for an implementation to
-conform to. Its specs land before any implementation code does, as the
-spec-first workflow requires.

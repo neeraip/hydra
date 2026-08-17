@@ -1,6 +1,6 @@
 # Diagnostics & Errors (Drainage)
 
-Import, validation and export diagnostics are Hydra's own — typed and exhaustive.
+Import, validation and export diagnostics are Hydra's own: typed and exhaustive.
 
 SWMM's numeric error catalogue is deliberately not reproduced. It is a property of that API, not of its files: nothing in a model file names an error code, so it is not an interoperability surface.
 
@@ -26,8 +26,8 @@ No other refusal qualifies: values, identifiers and structure all carry meaning 
 
 ## Recognition
 
-`.inp` belongs to both EPANET and SWMM, so the extension cannot decide which engine owns a file. Hydra decides from the contents — each engine judges the models it is shown, and names the other's exclusive sections as foreign markers, so any `.inp` both engines see gets complementary verdicts and routing never has to break a tie.
+`.inp` belongs to both EPANET and SWMM, so the extension cannot decide which engine owns a file. Hydra decides from the contents: each engine judges the models it is shown, and names the other's exclusive sections as foreign markers, so any `.inp` both engines see gets complementary verdicts and routing never has to break a tie.
 
-A file built only from sections both formats share is genuinely ambiguous, and `plausible` is the honest answer. Naming the engine explicitly — `--engine uds` on the CLI, or the engine choice in the desktop app's new-project wizard — supplies the evidence recognition lacked.
+A file built only from sections both formats share is genuinely ambiguous, and `plausible` is the honest answer. Naming the engine explicitly (`--engine uds` on the CLI, or the engine choice in the desktop app's new-project wizard) supplies the evidence recognition lacked.
 
 Recognition is stricter than parsing, deliberately. Parsing discards unrecognised sections rather than rejecting the file; recognition governs only *automatic routing*, where a wrong guess silently produces a confident wrong answer.

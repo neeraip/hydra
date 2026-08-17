@@ -10,29 +10,29 @@ Hydra produces three output files for a water distribution run. Only one of them
 | `.rpt` | Plain text | Run summary: header, input/options recap, warnings, timestamps | A quick human-readable overview of a run |
 | `.json` | JSON | The same summary data as `.rpt`, plus energy and flow/mass balance, in a structured form | Scripts and data pipelines |
 
-**Only the `.out` file contains time series.** The `.rpt` and `.json` reports are two serialisations of the same summary information — neither includes per-node or per-link result tables.
+**Only the `.out` file contains time series.** The `.rpt` and `.json` reports are two serialisations of the same summary information; neither includes per-node or per-link result tables.
 
 How each is produced:
 
-- **CLI** — the report path (`.rpt` or `.json`) selects the text or JSON report; `--output` writes the `.out` file. See [CLI](../getting-started/cli.md).
-- **GUI** — every run writes `results.out` into the scenario folder; CSV and GeoJSON exports are available from the command palette. See [GUI](../getting-started/gui.md).
-- **SDK** — `io::out_writer::write_binary_output`, `io::rpt_writer::build_text_report`, and `io::rpt_writer::build_json_report`. See [SDK Examples](../sdk/examples.md).
+- **CLI**: the report path (`.rpt` or `.json`) selects the text or JSON report; `--output` writes the `.out` file. See [CLI](../getting-started/cli.md).
+- **GUI**: every run writes `results.out` into the scenario folder; CSV and GeoJSON exports are available from the command palette. See [GUI](../getting-started/gui.md).
+- **SDK**: `io::out_writer::write_binary_output`, `io::rpt_writer::build_text_report`, and `io::rpt_writer::build_json_report`. See [SDK Examples](../sdk/examples.md).
 
 ---
 
-## `.out` — Binary results
+## `.out`: Binary results
 
-The `.out` file **is** the EPANET 2.3 binary output layout (format version `20012`), so tools that read EPANET output files read Hydra's. Hydra records its own metadata — such as the topology digest that detects a since-edited model — in a `run.json` beside the results rather than inside them, so the results file stays a format EPANET defines. Values are stored as 32-bit floats (`REAL4`) and 32-bit integers (`INT4`), little-endian; IDs and strings are fixed-width, zero-padded.
+The `.out` file **is** the EPANET 2.3 binary output layout (format version `20012`), so tools that read EPANET output files read Hydra's. Hydra records its own metadata (such as the topology digest that detects a since-edited model) in a `run.json` beside the results rather than inside them, so the results file stays a format EPANET defines. Values are stored as 32-bit floats (`REAL4`) and 32-bit integers (`INT4`), little-endian; IDs and strings are fixed-width, zero-padded.
 
 The file is written in five sections:
 
-1. **Prolog** — a 15-integer header (magic number, format version, element counts, quality mode, trace node, flow-unit code, pressure-unit code, report start/step, duration) followed by the network's static data: title lines, input/report filenames, chemical name and units, node and link IDs, link end-node indices and type codes, tank node indices and cross-section areas, and node elevations, link lengths, and link diameters.
-2. **Energy** — per-pump summary: percent online, average efficiency, average energy per unit flow, average and peak power, and average cost, plus the network demand charge.
-3. **Dynamic results** — **one record per reporting period** (not per hydraulic step), stored column-major. Each record holds, for that period:
+1. **Prolog**: a 15-integer header (magic number, format version, element counts, quality mode, trace node, flow-unit code, pressure-unit code, report start/step, duration) followed by the network's static data: title lines, input/report filenames, chemical name and units, node and link IDs, link end-node indices and type codes, tank node indices and cross-section areas, and node elevations, link lengths, and link diameters.
+2. **Energy**: a per-pump summary (percent online, average efficiency, average energy per unit flow, average and peak power, and average cost), plus the network demand charge.
+3. **Dynamic results**: **one record per reporting period** (not per hydraulic step), stored column-major. Each record holds, for that period:
    - **Node quantities (4):** demand, head, pressure, quality
    - **Link quantities (8):** flow, velocity, head loss, quality, status, setting, reaction rate, friction factor
-4. **Network reactions** — average bulk, wall, tank, and source reaction rates over the run.
-5. **Epilog** — the number of reporting periods, a warning flag, a network content digest, and a closing magic number.
+4. **Network reactions**: average bulk, wall, tank, and source reaction rates over the run.
+5. **Epilog**: the number of reporting periods, a warning flag, a network content digest, and a closing magic number.
 
 ### Units
 
@@ -42,7 +42,7 @@ Two categories are **not** unit-converted: tank cross-section areas (always inte
 
 ---
 
-## `.rpt` — Text report
+## `.rpt`: Text report { #rpt--text-report }
 
 A human-readable summary in EPANET report style. It contains, in order:
 
@@ -57,7 +57,7 @@ It does **not** contain per-node or per-link result tables. For full results, re
 
 ---
 
-## `.json` — JSON report
+## `.json`: JSON report { #json--json-report }
 
 The same summary data as the `.rpt` report, in a structured form suited to scripts and pipelines. Top-level keys:
 
@@ -98,4 +98,4 @@ Notes:
 - `warnings[].time` is the simulation time in seconds; `object_id` is the affected node/link ID or `null`.
 - `avg_efficiency` is a fraction in `[0, 1]`.
 - `flow_balance` is `null` if unavailable, and `mass_balance` is `null` when no quality analysis was run. Balance volumes are in m³; mass values are in mg.
-- `begun_epoch` / `ended_epoch` are **strings holding raw seconds since the Unix epoch** (or `null`) — not formatted datetimes.
+- `begun_epoch` / `ended_epoch` are **strings holding raw seconds since the Unix epoch** (or `null`), not formatted datetimes.

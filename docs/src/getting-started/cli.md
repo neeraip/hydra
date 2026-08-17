@@ -8,18 +8,17 @@ hydra report --model <PATH> --results <PATH> [-o PATH]
 hydra engines
 ```
 
-**The engine is detected from the model, never from its extension** — `.inp`
+**The engine is detected from the model, never from its extension.** `.inp`
 belongs to both EPANET and SWMM, so the filename cannot decide. There is no
 default engine: if the model does not identify one, Hydra stops and asks you to
 name it with `--engine` rather than guessing. See
 [Engine selection](#engine-selection).
 
-<!-- PLANNED-ENGINE: och — `hydra engines` reports status; revise this prose as each engine ships. -->
 The water distribution (`wds`, EPANET models) and urban drainage (`uds`, SWMM
 models) engines are implemented today; `hydra engines` lists what this build
 provides.
 
-> **Upgrading from 2.x** — `hydra <model> <report> <output>` is gone. Use
+> **Upgrading from 2.x:** `hydra <model> <report> <output>` is gone. Use
 > `hydra run <model> --summary <report> --results <output>`. Running the old
 > form prints a hint naming the replacement. See
 > [Migrating from EPANET](../reference/migrating-from-epanet.md) for the full
@@ -29,16 +28,16 @@ provides.
 
 For most users, **Cargo install is the recommended path** on macOS, Linux, and Windows.
 
-**Option 1 — Pre-built binary** (no Rust required)
+**Option 1: Pre-built binary** (no Rust required)
 
 Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest) and place it on your `PATH`.
 
-> **macOS** — Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
+> **macOS:** Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
 > ```sh
 > xattr -d com.apple.quarantine hydra
 > ```
 
-**Option 2 — Cargo (recommended)**
+**Option 2: Cargo (recommended)**
 
 ```sh
 cargo install hydra-cli
@@ -128,7 +127,7 @@ identification is required to proceed.
 | Situation | Result |
 |---|---|
 | One engine identifies the model | It runs |
-| Nothing identifies it, but it is shaped like some engine's format | Error — name the engine with `--engine` |
+| Nothing identifies it, but it is shaped like some engine's format | Error: name the engine with `--engine` |
 | No engine recognises the format | Error |
 | The owning engine is registered but not implemented | Error naming it |
 
@@ -143,7 +142,7 @@ failure, so Hydra stops instead of guessing.
 
 `--engine <KEY>` names the engine explicitly. That is more information than
 detection has, so it is also the escape hatch for a sparse model that carries
-nothing identifying — the named engine parses it under its normal rules.
+nothing identifying: the named engine parses it under its normal rules.
 
 ```bash
 hydra run net.inp --engine wds     # skip detection: parse as EPANET
@@ -154,8 +153,8 @@ hydra engines                      # what this build provides
 An urban drainage run differs from a water distribution run in a few
 CLI-visible ways: progress is a single phase (hydrology, routing, and water
 quality advance together); `--summary` writes the engine's text report only
-(no `.json` yet); and auxiliary files the model declares — daily climate
-records, hotstart state, routing interface files — are read and written
+(no `.json` yet); and auxiliary files the model declares (daily climate
+records, hotstart state, routing interface files) are read and written
 relative to the model file's directory, which is why a model fetched over
 HTTP cannot declare them.
 
@@ -173,12 +172,12 @@ hydra report --model network.inp --results output.out -o report.html
 |---|---|
 | `--model <PATH>` | The `.inp` file the results were produced from |
 | `--results <PATH>` | The `.out` binary from a completed run |
-| `--template <PATH>` | Report template JSON — which blocks, in what order. Omit to cover every available block |
+| `--template <PATH>` | Report template JSON: which blocks, in what order. Omit to cover every available block |
 | `--format <FORMAT>` | `txt`, `csv`, `html`, or `pdf`. Inferred from the `--out` extension when omitted; defaults to `txt` |
 | `-o`, `--out <PATH>` | Output path; omit to write to stdout |
 | `--no-timestamp` | Omit the generation timestamp so output is byte-reproducible |
 
-The content comes from the engine's **report blocks** — named, self-contained
+The content comes from the engine's **report blocks**: named, self-contained
 sections such as run summary, result extremes, pump energy, service compliance,
 and the distribution charts. A template selects and orders them; without one you
 get everything that applies to the run. See
@@ -192,12 +191,12 @@ same inputs produce byte-identical output.
 | Code | Meaning |
 |---|---|
 | `0` | Simulation completed (check report for warnings) |
-| `1` | Input error — bad `.inp` file, missing file, HTTP 4xx |
-| `2` | Solver error — hydraulics did not converge |
-| `3` | I/O error — write failed, permission denied, HTTP 5xx |
-| `4` | Internal error — unexpected engine state; please report a bug |
+| `1` | Input error: bad `.inp` file, missing file, HTTP 4xx |
+| `2` | Solver error: hydraulics did not converge |
+| `3` | I/O error: write failed, permission denied, HTTP 5xx |
+| `4` | Internal error: unexpected engine state; please report a bug |
 
-> **Breaking change** — internal errors previously exited with code `2` (the
+> **Breaking change:** internal errors previously exited with code `2` (the
 > solver-error code). They now exit with the dedicated code `4`; codes
 > `0`–`3` are unchanged.
 
@@ -207,10 +206,10 @@ Both report formats are **summary-level**. Per-node and per-link time series are
 
 The text report (`.rpt`) contains:
 
-- **Header** — a Hydra version banner and the network title
-- **Input summary** — element counts, head-loss formula, demand model, timesteps, and simulation duration
-- **Warnings** — non-fatal diagnostics raised during the run: unbalanced hydraulics, negative pressures, and pump-head warnings
-- **Analysis timestamps** — "Analysis begun" / "Analysis ended" markers
+- **Header**: a Hydra version banner and the network title
+- **Input summary**: element counts, head-loss formula, demand model, timesteps, and simulation duration
+- **Warnings**: non-fatal diagnostics raised during the run, covering unbalanced hydraulics, negative pressures, and pump-head warnings
+- **Analysis timestamps**: "Analysis begun" / "Analysis ended" markers
 
 It does **not** contain per-node/link result tables, a network-status section, or an energy-usage section. Use the `.out` file for full results, or the JSON report's `energy` block for the energy summary.
 

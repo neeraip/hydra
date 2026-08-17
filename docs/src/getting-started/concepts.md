@@ -1,6 +1,6 @@
 # Key Concepts
 
-This page explains the terminology of the **water distribution engine** — the vocabulary used throughout Hydra's documentation and in EPANET `.inp` files. If you are familiar with EPANET, most of these will be review.
+This page explains the terminology of the **water distribution engine**: the vocabulary used throughout Hydra's documentation and in EPANET `.inp` files. If you are familiar with EPANET, most of these will be review.
 
 Each engine brings its own vocabulary; see [Engines](../engines.md) for the full roster.
 
@@ -33,7 +33,7 @@ A water distribution network in Hydra is made up of **nodes** (points) and **lin
 | Term | Description |
 |---|---|
 | **Head** | The total energy of water at a point, expressed as a height of water (metres or feet). Equal to elevation + pressure head + velocity head. Velocity head is typically negligible in distribution networks. |
-| **Pressure** | Gauge pressure at a node — the difference between the total head and the node elevation. Positive pressure means the water is above atmospheric. |
+| **Pressure** | Gauge pressure at a node: the difference between the total head and the node elevation. Positive pressure means the water is above atmospheric. |
 | **Headloss** | The loss of energy as water flows through a pipe, due to friction and minor losses. Higher flow or smaller diameter means more headloss. |
 | **Demand** | The rate at which water is withdrawn at a junction (litres/second, gallons/minute, etc.). |
 | **Emitter** | A pressure-dependent outflow device at a junction, used to model sprinklers, leaks, or irrigation outlets. Flow is proportional to a power of the local pressure. |
@@ -47,7 +47,7 @@ A water distribution network in Hydra is made up of **nodes** (points) and **lin
 
 | Term | Description |
 |---|---|
-| **Extended-Period Simulation (EPS)** | A simulation that runs for a period of time (hours or days) and tracks how the system state evolves — as opposed to a single steady-state snapshot. |
+| **Extended-Period Simulation (EPS)** | A simulation that runs for a period of time (hours or days) and tracks how the system state evolves, as opposed to a single steady-state snapshot. |
 | **Hydraulic timestep** | The interval at which the solver recomputes the full network hydraulic state. Typically 1 hour. |
 | **Reporting step** | The interval at which results are saved. Must be a multiple of the hydraulic timestep. |
 | **Pattern** | A time series of multipliers applied to a base value (demand, pump speed, reservoir head, etc.) to simulate variation over the simulation period. A multiplier of 1.0 means the base value is used unchanged. |
@@ -73,6 +73,6 @@ A water distribution network in Hydra is made up of **nodes** (points) and **lin
 | Extension | Description |
 |---|---|
 | `.inp` | EPANET network input file. Plain text, defines all network elements, options, and patterns. This is the file you load into Hydra. |
-| `.out` | Binary output file. Contains time-series results for every node and link at every reporting step. EPANET-compatible — usable by existing post-processing tools. |
+| `.out` | Binary output file. Contains time-series results for every node and link at every reporting step. EPANET-compatible, so usable by existing post-processing tools. |
 | `.rpt` | Plain-text report. Summary of simulation results in EPANET report style. |
 | `.json` | JSON report. Summary-level results including warnings, energy usage, and flow/mass balance. |

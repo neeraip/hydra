@@ -3,10 +3,9 @@
 [![Crates.io](https://img.shields.io/crates/v/hydra-engine-wds)](https://crates.io/crates/hydra-engine-wds)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
 
-The water distribution engine (`wds`) of [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform — water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
+The water distribution engine (`wds`) of [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform: water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
 
-<!-- PLANNED-ENGINE: och — revise this paragraph when the open channel engine ships. -->
-It is one of Hydra's domain engines, alongside urban drainage (`hydra-engine-uds`); open channel (`hydra-engine-och`) is a published scaffold awaiting development.
+It is one of Hydra's domain engines, alongside urban drainage (`hydra-engine-uds`).
 
 > **Most users should depend on [`hydra-sdk`](https://crates.io/crates/hydra-sdk) instead.** `hydra-sdk` re-exports the complete public API of this crate as a single stable umbrella dependency.
 
@@ -23,8 +22,8 @@ This crate owns:
 | `simulation` | Session API, controls, timestep orchestration, accounting |
 | `analysis` | Post-simulation analytics |
 
-This crate does **not** own interface logic (CLI, GUI) or network I/O — simulation inputs (INP model bytes) are supplied in memory by callers. The one filesystem carve-out is the explicit path-based streaming of binary `.out` result files (`io::out_reader`), so large results never have to be loaded whole.
+This crate does **not** own interface logic (CLI, GUI) or network I/O. Simulation inputs (INP model bytes) are supplied in memory by callers. The one filesystem carve-out is the explicit path-based streaming of binary `.out` result files (`io::out_reader`), so large results never have to be loaded whole.
 
 ## License
 
-[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE) — see [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.
+[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE). See [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.

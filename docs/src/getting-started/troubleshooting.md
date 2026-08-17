@@ -2,7 +2,7 @@
 
 ## GUI
 
-### macOS — "Hydra is damaged and can't be opened"
+### macOS: "Hydra is damaged and can't be opened"
 
 Hydra GUI macOS releases are code-signed and notarised. If Gatekeeper still shows this message, the app bundle usually has stale quarantine metadata from the download/copy step.
 
@@ -14,15 +14,15 @@ xattr -cr /Applications/Hydra.app
 
 Then open the app normally from Finder or Spotlight.
 
-### macOS — App opens but immediately quits
+### macOS: App opens but immediately quits
 
 This can happen if the app was launched directly from the `.dmg` or if macOS retained stale quarantine metadata. Move `Hydra.app` to `/Applications` first, then run the `xattr -cr` command above only if the app still fails to open.
 
-### Windows — "Windows protected your PC" (SmartScreen)
+### Windows: "Windows protected your PC" (SmartScreen)
 
 Click **More info**, then **Run anyway**. SmartScreen warns on unsigned executables. This will be resolved once Hydra's Windows builds are code-signed.
 
-### Linux — AppImage does not open
+### Linux: AppImage does not open
 
 Make the AppImage executable before running it:
 
@@ -44,12 +44,12 @@ sudo dnf install fuse-libs
 ### "This is a SWMM model, not a water-distribution one"
 
 The `.inp` extension is shared by EPANET and SWMM, so a file picker cannot tell
-them apart — only the parser can. Hydra detected a section the EPANET data model
+them apart; only the parser can. Hydra detected a section the EPANET data model
 has no concept of and stopped rather than misreading the file.
 
 Nothing is wrong with the file. It belongs to the
 [urban drainage engine](../engines.md): create a new urban drainage project and
-import the file there, or run it with the CLI — `hydra run model.inp` routes it
+import the file there, or run it with the CLI: `hydra run model.inp` routes it
 to that engine automatically. See
 [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
 
@@ -67,7 +67,7 @@ If the issue keeps reproducing, open an issue and include your OS version, GPU m
 
 ## CLI
 
-### macOS — "hydra cannot be opened because the developer cannot be verified"
+### macOS: "hydra cannot be opened because the developer cannot be verified"
 
 Pre-built macOS CLI binaries are currently not notarised. If this warning appears for a downloaded binary, clear the quarantine attribute and try again:
 
@@ -89,16 +89,16 @@ The `hydra` binary is not on your `PATH`.
 
 - If you downloaded a pre-built binary, move it to a directory that is already on your `PATH` (e.g. `/usr/local/bin` on macOS/Linux).
 
-### Exit code 1 — Input error
+### Exit code 1: Input error
 
 Hydra could not read or parse the network file. Common causes:
 
 - The file path is wrong or the file does not exist.
 - The `.inp` file contains a syntax error. Check the report for the specific line.
 - A URL was provided but the server returned 4xx. Verify the URL is accessible.
-- `--engine` named an engine the model does not belong to — for example forcing `--engine wds` on a SWMM `.inp`. Drop the flag and let the model's own contents pick the engine. See [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
+- `--engine` named an engine the model does not belong to, for example forcing `--engine wds` on a SWMM `.inp`. Drop the flag and let the model's own contents pick the engine. See [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
 
-### Exit code 2 — Solver did not converge
+### Exit code 2: Solver did not converge
 
 The hydraulic solver could not find a balanced solution for one or more time steps. This usually means the network model itself has an issue:
 
@@ -106,7 +106,7 @@ The hydraulic solver could not find a balanced solution for one or more time ste
 - Verify pump curves and valve settings are physically reasonable.
 - Try setting `UNBALANCED CONTINUE 10` in the `[OPTIONS]` section to let the simulation proceed past the failing step and produce a partial report for diagnosis.
 
-### Exit code 3 — I/O error
+### Exit code 3: I/O error
 
 Hydra could not write output. Check that the output directory exists and that you have write permission.
 

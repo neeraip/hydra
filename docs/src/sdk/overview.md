@@ -7,7 +7,7 @@
 hydra-sdk = "12"
 ```
 
-It re-exports every type needed to parse networks, run simulations, query results, run post-simulation analytics, and generate reports — with all internal dependency versions pre-pinned.
+It re-exports every type needed to parse networks, run simulations, query results, run post-simulation analytics, and generate reports, with all internal dependency versions pre-pinned.
 
 The water-distribution engine's API is flattened at the crate root (the unprefixed types below); the urban-drainage engine is namespaced as `uds`, because its vocabulary overlaps (both have networks, simulations, and options). `engines::route(&bytes)` decides which engine owns a model of unknown provenance.
 
@@ -69,8 +69,8 @@ use hydra_sdk::io;
 
 | Function / module | Purpose |
 |---|---|
-| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network`, failing if the result would not be simulable. Match `io::ReadError::ForeignDialect` separately: it means the bytes are another engine's model, not a bad file — see [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects) |
-| `io::parse_tolerant(&bytes)` | Parse and return the `Network` **with** its validation errors instead of failing — for editors and inspectors that must show an invalid model. A non-empty error list means it must not be simulated |
+| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network`, failing if the result would not be simulable. Match `io::ReadError::ForeignDialect` separately: it means the bytes are another engine's model, not a bad file. See [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects) |
+| `io::parse_tolerant(&bytes)` | Parse and return the `Network` **with** its validation errors instead of failing, for editors and inspectors that must show an invalid model. A non-empty error list means it must not be simulated |
 | `io::write_inp(&network)` | Serialise a `Network` back to `.inp` bytes |
 | `io::rpt_writer::build_text_report(&sim)` | Build a plain-text `.rpt` report string |
 | `io::rpt_writer::build_json_report(&sim)` | Build a JSON report string |
@@ -88,7 +88,7 @@ The complete `hydra-engine-uds` crate, namespaced. The session API is
 `uds::simulation::engine::Simulation`: `open` (or `open_with_climate`) a model
 from its input text, `step`/`run` it, then query results by element id or
 write them with `write_out` (SWMM-compatible binary) and `write_report`
-(text). The engine performs no file I/O — model text and any auxiliary file
+(text). The engine performs no file I/O: model text and any auxiliary file
 contents (climate records, hotstart bytes, routing interface files) are
 supplied in memory, the way the `hydra` CLI does it.
 
@@ -115,10 +115,10 @@ roster and what `Planned` means in practice.
 | `common::ENGINES` | Every engine compiled into this distribution, in presentation order |
 | `common::engine_by_key(key)` | Resolve a key to its descriptor, or an `UnknownEngineError` |
 | `common::EngineDescriptor` | `key`, `label`, `pill`, `accent`, `summary`, `status`, `import` |
-| `common::EngineStatus` | `Available` or `Planned` — a planned engine is registered but has no implementation |
+| `common::EngineStatus` | `Available` or `Planned`; both registered engines are `Available` |
 | `common::ImportFormat` | A source-model format the engine reads: `label` plus `extensions` |
 
-`import` is a file-picker filter, never a validity test — `wds` and `uds` both
+`import` is a file-picker filter, never a validity test: `wds` and `uds` both
 claim `.inp` with incompatible contents, so only the owning engine's parser
 can decide whether a file really is its model.
 
@@ -134,12 +134,12 @@ nothing about engines.
 
 | Type / function | Purpose |
 |---|---|
-| `report_catalog()` | The engine's block catalog — queryable without running a simulation |
-| `report_block_options(id, network)` | The options a given block accepts, with labels, defaults, and bounds — enough to build an editor without hardcoding them. Advisory: an unknown id or a block with nothing to configure yields an empty list rather than an error |
+| `report_catalog()` | The engine's block catalog, queryable without running a simulation |
+| `report_block_options(id, network)` | The options a given block accepts, with labels, defaults, and bounds. That is enough to build an editor without hardcoding them. Advisory: an unknown id or a block with nothing to configure yields an empty list rather than an error |
 | `produce_report_block(id, out_path, network, options)` | Materialise one block for a completed run |
 | `report::ReportTemplate` | An ordered list of block references plus a document title (JSON) |
 | `report::assemble(template, catalog, context, produce)` | Pair a template with a producer to build a render-ready document |
-| `report::render_txt` / `render_csv` / `render_html` | Deterministic renderers — identical inputs give byte-identical output |
+| `report::render_txt` / `render_csv` / `render_html` | Deterministic renderers: identical inputs give byte-identical output |
 | `report::render_pdf` | Typeset PDF; behind hydra-sdk's `report-pdf` feature, and the only renderer that can fail (`PdfError`) |
 | `common::BlockDescriptor` / `Fragment` | The catalog entry and produced-content types the two halves exchange |
 
@@ -147,6 +147,6 @@ nothing about engines.
 
 Beyond the tables above, `hydra-sdk` re-exports several supporting items:
 
-- **Version constants** — `HYDRA_VERSION` and the per-subsystem `HYDRA_*_VERSION` strings.
-- **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, and `RuntimeEstimate`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
-- **Threshold binning** — `threshold_bands(values, edges)` counts values into the bands defined by ascending edges, with the outer two unbounded so nothing is dropped. It is the same binning the `wds.*-thresholds` report blocks use, so an interface presenting that view counts identically.
+- **Version constants**: `HYDRA_VERSION` and the per-subsystem `HYDRA_*_VERSION` strings.
+- **Runtime estimation**: `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, and `RuntimeEstimate`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
+- **Threshold binning**: `threshold_bands(values, edges)` counts values into the bands defined by ascending edges, with the outer two unbounded so nothing is dropped. It is the same binning the `wds.*-thresholds` report blocks use, so an interface presenting that view counts identically.

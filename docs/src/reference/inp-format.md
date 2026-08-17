@@ -7,14 +7,14 @@ Hydra parses the EPANET `.inp` file format. This page documents which sections a
 ## Supported EPANET versions
 
 **Any EPANET 2.x file.** The tables below are written against **EPANET 2.3**,
-which is the newest dialect Hydra understands — not a requirement your file has
+which is the newest dialect Hydra understands, not a requirement your file has
 to meet. Everything 2.3 added over earlier releases is optional: the
 `[LEAKAGE]` section and the `DISABLED` suffix on a control line. A 2.0 or 2.2
 file that uses neither loads unchanged and runs, with leakage simply zero on
 every pipe.
 
 Older constructs are skipped rather than rejected. A legacy `[ROUGHNESS]`
-section — superseded by the roughness column in `[PIPES]` — is accepted as a
+section (superseded by the roughness column in `[PIPES]`) is accepted as a
 no-op, as is any section or `[OPTIONS]` keyword Hydra does not recognise.
 Rejection is reserved for a file that is not an EPANET model at all; see
 [Foreign `.inp` dialects](#foreign-inp-dialects).
@@ -50,7 +50,7 @@ All data in these sections is parsed and applied to the simulation, with one exc
 | `[ENERGY]` | Global settings (GLOBAL EFFICIENCY/PRICE/PATTERN, DEMAND CHARGE) and per-pump energy settings (EFFIC, PRICE, PATTERN) |
 | `[TIMES]` | Simulation duration, timesteps, report start, pattern start, clock offset, rule timestep, and reporting statistic |
 | `[OPTIONS]` | See [OPTIONS keywords](#options-keywords) below |
-| `[REPORT]` | Report field selection and formatting options — parsed and stored, but not yet consumed by the report writer (field filtering is not implemented) |
+| `[REPORT]` | Report field selection and formatting options. Parsed and stored, but not yet consumed by the report writer (field filtering is not implemented) |
 | `[COORDINATES]` | Node XY positions (visual metadata, no unit conversion) |
 | `[VERTICES]` | Link intermediate vertices (visual metadata) |
 | `[TAGS]` | Node and link string tags (metadata) |
@@ -74,34 +74,34 @@ An `[END]` marker, if present, terminates parsing: any content after the first `
 
 ## Foreign `.inp` dialects
 
-The `.inp` extension is not exclusive to EPANET — SWMM uses it too, for a wholly
+The `.inp` extension is not exclusive to EPANET: SWMM uses it too, for a wholly
 different data model. Because the water distribution engine ignores sections it
 does not recognise (above), a SWMM file would otherwise parse "successfully"
 into a network of junctions carrying each node's maximum depth as its demand,
 joined by no links at all: a wrong answer wearing the costume of a right one.
 
 So the parser rejects a foreign dialect up front, before any network is built.
-The test is **positive only** — it fires on the presence of a section EPANET has
+The test is **positive only**: it fires on the presence of a section EPANET has
 no concept of, never on the absence of one EPANET expects, because a valid
 EPANET model is not required to contain any particular section. The markers are
 a fixed list of SWMM-only section names (`[SUBCATCHMENTS]`, `[CONDUITS]`,
 `[OUTFALLS]`, `[RAINGAGES]`, `[INFILTRATION]`, `[POLLUTANTS]`, `[XSECTIONS]`,
 and roughly two dozen more), matched on the upper-cased name.
 
-This is reported as an **engine mismatch, not a bad file** — the same bytes may
-be a flawless model in the tool that owns them:
+This is reported as an **engine mismatch, not a bad file**, because the same
+bytes may be a flawless model in the tool that owns them:
 
 | Surface | Behaviour |
 |---|---|
 | CLI | With engine detection (the default), a SWMM model simply routes to the [urban drainage engine](../engines.md) and runs. Forcing `--engine wds` on it produces diagnostic code `input/engine`, exit code `1`: *this is a SWMM model, not an EPANET one (it declares a `[SUBCATCHMENTS]` section)* |
 | GUI | An engine-mismatch message naming the tool and the giveaway section. When the tool's engine is GUI-openable (SWMM is: urban drainage), it says to create a project under that engine and import the file; otherwise it points at the CLI, which runs every available engine |
-| SDK | `io::ReadError::ForeignDialect { tool, section }` — matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it; `hydra_sdk::engines::route` does exactly that |
+| SDK | `io::ReadError::ForeignDialect { tool, section }`, matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it; `hydra_sdk::engines::route` does exactly that |
 
 ---
 
 ## OPTIONS Keywords
 
-The `[OPTIONS]` keywords listed below are parsed and applied. A few EPANET keywords are not parsed — notably `PRESSURE` (pressure display units) and `MAP` — and any unknown keyword is silently ignored.
+The `[OPTIONS]` keywords listed below are parsed and applied. A few EPANET keywords are not parsed, notably `PRESSURE` (pressure display units) and `MAP`, and any unknown keyword is silently ignored.
 
 | Keyword | Description |
 |---|---|

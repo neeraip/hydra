@@ -3,7 +3,7 @@
 Report generation for the Hydra workspace: JSON report templates,
 document assembly from engine-neutral content fragments, and
 deterministic txt / csv / html renderers. Knows nothing about engines or
-the results they produce — applications obtain fragments from an engine
+the results they produce. Applications obtain fragments from an engine
 and hand them to this layer. See `src/spec.md` for the authoritative
 specification.
 

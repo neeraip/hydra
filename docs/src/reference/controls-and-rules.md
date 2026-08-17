@@ -17,7 +17,7 @@ Each simple control is a single line that acts on one link. Every control begins
 **Action** is one of:
 
 - `OPEN` or `CLOSED` (`CLOSE` is accepted as a synonym for `CLOSED`), or
-- a **numeric setting** — a bare number sets a pump's relative speed or a valve's setting. For example, `LINK PU1 1.0000 IF NODE T1 BELOW 4.0` runs pump `PU1` at speed 1.0 while tank `T1` is below 4.0.
+- a **numeric setting**: a bare number sets a pump's relative speed or a valve's setting. For example, `LINK PU1 1.0000 IF NODE T1 BELOW 4.0` runs pump `PU1` at speed 1.0 while tank `T1` is below 4.0.
 
 When a numeric setting is given without a status, the status is inferred from the link type: a pump or pipe opens for a value greater than zero and closes at zero; a valve becomes active.
 
@@ -86,11 +86,11 @@ SYSTEM <attribute> <operator> <value>             # simulation clock
 | `TIME` | system | Elapsed simulation time |
 | `CLOCKTIME` | system | Time of day |
 
-**Operators:** `=` (also `==`, `IS`, `EQUALS`); `<>` (also `!=`, `NOT`); `<` (also `BELOW`); `>` (also `ABOVE`); `<=`; `>=`. Each operator is a single token — EPANET's two-word `IS NOT` is not supported.
+**Operators:** `=` (also `==`, `IS`, `EQUALS`); `<>` (also `!=`, `NOT`); `<` (also `BELOW`); `>` (also `ABOVE`); `<=`; `>=`. Each operator is a single token; EPANET's two-word `IS NOT` is not supported.
 
 ### Combining premises
 
-Premises are joined with `AND` and `OR`, and **`AND` binds more tightly than `OR`** — the condition is a disjunction of `AND`-clauses. For example:
+Premises are joined with `AND` and `OR`, and **`AND` binds more tightly than `OR`**: the condition is a disjunction of `AND`-clauses. For example:
 
 ```
 IF  TANK T1 LEVEL BELOW 2
@@ -111,7 +111,7 @@ LINK <id> STATUS OPEN|CLOSED
 LINK <id> SETTING <value>          # SPEED is a synonym for SETTING
 ```
 
-The object keyword before the link ID is cosmetic — the ID is always resolved as a link. An optional `IS` and `=` are allowed for readability (`THEN PUMP HSP#1 STATUS IS OPEN`).
+The object keyword before the link ID is cosmetic: the ID is always resolved as a link. An optional `IS` and `=` are allowed for readability (`THEN PUMP HSP#1 STATUS IS OPEN`).
 
 ### Priority and conflicts
 

@@ -1,6 +1,6 @@
 # Performance
 
-Hydra is fast enough to run large extended-period simulations interactively. The figures below are **indicative** — they show the order of magnitude you can expect, not a controlled lab result. Your own hardware, build flags, and network characteristics will change the numbers.
+Hydra is fast enough to run large extended-period simulations interactively. The figures below are **indicative**: they show the order of magnitude you can expect, not a controlled lab result. Your own hardware, build flags, and network characteristics will change the numbers.
 
 ## End-to-end timings
 
@@ -22,7 +22,7 @@ Measured on an Apple M5 Pro (macOS 26.5), release build (`cargo build --release`
 | Exnet | 1,893 | 2,467 | 1 | 6.6 ms |
 | BWSN2 | 12,527 | 14,831 | 49 | 168 ms |
 
-**Steps** is the number of reporting periods. Single-period (`Steps: 1`) rows are steady-state snapshots — their times are dominated by process start-up and parsing rather than the solve, so treat any sub-10 ms figure as "effectively instant." The larger the network, the more of each hydraulic step is spent in the sparse linear solve; networks with heavy control/rule logic or water-quality transport (Micropolis, for example) cost more per step than their node count alone suggests.
+**Steps** is the number of reporting periods. Single-period (`Steps: 1`) rows are steady-state snapshots: their times are dominated by process start-up and parsing rather than the solve, so treat any sub-10 ms figure as "effectively instant." The larger the network, the more of each hydraulic step is spent in the sparse linear solve; networks with heavy control/rule logic or water-quality transport (Micropolis, for example) cost more per step than their node count alone suggests.
 
 ## Reproducing these numbers
 

@@ -16,10 +16,10 @@ Hydra reports problems in three ways: **exit codes** (CLI process status), **str
 | Code | Meaning |
 |---|---|
 | `0` | Simulation completed (the report may still contain warnings) |
-| `1` | Input error — bad arguments, bad `.inp` file, missing input, HTTP 4xx, or a network validation failure |
-| `2` | Solver error — hydraulics or quality did not converge |
-| `3` | I/O error — write failed, permission denied, HTTP 5xx, or network failure |
-| `4` | Internal error — unexpected engine state; please report a bug |
+| `1` | Input error: bad arguments, bad `.inp` file, missing input, HTTP 4xx, or a network validation failure |
+| `2` | Solver error: hydraulics or quality did not converge |
+| `3` | I/O error: write failed, permission denied, HTTP 5xx, or network failure |
+| `4` | Internal error: unexpected engine state; please report a bug |
 
 Codes `0`–`4` are a stable contract. Note that network **validation** failures are input errors (exit `1`), not solver errors.
 
@@ -27,7 +27,7 @@ Codes `0`–`4` are a stable contract. Note that network **validation** failures
 
 ## Structured diagnostics (stderr)
 
-Independently of the report, the CLI writes each warning and error to **stderr** as one compact JSON object per line. This stream is always emitted — it is not suppressed by `-q`/`--quiet` (which only silences the human-readable progress output).
+Independently of the report, the CLI writes each warning and error to **stderr** as one compact JSON object per line. This stream is always emitted: it is not suppressed by `-q`/`--quiet` (which only silences the human-readable progress output).
 
 Each line has five keys:
 
@@ -62,7 +62,7 @@ Example:
 |---|---|---|
 | `io/fetch` | Failed to read the input file or URL | `1` (4xx / not found) or `3` (5xx / network) |
 | `input/format` | Unrecognised input file format | `1` |
-| `input/engine` | The file is a sound `.inp` model, but another engine's — see [Foreign `.inp` dialects](inp-format.md#foreign-inp-dialects) | `1` |
+| `input/engine` | The file is a sound `.inp` model, but another engine's; see [Foreign `.inp` dialects](inp-format.md#foreign-inp-dialects) | `1` |
 | `input/parse` | `.inp` parse error (bad field, duplicate ID, syntax at a line) | `1` |
 | `validation/network` | Network validation failed (one line per violation) | `1` |
 | `solver/hydraulic` | The hydraulic solver failed | `2` |
@@ -78,9 +78,9 @@ Example:
 
 Warnings are recorded during a run and surfaced in three places: the stderr diagnostics above, the `warnings` array of the [JSON report](output-files.md#json--json-report), and the Warnings section of the [text report](output-files.md#rpt--text-report). There are three kinds:
 
-- **Unbalanced hydraulics** — a step did not converge. Often points to an over-constrained or disconnected model; see [Troubleshooting](../getting-started/troubleshooting.md).
-- **Negative pressure** — a node's pressure went below zero, indicating demand that the network could not supply at that point (consider [PDA](inp-format.md#options-keywords)).
-- **Pump exceeds maximum head** — a pump operated past the top of its curve; check the curve and the operating point.
+- **Unbalanced hydraulics**: a step did not converge. Often points to an over-constrained or disconnected model; see [Troubleshooting](../getting-started/troubleshooting.md).
+- **Negative pressure**: a node's pressure went below zero, indicating demand that the network could not supply at that point (consider [PDA](inp-format.md#options-keywords)).
+- **Pump exceeds maximum head**: a pump operated past the top of its curve; check the curve and the operating point.
 
 ---
 

@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/hydra-cli)](https://crates.io/crates/hydra-cli)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
 
-Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform. It drives Hydra's simulation engines: reads model files (EPANET or SWMM `.inp`) from local paths or HTTP URLs, runs the engine the model belongs to — water distribution for EPANET models, urban drainage for SWMM models — and writes results to `.rpt` and `.out` files in that engine's native formats. The engine is detected from the model's contents, never its extension; `--engine wds|uds` names one explicitly. <!-- PLANNED-ENGINE: och — mention the open channel engine here when it becomes reachable from the CLI. -->Hydra's open channel engine is planned and not yet available.
+Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform. It drives Hydra's simulation engines: reads model files (EPANET or SWMM `.inp`) from local paths or HTTP URLs, runs the engine the model belongs to (water distribution for EPANET models, urban drainage for SWMM models), and writes results to `.rpt` and `.out` files in that engine's native formats. The engine is detected from the model's contents, never its extension; `--engine wds|uds` names one explicitly.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/docs/getting-started/cli.html)**
 
@@ -20,7 +20,7 @@ The argument surface was redesigned so it can carry more than one engine.
 - **One name per concept.** The model is `<MODEL>`, the binary time series
   is `--results`, the native run log is `--summary`. Previously `--output`
   meant the binary results while `hydra report`'s `--out` meant the report
-  document — one letter apart, opposite meanings.
+  document: one letter apart, opposite meanings.
 - **`--engine`**, defaulting to detection from the model's contents. There is
   no default engine; an unidentifiable model is an error, never a guess.
 - **`-v` is verbosity** (repeatable), reclaimed at this major boundary. `-V`
@@ -32,16 +32,16 @@ The argument surface was redesigned so it can carry more than one engine.
 
 For most users, **Cargo install is the recommended path**.
 
-**Option 1 — Pre-built binary** (no Rust required)
+**Option 1: Pre-built binary** (no Rust required)
 
 Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest).
 
-> **macOS** — Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
+> **macOS:** Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
 > ```sh
 > xattr -d com.apple.quarantine hydra
 > ```
 
-**Option 2 — Cargo (recommended)**
+**Option 2: Cargo (recommended)**
 
 ```sh
 cargo install hydra-cli
@@ -82,7 +82,7 @@ hydra -V
 
 ### Engine selection
 
-The engine is decided by the model's **contents**, never its extension —
+The engine is decided by the model's **contents**, never its extension:
 `.inp` belongs to both EPANET and SWMM. Exactly one engine must identify the
 model for it to run. If none does, or the file is only shaped like some
 engine's format without identifying it, Hydra stops and asks for `--engine`
@@ -101,4 +101,4 @@ would return a confident wrong answer instead of an error.
 
 ## License
 
-[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE) — see [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.
+[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE). See [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.
