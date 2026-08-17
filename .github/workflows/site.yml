@@ -1,13 +1,16 @@
-name: Docs
+# The whole GitHub Pages site: the marketing page at /, the mdbook docs at
+# /docs, and the browser demo at /try.
+name: Site
 
 on:
   push:
     branches: [main]
     paths:
+      - 'site/**'
       - 'docs/**'
       - 'crates/wasm/**'
       - 'scripts/build-wasm-single.py'
-      - '.github/workflows/docs.yml'
+      - '.github/workflows/site.yml'
   # Engine changes alter what /try computes but do not trigger a deploy —
   # redeploying the demo on every solver commit would rebuild Pages far more
   # often than it informs anyone. Dispatch manually after an engine release
@@ -57,21 +60,24 @@ jobs:
           wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
           python3 scripts/build-wasm-single.py
 
-      # After `mdbook build`, which recreates docs/book from scratch. The
-      # no-modules bundle exists only to assemble hydra.html and does not
-      # ship; hydra.html itself does, as the offline download the page
-      # offers.
-      - name: Place the demo at /try
+      # The marketing page at /, the book at /docs, the demo at /try.
+      # `just site` assembles the identical layout locally — keep the two
+      # in agreement. The no-modules bundle exists only to assemble
+      # hydra.html and does not ship; hydra.html itself does, as the
+      # offline download the demo page offers.
+      - name: Assemble the site (just site)
         run: |
-          mkdir -p docs/book/try
+          mkdir -p _site/try
+          cp -R site/. _site/
+          cp -R docs/book _site/docs
           cp crates/wasm/www/index.html crates/wasm/www/app.js crates/wasm/www/app.css \
-             crates/wasm/www/hydra.html docs/book/try/
-          cp -R crates/wasm/www/pkg docs/book/try/pkg
+             crates/wasm/www/hydra.html _site/try/
+          cp -R crates/wasm/www/pkg _site/try/pkg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5.0.0
         with:
-          path: docs/book
+          path: _site
 
   deploy:
     name: Deploy

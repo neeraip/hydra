@@ -301,6 +301,27 @@ docs-build:
 docs:
     mdbook serve docs --open
 
+# ── Site ──────────────────────────────────────────────────────────────────────
+
+# The assembled layout is what the Docs workflow deploys to GitHub Pages:
+# the marketing page at /, the mdbook at /docs, the browser demo at /try.
+# The workflow (.github/workflows/docs.yml) runs the same steps inline —
+# keep the two in agreement.
+# Assemble the whole Pages site into target/site
+site: docs-build wasm wasm-single
+    rm -rf target/site
+    mkdir -p target/site/try
+    cp -R site/. target/site/
+    cp -R docs/book target/site/docs
+    cp crates/wasm/www/index.html crates/wasm/www/app.js crates/wasm/www/app.css \
+       crates/wasm/www/hydra.html target/site/try/
+    cp -R crates/wasm/www/pkg target/site/try/pkg
+
+# Assemble the site and serve it at http://localhost:8000
+site-serve: site
+    @echo "Site: http://localhost:8000  (docs at /docs, demo at /try)"
+    cd target/site && python3 -m http.server 8000
+
 # ── CI ────────────────────────────────────────────────────────────────────────
 
 # Skips the slower CI-only steps (deny, docs-api, catalog drift, lockfile

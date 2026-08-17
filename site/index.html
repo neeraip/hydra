@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hydra: water infrastructure simulation</title>
+    <meta
+      name="description"
+      content="Water infrastructure simulation, written in Rust. A suite of domain engines behind one toolchain: desktop app, CLI, and Rust SDK."
+    />
+    <link
+      rel="icon"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" fill="%234aa3ff"/></svg>'
+    />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <nav class="nav">
+      <div class="nav-inner">
+        <a class="wordmark" href="#">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" />
+          </svg>
+          Hydra
+        </a>
+        <div class="nav-links">
+          <a href="#engines">Engines</a>
+          <a href="#toolchain">Toolchain</a>
+          <a href="docs/">Docs</a>
+          <a href="https://github.com/neeraip/hydra">GitHub</a>
+        </div>
+        <a class="button primary small" href="try/">Try it in your browser</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <!-- A schematic water network, flowing. Decoration only. -->
+      <svg class="net" viewBox="0 0 1200 460" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+        <g class="pipes">
+          <path d="M60 300 L250 240 L470 290 L690 220 L930 280 L1140 210" />
+          <path d="M250 240 L310 120 L560 90 L820 140 L1080 80" />
+          <path d="M470 290 L560 90" />
+          <path d="M690 220 L820 140" />
+          <path d="M310 120 L470 290" />
+          <path d="M930 280 L1080 80" />
+          <path d="M60 300 L180 400 L430 380 L690 420 L940 390 L1140 210" />
+          <path d="M430 380 L470 290" />
+          <path d="M940 390 L930 280" />
+        </g>
+        <g class="flows">
+          <path d="M60 300 L250 240 L470 290 L690 220 L930 280 L1140 210" />
+          <path d="M250 240 L310 120 L560 90 L820 140 L1080 80" />
+          <path d="M60 300 L180 400 L430 380 L690 420 L940 390 L1140 210" />
+        </g>
+        <g class="nodes">
+          <circle cx="60" cy="300" r="5" />
+          <circle cx="250" cy="240" r="5" />
+          <circle cx="470" cy="290" r="5" />
+          <circle cx="690" cy="220" r="5" />
+          <circle cx="930" cy="280" r="5" />
+          <circle cx="1140" cy="210" r="5" />
+          <circle cx="310" cy="120" r="5" />
+          <circle cx="560" cy="90" r="5" />
+          <circle cx="820" cy="140" r="5" />
+          <circle cx="1080" cy="80" r="5" />
+          <circle cx="180" cy="400" r="5" />
+          <circle cx="430" cy="380" r="5" />
+          <circle cx="690" cy="420" r="5" />
+          <circle cx="940" cy="390" r="5" />
+        </g>
+      </svg>
+
+      <div class="hero-inner">
+        <a class="announce" href="https://github.com/neeraip/hydra/releases">
+          <span class="announce-tag">New</span>
+          Urban drainage models are now editable in the desktop app
+          <span class="announce-arrow">→</span>
+        </a>
+        <h1>
+          Water infrastructure simulation,<br />
+          <span class="grad">written in Rust.</span>
+        </h1>
+        <p class="lede">
+          A suite of domain engines behind one toolchain. Import a model, run
+          it, and read the same report everywhere: in the desktop app, from
+          the command line, through the Rust SDK, or right here in your
+          browser.
+        </p>
+        <nav class="cta" aria-label="Primary">
+          <a class="button primary" href="try/">Try it in your browser</a>
+          <a class="button" href="docs/">Read the docs</a>
+          <a class="button" href="https://github.com/neeraip/hydra/releases/latest">Download</a>
+        </nav>
+
+        <!-- Real lines from a real run: `hydra run Net1.inp`, excerpted. -->
+        <div class="term-wrap" aria-hidden="true">
+          <div class="term-bar">
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+            <span class="cmd">hydra run Net1.inp</span>
+          </div>
+          <pre class="term"><span>  EPANET Example Network 1</span><span></span><span class="dim">      Number of Junctions................ 9</span><span class="dim">      Number of Pipes ................... 12</span><span class="dim">      Quality Analysis .................. Chlorine</span><span class="dim">      Total Duration .................... 24.00 hrs</span><span></span><span>  Analysis begun Mon Aug 17 13:50:54 2026</span><span class="ok">  Analysis ended Mon Aug 17 13:50:54 2026</span></pre>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="stats reveal" aria-label="At a glance">
+        <div class="stat">
+          <span class="stat-n">2</span>
+          <strong>engines available today</strong>
+          <span class="stat-d">Water distribution and urban drainage, each owning its data model end to end.</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n">4</span>
+          <strong>ways to run a model</strong>
+          <span class="stat-d">Desktop app, CLI, Rust SDK, and the browser. The same engine code runs everywhere.</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n">0</span>
+          <strong>uploads, ever</strong>
+          <span class="stat-d">The browser demo reads, solves and reports your model in your own tab.</span>
+        </div>
+      </section>
+
+      <section id="engines" class="reveal" aria-labelledby="engines-h">
+        <p class="eyebrow">The engines</p>
+        <h2 id="engines-h">Two engines today, a third planned</h2>
+        <p class="section-lede">
+          Each engine owns its data model end to end: reader, solver, and
+          report. Correctness is defined by Hydra's own convergence criteria
+          and physical conservation laws, with file-level compatibility with
+          each engine's predecessor.
+        </p>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C9 7.5 6 11 6 14.5a6 6 0 0 0 12 0C18 11 15 7.5 12 3z" fill="none" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              <span class="pill ok"><span class="pip"></span>Available</span>
+            </div>
+            <h3>Water distribution</h3>
+            <p class="model">EPANET data model</p>
+            <p>
+              A Global Gradient Algorithm hydraulic solver and a Lagrangian
+              water quality engine. Reads any EPANET 2.x
+              <code>.inp</code> file; writes EPANET-compatible binary results
+              and text reports.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-top">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4.5 4.5 0 1 1 .8-8.9A5.5 5.5 0 0 1 18.6 8 3.5 3.5 0 0 1 17 15z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
+              <span class="pill ok"><span class="pip"></span>Available</span>
+            </div>
+            <h3>Urban drainage</h3>
+            <p class="model">SWMM data model</p>
+            <p>
+              Rainfall-runoff hydrology, dynamic-wave routing, and water
+              quality on the SWMM data model: infiltration, LID controls,
+              snowmelt, groundwater, pollutant transport.
+            </p>
+          </article>
+          <!-- PLANNED-ENGINE: och — reword this card when the open channel engine ships. -->
+          <article class="card planned">
+            <div class="card-top">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c3-2.5 6-2.5 9 0s6 2.5 9 0M3 14c3-2.5 6-2.5 9 0s6 2.5 9 0" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
+              <span class="pill"><span class="pip"></span>Planned</span>
+            </div>
+            <h3>Open channel</h3>
+            <p class="model">HEC-RAS data model</p>
+            <p>
+              The next engine on the roadmap. Its place in the toolchain is
+              reserved; it is not yet implemented.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="toolchain" class="reveal" aria-labelledby="toolchain-h">
+        <p class="eyebrow">One toolchain</p>
+        <h2 id="toolchain-h">The same engines on every surface</h2>
+        <div class="cards four">
+          <article class="card">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" fill="none" stroke-width="1.6"/><path d="M9 21h6M12 17v4" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <h3>Desktop app</h3>
+            <p>
+              Import a model, edit the network on a map, run scenarios in a
+              background queue, and explore results. Both engines are
+              supported.
+            </p>
+          </article>
+          <article class="card">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>CLI</h3>
+            <p>
+              Run <code>hydra run model.inp</code>. The model's own sections
+              identify the engine, and one command produces the report, the
+              binary results, and the analytics.
+            </p>
+          </article>
+          <article class="card">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" fill="none" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" fill="none" stroke-width="1.6"/></svg>
+            <h3>Rust SDK</h3>
+            <p>
+              The engines as a library. One crate,
+              <code>hydra-sdk</code>, is the public API the desktop app and
+              CLI are themselves built on.
+            </p>
+          </article>
+          <article class="card">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke-width="1.6"/><path d="M3 12h18M12 3c-5 5.5-5 12.5 0 18 5-5.5 5-12.5 0-18z" fill="none" stroke-width="1.6"/></svg>
+            <h3>Browser</h3>
+            <p>
+              The real engines, compiled to WebAssembly.
+              <a href="try/">Drop a model on the demo</a>. It is read,
+              solved and reported in your tab, and never uploaded.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="closer reveal" aria-label="Get started">
+        <h2>Run your first model in the next minute</h2>
+        <p class="section-lede">
+          No install, no account, no upload. The demo runs the real engines
+          on your machine.
+        </p>
+        <nav class="cta center" aria-label="Get started">
+          <a class="button primary" href="try/">Try it in your browser</a>
+          <a class="button" href="docs/getting-started/installation.html">Install Hydra</a>
+        </nav>
+      </section>
+    </main>
+
+    <footer>
+      <div class="foot-inner">
+        <div>
+          <span class="wordmark">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <path d="M50 6C34 30 18 48 18 66a32 32 0 0 0 64 0C82 48 66 30 50 6z" />
+            </svg>
+            Hydra
+          </span>
+          <p class="dim">Water infrastructure simulation, written in Rust.</p>
+        </div>
+        <div class="foot-links">
+          <a href="docs/">Documentation</a>
+          <a href="try/">Browser demo</a>
+          <a href="https://github.com/neeraip/hydra">Source</a>
+          <a href="https://github.com/neeraip/hydra/blob/main/LICENSE">AGPL-3.0</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Scroll-reveal, skipped entirely when the visitor prefers less motion.
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const io = new IntersectionObserver(
+          (entries) =>
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                e.target.classList.add("in");
+                io.unobserve(e.target);
+              }
+            }),
+          { threshold: 0.15 },
+        );
+        document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+      } else {
+        document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in"));
+      }
+    </script>
+  </body>
+</html>

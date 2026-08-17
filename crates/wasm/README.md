@@ -15,8 +15,8 @@ server beyond the one handing over the static files. A uds model's
 `SAVE HOTSTART` ends as a download under the name the model declared.
 
 The demo deploys to GitHub Pages at
-[`/try`](https://neeraip.github.io/hydra/try/) (the docs workflow rebuilds
-it on demo or docs changes, or on manual dispatch), and every library
+[`/try`](https://neeraip.github.io/hydra/try/) (the Site workflow rebuilds
+it on demo, docs or site changes, or on manual dispatch), and every library
 release attaches the single-file build as `hydra-try-<version>.html`,
 pinned to that release's engines.
 

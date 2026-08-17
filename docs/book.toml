@@ -9,7 +9,10 @@ src = "src"
 git-repository-url = "https://github.com/neeraip/hydra"
 git-repository-icon = "fab-github"
 edit-url-template = "https://github.com/neeraip/hydra/edit/main/docs/{path}"
-site-url = "/hydra/"
+# The book is deployed under /docs on the Pages site (see
+# .github/workflows/docs.yml); mdbook needs the full prefix for its 404
+# page's asset links.
+site-url = "/hydra/docs/"
 
 [output.html.fold]
 enable = true

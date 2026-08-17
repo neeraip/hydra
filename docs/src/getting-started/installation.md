@@ -2,7 +2,7 @@
 
 ## Try without installing
 
-**[The browser demo](../try/index.html)** runs the real simulation engines, compiled to WebAssembly. Drop an EPANET or SWMM `.inp` file — or pick a bundled example — and read the same report the CLI prints, produced by the same engine code. Models are read, solved and reported in your own tab; nothing is uploaded anywhere.
+**[The browser demo](../../try/index.html)** runs the real simulation engines, compiled to WebAssembly. Drop an EPANET or SWMM `.inp` file — or pick a bundled example — and read the same report the CLI prints, produced by the same engine code. Models are read, solved and reported in your own tab; nothing is uploaded anywhere.
 
 The demo page offers a single-file version (`hydra.html`) you can download and keep: one HTML file that runs the same engines offline, straight from a Downloads folder, with no server and no install. Each library release also attaches it as `hydra-try-<version>.html`, pinned to that release's engines.
 
