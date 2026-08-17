@@ -313,7 +313,11 @@ function RecordTable({
                   <td
                     key={c.key}
                     style={{
-                      padding: editor.kind === "none" ? "3px 0" : 0,
+                      // Vertical room between the row's edges and its
+                      // boxed inputs: the row is a visible band now
+                      // (hover and danger tints), and a band whose
+                      // contents touch its borders reads as cramped.
+                      padding: editor.kind === "none" ? "7px 0" : "4px 0",
                       fontFamily: "var(--font-mono)",
                       fontSize: "var(--text-md)",
                     }}
@@ -351,7 +355,7 @@ function RecordTable({
                 <td key={k} />
               ))}
               {set.editable && (
-                <td className="record-remove" style={{ padding: "0 4px" }}>
+                <td className="record-remove" style={{ padding: "4px 4px" }}>
                   <ActionIcon
                     title="Remove row"
                     danger
