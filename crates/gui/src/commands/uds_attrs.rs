@@ -233,7 +233,14 @@ fn insert_opening(
     let Some(xs) = &l.cross_section else { return };
     let per_unit = net.options.flow_units.m_per_length_unit();
     m.insert(height_key, AttrValue::Number(xs.geom_user[0] * per_unit));
-    m.insert(width_key, AttrValue::Number(xs.geom_user[1] * per_unit));
+    // Only when the shape uses it: a circular orifice's second slot is
+    // zero and means nothing, and the write refuses a zero size — so
+    // serving it offered an edit whose undo could only fail. Absent is
+    // the same answer a tabulated storage gives for its area (§4.5.1
+    // drops the row).
+    if xs.geom_user[1] > 0.0 {
+        m.insert(width_key, AttrValue::Number(xs.geom_user[1] * per_unit));
+    }
 }
 
 fn link_values(
@@ -2710,55 +2717,9 @@ fn set_parcel_attribute(
 mod write_tests {
     use super::*;
 
-    const INP: &str = "\
-[OPTIONS]
-FLOW_UNITS    CMS
-
-[JUNCTIONS]
-J1  10  3  0.5  0  0
-
-[OUTFALLS]
-O1  8  FREE  NO
-
-[CONDUITS]
-C1  J1  O1  100  0.013  0  0  0  0
-
-[XSECTIONS]
-C1  CIRCULAR  1  0  0  0  1
-
-[SUBCATCHMENTS]
-S1  G1  J1  4.5  35  400  1.2  0
-
-[SUBAREAS]
-S1  0.015  0.24  0.06  0.2  20  OUTLET
-
-[INFILTRATION]
-S1  3.5  0.6  4.14  6
-
-[RAINGAGES]
-G1  INTENSITY  0:15  1.0  TIMESERIES  RS1
-G2  INTENSITY  0:15  1.0  TIMESERIES  RS1
-
-[AQUIFERS]
-AQ1  0.5  0.15  0.30  0.5  10  15  0.35  14  0.002  0  10  0.30
-
-[TRANSECTS]
-NC  0.02  0.02  0.016
-X1  TR1  3  0  0  0  0  0  0  0
-GR  10  0  0  5  10  10
-
-[STREETS]
-STRT1  20  0.5  2  0.016  0.1  2  1  10  4  0.02
-
-[INLETS]
-CB1  GRATE  2  2  P_BAR-50
-
-[LID_CONTROLS]
-GR1  BC
-
-[TIMESERIES]
-RS1  0:00  0.4
-";
+    /// The shared full-catalog fixture: one element of every kind, so
+    /// the catalog sweeps below can refuse to skip a kind in silence.
+    const INP: &str = crate::commands::test_fixtures::UDS_FULL_INP;
 
     fn model() -> Network {
         let (net, diags) = hydra::uds::io::objects::parse_network(INP);
@@ -2962,6 +2923,7 @@ RS1  0:00  0.4
     fn every_editable_value_can_be_changed_and_put_back() {
         let net = model();
         let mut checked = 0;
+        let mut absent: Vec<&str> = Vec::new();
         for kind in hydra::uds::descriptors::ELEMENT_KINDS {
             // Read from the *table*, not from the per-element rows. The
             // per-element path serves only the spatial kinds, so a loop
@@ -2970,6 +2932,12 @@ RS1  0:00  0.4
             // attributes were hiding.
             let table = kind_elements(&net, kind.id);
             let Some(id) = table.ids.first().cloned() else {
+                // Recorded, not skipped: a kind the fixture lacks is a
+                // kind this sweep says nothing about, and a silent skip
+                // is how a served-editable surface with no write behind
+                // it survives. The fixture carries one of everything so
+                // this list stays empty.
+                absent.push(kind.id);
                 continue;
             };
             for column in table.columns.iter().filter(|c| c.editable) {
@@ -3009,6 +2977,11 @@ RS1  0:00  0.4
                 checked += 1;
             }
         }
+        assert!(
+            absent.is_empty(),
+            "the fixture has no element of: {absent:?} — those kinds' editable \
+             attributes are unverified"
+        );
         assert!(
             checked >= 20,
             "only {checked} editable values were exercised"
@@ -3242,17 +3215,16 @@ RS1  0:00  0.4
                 .find(|r| r.key == key)
                 .and_then(|r| r.number)
         };
-        // Nothing carries an opening in the fixture, so one is made the
-        // same way the app would.
-        super::super::uds_create::create_uds_opening(&mut net, "weir", "W1", "J1", "O1", 1.5, 2.0)
+        // A fresh opening, made the same way the app would make one.
+        super::super::uds_create::create_uds_opening(&mut net, "weir", "W9", "J1", "O1", 1.5, 2.0)
             .expect("weir");
-        assert_eq!(read(&net, "W1", "crestHeight"), Some(1.5));
-        assert_eq!(read(&net, "W1", "crestLength"), Some(2.0));
+        assert_eq!(read(&net, "W9", "crestHeight"), Some(1.5));
+        assert_eq!(read(&net, "W9", "crestLength"), Some(2.0));
 
-        set_attribute(&mut net, "W1", "crestHeight", &serde_json::json!(2.25)).expect("set");
-        assert_eq!(read(&net, "W1", "crestHeight"), Some(2.25));
+        set_attribute(&mut net, "W9", "crestHeight", &serde_json::json!(2.25)).expect("set");
+        assert_eq!(read(&net, "W9", "crestHeight"), Some(2.25));
         // An opening of no size is refused rather than stored.
-        assert!(set_attribute(&mut net, "W1", "crestHeight", &serde_json::json!(0.0)).is_err());
+        assert!(set_attribute(&mut net, "W9", "crestHeight", &serde_json::json!(0.0)).is_err());
 
         super::super::uds_create::create_uds_storage(&mut net, "ST1", 0.0, 0.0, 5.0, 3.0, 400.0)
             .expect("storage");

@@ -3084,7 +3084,6 @@ mod tests {
     #[test]
     fn only_a_gui_openable_engine_may_back_a_new_project() {
         assert_eq!(require_gui_openable_engine("wds").unwrap().key, "wds");
-        // uds opens read-only: creatable from an import, viewable, runnable.
         assert_eq!(require_gui_openable_engine("uds").unwrap().key, "uds");
         // Two questions that used to be one flag. Drainage models are
         // edited in the GUI, and a drainage project still has to begin

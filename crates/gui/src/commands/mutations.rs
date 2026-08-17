@@ -567,6 +567,21 @@ fn rename_uds_element(
     // sections and in control rules.
     let found = found || rename_uds_container(net, old_id, new_id);
     if !found {
+        // A rule answers to its name, so "not found" would be a lie for
+        // one — but its name is the first word of its own retained text,
+        // and this path does not rewrite rule text. Refused in words
+        // about the model rather than with a sentence that denies the
+        // rule exists.
+        if net
+            .controls
+            .rules
+            .iter()
+            .any(|r| r.name.eq_ignore_ascii_case(old_id))
+        {
+            return Err(format!(
+                "a rule's name is part of its text, and '{old_id}' cannot be renamed here"
+            ));
+        }
         return Err(format!("element '{old_id}' not found"));
     }
     super::uds_view::rename_in_display(net, old_id, new_id);
@@ -695,6 +710,24 @@ pub fn patch_elements(
     Ok(result)
 }
 
+/// Which preserved display section a drainage point draws from, or
+/// `None` for an id that names no point.
+///
+/// A vertex is a `[COORDINATES]` line and a rain gage a `[SYMBOLS]` line
+/// — the same §14.5 sections the importer keeps. This is the decision
+/// the move command routes by, named so a test can hold it: the gage arm
+/// used to be missing, which made a gage — a point the catalog says has
+/// editable geometry — immovable, refused as a node that does not exist.
+fn uds_point_section(net: &hydra::uds::model::Network, id: &str) -> Option<&'static str> {
+    if net.vertices.iter().any(|v| v.id == id) {
+        return Some("[COORDINATES]");
+    }
+    if net.gages.iter().any(|g| g.id == id) {
+        return Some("[SYMBOLS]");
+    }
+    None
+}
+
 /// Move a node to a new coordinate position in a single write (avoids two
 /// serial coordinate patches and two INP re-serialisations). Fails when
 /// `id` names no existing node.
@@ -738,18 +771,23 @@ pub fn patch_node_position(
                 Ok(moved)
             }
             NetworkStateInner::LoadedUds { dirty, network, .. } => {
-                // The same refusal the wds arm makes, for the same reason:
-                // an unknown id would append a display line naming nothing
-                // and dirty the model to do it.
-                if !network.vertices.iter().any(|v| v.id == id) {
+                // A drainage point's position is not a field on the
+                // element — it is a line in a preserved display section
+                // (§14.5), and which section depends on what the point
+                // is: a vertex draws from [COORDINATES], a rain gage
+                // from [SYMBOLS]. The gage arm was missing, so a gage —
+                // a point the catalog says has editable geometry — could
+                // not be moved, and the refusal called it a node that
+                // does not exist.
+                // Refusing unknown ids for the same reason the wds arm
+                // does: an unknown id would append a display line naming
+                // nothing and dirty the model to do it.
+                let Some(section) = uds_point_section(network, &id) else {
                     return Err(format!("node '{id}' not found"));
-                }
-                // A drainage node's position is not a field on the node —
-                // it is a line in a preserved display section (§14.5), so
-                // moving one is a text edit rather than an assignment.
+                };
                 super::uds_view::set_display_point(
                     std::sync::Arc::make_mut(network),
-                    "[COORDINATES]",
+                    section,
                     &id,
                     x,
                     y,
@@ -2255,6 +2293,84 @@ mod tests {
             links.is_empty(),
             "cascaded link should be dropped: {links:?}"
         );
+    }
+
+    /// Every drainage point moves through the section the importer keeps
+    /// it in: a vertex is a `[COORDINATES]` line, a rain gage a
+    /// `[SYMBOLS]` line, and an unknown id is nowhere.
+    ///
+    /// The gage arm is the regression: the catalog declares geometry
+    /// editable for every point kind, and the move command only knew
+    /// vertices — so a gage could not be moved, and the refusal said it
+    /// did not exist.
+    #[test]
+    fn a_drainage_point_moves_in_the_section_that_draws_it() {
+        let (mut net, diags) =
+            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+
+        assert_eq!(uds_point_section(&net, "J1"), Some("[COORDINATES]"));
+        assert_eq!(uds_point_section(&net, "G1"), Some("[SYMBOLS]"));
+        assert_eq!(uds_point_section(&net, "NOPE"), None);
+        // A container is not a point; a move must refuse it too.
+        assert_eq!(uds_point_section(&net, "RS1"), None);
+
+        // And the write the command makes with that answer lands where
+        // the canvas reads gage positions from.
+        super::super::uds_view::set_display_point(&mut net, "[SYMBOLS]", "G1", 7.5, 8.5);
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let symbols = text.split("[SYMBOLS]").nth(1).expect("a symbols section");
+        assert!(symbols.contains("G1"), "the gage line vanished");
+        assert!(symbols.contains("7.5"), "the new x never landed: {symbols}");
+    }
+
+    /// Every kind in the drainage catalog renames — or refuses in words
+    /// about the model, never by denying the element exists.
+    ///
+    /// The rule is the one refusal: its name is the first word of its
+    /// own retained text, which this path does not rewrite. It used to
+    /// answer "element 'R1' not found" — a sentence that is false for a
+    /// rule the model holds, and reads as data loss.
+    #[test]
+    fn every_drainage_kind_renames_or_refuses_honestly() {
+        let (net, diags) =
+            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+
+        let mut renamed = 0;
+        let mut absent: Vec<&str> = Vec::new();
+        for kind in hydra::uds::descriptors::ELEMENT_KINDS {
+            let ids = crate::commands::uds_attrs::kind_elements(&net, kind.id).ids;
+            let Some(id) = ids.first().cloned() else {
+                absent.push(kind.id);
+                continue;
+            };
+            let mut draft = net.clone();
+            match rename_uds_element(&mut draft, &id, "RENAMED9") {
+                Ok(()) => {
+                    let back = crate::commands::uds_attrs::kind_elements(&draft, kind.id).ids;
+                    assert!(
+                        back.iter().any(|i| i == "RENAMED9"),
+                        "{}.{id} renamed but the table still lacks the new id",
+                        kind.id
+                    );
+                    renamed += 1;
+                }
+                Err(e) => {
+                    assert_eq!(kind.id, "rule", "{}.{id} refused the rename: {e}", kind.id);
+                    assert!(
+                        !e.contains("not found"),
+                        "a rule's refusal denies it exists: {e}"
+                    );
+                }
+            }
+        }
+        assert!(
+            absent.is_empty(),
+            "the fixture has no element of: {absent:?} — those kinds' renames \
+             are unverified"
+        );
+        assert!(renamed >= 23, "only {renamed} kinds renamed");
     }
 
     /// The drainage title takes the edit too — through the drainage
