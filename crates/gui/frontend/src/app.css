@@ -941,6 +941,22 @@ ol {
   margin: 4px 0;
 }
 
+/* ── Record tables (hydra-common §4.5.2.3) ──────────────────────────────────
+   A record is addressed by its row and deleted by its row, so the row has
+   to be legible as a unit. The rules live here because inline styles
+   cannot express hover, and the danger tint exists for one reason: the
+   remove icon deletes the whole row, and the row should say so before
+   the click rather than after. */
+.record-row td {
+  border-top: 1px solid var(--border);
+}
+.record-row:hover {
+  background: var(--nav-hover);
+}
+.record-row:has(td.record-remove:hover) {
+  background: rgba(230, 120, 120, 0.12);
+}
+
 /* ── Timeline scrubber ───────────────────────────────────────────────────────*/
 .timeline-bar {
   height: 64px;

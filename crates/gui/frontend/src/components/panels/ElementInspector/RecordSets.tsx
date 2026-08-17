@@ -301,7 +301,7 @@ function RecordTable({
             // in its set and by nothing else, so two identical rows are
             // two records rather than one.
             // biome-ignore lint/suspicious/noArrayIndexKey: records are positional
-            <tr key={r}>
+            <tr key={r} className="record-row">
               {set.columns.map((c, i) => {
                 const value = row[i] ?? null;
                 const editor = cellEditor(
@@ -351,9 +351,9 @@ function RecordTable({
                 <td key={k} />
               ))}
               {set.editable && (
-                <td style={{ padding: "0 4px" }}>
+                <td className="record-remove" style={{ padding: "0 4px" }}>
                   <ActionIcon
-                    title="Remove record"
+                    title="Remove row"
                     danger
                     onClick={() => send(set.rows.filter((_, or) => or !== r))}
                   >

@@ -145,6 +145,17 @@ describe("RecordSets", () => {
     );
   });
 
+  it("marks each row and its remove cell for the hover affordances", () => {
+    // The stylesheet's row hover and the danger tint target these class
+    // names; this pins them so a rename cannot silently detach the CSS.
+    // The tint exists because the remove icon deletes the whole row, and
+    // the row should say so before the click.
+    const { container } = renderSet();
+    const rows = container.querySelectorAll("tbody tr.record-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelector("td.record-remove")).not.toBeNull();
+  });
+
   it("adds and removes a record by writing the set that results", () => {
     write.mockClear();
     renderSet();
@@ -157,7 +168,7 @@ describe("RecordSets", () => {
       [0, "", ""],
     ]);
 
-    fireEvent.click(screen.getAllByLabelText("Remove record")[0]);
+    fireEvent.click(screen.getAllByLabelText("Remove row")[0]);
     expect(write.mock.calls[1][2]).toEqual([[2.5, "", ""]]);
   });
 
@@ -219,7 +230,7 @@ describe("RecordSets", () => {
     // row is still offered — that is how the layer comes off.
     renderSet({ ...DEMANDS, rows: [[10, "P1", "Residential"]], capacity: 1 });
     expect(screen.queryByLabelText("Add record")).toBeNull();
-    expect(screen.getAllByLabelText("Remove record")).toHaveLength(1);
+    expect(screen.getAllByLabelText("Remove row")).toHaveLength(1);
   });
 
   it("reads only when the engine did not mark the set editable", () => {
