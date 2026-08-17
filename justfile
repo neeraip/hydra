@@ -376,6 +376,12 @@ bump-gui version push_flag="":
 release-status track="":
     @python3 scripts/release-status.py {{track}}
 
+# Ask Dependabot to rebase its open PRs that are behind main. Skips PRs with
+# checks still running, lists the rest and asks before commenting.
+# Usage: just rebase-dependabot [--dry-run] [--force]
+rebase-dependabot *flags:
+    @python3 scripts/rebase-dependabot.py {{flags}}
+
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
 # Remove all build artifacts
