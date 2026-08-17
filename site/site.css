@@ -164,6 +164,26 @@ a:hover {
   transform: translateX(2px);
 }
 
+/* Wrapped text does not belong in a pill: on a phone the announcement
+   becomes a small left-aligned banner, the tag leading into the text,
+   the arrow dropped since the whole banner is the link. */
+@media (max-width: 640px) {
+  .announce {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 10px;
+    text-align: left;
+    padding: 10px 14px;
+    border-radius: 12px;
+    line-height: 1.55;
+  }
+
+  .announce-arrow {
+    display: none;
+  }
+}
+
 h1 {
   margin: 0;
   font-size: clamp(36px, 6vw, 60px);
@@ -438,21 +458,22 @@ h2 {
    .in; visitors preferring less motion get everything visible at once. */
 /* Scoped under .js (set by the page script) so no-JS readers see every
    section instead of permanent opacity 0. */
+/* Fade only, no translate: anchor scrolling measures the target's
+   visual position, and a section mid-drift measures 16px low, landing
+   headings under the sticky nav on a timing-dependent coin flip. An
+   entrance may move nothing that a scroll can target. */
 .js .reveal {
   opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 500ms ease, transform 500ms ease;
+  transition: opacity 500ms ease;
 }
 
 .js .reveal.in {
   opacity: 1;
-  transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .js .reveal {
     opacity: 1;
-    transform: none;
     transition: none;
   }
 }
@@ -728,6 +749,11 @@ h2 {
   max-width: none;
 }
 
+/* The bar shows a file name, not a prompt: no blinking caret here. */
+.code-card .cmd::after {
+  content: none;
+}
+
 .term.code .kw {
   display: inline;
   min-height: 0;
@@ -865,6 +891,61 @@ h2 {
   color: var(--dim);
 }
 
+/* On a phone, a column of separate card boxes reads as repetition. The
+   inventory grids (features, use cases, toolchain, downloads) become one
+   panel of divided rows; the engine cards and the screenshot figures
+   keep their card weight, and the benchmark placeholders shrink to one
+   skeleton, because three identical empty boxes say nothing once. */
+@media (max-width: 640px) {
+  .feature-grid,
+  #toolchain .cards.four,
+  #download .cards {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-panel);
+  }
+
+  .feature,
+  #toolchain .cards.four .card,
+  #download .cards .card {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 14px 16px;
+  }
+
+  .feature + .feature,
+  #toolchain .cards.four .card + .card,
+  #download .cards .card + .card {
+    border-top: 1px solid var(--border);
+  }
+
+  #toolchain .cards.four .card:hover,
+  #download .cards .card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  #toolchain .card .icon,
+  #download .card .icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    margin: 0 8px 0 0;
+    vertical-align: -3px;
+  }
+
+  #toolchain .card h3,
+  #download .card h3 {
+    display: inline-block;
+  }
+
+  .perf-card.tbd:nth-of-type(n + 2) {
+    display: none;
+  }
+}
+
 /* ── Download ────────────────────────────────────────────────────────── */
 
 .card.dl .icon {
@@ -960,6 +1041,7 @@ h2 {
   text-decoration: none;
 }
 
+
 /* ── Footer ──────────────────────────────────────────────────────────── */
 
 .foot-inner .hydra-wordmark {
@@ -998,5 +1080,27 @@ footer {
 
   section {
     margin-top: 72px;
+  }
+}
+
+/* Narrow layouts: content-sized flex wrapping reads as ragged columns,
+   so the footer switches to real grid tracks, brand spanning the row. */
+@media (max-width: 900px) {
+  .foot-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px 24px;
+  }
+
+  .foot-brand {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .foot-inner {
+    grid-template-columns: 1fr;
+    gap: 28px;
   }
 }

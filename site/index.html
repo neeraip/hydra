@@ -6,12 +6,12 @@
     <title>Hydra: water infrastructure simulation</title>
     <meta
       name="description"
-      content="Water infrastructure simulation, written in Rust. A suite of domain engines behind one toolchain: desktop app, CLI, and Rust SDK."
+      content="Water infrastructure simulation, from tap to outfall. A suite of domain engines behind one toolchain, written in Rust: desktop app, CLI, and Rust SDK."
     />
     <meta property="og:title" content="Hydra" />
     <meta
       property="og:description"
-      content="Water infrastructure simulation, written in Rust. EPANET-compatible water distribution and SWMM-compatible urban drainage, from one toolchain."
+      content="Water infrastructure simulation, from tap to outfall. EPANET-compatible water distribution and SWMM-compatible urban drainage, from one toolchain."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://neeraip.github.io/hydra/og-card.png" />
@@ -43,7 +43,7 @@
           <svg class="close-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </label>
         <div class="hydra-nav-links">
-          <a href="#why">Use cases</a>
+          <a href="#why">Why simulate</a>
           <a href="#engines">Engines</a>
           <a href="#toolchain">Toolchain</a>
           <a href="#features">Features</a>
@@ -99,10 +99,11 @@
         </a>
         <h1>
           Water infrastructure simulation,<br />
-          <span class="grad">written in Rust.</span>
+          <span class="grad">from tap to outfall.</span>
         </h1>
         <p class="lede">
-          A suite of domain engines behind one toolchain. Import a model, run
+          A suite of domain engines behind one toolchain, written in Rust.
+          Import a model, run
           it, and read the same report everywhere: in the desktop app, from
           the command line, through the Rust SDK, or right here in your
           browser.
@@ -144,7 +145,7 @@
       </section>
 
       <section id="why" class="reveal" aria-labelledby="why-h">
-        <p class="eyebrow">Use cases</p>
+        <p class="eyebrow">Why simulate</p>
         <h2 id="why-h">What is this for?</h2>
         <p class="section-lede">
           Every city runs on buried networks: one delivers drinking water
@@ -698,6 +699,7 @@
       // Reveal animations exist only once JS is known to be running, so
       // no-JS readers see every section.
       document.documentElement.classList.add("js");
+
 
       // Close the mobile drawer when a navigation choice is made; without
       // this the checkbox stays checked and the panel covers the section
