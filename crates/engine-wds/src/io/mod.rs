@@ -584,7 +584,22 @@ pub struct HydSnapshot {
 /// actually access, avoiding leaking internal solver state into the public API.
 pub trait WritableSimulation {
     /// The `Network` data model for this simulation.
+    ///
+    /// Panics when [`WritableSimulation::has_network`] is false. Every writer
+    /// in this module checks that first and returns an error instead, so the
+    /// panic is reachable only by calling this directly on a session that has
+    /// not loaded a model.
     fn net(&self) -> &crate::Network;
+    /// Whether a network has been loaded and [`WritableSimulation::net`] can
+    /// answer.
+    ///
+    /// A session created but not yet loaded has no network, and the writers
+    /// used to reach straight past that into a panic across the published API.
+    /// Defaulted to `true`: an implementor holding a network outright need not
+    /// think about it.
+    fn has_network(&self) -> bool {
+        true
+    }
     /// All hydraulic snapshots stored during the simulation.
     fn snapshots(&self) -> &[HydSnapshot];
     /// Simulation time (s) through which recorded snapshots are **final** —

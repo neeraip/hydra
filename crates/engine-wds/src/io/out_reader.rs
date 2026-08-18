@@ -261,6 +261,36 @@ pub fn read_metadata(path: &std::path::Path) -> Result<OutMetadata, String> {
     read_metadata_checked(path).map_err(|e| e.to_string())
 }
 
+/// The flow-units code from the prolog header (model spec §4.4.2), which
+/// says what units the file's own flow values are in.
+///
+/// Here rather than at the call site because this module is the engine's one
+/// sanctioned filesystem carve-out. The analytics path used to open the file
+/// and parse these four bytes itself, which made a second reader of a format
+/// this module owns.
+pub fn read_flow_units_code(path: &std::path::Path) -> Result<i32, OutValidityError> {
+    use std::io::Read;
+
+    let mut f = std::fs::File::open(path).map_err(|e| OutValidityError {
+        kind: if e.kind() == std::io::ErrorKind::NotFound {
+            OutValidityKind::Missing
+        } else {
+            OutValidityKind::Io
+        },
+        detail: format!("failed to open file: {e}"),
+    })?;
+    let mut hdr = [0u8; 44];
+    f.read_exact(&mut hdr).map_err(|e| OutValidityError {
+        kind: if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            OutValidityKind::Incomplete
+        } else {
+            OutValidityKind::Io
+        },
+        detail: format!("failed to read .out header: {e}"),
+    })?;
+    Ok(i32::from_le_bytes([hdr[40], hdr[41], hdr[42], hdr[43]]))
+}
+
 /// Read and validate `.out` metadata with explicit validity classification.
 pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutValidityError> {
     use std::io::{Read, Seek, SeekFrom};

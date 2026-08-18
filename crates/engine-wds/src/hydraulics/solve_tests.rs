@@ -567,6 +567,50 @@ fn closed_pipe_no_flow() {
     assert!(ls[0].flow.abs() < 1e-4, "closed pipe flow should be ~0");
 }
 
+/// §3.5 criterion 2 is specified "for each open link", and the solver was
+/// applying it to every link. A closed link is assembled with P = 1/C∞ and
+/// Y = its flow, so its "residual" is nonsense: 9.7 ft on the first
+/// iteration here, against a 0.5 ft limit.
+///
+/// It is self-correcting rather than fatal — a closed link's flow relaxes
+/// toward `P × head_drop`, which drives Y/P to the head drop and the
+/// residual to ~6e-14 — so the cost is one wasted iteration, not a network
+/// that cannot converge. That is what makes it observable only against a
+/// tight `max_iter`: two iterations suffice when the criterion is scoped as
+/// specified, three when it is not.
+#[test]
+fn a_closed_link_costs_no_convergence_iteration() {
+    // Not a ~100 ft drop across the closed link: it carries Y = Q_CLOSED =
+    // 1e-6 against P = 1e-8, so Y/P is exactly 100 and a 100 ft drop makes
+    // the bogus residual cancel to zero. The first draft of this test chose
+    // 100 and passed against the defect it was written for.
+    let mut builder = TestNetworkBuilder::new()
+        .reservoir("R1", 400.0)
+        .reservoir("R2", 100.0)
+        .junction("J1", 0.0, 100.0)
+        .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+        .hw_pipe("P2", "R2", "J1", 1000.0, 12.0, 100.0);
+    {
+        let o = builder.options_mut();
+        o.head_error_limit = 0.5; // the criterion the default leaves off
+        o.max_iter = 2;
+        o.extra_iter = 0; // report Unbalanced rather than erroring
+    }
+
+    let (net, mut ns, mut ls, favad) = builder.build_with_favad();
+    ls[0].status = crate::LinkStatus::Closed;
+
+    let mut ctx = build_solver_context(&net, &favad).unwrap();
+    let result =
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    assert_eq!(
+        result,
+        SolveResult::Converged,
+        "the closed link's head balance must not be checked, and must not \
+         spend an iteration"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Pump with head curve
 // ═══════════════════════════════════════════════════════════════════════════════

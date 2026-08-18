@@ -4,7 +4,9 @@ use crate::{
     Curve, HeadLossFormula, Link, LinkKind, LinkStatus, Network, PumpCurveType, ValveType,
 };
 
-use super::shared::{HydraulicError, PumpCoeffs, Py, C_INF, GAMMA_WATER, G_MIN, Q_CLOSED};
+use super::shared::{
+    assembled_closed, HydraulicError, PumpCoeffs, Py, C_INF, GAMMA_WATER, G_MIN, Q_CLOSED,
+};
 use super::{pipe_total_hg, valve::valve_py, HW_EXP};
 
 /// Initialises link flows from current statuses and settings (§3.10).
@@ -177,10 +179,7 @@ pub(super) fn link_py(
         }
     }
 
-    if matches!(
-        status,
-        LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
-    ) {
+    if assembled_closed(status) {
         return Ok(Py {
             p: 1.0 / C_INF,
             y: q,

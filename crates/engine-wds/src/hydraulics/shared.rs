@@ -7,6 +7,21 @@ pub(super) const G_MIN: f64 = 1.0e-6;
 /// Placeholder flow for closed links at initialisation (§3.10).
 pub(super) const Q_CLOSED: f64 = 1.0e-6;
 
+/// Whether a link is assembled as closed, i.e. gets `P = 1/C∞` and `Y = Q`
+/// rather than a real head-loss gradient (§3.3, §3.5).
+///
+/// One predicate rather than three copies of the same `matches!`: the head
+/// balance of §3.5 criterion 2 has to skip exactly the links this returns
+/// true for, and a fourth reader deciding for itself what "closed" covers is
+/// how that check came to include them.
+pub(super) fn assembled_closed(status: crate::LinkStatus) -> bool {
+    use crate::LinkStatus;
+    matches!(
+        status,
+        LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
+    )
+}
+
 /// Specific weight of water, ρg (N/m³). Used for constant-HP pump.
 pub(super) const GAMMA_WATER: f64 = 9810.0;
 

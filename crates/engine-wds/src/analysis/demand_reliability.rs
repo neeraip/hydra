@@ -3,7 +3,6 @@ use crate::io::out_reader;
 use crate::io::units::make_ucf;
 use crate::{DemandModel, FlowUnits, Network, NodeKind};
 use std::collections::HashMap;
-use std::io::Read;
 
 /// Options that control the demand-reliability computation.
 #[derive(Debug, Clone, Copy)]
@@ -180,7 +179,8 @@ pub fn compute_demand_reliability_from_out_with_options(
         1.0
     };
 
-    let flow_units_code = read_flow_units_code(out_path)?;
+    let flow_units_code = out_reader::read_flow_units_code(out_path)
+        .map_err(|e| AnalysisComputeError::OutRead(e.to_string()))?;
     let flow_units = flow_units_from_code(flow_units_code).ok_or_else(|| {
         AnalysisComputeError::InvalidInput(format!(
             "unsupported flow units code in .out header: {flow_units_code}"
@@ -326,17 +326,6 @@ fn build_pattern_index(network: &Network) -> HashMap<String, usize> {
         .enumerate()
         .map(|(i, p)| (p.id.clone(), i))
         .collect()
-}
-
-fn read_flow_units_code(path: &std::path::Path) -> Result<i32, AnalysisComputeError> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| AnalysisComputeError::OutRead(format!("failed to open .out file: {e}")))?;
-
-    let mut header = [0u8; 44];
-    file.read_exact(&mut header)
-        .map_err(|e| AnalysisComputeError::OutRead(format!("failed to read .out header: {e}")))?;
-
-    Ok(i32::from_le_bytes(header[40..44].try_into().unwrap()))
 }
 
 fn flow_units_from_code(code: i32) -> Option<FlowUnits> {

@@ -19,6 +19,10 @@ impl WritableSimulation for Simulation {
             .expect("WritableSimulation::net called before network was loaded")
     }
 
+    fn has_network(&self) -> bool {
+        self.network.is_some()
+    }
+
     fn snapshots(&self) -> &[HydSnapshot] {
         &self.hyd_snapshots
     }
@@ -83,6 +87,30 @@ mod tests {
     use super::*;
     use crate::test_support::TestNetworkBuilder;
     use crate::{QualityMode, SimulationOptions};
+
+    /// A session that has been created but not loaded has no network, and the
+    /// writers used to reach past that into `net()`'s `expect` — a panic
+    /// across the published API, on a path the SDK re-exports the trait
+    /// specifically to let integrators call.
+    #[test]
+    fn writing_before_a_model_is_loaded_is_an_error_not_a_panic() {
+        use crate::io::{out_writer::write_binary_output, rpt_writer};
+        use crate::FlowUnits;
+
+        let sim = Simulation::create();
+        assert!(!sim.has_network());
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let err = write_binary_output(&mut buf, &sim, "in.inp", "out.rpt", FlowUnits::Gpm)
+            .expect_err("no network loaded");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("no network loaded"), "{err}");
+
+        let err = rpt_writer::build_json_report(&sim).expect_err("no network loaded");
+        assert!(err.to_string().contains("no network loaded"), "{err}");
+
+        rpt_writer::build_text_report(&sim).expect_err("no network loaded");
+    }
 
     /// Reservoir —pump→ J1 —pipe→ J2 network with a 2 h EPS horizon.
     fn pump_network(quality_mode: QualityMode) -> Network {

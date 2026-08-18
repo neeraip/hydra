@@ -108,6 +108,12 @@ impl<W: Write + Seek> OutStreamWriter<W> {
         report_file: &str,
         output_units: FlowUnits,
     ) -> std::io::Result<Self> {
+        if !session.has_network() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "no network loaded: open a model on the session before writing results",
+            ));
+        }
         let network = session.net();
         let options = &network.options;
         let ucf = make_ucf(output_units, options.specific_gravity);
@@ -232,6 +238,12 @@ pub fn write_binary_output<W: Write + Seek>(
     report_file: &str,
     output_units: FlowUnits,
 ) -> std::io::Result<()> {
+    if !session.has_network() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "no network loaded: open a model on the session before writing results",
+        ));
+    }
     let mut stream = OutStreamWriter::begin(w, session, input_file, report_file, output_units)?;
     stream.append_available(session)?;
     let _ = stream.finish(session)?;

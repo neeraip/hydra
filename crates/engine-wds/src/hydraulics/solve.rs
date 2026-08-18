@@ -8,7 +8,7 @@ use crate::{
 use super::assembly::{assemble_links, assemble_node_residuals};
 use super::diagnostics::SolvePhaseTimings;
 use super::pump::{fit_pump_coeffs, initialise_flows, link_py};
-use super::shared::{HydraulicError, PumpCoeffs, SolveResult};
+use super::shared::{assembled_closed, HydraulicError, PumpCoeffs, SolveResult};
 use super::valve::apply_valve_coefficients;
 use super::{
     apply_emitter_coeffs, apply_favad_leakage_coeffs, apply_pda_demand_coeffs, bad_valve,
@@ -124,7 +124,12 @@ fn update_flows_and_check(
         link_sq += flows[k].abs();
         link_dsq += dq.abs();
 
-        if head_error_limit > 0.0 && pk > 0.0 {
+        // Spec §3.5 criterion 2: "for each open link k with P_k > 0". A
+        // closed link is assembled with P = 1/C∞, so Y/P is its flow times
+        // 1e8 — a residual of order 100 m that no tolerance can absorb, and
+        // any network holding one could never converge once
+        // `head_error_limit` was set.
+        if head_error_limit > 0.0 && pk > 0.0 && !assembled_closed(statuses[k]) {
             let eps = (head_drop - yk / pk).abs();
             if eps > head_error_limit {
                 head_ok = false;

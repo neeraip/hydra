@@ -62,6 +62,12 @@ pub fn describe_warning(
 
 /// Build a JSON report string from a completed simulation (crates/cli/spec.md §4.3).
 pub fn build_json_report(session: &impl WritableSimulation) -> Result<String, serde_json::Error> {
+    if !session.has_network() {
+        use serde::ser::Error as _;
+        return Err(serde_json::Error::custom(
+            "no network loaded: open a model on the session before building a report",
+        ));
+    }
     let network = session.net();
     let options = &network.options;
 
@@ -213,6 +219,12 @@ pub fn build_json_report(session: &impl WritableSimulation) -> Result<String, se
 
 /// Build a plain-text report string from a completed simulation.
 pub fn build_text_report(session: &impl WritableSimulation) -> Result<String, std::fmt::Error> {
+    // `fmt::Error` carries no message, so this reports only that it failed.
+    // Better than the panic it replaces, and the JSON builder beside it says
+    // why; giving this one a real error type would change a public signature.
+    if !session.has_network() {
+        return Err(std::fmt::Error);
+    }
     let mut report = String::new();
     let network = session.net();
     let options = &network.options;

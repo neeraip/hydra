@@ -3,7 +3,7 @@
 use crate::{Link, LinkKind, LinkStatus, Network, NodeState, PumpCurveType, ValveType};
 
 use super::pump::curve_segment;
-use super::shared::{HydraulicError, PumpCoeffs, Py, C_INF, G_MIN};
+use super::shared::{assembled_closed, HydraulicError, PumpCoeffs, Py, C_INF, G_MIN};
 use super::SparseSolver;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -187,10 +187,7 @@ fn valve_open_py(flow: f64, km: f64, status: LinkStatus) -> (f64, f64) {
     // EPANET valvecoeff: only status <= CLOSED (XHEAD, TEMPCLOSED, CLOSED)
     // gets high-resistance treatment. XFCV and XPRESSURE are treated as
     // open valves (low resistance), matching EPANET's numeric ordering.
-    if matches!(
-        status,
-        LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
-    ) {
+    if assembled_closed(status) {
         return (1.0 / C_INF, flow);
     }
     // Open: minor loss headloss
@@ -591,26 +588,28 @@ fn fcv_status(
     };
     let status = statuses[k];
     let head_drop = h1 - h2;
-    let new_status = match status {
-        LinkStatus::Active => {
-            let km_q2 = if q.abs() > 1.0e-20 { km } else { 0.0 };
-            if head_drop < -eps_h || q < -eps_q || head_drop / (q * q).max(1.0e-20) < km_q2 {
-                LinkStatus::XFcv
-            } else {
-                LinkStatus::Active
-            }
+    // §3.9 FCV: one ordered chain evaluated regardless of the current status,
+    // not a set of per-state transitions. Tests 1 and 2 demote from any state;
+    // only when neither fires are the state-specific tests 3 and 4 reached.
+    // Written per-state, an FCV that a rule had switched OPEN was never demoted
+    // however badly it was behaving.
+    let new_status = if head_drop < -eps_h || q < -eps_q {
+        // 1: negative available head. 2: reverse flow.
+        LinkStatus::XFcv
+    } else if status == LinkStatus::XFcv && q >= setting {
+        // 3: flow has recovered to the setpoint.
+        LinkStatus::Active
+    } else if status == LinkStatus::Active {
+        // 4: the available gradient is below the fully-open loss coefficient,
+        // so the setpoint cannot be maintained.
+        let km_q2 = if q.abs() > 1.0e-20 { km } else { 0.0 };
+        if head_drop / (q * q).max(1.0e-20) < km_q2 {
+            LinkStatus::XFcv
+        } else {
+            LinkStatus::Active
         }
-        LinkStatus::XFcv => {
-            // EPANET: reverse-condition guards fire before recovery check.
-            if head_drop < -eps_h || q < -eps_q {
-                LinkStatus::XFcv
-            } else if q >= setting {
-                LinkStatus::Active
-            } else {
-                LinkStatus::XFcv
-            }
-        }
-        _ => status,
+    } else {
+        status
     };
     if new_status != status {
         statuses[k] = new_status;
@@ -807,6 +806,81 @@ mod tests {
         let (p, y) = valve_open_py(2.0, 0.0, LinkStatus::Open);
         assert!((p - 1.0 / G_MIN).abs() < 1e-12);
         assert!((y - 2.0).abs() < 1e-12);
+    }
+
+    /// §3.9 FCV tests 1 and 2 demote "from any state". Written as per-state
+    /// transitions, only ACTIVE and XFCV were ever examined, so an FCV that a
+    /// rule had switched OPEN kept running with reverse flow through it.
+    #[test]
+    fn an_open_fcv_is_demoted_by_reverse_flow_and_negative_head() {
+        use crate::test_support::TestNetworkBuilder;
+
+        let (net, _ns, _ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 0.0)
+            .junction("J2", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .valve("V1", "J1", "J2", ValveType::Fcv, 12.0, 50.0)
+            .build();
+        let k = 1; // the FCV
+        let (eps_h, eps_q) = (1.0e-3, 1.0e-3);
+
+        // Reverse flow (test 2), from OPEN.
+        let mut statuses = vec![LinkStatus::Open, LinkStatus::Open];
+        fcv_status(
+            &mut statuses,
+            k,
+            50.0,
+            40.0,
+            -1.0,
+            50.0,
+            eps_h,
+            eps_q,
+            &net.links[k],
+        );
+        assert_eq!(
+            statuses[k],
+            LinkStatus::XFcv,
+            "reverse flow through an open FCV"
+        );
+
+        // Negative available head (test 1), from OPEN.
+        let mut statuses = vec![LinkStatus::Open, LinkStatus::Open];
+        fcv_status(
+            &mut statuses,
+            k,
+            40.0,
+            50.0,
+            1.0,
+            50.0,
+            eps_h,
+            eps_q,
+            &net.links[k],
+        );
+        assert_eq!(
+            statuses[k],
+            LinkStatus::XFcv,
+            "negative head across an open FCV"
+        );
+
+        // Behaving: neither demotion fires, and a non-ACTIVE state is left alone.
+        let mut statuses = vec![LinkStatus::Open, LinkStatus::Open];
+        fcv_status(
+            &mut statuses,
+            k,
+            50.0,
+            40.0,
+            1.0,
+            50.0,
+            eps_h,
+            eps_q,
+            &net.links[k],
+        );
+        assert_eq!(
+            statuses[k],
+            LinkStatus::Open,
+            "a healthy open FCV is untouched"
+        );
     }
 
     #[test]
