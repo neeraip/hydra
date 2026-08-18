@@ -373,20 +373,25 @@ Energy is tallied as $\rho g\,Q\,\Delta H$ per §7.1.
 
 ### 12.1 Lifecycle
 
-The session is phased: **create** → **load** (parse, validate — §5's
-mutations applied here) → **run**, stepwise or to completion → **results**.
+The session is phased: **open** (parse, validate — §5's mutations applied
+here) → **run**, stepwise or to completion → **results**.
 The load also accepts the contents of the auxiliary records a model may
 declare — daily climate records (§3.1) and external rain records (§14.12)
 — supplied by the caller, which owns all file I/O; a model declaring an
 auxiliary record the caller did not supply refuses the load with the
 record named.
-Every entry point is guarded by phase, returning a typed error rather than
-faulting. Between load and run the whole validated model is readable and
+No entry point may fault for being called out of order. This engine meets
+that by making the disallowed states unrepresentable rather than by
+guarding against them: opening **is** the constructor, so an unopened
+session cannot be held, and stepping past the end reports completion
+rather than erroring. A phase enum and a phase error are one way to honour
+the rule, not the rule itself; an engine whose type system already refuses
+the ordering owes nothing further.
+
+Between opening and the run the whole validated model is readable and
 design parameters writable; during the run, current-time results, running
 statistics, and to-date balances are readable, while writes are confined to
-**boundary forcing and control state** — gage precipitation, vertex lateral
-inflow, outfall stage, link target settings, loss coefficients, flow limits,
-control-measure drain parameters, concentrations. After the run, results and
+**boundary forcing and control state** (§12.4). After the run, results and
 run-total balances are readable and nothing is writable.
 
 The asymmetry is the contract, inherited from the predecessor because it is
@@ -424,3 +429,12 @@ and target settings per controllable link — the same vocabulary rules may
 act on, under the same conflict resolution, logged in the action record.
 Injection never mutates geometry, and no injection has undocumented side
 effects on the stepping policy.
+
+Of that vocabulary, **lateral inflow per vertex is served**. Gage
+precipitation, outfall stage, and link target settings are deferred: the
+last two are reachable inside the router but are not published on the
+session, and gage precipitation has no implementation. Writes to loss
+coefficients, flow limits, control-measure drain parameters, and
+concentrations are likewise deferred. They are listed in the charter's
+deferred set (§1.8), because a capability this section describes and the
+engine does not serve is exactly what that set exists to record.

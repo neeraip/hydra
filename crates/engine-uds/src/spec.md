@@ -293,7 +293,13 @@ runoff, and RDII *interface-file formats* (§14.8 specifies routing and
 hotstart files; the other three are declared but not yet served), the
 engine's own native checkpoint format (§12.3 — predecessor hotstart files
 version 3+ are served), archival climate-record formats (user-format
-climate files are served), and archival rain-record formats (user-format
-rain files are served, §14.12). A section absent from the specification
-remains unspecified behaviour rather than deferred behaviour — it is not
-implemented until it is specified.
+climate files are served), archival rain-record formats (user-format rain
+files are served, §14.12), and most of §12.4's mid-run forcing (lateral
+inflow per vertex is served; gage precipitation, outfall stage, link
+target settings, loss coefficients, flow limits, control-measure drain
+parameters, and concentrations are not). The forcing entries differ in kind
+from the rest of that list: no model can need them, so their absence is an
+unpublished operation rather than a refusal at open time — a caller cannot
+reach for one and be told no, because there is nothing to reach for. A
+section absent from the specification remains unspecified behaviour rather
+than deferred behaviour — it is not implemented until it is specified.
