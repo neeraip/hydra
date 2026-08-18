@@ -1,8 +1,8 @@
-# hydra-engine — Simulation Sub-Specification
+# hydra-engine-wds — Simulation Sub-Specification
 
 ## 1. Overview
 
-This document is the simulation sub-specification for `hydra-engine`. It defines the control system (§4), time stepper (§5), accounting subsystem (§7), and session API (§8), and references the hydraulic (§3) and quality (§6) subsystem sub-specifications in [hydraulics spec](../hydraulics/spec.md) and [quality spec](../quality/spec.md). It also documents solver characteristics relative to EPANET (§9).
+This document is the simulation sub-specification for `hydra-engine-wds`. It defines the control system (§4), time stepper (§5), accounting subsystem (§7), and session API (§8), and references the hydraulic (§3) and quality (§6) subsystem sub-specifications in [hydraulics spec](../hydraulics/spec.md) and [quality spec](../quality/spec.md). It also documents solver characteristics relative to EPANET (§9).
 
 The network data model consumed by all subsystems is defined in [model spec](../model/spec.md). Hydraulic algorithm details are specified in [hydraulics spec](../hydraulics/spec.md), and quality algorithm details are specified in [quality spec](../quality/spec.md). Throughout this document, bare references to §2 and its sub-sections (e.g., §2.1, §2.7) refer to `../model/spec.md`. For the system-level description of physical scope, see [`README.md`](../../../../README.md); for the unit system contract, see [model spec](../model/spec.md#3-unit-system).
 
@@ -367,11 +367,11 @@ A value of $\rho_v \approx 1$ confirms global volume conservation.
 
 ## 8. Session API
 
-`hydra-engine` exposes a session API (§8.3) through which a caller can load a validated `Network`, drive the simulation, retrieve results, and serialize output. Model-file parsing is owned by `hydra-engine`'s I/O layer (`../model/spec.md` §4). `hydra-engine` performs no filesystem or network I/O; callers supply bytes and receive structured results.
+`hydra-engine-wds` exposes a session API (§8.3) through which a caller can load a validated `Network`, drive the simulation, retrieve results, and serialize output. Model-file parsing is owned by `hydra-engine-wds`'s I/O layer (`../model/spec.md` §4). `hydra-engine-wds` performs no filesystem or network I/O; callers supply bytes and receive structured results.
 
 ### 8.1 Input Contract
 
-Model-file bytes are parsed by `hydra-engine`'s I/O layer (`../model/spec.md` §4), which performs format detection, parsing, unit conversion, and validation. The session receives a `Network` via `load()`.
+Model-file bytes are parsed by `hydra-engine-wds`'s I/O layer (`../model/spec.md` §4), which performs format detection, parsing, unit conversion, and validation. The session receives a `Network` via `load()`.
 
 Alternatively, a caller may construct a `Network` programmatically and pass it to `load()`. In this case all numeric values must be in the internal unit system (`../model/spec.md` §3) and the caller is responsible for conversion.
 
@@ -457,8 +457,8 @@ The core must expose the following logical operations through its public API. Ho
 The simulation is modelled as a **session** with the following lifecycle:
 
 ```text
-// ── Parsing (owned by hydra-engine's I/O layer, not the session) ──
-network = parse(bytes) // from hydra-engine I/O: format detection, conversion, validation
+// ── Parsing (owned by hydra-engine-wds's I/O layer, not the session) ──
+network = parse(bytes) // from hydra-engine-wds I/O: format detection, conversion, validation
 // → error on unrecognised format, parse failure, or validation failure
 
 // ── Session lifecycle ──
@@ -614,7 +614,7 @@ differences, not a behavioural deviation.
 
 ## 10. Runtime Estimation API
 
-`hydra-engine` provides a deterministic runtime estimator for hydraulic +
+`hydra-engine-wds` provides a deterministic runtime estimator for hydraulic +
 quality execution cost. The estimator is advisory only and does not influence
 time-step selection, convergence behavior, or any simulation result.
 

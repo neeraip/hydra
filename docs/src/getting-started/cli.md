@@ -164,6 +164,9 @@ HTTP cannot declare them.
 separate step from the simulation: you point it at the model and the `.out` file
 the run produced.
 
+This subcommand covers water distribution models today. A drainage model is
+refused by name; its report blocks are available through the GUI and the SDK.
+
 ```bash
 hydra report --model network.inp --results output.out -o report.html
 ```

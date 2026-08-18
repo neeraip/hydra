@@ -14,7 +14,7 @@ Hydra produces three output files for a water distribution run. Only one of them
 
 How each is produced:
 
-- **CLI**: the report path (`.rpt` or `.json`) selects the text or JSON report; `--output` writes the `.out` file. See [CLI](../getting-started/cli.md).
+- **CLI**: `--summary` takes the report path, and its extension (`.rpt` or `.json`) selects the text or JSON report; `--results` writes the `.out` file. See [CLI](../getting-started/cli.md).
 - **GUI**: every run writes `results.out` into the scenario folder; CSV and GeoJSON exports are available from the command palette. See [GUI](../getting-started/gui.md).
 - **SDK**: `io::out_writer::write_binary_output`, `io::rpt_writer::build_text_report`, and `io::rpt_writer::build_json_report`. See [SDK Examples](../sdk/examples.md).
 

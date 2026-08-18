@@ -6,13 +6,13 @@ After a run, Hydra can derive higher-level metrics from the saved results. There
 - **Report blocks** (SDK): a catalog of named, self-contained content blocks that render into txt/csv/html/PDF documents. Several of them are built *on* the two modules above, which is how those metrics reach a generated report. See [SDK Overview](../sdk/overview.md#reports).
 - **The GUI Results tab**: an interactive dashboard computed separately from the same results.
 
-The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-started/cli.md#generating-a-report)) but not the two modules directly. The GUI uses report blocks for its generated reports, while its Results tab computes its own dashboard rather than calling the two modules.
+The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-started/cli.md#generating-a-report)), for water distribution models, but not the two modules directly. The GUI uses report blocks for its generated reports, while its Results tab computes its own dashboard rather than calling the two modules.
 
 ---
 
 ## Report blocks
 
-The water distribution engine publishes thirteen blocks. Each is self-contained:
+The water distribution engine publishes fifteen blocks. Each is self-contained:
 it carries its own heading and renders identically in every output format.
 
 | Block id | Heading | Contents |
@@ -21,6 +21,7 @@ it carries its own heading and renders identically in every output format.
 | `wds.result-extremes` | Result Extremes | Global minimum and maximum pressure, head, demand, flow, and velocity |
 | `wds.pump-energy` | Pump Energy | Per-pump utilization, efficiency, power, and cost, plus network totals |
 | `wds.quality-summary` | Water Quality Summary | Quality mode and global quality extremes |
+| `wds.quality-compliance` | Quality Compliance | Junction compliance against the residual (chemical) or age criterion, with the worst-performing junctions |
 | `wds.service-compliance` | Pressure Adequacy | Junction-pressure compliance against a minimum (and optional maximum) |
 | `wds.demand-reliability` | Demand Reliability | Delivered-vs-required volumes and the reliability ratio |
 | `wds.pressure-distribution` | Pressure Distribution | Distribution of each junction's minimum pressure |
@@ -30,6 +31,7 @@ it carries its own heading and renders identically in every output format.
 | `wds.tank-levels` | Tank Levels | Hydraulic head of each tank over the reporting horizon |
 | `wds.mass-balance` | Mass Balance | Cumulative inflow and outflow with closure percentage |
 | `wds.pipe-criticality` | Pipe Criticality | Pipes ranked by peak velocity |
+| `wds.unit-headloss` | Unit Headloss | Pipes ranked by peak headloss per unit length: the undersized-main finder |
 
 A block that does not apply to a run is **not** dropped: it renders as a
 placeholder section under its normal heading, carrying the reason. Asking for
@@ -169,5 +171,5 @@ The **Results** tab computes its own dashboard from the scenario's results (a hi
 | Surface | Reliability / compliance modules | Report blocks | GUI Results dashboard |
 |---|---|---|---|
 | SDK (`hydra-sdk`) | ✅ direct | ✅ | — |
-| CLI | ✅ via report blocks | ✅ `hydra report` | — |
+| CLI | ✅ via report blocks | ✅ `hydra report` (water distribution) | — |
 | GUI | ✅ via report blocks | ✅ | ✅ |

@@ -41,8 +41,9 @@ stormwater network as a plausible-looking pressurised one. See
 that rejection looks like in the CLI, the GUI, and the SDK.
 
 The same separation runs through the codebase. `hydra-common` holds only what
-every engine shares (engine identity and the reportable-output contract) and
-carries no engine vocabulary. Engines emit neutral content fragments;
+every engine shares (engine identity, the reportable-output contract, and the
+element, quantity, result-variable and criteria contracts) and carries no
+engine vocabulary. Engines emit neutral content fragments;
 `hydra-report` renders them without knowing which engine produced them. See
 [Crate Layout](architecture/crates.md) for how the workspace is arranged.
 

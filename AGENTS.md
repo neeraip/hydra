@@ -28,7 +28,7 @@ identity.
 
 | Crate | Owns | Does not own |
 |---|---|---|
-| `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry), the reportable-output contract (block catalog, neutral fragment model), and — since a second engine exists to validate them — the element-taxonomy, quantity, and result-variable contracts (spec §4–§6: engine-authored catalogs, opaque ids). Depends on nothing in the workspace | Any engine logic; presentation/rendering; a cross-engine simulation session contract (still deferred — only its dispatch home is assigned, spec §2.6) |
+| `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry), the reportable-output contract (block catalog, neutral fragment model), and — since a second engine exists to validate them — the element-taxonomy, quantity, result-variable, and criteria contracts (spec §4–§7: engine-authored catalogs, opaque ids). Depends on nothing in the workspace | Any engine logic; presentation/rendering; a cross-engine simulation session contract (still deferred — only its dispatch home is assigned, spec §2.6) |
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-engine-uds` | Complete urban-drainage engine: SWMM data model; INP import and OUT/RPT writers; rainfall-runoff hydrology (infiltration, LID, snow, groundwater, RDII); dynamic-wave routing; structures and inlets; pollutant transport; controls; session API (`simulation::engine::Simulation`); local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`, §14.9) | Interface logic; network I/O; any other filesystem I/O (model text and auxiliary-file contents are supplied in memory by callers) |
 | `hydra-engines` | Engine dispatch, implemented once for every application: the routing policy of the `hydra-common` recognition contract (§2.5.1) and the uniform run surface of §2.6 (`EngineSession` — open a model for its engine, step it, observe progress, persist results, collect warnings). Depends on `hydra-common` and every engine — the only layer that sees both | Any recognition logic of its own (each engine judges its own models); any solver logic (it drives sessions, never computes) |
@@ -376,8 +376,13 @@ belongs in the layout project, because that box is a stub and not a
 layout.
 
 **Not currently covered, and known:** no end-to-end test drives the real
-Tauri shell; nothing checks *appearance* — the layout layer measures
-geometry, so a stray gradient or a wrong colour still passes everything
-here; and the water-distribution editor tables and the network list have
-no row-level tests, which is now a gap rather than an impossibility.
+Tauri shell, and the network list's rows have no test — `NetworkList.test.ts`
+imports three decisions and never renders the component. That is now a gap
+rather than an impossibility. The editor tables are covered
+(`KindTable.test.tsx` renders the component and asserts row listing, header
+sort, per-row edit addressing and virtualised mounting), and the layout layer
+does assert colour as well as geometry: `PrimaryButton.layout.test.tsx` pins
+exact RGB and chroma bounds, `selectPopup.layout.test.tsx` pins per-theme
+lightness and a contrast gap. What is still deliberately absent is screenshot
+diffing, for the reason given above.
 

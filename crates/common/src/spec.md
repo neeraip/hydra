@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.15 — 2026-08-15** (v1.1 added opaque per-block options
+Status: **v1.16 — 2026-08-17** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -33,7 +33,10 @@ element that has no contents from one whose contents are held outside the
 model — which a consumer had been telling apart by guessing, and getting
 wrong for six kinds; v1.15 let a record set say how many rows it may
 hold, §4.5.2.3, so a set that is full stops offering a row it would
-refuse).
+refuse; v1.16 withdrew the planned open-channel engine from the registry,
+§2.4, when 2D overland flow was re-planned as future functionality of the
+urban drainage engine — a breaking change, since the registry lost an entry
+and its key now resolves as unknown).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the

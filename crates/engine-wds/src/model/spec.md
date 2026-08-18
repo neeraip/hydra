@@ -1,4 +1,4 @@
-# hydra-engine — Model Specification
+# hydra-engine-wds — Model Specification
 
 This document is the sub-specification for the WD network data model, unit system, and model file formats.
 
@@ -472,7 +472,7 @@ The defaults match EPANET: US-customary models report pressure in psi, and SI mo
 
 ## 4. Model File Formats
 
-A **model file** is a structured document that describes a complete network (topology, physical properties, operational data, and simulation options) as defined in §2. `hydra-engine` owns all format parsing and output serialisation — callers supply raw bytes and receive a validated `Network`, or supply a completed `Simulation` and receive serialised output bytes.
+A **model file** is a structured document that describes a complete network (topology, physical properties, operational data, and simulation options) as defined in §2. `hydra-engine-wds` owns all format parsing and output serialisation — callers supply raw bytes and receive a validated `Network`, or supply a completed `Simulation` and receive serialised output bytes.
 
 One format is currently defined. Additional formats may be added in future.
 

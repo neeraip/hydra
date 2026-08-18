@@ -4,7 +4,7 @@ Hydra is a multi-crate Rust workspace:
 
 | Crate | Role |
 |---|---|
-| `hydra-common` | Foundation contracts shared by every engine and application: engine identity, and the reportable-output contract (block catalog, neutral fragment model). Depends on nothing else in the workspace |
+| `hydra-common` | Foundation contracts shared by every engine and application: engine identity, the reportable-output contract (block catalog, neutral fragment model), and the element-taxonomy, quantity, result-variable and criteria contracts. Depends on nothing else in the workspace |
 | `hydra-engine-wds` | Water-distribution engine: data model, parsers, unit conversion, GGA hydraulic solver, Lagrangian quality engine, session API, analytics, report blocks |
 | `hydra-engine-uds` | Urban-drainage engine: SWMM data model and import, rainfall-runoff hydrology, dynamic-wave routing, water quality, controls, session API, predecessor-format output |
 | `hydra-engines` | Engine dispatch: given a model of unknown provenance, decides which engine owns it. The one layer that sees both the registry and every engine, so the routing policy lives here once instead of in each interface |
@@ -19,4 +19,4 @@ between `hydra-common`, the engines, and `hydra-report` is what lets a report be
 assembled from any engine's output: engines emit neutral fragments, and the
 report layer renders them without knowing which engine produced them.
 
-`hydra-cli`, `hydra-gui` and `hydra-demo` are downstream consumers of Hydra in exactly the same way a third-party integrator would be: they depend on the umbrella crate and never import from `hydra-engine-wds` directly. Anyone who wants a different interface (HTTP, gRPC, Python bindings, etc.) follows the same pattern. The wasm crate doubles as proof that the pattern reaches into a browser, where there is no filesystem and no thread to lean on.
+`hydra-cli`, `hydra-gui` and `hydra-demo` are downstream consumers of Hydra in exactly the same way a third-party integrator would be: they depend on the umbrella crate and never import from `hydra-engine-wds` directly. Anyone who wants a different interface (HTTP, gRPC, Python bindings, etc.) follows the same pattern. `hydra-demo` doubles as proof that the pattern reaches into a browser, where there is no filesystem and no thread to lean on.

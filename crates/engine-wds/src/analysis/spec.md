@@ -1,6 +1,6 @@
-# hydra-engine — Analysis Sub-Specification
+# hydra-engine-wds — Analysis Sub-Specification
 
-This document is the analysis sub-specification for `hydra-engine`.
+This document is the analysis sub-specification for `hydra-engine-wds`.
 
 ## 1. Overview
 
@@ -9,7 +9,7 @@ interactive UI transformations. Its results are published through the foundation
 layer's reportable-output contract as **report blocks** (§4), produced on demand
 from a completed run.
 
-`hydra-engine`'s analysis module does not run hydraulics or quality simulation. It consumes
+`hydra-engine-wds`'s analysis module does not run hydraulics or quality simulation. It consumes
 completed simulation outputs and publishes derived statistics.
 
 Analysis owns no persisted format of its own. Derived results are not written to a
@@ -41,7 +41,7 @@ is a Hydra design decision rather than a reproduction of prior art.
 
 ## 3. Computation Ownership
 
-`hydra-engine`'s analysis module owns:
+`hydra-engine-wds`'s analysis module owns:
 
 1. Full-run aggregation across reporting periods — global extremes, and per-element
    minima and maxima.

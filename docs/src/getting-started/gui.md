@@ -105,7 +105,7 @@ Hydra saves simulation results inside the project folder on disk. To open the fo
 
 Other formats are available from the command palette (**⌘K** / **Ctrl+K**):
 
-- **Export INP…** saves the current network as an EPANET `.inp` file
+- **Export INP…** saves the current network as a model input file, in the format of the project's own engine
 - **Export results as CSV…** saves node and link result time series as CSV files (shown once results exist)
 - **Export results to GeoJSON** saves nodes/links with attributes, including result values when available
 
