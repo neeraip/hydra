@@ -232,9 +232,17 @@ factor of 1.
 
 ### 14.8 Interface Files
 
-Rainfall, runoff, and RDII interface files are read and written per the
-predecessor's formats, the hotstart type alone holding `USE` and `SAVE`
-separately so one run may both load and save. Routing interface files:
+Rainfall, runoff, and RDII interface files are declared per the
+predecessor's syntax, the hotstart type alone holding `USE` and `SAVE`
+separately so one run may both load and save. Those three formats are
+deferred (charter §1.8), and the two usages fail differently because they
+are different requests. `USE` names an input the results depend on, so the
+model is refused with the file named. `SAVE` and the scratch mode ask for
+an output artifact: the predecessor builds its rainfall file on every run
+and merely keeps rather than deletes it, so a run that does not write one
+produces the same results. Those open normally and report the file as not
+written, since refusing would block a runnable model and silence would
+leave a modeller waiting for a file that never arrives. Routing interface files:
 inflow files are read-only boundary inflows, outflow files written from
 outlet vertices, one file never serving both roles in a run; values
 interpolate between bracketing periods, unmatched pollutants read as zero,
@@ -242,8 +250,9 @@ and flows convert from the *file's* declared units. Declared counts are
 bounded (100 constituents, 100 000 nodes) — each period allocates their
 product, so an unbounded declaration would let a kilobyte-scale file
 demand gigabytes. A run resumed from a
-runoff interface file starts with cold antecedent state — the file replays
-results, not state — and the engine says so at start-up.
+runoff interface file would start with cold antecedent state, the file
+replaying results rather than state, and the engine would say so at
+start-up; that path is unreachable while the format is deferred.
 
 **Predecessor hotstart files** (`SWMM5-HOTSTART` versions 3 and 4; the
 1–2 layouts are refused with a typed error, their node-record tails and

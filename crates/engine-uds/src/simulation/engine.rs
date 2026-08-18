@@ -395,7 +395,7 @@ impl Simulation {
         // silently skipping all of it, running a coarser hydrology step
         // than the same model with the record inlined.
         realise_file_gages(&mut net, &rain_files).map_err(OpenError::Surface)?;
-        let findings = validate(&mut net);
+        let mut findings = validate(&mut net);
         if findings.iter().any(|f| f.kind.is_error()) {
             return Err(OpenError::Validation(findings));
         }
@@ -498,17 +498,33 @@ impl Simulation {
                 )));
             }
         }
-        // §14.8: the rainfall, runoff, and RDII interface formats arrive
-        // with a follow-up stage; reading them cannot be silently skipped.
+        // §14.8: the rainfall, runoff, and RDII interface formats arrive with
+        // a follow-up stage. The two modes are not the same failure.
+        //
+        // USE is an input the results depend on, so the model is refused. SAVE
+        // and SCRATCH ask for an output artifact: in the predecessor the
+        // rainfall file is built on every run and merely kept rather than
+        // deleted (`rain.c`, default mode SCRATCH_FILE), so a run without it
+        // produces the same results. Refusing those would block a model that
+        // is otherwise perfectly runnable, and saying nothing — which is what
+        // happened before — leaves a modeller waiting for a file that will
+        // never appear. Loud and non-destructive, per §1.8.
         for (role, slot) in [
             ("rainfall", &net.interface_files.rainfall),
             ("runoff", &net.interface_files.runoff),
             ("RDII", &net.interface_files.rdii),
         ] {
-            if matches!(slot, Some((crate::model::FileMode::Use, _))) {
-                return Err(OpenError::Transport(format!(
-                    "{role} interface files arrive with a follow-up stage"
-                )));
+            match slot {
+                Some((crate::model::FileMode::Use, _)) => {
+                    return Err(OpenError::Transport(format!(
+                        "{role} interface files arrive with a follow-up stage"
+                    )));
+                }
+                Some(_) => findings.push(ValidationDiagnostic {
+                    element: String::new(),
+                    kind: crate::io::validate::ValidationKind::InterfaceFileNotWritten { role },
+                }),
+                None => {}
             }
         }
         // One routing file never serves both roles in a run (§14.8).
@@ -2582,4 +2598,63 @@ fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64, hold_en
         }
     }
     points[points.len() - 1].value
+}
+
+#[cfg(test)]
+mod interface_file_modes {
+    use super::*;
+    use crate::io::validate::ValidationKind;
+
+    fn model_with(files: &str) -> String {
+        let base = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/uds/runoff_parcel.inp"),
+        )
+        .expect("fixture readable");
+        format!("{base}\n{files}\n")
+    }
+
+    /// USE is an input the results depend on, so the model is refused.
+    #[test]
+    fn reading_a_deferred_interface_file_refuses_the_model() {
+        let Err(err) = Simulation::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")) else {
+            panic!("a model that needs an unserved input must not open");
+        };
+        assert!(err.to_string().contains("rainfall interface file"), "{err}");
+    }
+
+    /// SAVE asks for an output artifact. The predecessor builds the rainfall
+    /// file on every run and merely keeps it rather than deleting it
+    /// (`rain.c`, default mode SCRATCH_FILE), so a run without it produces
+    /// the same results. Refusing would block a runnable model; saying
+    /// nothing — which is what happened before — leaves a modeller waiting
+    /// for a file that never appears.
+    #[test]
+    fn writing_a_deferred_interface_file_runs_and_says_so() {
+        let Ok((_sim, _diags, findings)) =
+            Simulation::open(&model_with("[FILES]\nSAVE RAINFALL rain.rff"))
+        else {
+            panic!("an output artifact we cannot write must not block the run");
+        };
+
+        let notice = findings
+            .iter()
+            .find(|f| matches!(f.kind, ValidationKind::InterfaceFileNotWritten { .. }))
+            .expect("the unwritten file must be reported");
+        assert!(!notice.kind.is_error(), "it must not refuse the run");
+        let text = notice.to_string();
+        assert!(text.contains("rainfall"), "{text}");
+        assert!(text.contains("not written"), "{text}");
+    }
+
+    /// A model declaring none of them says nothing about them.
+    #[test]
+    fn a_model_without_interface_files_is_silent() {
+        let Ok((_sim, _diags, findings)) = Simulation::open(&model_with("")) else {
+            panic!("fixture opens");
+        };
+        assert!(!findings
+            .iter()
+            .any(|f| matches!(f.kind, ValidationKind::InterfaceFileNotWritten { .. })));
+    }
 }

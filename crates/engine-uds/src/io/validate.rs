@@ -155,6 +155,13 @@ pub enum ValidationKind {
     /// The file declares no conveyance vertices at all — likely not a
     /// drainage model.
     EmptyModel,
+    /// A deferred interface file was declared for writing (§14.8). The run
+    /// is unaffected: the file is an output artifact rather than an input,
+    /// so the results are the ones the model would have produced anyway.
+    InterfaceFileNotWritten {
+        /// Which file: "rainfall", "runoff" or "RDII".
+        role: &'static str,
+    },
 }
 
 impl ValidationKind {
@@ -180,6 +187,7 @@ impl ValidationKind {
                 | ValidationKind::TidalCurveClockIndexed
                 | ValidationKind::BuildupJumpsToMax
                 | ValidationKind::EmptyModel
+                | ValidationKind::InterfaceFileNotWritten { .. }
         )
     }
 }
@@ -259,6 +267,12 @@ impl std::fmt::Display for ValidationKind {
             ValidationKind::CrestRaised { to } => {
                 write!(f, "crest raised to {to:.3} m above the upstream invert")
             }
+            ValidationKind::InterfaceFileNotWritten { role } => write!(
+                f,
+                "{role} interface file not written: this engine does not serve \
+                 that format yet. The run is unaffected, because the file is an \
+                 output artifact and the results are unchanged"
+            ),
             ValidationKind::NegativeOffsetZeroed => write!(f, "negative invert offset zeroed"),
             ValidationKind::NegligibleDrop => {
                 write!(f, "negligible elevation drop treated as the minimum")
