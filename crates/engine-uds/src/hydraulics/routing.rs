@@ -10,7 +10,8 @@
 //! equations, except at the step floor, where it says so.
 //!
 //! This stage routes channels, junctions, storage, dividers-as-junctions,
-//! and outfalls; the §7 structures splice in next.
+//! and outfalls, with the §7 structures (orifices, weirs, outlets, culverts,
+//! pumps) spliced into the same sweep.
 
 use super::section::Section;
 use super::{tables, GRAVITY};

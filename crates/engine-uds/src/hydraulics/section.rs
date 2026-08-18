@@ -23,9 +23,11 @@ const FT: f64 = 0.3048;
 pub enum BuildError {
     /// A geometry parameter outside its accepted range.
     BadGeometry(&'static str),
-    /// A family this build stage does not construct yet: the tabulated
-    /// families (§5.3), size catalogues (§5.4), and transect-backed
-    /// sections (§5.6) arrive in later increments.
+    /// A shape that this entry point does not build. Transect-backed
+    /// sections (§5.6) carry no geometry of their own, so they are built
+    /// through `build_transect_section` / `build_street_section` instead of
+    /// the generic path; reaching that path with one is a caller error, not
+    /// a missing capability.
     Unsupported(&'static str),
 }
 
@@ -702,7 +704,7 @@ pub fn build_section(
     // them before the depth gate.
     if matches!(shape, XsectShape::Irregular | XsectShape::Street) {
         return Err(BuildError::Unsupported(
-            "transect-backed sections await §5.6 evaluation",
+            "transect-backed sections build through their own entry point",
         ));
     }
     let p = geom_user;
@@ -966,7 +968,7 @@ pub fn build_section(
         // Routed before the depth gate; kept as an error, not a panic.
         XsectShape::Irregular | XsectShape::Street => {
             return Err(BuildError::Unsupported(
-                "transect-backed sections await §5.6 evaluation",
+                "transect-backed sections build through their own entry point",
             ));
         }
     };

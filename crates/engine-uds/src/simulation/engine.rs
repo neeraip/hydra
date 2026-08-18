@@ -473,8 +473,8 @@ impl Simulation {
         let n_series = net.timeseries.len();
         let routing_period = net.options.routing_step.max(0.5);
 
-        // §8: this stage evaluates network transport only; surface
-        // accumulation-mobilisation and treatment refuse, typed.
+        // §8: network transport, surface accumulation-mobilisation and
+        // treatment all evaluate here.
         if climate_records.is_empty() {
             if matches!(
                 net.climate.evaporation,
@@ -1690,7 +1690,7 @@ impl Simulation {
         }
     }
 
-    /// Load a predecessor hotstart file (§14.8), versions 1–4, restoring
+    /// Load a predecessor hotstart file (§14.8), versions 3 and 4, restoring
     /// what the format carries; what it cannot carry is named in the
     /// notices. Object counts must match the model.
     pub fn load_hotstart(&mut self, bytes: &[u8]) -> Result<(), String> {

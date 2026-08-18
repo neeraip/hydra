@@ -295,8 +295,7 @@ impl SparseSolver {
                     let isub = self.nzsub[istrt];
                     self.link_chain[k] = self.link_chain[isub];
                     self.link_chain[isub] = k;
-                    // SAFETY: same as the factorisation inner loop above:
-                    // all indices bounded by CSC structure invariants, nzsub entries < n.                    // SAFETY: `istrt..istop` ⊆ `0..n_coeff`; `nzsub` entries < n,
+                    // SAFETY: `istrt..istop` ⊆ `0..n_coeff`; `nzsub` entries < n,
                     // so `temp.get_unchecked_mut(isub)` / `aij.get_unchecked(i)` are valid.
                     unsafe {
                         for i in istrt..istop {
@@ -324,6 +323,9 @@ impl SparseSolver {
                 let isub = self.nzsub[istrt];
                 self.link_chain[j] = self.link_chain[isub];
                 self.link_chain[isub] = j;
+                // SAFETY: `istrt..istop` ⊆ `0..n_coeff`; `nzsub` entries < n,
+                // so `aij.get_unchecked(_mut)(i)` / `temp.get_unchecked(isub)`
+                // are valid.
                 unsafe {
                     for i in istrt..istop {
                         let isub = *self.nzsub.get_unchecked(i);

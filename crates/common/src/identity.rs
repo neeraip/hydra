@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn a_withdrawn_key_is_unknown_rather_than_registered() {
-        // Spec §2.3: `och` was withdrawn when 2D overland flow was
+        // Spec §2.4: `och` was withdrawn when 2D overland flow was
         // re-planned as future `uds` functionality. The key stays reserved
         // (never reused for a different domain) but resolves as unknown.
         assert!(engine_by_key("och").is_err());

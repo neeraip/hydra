@@ -61,7 +61,7 @@ impl fmt::Display for RouteError {
             ),
             Self::Ambiguous { candidates } => write!(
                 f,
-                "cannot tell which engine this model belongs to — it could be {}",
+                "cannot tell which engine this model belongs to. It could be {}",
                 candidates.join(" or ")
             ),
             Self::Unrecognised { notes } if !notes.is_empty() => {
@@ -179,7 +179,15 @@ mod tests {
     #[test]
     fn planned_engines_are_never_consulted() {
         // Consulting one could only ever produce a claim it cannot honour.
-        for engine in ENGINES.iter().filter(|e| !e.is_available()) {
+        //
+        // Every registered engine ships today, so this asserts nothing until
+        // one does not. Said out loud rather than left as an empty loop: a
+        // test that silently stops testing reads exactly like one that passes.
+        let mut planned = ENGINES.iter().filter(|e| !e.is_available()).peekable();
+        if planned.peek().is_none() {
+            return;
+        }
+        for engine in planned {
             assert!(!verdict(engine, EPANET.as_bytes()).claims());
         }
     }
