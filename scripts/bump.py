@@ -92,7 +92,7 @@ def main():
         f"v{version}",
     )
     print(f"Tagged v{version}.")
-    maybe_push(push_pref)
+    maybe_push(push_pref, f"v{version}")
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ def main():
         f"cli-v{version}",
     )
     print(f"Tagged cli-v{version}.")
-    maybe_push(push_pref)
+    maybe_push(push_pref, f"cli-v{version}")
 
 
 if __name__ == "__main__":

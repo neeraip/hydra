@@ -161,7 +161,7 @@ def commit_and_tag(files, message, tag):
     sh("git", "tag", "-a", tag, "-m", tag)
 
 
-def maybe_push(push_pref):
+def maybe_push(push_pref, tag):
     if push_pref is None:
         # Without a terminal there is nobody to ask, and by this point the
         # commit and the tag already exist. Raising here left the release
@@ -176,8 +176,10 @@ def maybe_push(push_pref):
 
     if push_pref:
         sh("git", "push", capture=False)
-        sh("git", "push", "--tags", capture=False)
-        print("Pushed branch and tags.")
+        # This tag by name, not --tags: that pushes every local tag, including
+        # any left over from an abandoned release.
+        sh("git", "push", "origin", f"refs/tags/{tag}", capture=False)
+        print(f"Pushed branch and {tag}.")
         return
 
-    print("Not pushed. Push with: git push && git push --tags")
+    print(f"Not pushed. Push with: git push && git push origin refs/tags/{tag}")

@@ -37,7 +37,7 @@ def main():
         f"gui-v{version}",
     )
     print(f"Tagged gui-v{version}.")
-    maybe_push(push_pref)
+    maybe_push(push_pref, f"gui-v{version}")
 
 
 if __name__ == "__main__":

@@ -117,10 +117,14 @@ class TestReleaseHelpers(unittest.TestCase):
 
         with mock.patch.object(release, "sh", new=fake_sh):
             with contextlib.redirect_stdout(io.StringIO()):
-                release.maybe_push(True)
+                release.maybe_push(True, "gui-v2.3.4")
 
         self.assertEqual(calls[0][0], ("git", "push"))
-        self.assertEqual(calls[1][0], ("git", "push", "--tags"))
+        # By name, not --tags: --tags also pushes tags left over from an
+        # abandoned release.
+        self.assertEqual(
+            calls[1][0], ("git", "push", "origin", "refs/tags/gui-v2.3.4")
+        )
 
     def test_maybe_push_no(self):
         calls = []
@@ -135,7 +139,7 @@ class TestReleaseHelpers(unittest.TestCase):
 
         with mock.patch.object(release, "sh", new=fake_sh):
             with contextlib.redirect_stdout(io.StringIO()):
-                release.maybe_push(False)
+                release.maybe_push(False, "gui-v2.3.4")
 
         self.assertEqual(calls, [])
 
@@ -158,10 +162,14 @@ class TestReleaseHelpers(unittest.TestCase):
             ):
                 with mock.patch("builtins.input", return_value="y"):
                     with contextlib.redirect_stdout(io.StringIO()):
-                        release.maybe_push(None)
+                        release.maybe_push(None, "gui-v2.3.4")
 
         self.assertEqual(calls[0][0], ("git", "push"))
-        self.assertEqual(calls[1][0], ("git", "push", "--tags"))
+        # By name, not --tags: --tags also pushes tags left over from an
+        # abandoned release.
+        self.assertEqual(
+            calls[1][0], ("git", "push", "origin", "refs/tags/gui-v2.3.4")
+        )
 
     def test_maybe_push_without_a_terminal_does_not_ask(self):
         """The commit and the tag already exist by this point.
@@ -190,7 +198,7 @@ class TestReleaseHelpers(unittest.TestCase):
                     "builtins.input", side_effect=AssertionError("asked")
                 ):
                     with contextlib.redirect_stdout(out):
-                        release.maybe_push(None)
+                        release.maybe_push(None, "gui-v2.3.4")
 
         self.assertEqual(calls, [])
         self.assertIn("not pushing", out.getvalue().lower())
