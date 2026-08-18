@@ -141,8 +141,15 @@ lint-frontend:
 typecheck-frontend:
     cd crates/gui/frontend && pnpm exec tsc --noEmit
 
+# Find em dashes in user-facing copy: GUI text, CLI and demo diagnostics,
+# report text, the docs site, the marketing site, the READMEs. Comments,
+# specs and tests are exempt, and so is the lone placeholder glyph. See
+# the User-Facing Copy section of AGENTS.md.
+em-dashes:
+    python3 scripts/em_dashes.py
+
 # Run every static check, Rust and frontend — no tests
-lint: fmt-check clippy check-wasm typecheck-frontend lint-frontend
+lint: fmt-check clippy check-wasm typecheck-frontend lint-frontend em-dashes
 
 # ── Security ──────────────────────────────────────────────────────────────────
 

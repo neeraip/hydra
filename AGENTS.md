@@ -298,6 +298,12 @@ sounds like a person explaining something.
 stop, a comma, a colon, or parentheses instead. An em dash in a code
 comment or a spec is fine.
 
+`just em-dashes` checks this, and `just lint` runs it. It reads string
+literals and JSX text but not comments, skips tests and the pinned
+theory snapshots, and permits the lone placeholder glyph that stands
+for a value the app does not have. Three manual sweeps each missed
+some before it existed.
+
 ---
 
 ## Regression Discipline
