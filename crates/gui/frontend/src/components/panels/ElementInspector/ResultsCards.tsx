@@ -47,12 +47,6 @@ function EmptyStateCard() {
   );
 }
 
-export const LINK_TYPE_COLOR: Record<string, string> = {
-  pipe: "var(--text-secondary)",
-  pump: "#d4a017",
-  valve: "#f97316",
-};
-
 // ── Results cards ─────────────────────────────────────────────────────────────
 
 export function NodeResultsCard({

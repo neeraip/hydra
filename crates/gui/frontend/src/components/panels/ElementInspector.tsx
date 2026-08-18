@@ -32,12 +32,10 @@ import {
 } from "../../engine/registry";
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
-import { elementTypeBadge } from "../../types/elementTypes";
 import type { Region } from "../../types/network";
 import { Header } from "./ElementInspector/InspectorHeader";
 import { LinkBody } from "./ElementInspector/LinkBody";
 import { NodeBody } from "./ElementInspector/NodeBody";
-import { LINK_TYPE_COLOR } from "./ElementInspector/ResultsCards";
 
 const btnIcon: React.CSSProperties = {
   background: "var(--bg-card)",
@@ -115,18 +113,6 @@ export function NodeInspector({
         id={node.id}
         subtitle={node.type}
         accentColor={ACCENT}
-        badge={
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: elementTypeBadge(node.type).color,
-              boxShadow: `0 0 6px ${elementTypeBadge(node.type).color}88`,
-              flexShrink: 0,
-            }}
-          />
-        }
         onClose={onClose}
         onRename={onRename}
       />
@@ -263,20 +249,6 @@ export function LinkInspector({
         id={link.id}
         subtitle={link.type}
         accentColor={ACCENT}
-        badge={
-          <div
-            style={{
-              width: 16,
-              height: 3,
-              borderRadius: 2,
-              // The badge's kind colour — LINK_TYPE_COLOR only knows wds
-              // kinds and the wds accent is engine identity, not a fallback.
-              background:
-                LINK_TYPE_COLOR[link.type] ?? elementTypeBadge(link.type).color,
-              flexShrink: 0,
-            }}
-          />
-        }
         onClose={onClose}
         onRename={onRename}
       />
@@ -426,18 +398,6 @@ export function RegionInspector({
         id={region.id}
         subtitle={region.type}
         accentColor={ACCENT}
-        badge={
-          <div
-            style={{
-              width: 12,
-              height: 9,
-              borderRadius: 2,
-              border: `1.5px solid ${elementTypeBadge(region.type).color}`,
-              background: `${elementTypeBadge(region.type).color}33`,
-              flexShrink: 0,
-            }}
-          />
-        }
         onClose={onClose}
         onRename={onRename}
       />

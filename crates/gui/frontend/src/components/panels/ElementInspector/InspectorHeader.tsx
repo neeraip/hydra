@@ -1,5 +1,4 @@
 import { PencilSquareIcon, XMarkIcon } from "@heroicons/react/16/solid";
-import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { TypeBadge } from "../../ui/TypeBadge";
 
@@ -8,17 +7,21 @@ import { TypeBadge } from "../../ui/TypeBadge";
 export function Header({
   id,
   subtitle,
-  badge,
   accentColor,
   onClose,
   onRename,
 }: {
   id: string;
   /** The element type ("junction", "pipe", …) — rendered as the shared letter
-   * badge with the full capitalised name beside it. */
+   * badge with the full capitalised name beside it.
+   *
+   * That badge is the only mark of kind this header shows. It used to
+   * carry a second one, hand-rolled by each caller: a dot for a node, a
+   * stripe for a link, an outlined box for a region. All three were the
+   * kind's colour and nothing else, so they looked like they said what
+   * the badge says while saying strictly less, and each was free to
+   * drift from the catalog on its own. */
   subtitle: string;
-  /** Visual icon in the header — a circle dot for nodes, a short line for links. */
-  badge: React.ReactNode;
   accentColor: string;
   onClose: () => void;
   /** When provided, the ID becomes click-to-rename; called with the new ID
@@ -58,7 +61,6 @@ export function Header({
         flexShrink: 0,
       }}
     >
-      {badge}
       <div style={{ flex: 1, minWidth: 0 }}>
         {editing && onRename ? (
           <input
