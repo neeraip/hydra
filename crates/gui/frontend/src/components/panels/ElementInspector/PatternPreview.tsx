@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { usePatterns } from "../../../hooks";
+import { useAppState } from "../../../AppContext";
+import { useCollectionDetail } from "../../../hooks";
 import { Sparkline } from "../../../pages/project/AnalysisPanel/charts";
 import { downsampleMinMax } from "./patternDownsample";
 
@@ -23,6 +24,14 @@ const MAX_POINTS = 140;
  * network that has never been simulated, on a steady-state run, and when the
  * two disagree because a pressure-dependent demand model delivered less than
  * was asked for.
+ *
+ * Reads the one pattern it names, through the same command the editor's
+ * contents table uses. It used to ask for every pattern in the model
+ * through `get_patterns`, which no backend ever defined: the invoke
+ * failed, the wrapper turned the failure into an empty list, and the
+ * preview silently took the branch meant for a dangling reference. So
+ * this chart has never drawn. Fetching one instead of all is also the
+ * cheaper read, since a pattern can hold a multiplier per hour of a year.
  */
 export function PatternPreview({
   patternId,
@@ -31,14 +40,18 @@ export function PatternPreview({
   patternId: string;
   stroke: string;
 }) {
-  const patterns = usePatterns();
-  const pattern = useMemo(
-    () => patterns.find((p) => p.id === patternId),
-    [patterns, patternId],
+  const { activeProjectId, activeScenarioId } = useAppState();
+  const { detail } = useCollectionDetail(
+    activeProjectId,
+    activeScenarioId,
+    "pattern",
+    patternId,
   );
 
   const chart = useMemo(() => {
-    const values = pattern?.multipliers ?? [];
+    // Both engines serve a pattern as [Interval, Factor]; the multiplier
+    // is the second column, and the first only counts the rows.
+    const values = detail.rows.map((r) => r[1]);
     if (values.length === 0) return null;
     // A loop, not `Math.min(...values)`: patterns run to a value per hour for a
     // year, and spreading that many arguments is a stack overflow away.
@@ -53,7 +66,7 @@ export function PatternPreview({
         ? downsampleMinMax(values, MAX_POINTS).map((b) => (b.min + b.max) / 2)
         : values;
     return { points, min, max, steps: values.length };
-  }, [pattern]);
+  }, [detail]);
 
   // An id that resolves to nothing is a dangling reference, which validation
   // reports (`UnknownPatternRef`) — drawing an empty chart would imply the

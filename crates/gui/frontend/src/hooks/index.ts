@@ -17,7 +17,7 @@
 export type { ProjectView } from "../projectConfig";
 // Engine constants and view config.
 export { ACCENT, PROJECT_VIEWS } from "../projectConfig";
-export type { Link, Node, Pattern, Task } from "../types";
+export type { Link, Node, Task } from "../types";
 export * from "./basemapProviders";
 export * from "./criteria";
 export {

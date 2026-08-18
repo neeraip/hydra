@@ -1,7 +1,7 @@
 /**
  * Minimal context that tracks how many times the network in Tauri managed
  * state has structurally changed. `NetworkDataProvider` re-fetches the full
- * snapshot, and version-keyed hooks (`usePatterns`, `useKindElements`,
+ * snapshot, and version-keyed hooks (`useKindElements`,
  * `useKindCounts`, `useCollectionDetail`) re-fetch their rows, whenever the
  * version bumps.
  *

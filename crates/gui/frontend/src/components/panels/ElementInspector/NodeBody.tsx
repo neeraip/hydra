@@ -62,7 +62,17 @@ export function NodeBody({
                 it belongs under the pattern's own row rather than as
                 another card competing with the results chart below. */}
             <td colSpan={2} style={{ padding: "2px 0 6px" }}>
-              <PatternPreview patternId={headPattern} stroke={accent} />
+              {/* Keyed, so selecting another node starts the preview
+                  empty instead of showing the previous node's profile
+                  under this one's pattern name. The inspector is not
+                  remounted per element, and the fetch is per pattern, so
+                  without this the old sparkline survives the switch until
+                  the new one lands. */}
+              <PatternPreview
+                key={headPattern}
+                patternId={headPattern}
+                stroke={accent}
+              />
               {onOpenPattern && (
                 <button
                   type="button"

@@ -7,7 +7,7 @@ import type { GenericQuantity } from "./results";
 
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
+import type { Link, LinkType, Node, NodeType } from "../types";
 import { fetchInto } from "./fetchInto";
 import { invoke, isTauri, tryInvoke, tryInvokeOr } from "./ipc";
 import type { ValidationFinding } from "./issues";
@@ -829,31 +829,6 @@ export function useRegions(): Region[] {
 export function useNetworkSummary(): NetworkSummary {
   const { summary } = useNetworkData();
   return summary;
-}
-
-/**
- * Shared fetch-effect for the version-keyed row hooks (patterns / curves /
- * controls / rules): re-fetch `cmd` whenever the network version from
- * `NetworkVersionContext` or the caller-supplied refetch counter bumps.
- * Keeps the previous rows when the fetch resolves `null` (outside Tauri or
- * command failure) and ignores results that land after unmount or a re-run.
- */
-function useVersionedRows<T>(cmd: string, version: number): T[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [rows, setRows] = useState<T[]>([]);
-  useEffect(() => {
-    // Both versions are pure refetch triggers.
-    void ctxVersion;
-    void version;
-    return fetchInto(tryInvoke<T[]>(cmd), (next) => {
-      if (next !== null) setRows(next);
-    });
-  }, [cmd, ctxVersion, version]);
-  return rows;
-}
-
-export function usePatterns(_version = 0): Pattern[] {
-  return useVersionedRows<Pattern>("get_patterns", _version);
 }
 
 export function useLinksConnectedTo(nodeId: string | null | undefined) {
