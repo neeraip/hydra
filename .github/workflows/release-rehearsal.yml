@@ -111,10 +111,15 @@ jobs:
         run: |
           set -eu
           cargo tauri signer generate -w "$RUNNER_TEMP/rehearsal.key" -p "" --force --ci
+          # The key file ends without a newline, so `cat` alone ran the value
+          # straight into the heredoc delimiter and the runner rejected the
+          # whole write. Command substitution strips trailing newlines and
+          # printf puts exactly one back.
+          key=$(cat "$RUNNER_TEMP/rehearsal.key")
           {
-            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
-            cat "$RUNNER_TEMP/rehearsal.key"
-            echo "EOF"
+            echo "TAURI_SIGNING_PRIVATE_KEY<<HYDRA_KEY_EOF"
+            printf '%s\n' "$key"
+            echo "HYDRA_KEY_EOF"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
           } >> "$GITHUB_ENV"
 
