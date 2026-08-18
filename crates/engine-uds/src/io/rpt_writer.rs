@@ -777,7 +777,15 @@ fn write_step_summary(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> 
     writeln!(w, "  Trials Rejected             : {:>8}", p.rejected)?;
     writeln!(w, "  Degraded-Accuracy Steps     : {:>8}", p.degraded.len())?;
     writeln!(w, "  Time Step Frequencies       :")?;
-    let edges = step_bands(inp.net.options.routing_step);
+    // The bands span the model's own floor, so a model that raised or
+    // lowered `MINIMUM_STEP` is reported against the range it actually ran in.
+    let edges = step_bands(
+        inp.net.options.routing_step,
+        crate::hydraulics::routing::step_floor(
+            inp.net.options.min_routing_step,
+            inp.net.options.routing_step,
+        ),
+    );
     for k in 0..5 {
         writeln!(
             w,

@@ -2981,3 +2981,94 @@ C1  RECT_OPEN  2  2  0  0
     assert!(err.contains("elsewhere"), "{err}");
     assert!(err.contains("rain.dat"), "{err}");
 }
+
+/// `MINIMUM_STEP` is honoured, and it is the lever the spec says it is.
+///
+/// The engine has always floored the adaptive step at 0.5 s, which is the
+/// predecessor's default, so a model that never set the option already
+/// routed identically. A model that did set it was run at 0.5 anyway: the
+/// value was parsed, written back out, and ignored.
+///
+/// The network below is Courant-limited by a five-metre conduit, so the
+/// seed sits under any floor worth testing and the floor is what decides
+/// the step. Raising it therefore has to cost steps, and the run has to
+/// stay a real run rather than becoming a no-op that trivially takes few.
+#[test]
+fn the_minimum_step_option_sets_the_step_floor() {
+    fn model(minimum_step: Option<&str>) -> String {
+        format!(
+            "[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             00:20:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         0:00:30
+VARIABLE_STEP        0.75
+{}
+
+[JUNCTIONS]
+J1  10  3  0  0  0
+J2   9  3  0  0  0
+
+[OUTFALLS]
+O1   8  FREE
+
+[CONDUITS]
+C1  J1  J2  5    0.01  0  0  0  0
+C2  J2  O1  200  0.01  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0  1
+C2  CIRCULAR  1  0  0  0  1
+
+[INFLOWS]
+J1  FLOW  TS1
+
+[TIMESERIES]
+TS1  0:00  0.5
+TS1  0:10  0.5
+TS1  0:20  0.5
+
+[REPORT]
+",
+            minimum_step.map_or(String::new(), |v| format!("MINIMUM_STEP         {v}"))
+        )
+    }
+
+    fn run(inp: &str) -> (u64, f64) {
+        let (mut sim, diags, findings) = Simulation::open(inp).expect("open");
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
+        sim.run();
+        let led = sim.report();
+        (led.accepted, led.outflow)
+    }
+
+    let (default_steps, default_out) = run(&model(None));
+    let (raised_steps, raised_out) = run(&model(Some("5")));
+    let (lowered_steps, lowered_out) = run(&model(Some("0.1")));
+
+    // Both are real runs: water arrived at the outfall in each.
+    for (name, out) in [
+        ("default", default_out),
+        ("raised", raised_out),
+        ("lowered", lowered_out),
+    ] {
+        assert!(out > 0.0, "{name} run moved no water, so it proves nothing");
+    }
+
+    // A floor of 5 s cannot take more steps than a floor of 0.5 s, and on
+    // a run this short it takes materially fewer.
+    assert!(
+        raised_steps < default_steps,
+        "raising the floor changed nothing: {raised_steps} steps against {default_steps}"
+    );
+    // And lowering it costs steps, which is the other half of the lever.
+    assert!(
+        lowered_steps > default_steps,
+        "lowering the floor changed nothing: {lowered_steps} steps against {default_steps}"
+    );
+}

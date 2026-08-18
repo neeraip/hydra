@@ -135,8 +135,23 @@ const Q_REVERSAL: f64 = 2.832e-5;
 const Q_DRY: f64 = 2.832e-6;
 /// Under-relaxation factor, §6.4.
 const OMEGA: f64 = 0.5;
-/// Step floor (s), §6.5; the run opens here.
-const DT_FLOOR: f64 = 0.5;
+/// The smallest step floor a model may ask for (s), §6.5.
+///
+/// The floor itself is `min_routing_step`, defaulting to 0.5 s. This is
+/// the bound below which it cannot be set: a floor at zero would let one
+/// short channel drive the step toward zero, and the run would stop
+/// advancing in finite time rather than finish inaccurately.
+const DT_FLOOR_MIN: f64 = 1e-3;
+
+/// The §6.5 floor a model asks for, clamped to what is usable.
+///
+/// Order matters and follows the predecessor's: the user step caps it
+/// first, then the absolute minimum raises it. A routing step below the
+/// absolute minimum therefore ends with a floor above the user step,
+/// which is the only sane reading of a model that asks for both.
+pub fn step_floor(min_routing_step: f64, dt_user: f64) -> f64 {
+    min_routing_step.min(dt_user).max(DT_FLOOR_MIN)
+}
 
 /// The §6.4 criterion-2 allowance: how much summed continuity residual an
 /// iterate may carry and still count as conserving mass.
@@ -386,9 +401,9 @@ fn linear_lookup(points: &[(f64, f64)], x: f64) -> f64 {
 /// routing step down to the step floor and spaced logarithmically. The
 /// report prints them as five intervals, so it wants the edges rather
 /// than the counts alone.
-pub fn step_bands(dt_user: f64) -> [f64; 6] {
-    let top = dt_user.max(DT_FLOOR);
-    let ratio = (DT_FLOOR / top).powf(0.2);
+pub fn step_bands(dt_user: f64, dt_floor: f64) -> [f64; 6] {
+    let top = dt_user.max(dt_floor);
+    let ratio = (dt_floor / top).powf(0.2);
     let mut edges = [top; 6];
     for k in 1..6 {
         edges[k] = edges[k - 1] * ratio;
@@ -397,8 +412,8 @@ pub fn step_bands(dt_user: f64) -> [f64; 6] {
 }
 
 /// Which band an accepted step of `dt` falls in, largest band first.
-fn step_band(dt: f64, dt_user: f64) -> usize {
-    let edges = step_bands(dt_user);
+fn step_band(dt: f64, dt_user: f64, dt_floor: f64) -> usize {
+    let edges = step_bands(dt_user, dt_floor);
     (0..5).find(|&k| dt > edges[k + 1]).unwrap_or(4)
 }
 
@@ -584,6 +599,8 @@ pub struct Router {
     ids: Vec<String>,
     // Options.
     dt_user: f64,
+    /// §6.5 step floor (s): `min_routing_step`, clamped by `step_floor`.
+    dt_floor: f64,
     courant_factor: f64,
     max_trials: u32,
     head_tol: f64,
@@ -1186,6 +1203,7 @@ impl Router {
             structs,
             ids: net.vertices.iter().map(|v| v.id.clone()).collect(),
             dt_user: net.options.routing_step,
+            dt_floor: step_floor(net.options.min_routing_step, net.options.routing_step),
             courant_factor: net.options.courant_factor,
             max_trials: net.options.max_trials.max(2),
             head_tol: net.options.head_tol,
@@ -1214,7 +1232,7 @@ impl Router {
             stor_seep_now: vec![0.0; nv],
             chan_seep_now: vec![0.0; nc],
             hist: Vec::new(),
-            dt_prev: DT_FLOOR,
+            dt_prev: step_floor(net.options.min_routing_step, net.options.routing_step),
             quiet_streak: 0,
             vertex_stats: vec![VertexStats::default(); nv],
             pump_prev_off: vec![true; ns],
@@ -1402,7 +1420,7 @@ impl Router {
         if t > self.t {
             self.t = t;
             self.hist.clear();
-            self.dt_prev = DT_FLOOR;
+            self.dt_prev = self.dt_floor;
         }
     }
 
@@ -1676,7 +1694,7 @@ impl Router {
         let mut dt = self.seed_step().min(t_end - self.t);
         loop {
             let trial = self.run_trial(dt, lat);
-            let at_floor = dt <= DT_FLOOR + 1e-12;
+            let at_floor = dt <= self.dt_floor + 1e-12;
             let ok = trial.converged && (self.err_tol <= 0.0 || trial.err <= self.err_tol);
             if ok || at_floor {
                 if !ok {
@@ -1689,14 +1707,14 @@ impl Router {
             }
             self.report.rejected += 1;
             self.quiet_streak = 0;
-            dt = (0.5 * dt).max(DT_FLOOR);
+            dt = (0.5 * dt).max(self.dt_floor);
         }
     }
 
     /// §6.5 step seeding.
     fn seed_step(&mut self) -> f64 {
         if self.report.accepted == 0 {
-            return DT_FLOOR;
+            return self.dt_floor;
         }
         let mut dt = self.dt_user.min(2.0 * self.dt_prev);
         // Vertex quarter-crown rate constraint.
@@ -1744,7 +1762,7 @@ impl Router {
                 dt = dt.min(self.courant_factor * c.length / (u + cel));
             }
         }
-        dt.max(DT_FLOOR)
+        dt.max(self.dt_floor)
     }
 
     fn accept(&mut self, dt: f64, trial: Trial, lat: &[f64]) {
@@ -1845,7 +1863,7 @@ impl Router {
         if !trial.converged {
             self.report.nonconverged += 1;
         }
-        self.report.dt_bands[step_band(dt, self.dt_user)] += 1;
+        self.report.dt_bands[step_band(dt, self.dt_user, self.dt_floor)] += 1;
         // §11.2: per-object statistics, gated on the report start.
         if self.t >= self.stats_start {
             self.accumulate_stats(dt, lat);
@@ -3594,6 +3612,50 @@ fn offset_height(o: &Offset) -> f64 {
     match o {
         Offset::Depth(h) => *h,
         _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod step_floor_tests {
+    use super::{step_floor, DT_FLOOR_MIN};
+
+    /// The floor is the one control a modeller has over the trade a floor
+    /// step makes, so what it may be set to is worth pinning. The clamps
+    /// bound both ends: a floor above the user step makes every step a
+    /// floor step, and a floor at zero lets one short channel drive the
+    /// step toward zero until the run stops advancing in finite time.
+
+    #[test]
+    fn the_default_is_half_a_second() {
+        assert_eq!(0.5, step_floor(0.5, 30.0));
+    }
+
+    #[test]
+    fn a_model_may_lower_it() {
+        assert_eq!(0.05, step_floor(0.05, 30.0));
+    }
+
+    #[test]
+    fn a_model_may_raise_it() {
+        assert_eq!(5.0, step_floor(5.0, 30.0));
+    }
+
+    #[test]
+    fn it_never_exceeds_the_user_step() {
+        assert_eq!(10.0, step_floor(60.0, 10.0));
+    }
+
+    #[test]
+    fn zero_becomes_the_absolute_minimum() {
+        assert_eq!(DT_FLOOR_MIN, step_floor(0.0, 30.0));
+    }
+
+    #[test]
+    fn the_absolute_minimum_outranks_the_user_step() {
+        // The predecessor applies the two clamps in this order, so a
+        // routing step under a millisecond ends with a floor above it.
+        // Any other reading of that model asks for a step of zero.
+        assert_eq!(DT_FLOOR_MIN, step_floor(0.5, 1e-6));
     }
 }
 

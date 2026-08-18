@@ -539,8 +539,19 @@ the step floor during exactly the events the engine exists to compute. The
 predecessor exempts full conduits under both of its surcharge methods; here
 the vertex head-rate constraint and the error test still govern surcharge
 accuracy. Steps are
-real-valued — no quantisation — floored at $\Delta t_{floor}$ = 0.5 s, and
-the run opens at the floor.
+real-valued — no quantisation — floored at $\Delta t_{floor}$, and the run
+opens at the floor.
+
+**The floor is the model's**, `min_routing_step` (seconds, default 0.5),
+clamped to $[10^{-3}\,\mathrm{s},\ \Delta t_{user}]$. It is the only
+control the modeller has over the trade the floor makes. Every step taken at
+the floor is a step whose stability seed or error estimate was overruled, so
+lowering it buys accuracy in the elements that drive the seed and costs
+wall-clock, and raising it does the reverse; a model that pins at the floor
+(§6.4) has no other lever. The clamps bound both ends of that: a floor above
+the user step would make every step a floor step, and a floor at zero would
+let one short channel drive $\Delta t$ toward zero until the run stopped
+advancing in finite time.
 
 **Quiescent growth.** Sustained accuracy margin releases the Courant seed:
 after three consecutive accepted steps whose error estimates stayed below a
