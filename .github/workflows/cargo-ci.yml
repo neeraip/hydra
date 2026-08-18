@@ -52,7 +52,7 @@ jobs:
           cache: false
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.1
+        uses: Swatinem/rust-cache@v2.9.2
         with:
           # Restore everywhere, save from main only: the repo cache budget is
           # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
@@ -142,7 +142,7 @@ jobs:
           cache: false
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.1
+        uses: Swatinem/rust-cache@v2.9.2
         with:
           # Restore everywhere, save from main only: the repo cache budget is
           # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
@@ -192,7 +192,7 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.1
+        uses: Swatinem/rust-cache@v2.9.2
         with:
           key: stable
           save-if: ${{ github.ref == 'refs/heads/main' }}
