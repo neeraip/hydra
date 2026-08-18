@@ -1,0 +1,35 @@
+name: Install Tauri system dependencies
+description: >
+  The Linux packages a Tauri build needs, installed with each attempt
+  bounded so a stalled mirror costs an attempt rather than the whole job.
+
+runs:
+  using: composite
+  steps:
+    # On 2026-08-18 this step ran for the full 30-minute job budget on
+    # ubuntu-latest and the tests never started: `apt-get` stalled against a
+    # mirror that accepted the connection and then sent nothing. The same
+    # step takes ~36 s when the mirror is healthy, so the job did not need
+    # more time, it needed to stop waiting. A cancelled run also never
+    # reaches its cargo cache save, so the next run starts cold, and on main
+    # a cancelled run leaves that commit with no verdict at all.
+    #
+    # `sudo timeout` rather than `timeout sudo`, so the clock runs as root
+    # and signals apt itself rather than the sudo wrapper; `-k` escalates if
+    # apt ignores the first signal, which is what would otherwise leave the
+    # dpkg lock held for the retry.
+    - shell: bash
+      run: |
+        set -eu
+        apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20"
+        packages="libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf"
+        for attempt in 1 2 3; do
+          if sudo timeout -k 10 180 apt-get update $apt_opts \
+            && sudo timeout -k 10 180 apt-get install -y $apt_opts $packages; then
+            exit 0
+          fi
+          echo "::warning::apt attempt ${attempt} of 3 failed or stalled; retrying"
+          sleep $((attempt * 15))
+        done
+        echo "::error::apt did not finish in three bounded attempts"
+        exit 1

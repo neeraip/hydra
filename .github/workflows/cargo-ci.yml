@@ -38,13 +38,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
+        uses: ./.github/actions/tauri-deps
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -128,13 +122,7 @@ jobs:
 
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
+        uses: ./.github/actions/tauri-deps
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -175,13 +163,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
+        uses: ./.github/actions/tauri-deps
 
       - name: Install Rust toolchain (pinned, for rustup)
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
