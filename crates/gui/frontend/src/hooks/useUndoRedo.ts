@@ -73,8 +73,16 @@ async function applyRecreate(spec: RecreateSpec): Promise<void> {
 }
 
 /** Apply one edit set in recreate → patch → delete order. Throws on the
- *  first failed step. */
-async function applyEditSet(set: EditSet, projectId: string): Promise<void> {
+ *  first failed step.
+ *
+ *  Exported for its tests. The order is the contract: a recreate that ran
+ *  after its own delete, or a patch that ran before the element existed,
+ *  writes a model to disk that the user never asked for, and nothing on
+ *  screen says so. */
+export async function applyEditSet(
+  set: EditSet,
+  projectId: string,
+): Promise<void> {
   // Contract operations first: they are the ones any engine understands,
   // and an entry that mixes them with the water-distribution editor's own
   // sets does not exist — a surface captures one vocabulary or the other.
@@ -156,8 +164,12 @@ export function useUndoRedo(): { undo: () => void; redo: () => void } {
  * one engine's commands. The previous stack replayed water-distribution
  * commands, so an entry captured from a drainage model looked undoable
  * and refused when applied.
+ *
+ * Exported for its tests: the dispatch is where an op silently reaches
+ * the wrong command, and `kind` travelling with `set` and `records` is
+ * what keeps a junction `9` from being edited in a conduit `9`'s place.
  */
-async function applyOp(op: ElementOp, projectId: string): Promise<void> {
+export async function applyOp(op: ElementOp, projectId: string): Promise<void> {
   switch (op.op) {
     case "move":
       return patchNodePosition(op.id, op.x, op.y);
