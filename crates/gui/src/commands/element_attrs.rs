@@ -194,10 +194,10 @@ pub fn set_element_attribute(
     match project_engine_key(&app_data, &project_id).as_str() {
         // Drainage registers every id in one namespace, so its write
         // needs no kind and is given none.
-        "uds" => super::mutations::mutate_uds(&app, &state, |network| {
+        "uds" => super::mutations::mutate_uds(&app, &state, &project_id, |network| {
             super::uds_attrs::set_attribute(network, &element_id, &key, &value)
         }),
-        "wds" => super::mutations::mutate_wds(&app, &state, |network| {
+        "wds" => super::mutations::mutate_wds(&app, &state, &project_id, |network| {
             super::wds_attrs::set_attribute(network, kind.as_deref(), &element_id, &key, &value)
         }),
         other => Err(super::projects::unknown_engine(other)),

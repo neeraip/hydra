@@ -43,10 +43,10 @@ pub fn set_collection_contents(
         return Err("every value has to be a number".into());
     }
     match project_engine_key(&app_data, &project_id).as_str() {
-        "uds" => super::mutations::mutate_uds(&app, &state, |network| {
+        "uds" => super::mutations::mutate_uds(&app, &state, &project_id, |network| {
             set_uds_contents(network, &kind, &element_id, &rows)
         }),
-        "wds" => super::mutations::mutate_wds(&app, &state, |network| {
+        "wds" => super::mutations::mutate_wds(&app, &state, &project_id, |network| {
             set_wds_contents(network, &kind, &element_id, &rows)
         }),
         other => Err(super::projects::unknown_engine(other)),

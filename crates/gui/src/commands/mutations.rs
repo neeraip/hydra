@@ -468,12 +468,28 @@ where
 pub(crate) fn mutate_uds<F>(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, NetworkState>,
+    project_id: &str,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::uds::model::Network) -> Result<(), String>,
+{
+    mutate_uds_inner(app, state, Some(project_id), f)
+}
+
+/// The drainage half of `mutate_structural`. `target` is the project the
+/// edit is for, or `None` from a command that is given none.
+fn mutate_uds_inner<F>(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, NetworkState>,
+    target: Option<&str>,
     f: F,
 ) -> Result<(), String>
 where
     F: FnOnce(&mut hydra::uds::model::Network) -> Result<(), String>,
 {
     let mut guard = state.0.lock();
+    check_owner(&guard, target)?;
     apply_uds_mutation(&mut guard, f)?;
     emit_or_warn(app, NETWORK_CHANGED_EVENT, ());
     drop(guard);
@@ -605,19 +621,83 @@ fn rename_uds_element(
 pub(crate) fn mutate_wds<F>(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, NetworkState>,
+    project_id: &str,
     f: F,
 ) -> Result<(), String>
 where
     F: FnOnce(&mut hydra::Network) -> Result<(), String>,
 {
-    mutate_structural(app, state, f)
+    mutate_structural(app, state, Some(project_id), f)
 }
 
-fn mutate_structural<F>(app: &tauri::AppHandle, state: &NetworkState, f: F) -> Result<(), String>
+/// Refuse an edit aimed at a project other than the loaded one.
+///
+/// `save_project` has always refused this, so nothing wrong reaches disk.
+/// What it could not stop is the edit itself: between the frontend
+/// switching project and the new model finishing its load, an edit
+/// command carrying the new project's id landed on the old project's
+/// cached network, changed it, and returned as though it had worked. The
+/// user then saw their edit refused at save time by a message about a
+/// project they were no longer looking at.
+///
+/// Takes the state the caller already holds the lock on, rather than
+/// locking for itself. Checking under one lock and mutating under the
+/// next leaves the window open between them, which is the whole of what
+/// this is for: commands run on a thread pool, so a load can land in
+/// between.
+///
+/// Only the project half is checked, because only the project half is
+/// known here: see the note on `mutate_structural` for the commands that
+/// carry no target at all.
+///
+/// `None` is a command with no target to check. A network with no owner
+/// is a file-picker load with no project yet, on its way to
+/// `create_project`. Both are let through.
+fn check_owner(state: &NetworkStateInner, target: Option<&str>) -> Result<(), String> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    let owner = match state {
+        NetworkStateInner::Loaded {
+            owner_project_id, ..
+        }
+        | NetworkStateInner::LoadedUds {
+            owner_project_id, ..
+        } => owner_project_id.as_deref(),
+        NetworkStateInner::Empty => return Ok(()),
+    };
+    match owner {
+        Some(owner) if owner != target => Err(format!(
+            "the loaded model belongs to another project ({owner}), not {target}; \
+             wait for this project to finish loading before editing"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Commit one change to the loaded network and announce it.
+///
+/// A `None` target cannot be checked against the loaded network. Five
+/// commands pass one, because none of
+/// them is given a project id: `create_node`, `create_link`,
+/// `delete_element`, `rename_element` and `update_network_title`. Giving
+/// them one means changing their argument lists on both sides of the IPC
+/// boundary, and `delete_element`'s in particular is replayed by the undo
+/// stack, so the change is to a surface rather than to this function.
+/// `check_owner` guards every path that does carry a project id.
+/// `save_project` refuses a mismatch either way, so the model on disk is
+/// safe in all of them; what is unguarded is the model in memory.
+fn mutate_structural<F>(
+    app: &tauri::AppHandle,
+    state: &NetworkState,
+    target: Option<&str>,
+    f: F,
+) -> Result<(), String>
 where
     F: FnOnce(&mut hydra::Network) -> Result<(), String>,
 {
     let mut guard = state.0.lock();
+    check_owner(&guard, target)?;
     let result = apply_structural_mutation(&mut guard, f);
     if result.is_ok() {
         emit_or_warn(app, NETWORK_CHANGED_EVENT, ());
@@ -1156,7 +1236,7 @@ pub fn delete_element(
         id: id.clone(),
         ..Removed::default()
     };
-    mutate_structural(&app, &state, |network| {
+    mutate_structural(&app, &state, None, |network| {
         removed.links = delete_element_from_network(network, &kind, &id)?;
         Ok(())
     })?;
@@ -1310,12 +1390,12 @@ pub fn rename_element(
         let guard = state.0.lock();
         if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
             drop(guard);
-            return mutate_uds(&app, &state, |network| {
+            return mutate_uds_inner(&app, &state, None, |network| {
                 rename_uds_element(network, &old_id, &new_id)
             });
         }
     }
-    mutate_structural(&app, &state, |network| {
+    mutate_structural(&app, &state, None, |network| {
         rename_element_in_network(network, &kind, &old_id, &new_id)
     })
 }
@@ -1340,7 +1420,7 @@ pub fn create_node(
     max_level: Option<f64>,
     initial_level: Option<f64>,
 ) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
+    mutate_structural(&app, &state, None, |network| {
         create_node_in_network(
             network,
             &kind,
@@ -1482,7 +1562,7 @@ pub fn create_link(
     from_id: String,
     to_id: String,
 ) -> Result<(), String> {
-    mutate_structural(&app, &state, |network| {
+    mutate_structural(&app, &state, None, |network| {
         create_link_in_network(network, &kind, &id, &from_id, &to_id)
     })
 }
@@ -2009,8 +2089,6 @@ pub fn validate_network(
     validate_target_ids(&project_id, scenario_id.as_deref())?;
 
     // Engine-dispatched: each engine's validator serves its own findings.
-    // Unknown engines stay quiet instead of toasting a foreign-dialect
-    // error on every open.
     {
         let app_data = app_data_dir(&app)?;
         match super::projects::project_engine_key(&app_data, &project_id).as_str() {
@@ -2050,6 +2128,11 @@ pub fn validate_network(
                     })
                     .collect());
             }
+            // Unknown engines stay quiet rather than refusing, which is
+            // the exception to how every other dispatch here treats one:
+            // this runs on every open, and a build that cannot read the
+            // model would report that in a toast each time. The commands
+            // that serve the model itself say so once instead.
             _ => return Ok(Vec::new()),
         }
     }
@@ -2117,13 +2200,13 @@ pub fn update_network_title(
         if matches!(&*guard, NetworkStateInner::LoadedUds { .. }) {
             drop(guard);
             let title = normalized;
-            return mutate_uds(&app, &state, |network| {
+            return mutate_uds_inner(&app, &state, None, |network| {
                 network.title = title;
                 Ok(())
             });
         }
     }
-    mutate_structural(&app, &state, |network| {
+    mutate_structural(&app, &state, None, |network| {
         network.title = normalized;
         Ok(())
     })
@@ -2371,6 +2454,69 @@ mod tests {
              are unverified"
         );
         assert!(renamed >= 23, "only {renamed} kinds renamed");
+    }
+
+    /// An edit aimed at one project must not land on another's model.
+    ///
+    /// The window is real: the frontend switches `activeProjectId` before
+    /// the new model has finished loading, so for a moment an edit carries
+    /// the new id while the cache still holds the old network. `save_project`
+    /// caught it at write time, which is why nothing wrong ever reached
+    /// disk, but by then the wrong model had already been changed in memory
+    /// and the user was reading a refusal about a project they had left.
+    mod edit_target {
+        use super::*;
+
+        fn state_owned_by(owner: Option<&str>) -> NetworkStateInner {
+            let (net, _) = hydra::uds::io::objects::parse_network(
+                "[TITLE]\nT\n[OPTIONS]\nFLOW_UNITS CMS\n\
+                 [JUNCTIONS]\nJ1 10 3 0 0 0\n\
+                 [OUTFALLS]\nO1 8 FREE NO\n\
+                 [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+                 [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n",
+            );
+            NetworkStateInner::LoadedUds {
+                raw_text: String::new(),
+                dirty: false,
+                network: std::sync::Arc::new(net),
+                aux_files: Vec::new(),
+                owner_project_id: owner.map(str::to_string),
+                owner_scenario_id: None,
+            }
+        }
+
+        #[test]
+        fn an_edit_for_the_loaded_project_goes_through() {
+            assert!(check_owner(&state_owned_by(Some("p1")), Some("p1")).is_ok());
+        }
+
+        #[test]
+        fn an_edit_for_another_project_is_refused_by_name() {
+            let err = check_owner(&state_owned_by(Some("p1")), Some("p2")).unwrap_err();
+            assert!(err.contains("p1"), "{err}");
+            assert!(err.contains("p2"), "{err}");
+        }
+
+        #[test]
+        fn a_network_with_no_owner_yet_is_let_through() {
+            // The file picker loads one before any project exists, and
+            // `create_project` is what gives it an owner. Refusing here
+            // would refuse every edit made in the import preview.
+            assert!(check_owner(&state_owned_by(None), Some("p1")).is_ok());
+        }
+
+        #[test]
+        fn nothing_loaded_is_not_a_mismatch() {
+            assert!(check_owner(&NetworkStateInner::Empty, Some("p1")).is_ok());
+        }
+
+        #[test]
+        fn a_command_with_no_target_is_not_checked() {
+            // The five commands that take no project id. They are listed
+            // in `scripts/tests/test_mutation_targets.py`, which is what
+            // stops a sixth joining them unremarked.
+            assert!(check_owner(&state_owned_by(Some("p1")), None).is_ok());
+        }
     }
 
     /// The drainage title takes the edit too — through the drainage

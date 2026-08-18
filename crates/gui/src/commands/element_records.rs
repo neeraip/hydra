@@ -171,10 +171,10 @@ pub fn set_element_records(
     validate_target_ids(&project_id, None)?;
     let app_data = app_data_dir(&app)?;
     match project_engine_key(&app_data, &project_id).as_str() {
-        "uds" => super::mutations::mutate_uds(&app, &state, |network| {
+        "uds" => super::mutations::mutate_uds(&app, &state, &project_id, |network| {
             set_uds_records(network, &element_id, &set, &rows)
         }),
-        "wds" => super::mutations::mutate_wds(&app, &state, |network| {
+        "wds" => super::mutations::mutate_wds(&app, &state, &project_id, |network| {
             set_wds_records(network, kind.as_deref(), &element_id, &set, &rows)
         }),
         other => Err(super::projects::unknown_engine(other)),

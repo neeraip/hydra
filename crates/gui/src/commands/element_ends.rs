@@ -34,10 +34,10 @@ pub fn set_element_ends(
     validate_target_ids(&project_id, None)?;
     let app_data = app_data_dir(&app)?;
     match project_engine_key(&app_data, &project_id).as_str() {
-        "uds" => super::mutations::mutate_uds(&app, &state, |network| {
+        "uds" => super::mutations::mutate_uds(&app, &state, &project_id, |network| {
             set_uds_ends(network, &element_id, &from_id, &to_id)
         }),
-        "wds" => super::mutations::mutate_wds(&app, &state, |network| {
+        "wds" => super::mutations::mutate_wds(&app, &state, &project_id, |network| {
             set_wds_ends(network, &element_id, &from_id, &to_id)
         }),
         other => Err(super::projects::unknown_engine(other)),
