@@ -531,13 +531,9 @@ fn open_uds(
         );
     }
 
+    // Deferred interface files are the engine's own finding now (§14.8), and
+    // are reported through the validation findings above.
     let iface = &net.interface_files;
-    if iface.rainfall.is_some() || iface.runoff.is_some() || iface.rdii.is_some() {
-        pending.push(Diagnostic::warning(
-            "input/unsupported",
-            "rainfall, runoff, and RDII interface files are not supported yet — ignored",
-        ));
-    }
     // A declared hotstart save is honoured: the engine writes it to memory
     // when the run finishes and the caller offers it as a download. Recorded
     // under the name the model chose, which is the name the same run writes

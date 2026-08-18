@@ -161,14 +161,11 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     }
 
     // ── Auxiliary inputs the engine cannot read itself ────────────────────────
+    // Deferred interface files are the engine's own finding now (§14.8): a
+    // USE refuses the open, a SAVE opens with a per-role notice. This used to
+    // be restated here, and differently again in the demo, which left every
+    // other consumer of the engine with silence.
     let iface = &net.interface_files;
-    if iface.rainfall.is_some() || iface.runoff.is_some() || iface.rdii.is_some() {
-        emit_warning(
-            "input/unsupported",
-            "rainfall, runoff, and RDII interface files are not supported yet and were ignored",
-            None,
-        );
-    }
     if let Some(name) = &iface.hotstart_use {
         let path = match resolve_aux_path(&args.model, name) {
             Ok(p) => p,

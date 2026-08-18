@@ -404,7 +404,13 @@ pub fn delete_project(
     let _guards = targets
         .iter()
         .map(|sid| try_acquire_run_target(&id, sid.as_deref()))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        // The helper's own message is about starting a run, which is not what
+        // the reader just tried to do.
+        .map_err(|_| {
+            "This project cannot be deleted while one of its simulations is              running. Wait for it to finish, or cancel it, then delete."
+                .to_string()
+        })?;
 
     bundle::delete_project_dir(&app_data, &id).map_err(|e| e.to_string())?;
 
@@ -1485,7 +1491,11 @@ pub fn delete_scenario(
     let _guards = targets
         .iter()
         .map(|sid| try_acquire_run_target(&project_id, Some(sid.as_str())))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            "This scenario cannot be deleted while its simulation is running.              Wait for it to finish, or cancel it, then delete."
+                .to_string()
+        })?;
 
     let mut removed = 0u32;
     if cascade {
