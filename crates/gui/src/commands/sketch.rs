@@ -326,6 +326,10 @@ pub fn get_project_sketch(
     app: tauri::AppHandle,
     project_id: String,
 ) -> Result<Option<Sketch>, String> {
+    // The id is joined into a path below, so it is checked here like every
+    // other project-scoped command. This one was missed, which left a guard
+    // meant to be total with a hole in it.
+    crate::commands::projects::validate_id(&project_id)?;
     let app_data = crate::commands::app_data_dir(&app)?;
     let path = sketch_path(&app_data, &project_id);
     let Ok(bytes) = std::fs::read(&path) else {
@@ -352,6 +356,18 @@ fn geometry_digest(dto: &NetworkDto) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every project-scoped command validates its id before joining it into
+    /// a path. `get_project_sketch` did not, so a traversal id reached
+    /// `sketch_path` and read a file outside the projects root.
+    #[test]
+    fn the_sketch_path_is_only_built_from_a_validated_id() {
+        use crate::commands::projects::validate_id;
+        for bad in ["../../etc", "..", "not-a-uuid", ""] {
+            assert!(validate_id(bad).is_err(), "{bad:?} must be refused");
+        }
+        assert!(validate_id("11111111-1111-4111-8111-111111111111").is_ok());
+    }
     use super::*;
     use crate::commands::network_dto::{LinkDto, NodeDto};
 

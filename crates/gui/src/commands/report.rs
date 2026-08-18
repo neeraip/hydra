@@ -23,6 +23,9 @@ pub fn list_report_blocks(
     let Some(project_id) = project_id else {
         return Ok(hydra::report_catalog());
     };
+    // Reads <project>/meta.json below, so the id is checked first, as every
+    // other project-scoped command does.
+    super::projects::validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
     Ok(
         match super::projects::project_engine_key(&app_data, &project_id).as_str() {
