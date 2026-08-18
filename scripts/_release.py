@@ -3,6 +3,7 @@
 Not a standalone command — imported by the sibling scripts.
 """
 
+import json
 import pathlib
 import re
 import subprocess
@@ -47,6 +48,10 @@ def parse_push_pref(args):
                 fail("cannot pass both --push and --no-push")
             push_pref = False
             continue
+        # Consumed here so it never reaches parse_level_arg, which rejects
+        # any positional it does not recognise.
+        if arg == "--no-verify-ci":
+            continue
         positionals.append(arg)
     return positionals, push_pref
 
@@ -58,6 +63,75 @@ def require_clean_main():
     if branch != "main":
         fail(f"must be on main branch to bump (currently on '{branch}')")
     require_up_to_date_with_origin()
+
+
+def ci_verdict(runs):
+    """What CI says about a commit: ("green"|"failing"|"pending"|"unknown", names).
+
+    A tag is cut from a commit, and the release build starts from the tag —
+    so if that commit's CI is red, the release ships whatever was broken.
+    gui-v2.18.0 and gui-v2.18.1 were both tagged over a red main and both
+    failed; gui-v2.19.0 was tagged before its own licence check reported and
+    shipped notices that did not match its dependencies.
+
+    `runs` is one dict per workflow run, as `gh run list --json` returns
+    them. "unknown" means nothing could be determined and the caller should
+    say so rather than pretend either way.
+    """
+    if not runs:
+        return "unknown", []
+    failing = sorted(
+        {r.get("name", "?") for r in runs if r.get("conclusion") in ("failure", "timed_out")}
+    )
+    if failing:
+        return "failing", failing
+    pending = sorted(
+        {r.get("name", "?") for r in runs if r.get("status") not in ("completed",)}
+    )
+    if pending:
+        return "pending", pending
+    return "green", []
+
+
+def ci_runs_for(sha):
+    """Workflow runs for one commit, or None when they cannot be fetched."""
+    try:
+        out = subprocess.run(
+            ["gh", "run", "list", "--commit", sha, "--limit", "50",
+             "--json", "name,status,conclusion"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        ).stdout
+        return json.loads(out)
+    except Exception:
+        return None
+
+
+def require_green_ci(skip):
+    """Refuse to tag a commit whose CI is red, or still deciding."""
+    if skip:
+        print("Skipping the CI check (--no-verify-ci).")
+        return
+    sha = sh("git", "rev-parse", "HEAD").stdout.strip()
+    runs = ci_runs_for(sha)
+    if runs is None:
+        print(f"Could not reach GitHub to check CI for {sha[:8]}; continuing.")
+        return
+    verdict, names = ci_verdict(runs)
+    if verdict == "green":
+        return
+    if verdict == "unknown":
+        print(f"No CI runs found for {sha[:8]} yet; continuing.")
+        return
+    joined = ", ".join(names)
+    fail(
+        f"CI is {verdict} for {sha[:8]} ({joined}).\n"
+        "       A tag is cut from this commit and the release builds from the\n"
+        "       tag, so releasing now ships whatever is broken. Wait for CI, or\n"
+        "       pass --no-verify-ci if you know better."
+    )
 
 
 def upstream_state(local, remote):

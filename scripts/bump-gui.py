@@ -10,7 +10,7 @@ import json
 import pathlib
 import sys
 
-from _release import commit_and_tag, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
+from _release import commit_and_tag, require_green_ci, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def set_json_version(path: pathlib.Path, version):
@@ -23,6 +23,7 @@ def main():
     args, push_pref = parse_push_pref(sys.argv[1:])
     level = parse_level_arg(args)
     require_clean_main()
+    require_green_ci("--no-verify-ci" in sys.argv[1:])
 
     gui = pathlib.Path("crates/gui/Cargo.toml")
     version = next_version(read_version(gui), level)

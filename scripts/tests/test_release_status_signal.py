@@ -79,3 +79,28 @@ class TestReleaseStatusSignal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrphanTagWarningTests(unittest.TestCase):
+    """A tag is proof of an intention, not of a release.
+
+    gui-v2.18.0 and gui-v2.18.1 were both tagged and both failed to build,
+    leaving versions nobody can install. Reading the newest tag as released
+    reports the track as up to date against one of those.
+    """
+
+    def test_a_tag_without_a_release_warns(self):
+        note = release_status.orphan_tag_warning("gui-v2.18.1", {"gui-v2.17.1"})
+        self.assertIsNotNone(note)
+        self.assertIn("gui-v2.18.1", note)
+        self.assertIn("no published release", note)
+
+    def test_a_released_tag_is_silent(self):
+        self.assertIsNone(
+            release_status.orphan_tag_warning("gui-v2.19.0", {"gui-v2.19.0", "v12.1.0"})
+        )
+
+    def test_unknown_release_state_says_nothing(self):
+        # Offline, or no `gh`: never guess, because the guess would appear as
+        # a warning about a release that is perfectly fine.
+        self.assertIsNone(release_status.orphan_tag_warning("gui-v2.19.0", None))

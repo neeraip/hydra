@@ -17,6 +17,7 @@ Usage:
     scripts/release-status.py [library|cli|gui]
 """
 
+import json
 import os
 import re
 import subprocess
@@ -37,16 +38,56 @@ def sh(*args):
     return subprocess.run(list(args), check=True, capture_output=True, text=True).stdout.strip()
 
 
-def latest_tag(pattern):
+def semver_key(tag):
+    m = re.search(rf"({SEMVER_RE})$", tag)
+    return tuple(int(p) for p in m.group(1).split(".")) if m else (0, 0, 0)
+
+
+def tags_matching(pattern):
+    """Every tag matching `pattern`, newest semver first."""
     tags = [t for t in sh("git", "tag", "--list", pattern).splitlines() if t]
-    if not tags:
+    return sorted(tags, key=semver_key, reverse=True)
+
+
+def latest_tag(pattern):
+    tags = tags_matching(pattern)
+    return tags[0] if tags else None
+
+
+def released_tags(patterns):
+    """Tags that have a published GitHub release, or None when unknown.
+
+    Best effort: this is a local status command and must work offline, so a
+    missing `gh`, no network, or any failure means "unknown" and the caller
+    says nothing rather than guessing.
+    """
+    try:
+        out = subprocess.run(
+            ["gh", "release", "list", "--limit", "100", "--json", "tagName"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        return {r["tagName"] for r in json.loads(out)}
+    except Exception:
         return None
 
-    def key(tag):
-        m = re.search(rf"({SEMVER_RE})$", tag)
-        return tuple(int(p) for p in m.group(1).split(".")) if m else (0, 0, 0)
 
-    return sorted(tags, key=key)[-1]
+def orphan_tag_warning(tag, released):
+    """A tag is proof of an intention, not of a release.
+
+    `gui-v2.18.0` and `gui-v2.18.1` were both tagged and both failed to
+    build, leaving versions nobody can install. Reading the newest tag as
+    "released" then reports a track as up to date against one of those.
+    """
+    if released is None or tag in released:
+        return None
+    return (
+        f"    warning: {tag} is tagged but has no published release — "
+        f"its build may have failed, and this track's baseline may be a "
+        f"version nobody can install"
+    )
 
 
 def messages_since(tag, paths):
@@ -181,6 +222,12 @@ COMMIT_COLOR = {"dev": "2", "mixed": "33"}
 # `crates/demo` inherits the version but sets `publish = false`, so it is
 # deliberately absent: it releases nothing, and listing it would make a change
 # to the browser demo ask for a library bump that publishes no new code.
+# `Cargo.lock` is deliberately absent, though a transitive-only bump does
+# change what every binary links. Listing it here makes every CLI and GUI
+# version bump a library candidate too, because those rewrite the lockfile
+# without touching a line of library code — more noise than the case it
+# catches. Telling those apart needs a rule about what changed inside the
+# lockfile, not a path list.
 LIBRARY_PATHS = [
     "Cargo.toml",
     "crates/common",
@@ -207,11 +254,13 @@ def main():
 
     info = {}
     missing = []
+    released = released_tags([p for _, p, _, _ in TRACKS])
     for name, pattern, paths, cmd in TRACKS:
         tag = latest_tag(pattern)
         if tag is None:
             missing.append(pattern)
             continue
+        orphan = orphan_tag_warning(tag, released)
         subjects = subjects_since(tag, paths)
         shas = commit_shas_since(tag, paths)
         classifications = [classify_commit(sha, paths) for sha in shas]
@@ -222,6 +271,7 @@ def main():
             "count": len(subjects),
             "impactful": any(c != "dev" for c in classifications),
             "signal": signal(messages_since(tag, paths)),
+            "orphan": orphan,
         }
 
     if missing:
@@ -276,6 +326,8 @@ def main():
             else:
                 status = paint("2", "up to date · no changes since tag")
             print(f"{paint('1', name)}  {i['tag']}   {status}")
+            if i["orphan"]:
+                print(paint("33", i["orphan"]))
             print_commits(commits)
             print()
             continue
@@ -283,6 +335,8 @@ def main():
         status = paint("32", "release candidate")
         plural = "" if i["count"] == 1 else "s"
         print(f"{paint('1', name)}  {i['tag']}   {status} · {i['count']} commit{plural} · {reason}")
+        if i["orphan"]:
+            print(paint("33", i["orphan"]))
         print_commits(commits)
         if i["count"] > 0:
             code, text = HINT[i["signal"]]

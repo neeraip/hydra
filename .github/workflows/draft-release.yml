@@ -39,10 +39,30 @@ jobs:
           else
             title="Hydra Library ${GITHUB_REF_NAME}"
           fi
-          gh release create "${{ github.ref_name }}" \
-            --draft \
-            --generate-notes \
-            --title "${title}"
+          # A draft release cannot be fetched by tag — GitHub's by-tag
+          # endpoint serves published releases only — so existence is a
+          # paginated list lookup, the same one the uploads do.
+          exists() {
+            gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+              --jq '.[].tag_name' 2>/dev/null | grep -qx "${GITHUB_REF_NAME}"
+          }
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if exists; then
+              echo "${GITHUB_REF_NAME} already exists; leaving it alone."
+              exit 0
+            fi
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --generate-notes \
+              --title "${title}" && exit 0
+            # Created-then-failed-to-answer looks identical to never-created
+            # from here, so the next round re-checks before trying again.
+            if [ "$attempt" = 8 ]; then
+              echo "gh release create failed after 8 attempts" >&2
+              exit 1
+            fi
+            sleep $(( attempt * 15 ))
+          done
 
   # ── 2. Build the CLI binary for each target and attach it. ───────────────
   cli:
@@ -128,13 +148,16 @@ jobs:
           # matrix uploads to it from four targets at once. `--clobber`
           # is what makes a retry safe — without it, retrying an upload
           # that actually succeeded fails on the existing asset.
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber && exit 0
-            if [ "$attempt" = 5 ]; then
-              echo "gh release upload failed after 5 attempts" >&2
+            if [ "$attempt" = 8 ]; then
+              echo "gh release upload failed after 8 attempts" >&2
               exit 1
             fi
-            sleep $(( 2 ** (attempt - 1) ))
+            # ~15 minutes in total: the 15 seconds this used to spend covered
+            # the listing race and nothing else, so a platform outage took the
+            # release with it.
+            sleep $(( attempt * 15 ))
           done
 
   # ── Library: attach the browser demo as a single portable HTML file. ──────
@@ -198,13 +221,13 @@ jobs:
           cp crates/demo/www/hydra.html "${asset}"
           # Retried like the others: this job races nothing, but a draft
           # lookup or a plain 5xx should not cost the release its demo.
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             gh release upload "${{ github.ref_name }}" "${asset}" --clobber && exit 0
-            if [ "$attempt" = 5 ]; then
-              echo "gh release upload failed after 5 attempts" >&2
+            if [ "$attempt" = 8 ]; then
+              echo "gh release upload failed after 8 attempts" >&2
               exit 1
             fi
-            sleep $(( 2 ** (attempt - 1) ))
+            sleep $(( attempt * 15 ))
           done
 
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
@@ -372,16 +395,82 @@ jobs:
           #
           # Uploading in one call takes that from six lookups per platform
           # to one. The retry covers the rest, and covers a plain 5xx too.
-          for attempt in range(5):
+          for attempt in range(8):
               result = subprocess.run(['gh', 'release', 'upload', tag, *uploads, '--clobber'])
               if result.returncode == 0:
                   break
-              if attempt == 4:
-                  raise SystemExit(f'gh release upload failed after 5 attempts')
-              delay = 2 ** attempt
+              if attempt == 7:
+                  raise SystemExit('gh release upload failed after 8 attempts')
+              # ~15 minutes in total. The old 15 seconds covered the listing
+              # race and nothing else.
+              delay = (attempt + 1) * 15
               print(f'Upload failed; retrying in {delay}s', flush=True)
               time.sleep(delay)
 
           for dst in uploads:
               print(f'Uploaded: {os.path.basename(dst)}', flush=True)
           EOF
+
+  # ── 4. Assert the release carries what its tag promises. ─────────────────
+  #
+  # `fail-fast: false` lets one platform drop out without stopping the others,
+  # which is what you want while building — and meant a release could publish
+  # missing a whole platform with every job green and nothing saying so. The
+  # updater compounds it: a platform with no signature is skipped there too,
+  # so an install simply never sees another update.
+  verify-assets:
+    name: Verify assets
+    needs: [cli, wasm, gui]
+    # `needs` on a skipped job is "successful", so this runs for every tag and
+    # checks whichever set that tag should have produced.
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check every expected artifact is attached
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            cli-v*)
+              version="${tag#cli-v}"
+              expected="hydra-cli-${version}-aarch64-apple-darwin.tar.gz
+          hydra-cli-${version}-aarch64-unknown-linux-gnu.tar.gz
+          hydra-cli-${version}-x86_64-unknown-linux-gnu.tar.gz
+          hydra-cli-${version}-x86_64-pc-windows-msvc.zip" ;;
+            gui-v*)
+              version="${tag#gui-v}"
+              expected="hydra-gui-${version}-aarch64-apple-darwin.dmg
+          hydra-gui-${version}-aarch64-apple-darwin.app.tar.gz
+          hydra-gui-${version}-aarch64-apple-darwin.app.tar.gz.sig
+          hydra-gui-${version}-x86_64-pc-windows-msvc.msi
+          hydra-gui-${version}-x86_64-pc-windows-msvc.msi.sig
+          hydra-gui-${version}-x86_64-pc-windows-msvc.exe
+          hydra-gui-${version}-x86_64-pc-windows-msvc.exe.sig
+          hydra-gui-${version}-x86_64-unknown-linux-gnu.AppImage
+          hydra-gui-${version}-x86_64-unknown-linux-gnu.AppImage.sig
+          hydra-gui-${version}-x86_64-unknown-linux-gnu.deb
+          hydra-gui-${version}-x86_64-unknown-linux-gnu.rpm" ;;
+            v*)
+              expected="hydra-try-${tag#v}.html" ;;
+            *)
+              echo "unrecognised tag ${tag}" >&2; exit 1 ;;
+          esac
+
+          # A draft release is not visible to the by-tag endpoint, so list.
+          actual="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .assets[].name")"
+          echo "attached:"; echo "${actual}" | sed 's/^/  /'
+
+          missing=0
+          while read -r want; do
+            [ -n "$want" ] || continue
+            if ! echo "${actual}" | grep -qx "${want}"; then
+              echo "::error::${tag} is missing ${want}"
+              missing=1
+            fi
+          done <<< "${expected}"
+          [ "$missing" = 0 ] || exit 1
+          echo "All expected artifacts are attached."

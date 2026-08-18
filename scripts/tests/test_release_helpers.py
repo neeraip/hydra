@@ -288,3 +288,47 @@ class TestUpstreamState(unittest.TestCase):
 
     def test_diverged_is_refused(self):
         self.assertEqual(release.upstream_state(2, 3), "diverged")
+
+
+class CiVerdictTests(unittest.TestCase):
+    """A tag is cut from a commit and the release builds from the tag, so a
+    red commit ships whatever was broken. gui-v2.18.0 and gui-v2.18.1 were
+    both tagged over a red main; gui-v2.19.0 was tagged before its own
+    licence check reported and shipped mismatched notices."""
+
+    def test_all_completed_and_successful_is_green(self):
+        runs = [
+            {"name": "Cargo Test", "status": "completed", "conclusion": "success"},
+            {"name": "PNPM Lint", "status": "completed", "conclusion": "success"},
+        ]
+        self.assertEqual(release.ci_verdict(runs), ("green", []))
+
+    def test_a_failure_is_reported_by_name(self):
+        runs = [
+            {"name": "Cargo Test", "status": "completed", "conclusion": "success"},
+            {"name": "Licence Notices", "status": "completed", "conclusion": "failure"},
+        ]
+        verdict, names = release.ci_verdict(runs)
+        self.assertEqual(verdict, "failing")
+        self.assertEqual(names, ["Licence Notices"])
+
+    def test_still_running_is_pending_not_green(self):
+        # The 2.19.0 case: tagged 30 seconds after the push, before the
+        # verdict existed.
+        runs = [
+            {"name": "Cargo Test", "status": "completed", "conclusion": "success"},
+            {"name": "Licence Notices", "status": "in_progress", "conclusion": None},
+        ]
+        verdict, names = release.ci_verdict(runs)
+        self.assertEqual(verdict, "pending")
+        self.assertEqual(names, ["Licence Notices"])
+
+    def test_no_runs_is_unknown_rather_than_a_guess(self):
+        self.assertEqual(release.ci_verdict([]), ("unknown", []))
+
+    def test_failure_outranks_pending(self):
+        runs = [
+            {"name": "A", "status": "completed", "conclusion": "failure"},
+            {"name": "B", "status": "queued", "conclusion": None},
+        ]
+        self.assertEqual(release.ci_verdict(runs)[0], "failing")

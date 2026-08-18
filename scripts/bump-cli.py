@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from _release import commit_and_tag, fail, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
+from _release import commit_and_tag, require_green_ci, fail, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def ensure_sdk_published(cli_toml: pathlib.Path):
@@ -40,6 +40,7 @@ def main():
     args, push_pref = parse_push_pref(sys.argv[1:])
     level = parse_level_arg(args)
     require_clean_main()
+    require_green_ci("--no-verify-ci" in sys.argv[1:])
 
     cli = pathlib.Path("crates/cli/Cargo.toml")
     ensure_sdk_published(cli)
