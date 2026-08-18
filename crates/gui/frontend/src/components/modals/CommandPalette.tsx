@@ -58,49 +58,62 @@ const CATEGORY_ORDER: DisplayCategory[] = [
 
 export interface ElementMatch {
   id: string;
-  kind: "node" | "link";
-  subtype: string;
+  /**
+   * Node or link, which decides how the match is focused.
+   *
+   * The same pair of names `RecreateSpec` uses, and for the same reason:
+   * this field and `kind` answer two questions that used to share the
+   * word "kind" here while meaning the opposite of what it means
+   * everywhere else. This one picked the focus path; the other one is
+   * what the badge, the delete command and the undo stack all call a
+   * kind. The toast read "Focused node J9" as a result, naming the half
+   * of the identity the reader already knew.
+   */
+  elementType: "node" | "link";
+  /** "junction" | "pipe" | "conduit" … */
+  kind: string;
   description: string;
 }
 
-/** Maximum matches returned per element kind in find-element mode. */
-export const FIND_MAX_PER_KIND = 12;
+/** Maximum matches returned per element type (nodes, links) in
+ *  find-element mode. */
+export const FIND_MAX_PER_TYPE = 12;
 
 /**
  * Find-element search: case-insensitive substring match of `findQuery`
  * (expected pre-lowercased and trimmed by the caller) against node/link ids.
  * Early-exit loops instead of full `.filter()` passes: with ~46k nodes/links
- * a full scan per keystroke is wasted work once the first `maxPerKind`
- * matches per kind are found. Nodes are listed before links.
+ * a full scan per keystroke is wasted work once the first `maxPerType`
+ * matches of each are found. Nodes are listed before links.
  */
 export function searchElements(
   allNodes: readonly Node[],
   allLinks: readonly Link[],
   findQuery: string,
-  maxPerKind: number = FIND_MAX_PER_KIND,
+  maxPerType: number = FIND_MAX_PER_TYPE,
   sys: UnitSystem = "si",
 ): ElementMatch[] {
   const matches: ElementMatch[] = [];
   let found = 0;
   for (const n of allNodes) {
-    if (found >= maxPerKind) break;
+    if (found >= maxPerType) break;
     if (!n.id.toLowerCase().includes(findQuery)) continue;
     matches.push({
       id: n.id,
-      kind: "node",
-      subtype: n.type,
+      elementType: "node",
+      kind: n.type,
       description: `(${n.x}, ${n.y})`,
     });
     found += 1;
   }
   found = 0;
   for (const l of allLinks) {
-    if (found >= maxPerKind) break;
+    if (found >= maxPerType) break;
     if (!l.id.toLowerCase().includes(findQuery)) continue;
     matches.push({
       id: l.id,
-      kind: "link",
-      subtype: l.type,
+      elementType: "link",
+      kind: l.type,
       // Diameter only when the engine served one — "⌀0 m" on every
       // attribute-less link read as data.
       description: `${l.fromId} → ${l.toId}${
@@ -1014,7 +1027,7 @@ export function CommandPalette() {
       }
 
       setProjectView("canvas");
-      if (m.kind === "node") {
+      if (m.elementType === "node") {
         setSelectedLinkId(null);
         setSelectedNodeId(m.id);
         setInspectorView("node");
@@ -1025,6 +1038,9 @@ export function CommandPalette() {
         setInspectorView("link");
         zoomToLink(m.id);
       }
+      // The kind, not "node" or "link": an id is unique only within
+      // its kind, so naming the class tells the reader the half they
+      // could already see.
       showToast(`Focused ${m.kind} ${m.id}`, "info");
     },
     [
@@ -1191,7 +1207,7 @@ export function CommandPalette() {
                 return (
                   <button
                     type="button"
-                    key={`${m.kind}-${m.id}`}
+                    key={`${m.elementType}-${m.id}`}
                     onClick={() => executeElement(m)}
                     onMouseEnter={() => setActiveIdx(i)}
                     style={{
@@ -1214,7 +1230,7 @@ export function CommandPalette() {
                         — the list is nothing else — where the badge says
                         which kind, in the same letters every other surface
                         uses. */}
-                    <TypeBadge type={m.subtype} />
+                    <TypeBadge type={m.kind} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
@@ -1232,7 +1248,7 @@ export function CommandPalette() {
                             fontFamily: "var(--font-ui)",
                           }}
                         >
-                          {m.subtype}
+                          {m.kind}
                         </span>
                       </div>
                       <div

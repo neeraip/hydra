@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../../hooks";
-import { FIND_MAX_PER_KIND, searchElements } from "./CommandPalette";
+import { FIND_MAX_PER_TYPE, searchElements } from "./CommandPalette";
 
 function makeNode(id: string, extra: Partial<Node> = {}): Node {
   return {
@@ -40,16 +40,16 @@ describe("searchElements", () => {
 
     const matches = searchElements(nodes, links, "j");
 
-    expect(matches).toHaveLength(2 * FIND_MAX_PER_KIND);
-    expect(matches.filter((m) => m.kind === "node")).toHaveLength(
-      FIND_MAX_PER_KIND,
+    expect(matches).toHaveLength(2 * FIND_MAX_PER_TYPE);
+    expect(matches.filter((m) => m.elementType === "node")).toHaveLength(
+      FIND_MAX_PER_TYPE,
     );
-    expect(matches.filter((m) => m.kind === "link")).toHaveLength(
-      FIND_MAX_PER_KIND,
+    expect(matches.filter((m) => m.elementType === "link")).toHaveLength(
+      FIND_MAX_PER_TYPE,
     );
     // First matches in array order win — no ranking pass.
     expect(matches[0].id).toBe("J0");
-    expect(matches[FIND_MAX_PER_KIND - 1].id).toBe(`J${FIND_MAX_PER_KIND - 1}`);
+    expect(matches[FIND_MAX_PER_TYPE - 1].id).toBe(`J${FIND_MAX_PER_TYPE - 1}`);
   });
 
   it("respects an explicit maxPerKind", () => {
@@ -66,7 +66,7 @@ describe("searchElements", () => {
 
   it("lists node matches before link matches", () => {
     const matches = searchElements([makeNode("X1")], [makeLink("X2")], "x");
-    expect(matches.map((m) => m.kind)).toEqual(["node", "link"]);
+    expect(matches.map((m) => m.elementType)).toEqual(["node", "link"]);
   });
 
   it("matches element ids case-insensitively against a lowercased query", () => {
@@ -94,7 +94,7 @@ describe("searchElements", () => {
    * The description no longer repeats the element's type: the row renders
    * that as a badge and a name of its own, and saying it a third time in
    * the description crowded out the coordinates and endpoints the line
-   * exists to show. `subtype` still carries it — the row needs the kind,
+   * exists to show. `kind` still carries it — the row needs the kind,
    * just not spelled into prose.
    */
   it("builds the documented description strings", () => {
@@ -105,15 +105,34 @@ describe("searchElements", () => {
     );
     expect(matches[0]).toEqual({
       id: "J1",
-      kind: "node",
-      subtype: "tank",
+      elementType: "node",
+      kind: "tank",
       description: "(3, 4)",
     });
     expect(matches[1]).toEqual({
       id: "P1",
-      kind: "link",
-      subtype: "valve",
+      elementType: "link",
+      kind: "valve",
       description: "A → B · ⌀80 mm",
     });
+  });
+
+  /**
+   * These two answer different questions and have to be free to differ.
+   * One word used to do both jobs here, and it meant the opposite of what
+   * it means in the rest of the app: `kind` picked the focus path while
+   * the badge read from `subtype`. The toast paid for it, reporting
+   * "Focused node J9" where the reader wanted the kind.
+   */
+  it("keeps how an element is focused separate from what it is", () => {
+    const matches = searchElements(
+      [makeNode("X1", { type: "tank" }), makeNode("X2", { type: "reservoir" })],
+      [makeLink("X3", { type: "pump" })],
+      "x",
+    );
+    // One focus path, three kinds: the two nodes agree on elementType and
+    // disagree on kind, and the link disagrees on both.
+    expect(matches.map((m) => m.elementType)).toEqual(["node", "node", "link"]);
+    expect(matches.map((m) => m.kind)).toEqual(["tank", "reservoir", "pump"]);
   });
 });
