@@ -24,8 +24,17 @@ COMMANDS = ROOT / "crates" / "gui" / "src" / "commands"
 
 DISPATCH = re.compile(r"project_engine_key\([^;]*?\)\s*\.as_str\(\)\s*\{")
 # A local already read from `project_engine_key`, matched on further down.
-BOUND = re.compile(r"let\s+engine\s*=[^;]*?project_engine_key")
+# Either the shared helper, or the metadata field it reads: the project
+# loader took the second route, so the first pattern alone missed the one
+# dispatch that decides which parser sees the model at all.
+BOUND = re.compile(r"let\s+engine\s*=[^;]*?(?:project_engine_key|\.engine\b|m\.engine)")
 LOCAL_DISPATCH = re.compile(r"match\s+engine(?:\.as_str\(\))?\s*\{")
+FN_START = re.compile(r"^(?:pub(?:\(crate\))? )?(?:async )?fn ", re.M)
+# An engine key branched on with `if` rather than matched. The compiler
+# cannot call it inexhaustive, so the untested engine is whatever the
+# `else` happens to do: the project loader read "not uds" as "wds" and
+# handed a model from an engine this build lacks to the water parser.
+IF_DISPATCH = re.compile(r"if\s+engine(?:\.as_str\(\))?\s*[!=]=\s*\"")
 
 # Dispatches on an engine key the *caller* supplied, rather than one read
 # from a project, are catalog lookups: `list_element_kinds` asked for a
@@ -58,7 +67,10 @@ def dispatches() -> list[tuple[pathlib.Path, int, str]]:
         starts = [m.end() for m in DISPATCH.finditer(text)]
         for m in LOCAL_DISPATCH.finditer(text):
             bound = [b.end() for b in BOUND.finditer(text) if b.end() < m.start()]
-            if bound and text.count("\nfn ", bound[-1], m.start()) == 0:
+            # The binding only reaches this match if no other item begins in
+            # between. Counting `\nfn ` alone missed `pub fn`, so a match in a
+            # much later function looked like it used a much earlier binding.
+            if bound and not FN_START.search(text, bound[-1], m.start()):
                 starts.append(m.end())
         for start in sorted(starts):
             body, _end = match_block(text, start)
@@ -113,7 +125,9 @@ class EngineDispatchTests(unittest.TestCase):
     def test_every_dispatch_names_both_engines(self):
         offences = []
         for path, line, body in dispatches():
-            arms = set(top_level_arms(body))
+            # An or-pattern names each of its engines: `"uds" | "wds"` is two
+            # answers written once, not one answer covering both.
+            arms = {a.strip() for arm in top_level_arms(body) for a in arm.split("|")}
             if not {'"wds"', '"uds"'} <= arms:
                 offences.append(f"{path.relative_to(ROOT)}:{line}: {sorted(arms)}")
         self.assertEqual(
@@ -137,6 +151,24 @@ class EngineDispatchTests(unittest.TestCase):
                 s.read_text(),
                 f"{s.name} words this refusal for itself; call unknown_engine",
             )
+
+    def test_no_engine_key_is_branched_on_with_an_if(self):
+        offences = []
+        for path in sorted(COMMANDS.glob("*.rs")):
+            text = path.read_text()
+            cut = text.find("#[cfg(test)]")
+            if cut >= 0:
+                text = text[:cut]
+            for m in IF_DISPATCH.finditer(text):
+                line = text[: m.start()].count("\n") + 1
+                offences.append(f"{path.relative_to(ROOT)}:{line}")
+        self.assertEqual(
+            [],
+            offences,
+            "an `if` on the engine key leaves the other engines to the "
+            "`else` branch, which the compiler cannot check; match on it "
+            "so a new engine is a compile error rather than a wrong answer",
+        )
 
     def test_the_scan_finds_the_dispatches_that_exist(self):
         # A regex that stopped matching would pass every assertion above.

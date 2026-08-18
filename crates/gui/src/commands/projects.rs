@@ -2433,27 +2433,36 @@ pub fn load_project_network(
     let engine = meta::read_project_meta(&project_dir)
         .map(|m| m.engine)
         .unwrap_or_else(|_| "wds".to_string());
-    if engine == "uds" {
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let (network, diags) = hydra::uds::io::objects::parse_network(&text);
-        if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
-            return Err(format!("Cannot open this model: {first}"));
+    // An engine this build does not have must not reach the water reader:
+    // "not uds" meant "wds" here, so a project written by a later Hydra was
+    // parsed as EPANET, and whether that produced a wrong model or a
+    // confusing parse error depended entirely on what the other engine's
+    // format happened to look like.
+    match engine.as_str() {
+        "uds" => {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+            if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+                return Err(format!("Cannot open this model: {first}"));
+            }
+            let view = super::uds_view::build_view(&network);
+            // Same outline for the home page as the distribution path draws,
+            // from the viewer's own geometry rather than a network DTO.
+            super::sketch::refresh_uds(&app_data, &project_id, &view);
+            let encoded = super::uds_view::encode_uds_snapshot(&view);
+            *state.0.lock() = NetworkStateInner::LoadedUds {
+                dirty: false,
+                raw_text: text,
+                network: std::sync::Arc::new(network),
+                // Project-owned: aux files live on disk in base/aux/.
+                aux_files: Vec::new(),
+                owner_project_id: Some(project_id.clone()),
+                owner_scenario_id: scenario_id.clone(),
+            };
+            return Ok(tauri::ipc::Response::new(encoded));
         }
-        let view = super::uds_view::build_view(&network);
-        // Same outline for the home page as the distribution path draws,
-        // from the viewer's own geometry rather than a network DTO.
-        super::sketch::refresh_uds(&app_data, &project_id, &view);
-        let encoded = super::uds_view::encode_uds_snapshot(&view);
-        *state.0.lock() = NetworkStateInner::LoadedUds {
-            dirty: false,
-            raw_text: text,
-            network: std::sync::Arc::new(network),
-            // Project-owned: aux files live on disk in base/aux/.
-            aux_files: Vec::new(),
-            owner_project_id: Some(project_id.clone()),
-            owner_scenario_id: scenario_id.clone(),
-        };
-        return Ok(tauri::ipc::Response::new(encoded));
+        "wds" => {}
+        other => return Err(unknown_engine(other)),
     }
 
     // Tolerant (model spec §4.1.2): a network under construction is not
