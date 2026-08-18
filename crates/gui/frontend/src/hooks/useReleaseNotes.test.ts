@@ -103,6 +103,31 @@ describe("stripHtmlComments", () => {
   it("leaves comment-free bodies untouched apart from trimming", () => {
     expect(stripHtmlComments("  ## Notes\n- item  ")).toBe("## Notes\n- item");
   });
+
+  // An unterminated comment used to survive both this function and the
+  // renderer: CommonMark runs an unclosed comment to the end of the
+  // document, so react-markdown dropped every line after it and the notes
+  // came out blank. MarkdownBody.test.tsx holds the rendering half.
+  it("removes an unterminated comment, keeping nothing after it hostage", () => {
+    expect(stripHtmlComments("<!-- oops\n\n## Notes\n- item")).toBe(
+      "## Notes\n- item",
+    );
+    expect(stripHtmlComments("## Notes\n\n<!-- trailing note")).toBe(
+      "## Notes",
+    );
+  });
+
+  it("never leaves an opening token behind", () => {
+    for (const body of [
+      "<!-- oops",
+      "<!--",
+      "text <!-- dangling",
+      "<!-- closed --> then <!-- dangling",
+      "<!--<!---->-->",
+    ]) {
+      expect(stripHtmlComments(body)).not.toContain("<!--");
+    }
+  });
 });
 
 describe("stripChangelogLines", () => {

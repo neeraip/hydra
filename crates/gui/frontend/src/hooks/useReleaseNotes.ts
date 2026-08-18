@@ -80,9 +80,29 @@ export function compareSemver(a: string, b: string): number {
 /** Strip HTML comments (GitHub prepends a generated release-notes preamble
  * like `<!-- Release notes generated using … -->`) and trim. Applied at the
  * data boundary so emptiness checks ("body is only a comment") and both
- * render sites see clean markdown. */
+ * render sites see clean markdown.
+ *
+ * An unterminated `<!--` loses its own line, and that second pass is not
+ * tidiness. CommonMark runs an unclosed comment to the end of the document,
+ * so the renderer discards *every* line after it: one stray token in a
+ * release body blanks the notes with no error. The first pass cannot help,
+ * because it only matches a closed pair.
+ *
+ * The line, not the remainder. Deleting to end-of-input would honour
+ * CommonMark and still leave the reader with nothing, which is the outcome
+ * being fixed. If the author really did mean a multi-line comment and forgot
+ * to close it, its later lines show up as prose: visible junk beats
+ * invisible deletion, the same call `stripChangelogLines` makes below.
+ *
+ * It also answers CodeQL js/incomplete-multi-character-sanitization, which
+ * flagged the leftover `<!--` as an HTML injection. It is not one here (the
+ * sink renders markdown with raw HTML disabled, so injected markup is
+ * dropped rather than built), but the residue was a real defect regardless. */
 export function stripHtmlComments(markdown: string): string {
-  return markdown.replace(/<!--[\s\S]*?-->/g, "").trim();
+  return markdown
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<!--.*$/gm, "")
+    .trim();
 }
 
 /** Strip every line that is ENTIRELY a "Full Changelog: <url>" plumbing
