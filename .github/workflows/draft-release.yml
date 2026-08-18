@@ -75,7 +75,7 @@ jobs:
           target: ${{ matrix.target }}
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           # Release runs execute on tag refs. Caches saved under a tag ref can
           # never be restored by any later run (each release is a new tag), so
@@ -168,7 +168,7 @@ jobs:
           target: wasm32-unknown-unknown
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           # Same policy as the CLI job above: restore from main, never save
           # under a tag ref nothing can restore from.
@@ -263,7 +263,7 @@ jobs:
           target: ${{ matrix.target }}
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           # Release runs execute on tag refs. Caches saved under a tag ref can
           # never be restored by any later run (each release is a new tag), so
