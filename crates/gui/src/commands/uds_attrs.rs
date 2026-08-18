@@ -510,7 +510,7 @@ pub fn get_kind_elements(
                     super::wds_attrs::kind_elements(net, &kind)
                 }))
         }
-        _ => Ok(KindElementsDto::empty()),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -601,7 +601,7 @@ pub fn get_collection_detail(
                     super::wds_attrs::collection_detail(net, &kind, &id)
                 }))
         }
-        _ => Ok(CollectionDetailDto::default()),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -874,7 +874,7 @@ pub fn get_kind_counts(
                 .wds_network()
                 .map_or_else(HashMap::new, super::wds_attrs::kind_counts))
         }
-        _ => Ok(HashMap::new()),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

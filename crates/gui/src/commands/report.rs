@@ -27,12 +27,11 @@ pub fn list_report_blocks(
     // other project-scoped command does.
     super::projects::validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
-    Ok(
-        match super::projects::project_engine_key(&app_data, &project_id).as_str() {
-            "uds" => hydra::uds::report_blocks::report_catalog(),
-            _ => hydra::report_catalog(),
-        },
-    )
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => Ok(hydra::uds::report_blocks::report_catalog()),
+        "wds" => Ok(hydra::report_catalog()),
+        other => Err(super::projects::unknown_engine(other)),
+    }
 }
 
 /// Whether one block can be produced for a target, and why not when it cannot.
@@ -98,7 +97,7 @@ pub fn probe_report_blocks(
                 })
                 .collect())
         }
-        _ => {
+        "wds" => {
             let network =
                 network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             Ok(hydra::report_catalog()
@@ -115,6 +114,7 @@ pub fn probe_report_blocks(
                 })
                 .collect())
         }
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -150,11 +150,12 @@ pub fn get_report_block_options(
                 &block_id, &network,
             ))
         }
-        _ => {
+        "wds" => {
             let network =
                 network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             Ok(hydra::report_block_options(&block_id, &network))
         }
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -190,7 +191,8 @@ pub fn get_criteria_catalog(
                 hydra::uds::report_blocks::criteria_catalog(),
                 hydra::uds::descriptors::QUANTITIES,
             ),
-            _ => (hydra::criteria_catalog(), hydra::descriptors::QUANTITIES),
+            "wds" => (hydra::criteria_catalog(), hydra::descriptors::QUANTITIES),
+            other => return Err(super::projects::unknown_engine(other)),
         };
     Ok(catalog
         .iter()
@@ -224,7 +226,8 @@ fn saved_valuation(
     let dir = bundle::project_dir(app_data, project_id);
     match engine {
         "uds" => meta::read_criteria_valuation(&dir, "uds"),
-        _ => meta::read_project_criteria(&dir).map(|c| wds_valuation_of(&c)),
+        "wds" => meta::read_project_criteria(&dir).map(|c| wds_valuation_of(&c)),
+        _ => None,
     }
 }
 
@@ -383,7 +386,7 @@ pub fn get_analysis_blocks(
                 })
                 .collect())
         }
-        _ => {
+        "wds" => {
             let network =
                 network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             let settings = hydra::report::DisplaySettings {
@@ -418,6 +421,7 @@ pub fn get_analysis_blocks(
                 })
                 .collect())
         }
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -628,9 +632,10 @@ fn render_for_target(
         "uds" => {
             hydra::uds::io::out_reader::read_metadata(&out_path)?;
         }
-        _ => {
+        "wds" => {
             hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
         }
+        other => return Err(super::projects::unknown_engine(other)),
     }
 
     let project_name = meta::read_project_meta(&bundle::project_dir(&app_data, project_id))
@@ -685,7 +690,7 @@ fn render_for_target(
                 },
             )
         }
-        _ => {
+        "wds" => {
             let network = network_for_target(&app_data, state, project_id, scenario_id)?;
             let criteria_options = match saved_valuation(&app_data, project_id, "wds") {
                 Some(v) => hydra::criteria_block_options(&v, &network)?,
@@ -707,6 +712,7 @@ fn render_for_target(
                 },
             )
         }
+        other => return Err(super::projects::unknown_engine(other)),
     };
     Ok(match format {
         "txt" => render_txt(&document),

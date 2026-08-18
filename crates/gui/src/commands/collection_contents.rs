@@ -49,7 +49,7 @@ pub fn set_collection_contents(
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             set_wds_contents(network, &kind, &element_id, &rows)
         }),
-        other => Err(format!("no editing surface for engine '{other}'")),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

@@ -40,7 +40,7 @@ pub fn set_element_ends(
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             set_wds_ends(network, &element_id, &from_id, &to_id)
         }),
-        other => Err(format!("no editing surface for engine '{other}'")),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

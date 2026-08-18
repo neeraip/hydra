@@ -160,6 +160,19 @@ pub(crate) fn project_engine_key(app_data: &std::path::Path, project_id: &str) -
         .unwrap_or_else(|_| "wds".to_string())
 }
 
+/// The refusal for a project whose engine this build does not have.
+///
+/// A project's engine key is written into its own metadata, so a build
+/// older than the project that wrote it meets a key it has never heard
+/// of. The write paths have always refused that outright. The reads used
+/// to answer it with an empty model, which is indistinguishable from a
+/// project someone emptied: the network list showed nothing, the
+/// inspector found no element, and the only thing the user could
+/// conclude was that their model had been lost.
+pub(crate) fn unknown_engine(key: &str) -> String {
+    format!("this project's engine ('{key}') is not in this build of Hydra")
+}
+
 /// Whether a project for this engine can begin with nothing imported.
 ///
 /// Mirrored on the frontend as the engine registry's `hasStarterModel`,
@@ -580,7 +593,7 @@ pub fn get_model_unit_system(
             )?;
             si(!network.options.flow_units.is_us())
         }
-        _ => Ok(None),
+        other => Err(unknown_engine(other)),
     }
 }
 

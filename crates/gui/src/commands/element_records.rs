@@ -144,7 +144,7 @@ pub fn get_element_records(
                 wds_records(net, kind.as_deref(), &element_id)
             }))
         }
-        _ => Ok(Vec::new()),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -177,7 +177,7 @@ pub fn set_element_records(
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             set_wds_records(network, kind.as_deref(), &element_id, &set, &rows)
         }),
-        other => Err(format!("no editing surface for engine '{other}'")),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

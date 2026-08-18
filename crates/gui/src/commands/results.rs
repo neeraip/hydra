@@ -315,7 +315,11 @@ pub fn load_result_meta(
                 generic_periods: true,
             }));
         }
-        _ => return Ok(None),
+        // `None` above means there are no results yet, which is the normal
+        // state of a fresh project. An engine this build does not have is
+        // a different answer and says so, rather than presenting a model
+        // it cannot read as one nobody has run.
+        other => return Err(super::projects::unknown_engine(other)),
     }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
@@ -728,7 +732,7 @@ pub fn get_element_series(
                 uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             super::uds_results::element_series(&out_path, &network, &kind, index as usize)
         }
-        _ => Ok(None),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

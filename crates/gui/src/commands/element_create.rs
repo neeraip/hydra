@@ -55,7 +55,7 @@ fn creatable_class(engine: &str, kind: &str) -> Result<ElementClass, String> {
     let catalog: &[hydra::common::ElementKind] = match engine {
         "wds" => hydra::descriptors::ELEMENT_KINDS,
         "uds" => hydra::uds::descriptors::ELEMENT_KINDS,
-        other => return Err(format!("no editing surface for engine '{other}'")),
+        other => return Err(super::projects::unknown_engine(other)),
     };
     let descriptor = catalog
         .iter()
@@ -131,7 +131,7 @@ pub fn create_element(
             *network = draft;
             Ok(())
         }),
-        other => Err(format!("no editing surface for engine '{other}'")),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 

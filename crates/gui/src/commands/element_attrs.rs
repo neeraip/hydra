@@ -153,7 +153,7 @@ pub fn get_element_details(
                 &element_id,
             ))
         }
-        _ => Ok(None),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
 
@@ -200,6 +200,6 @@ pub fn set_element_attribute(
         "wds" => super::mutations::mutate_wds(&app, &state, |network| {
             super::wds_attrs::set_attribute(network, kind.as_deref(), &element_id, &key, &value)
         }),
-        other => Err(format!("no editing surface for engine '{other}'")),
+        other => Err(super::projects::unknown_engine(other)),
     }
 }
