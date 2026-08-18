@@ -4,8 +4,8 @@ Hydra is free and open-source software published under the
 [GNU Affero General Public License v3.0](LICENSE) (AGPL v3). The AGPL v3 requires
 that any product incorporating Hydra must also be released under AGPL v3.
 
-If you wish to use Hydra in a proprietary or closed-source product — or in any
-context where you cannot comply with the AGPL v3 — a commercial license is
+If you wish to use Hydra in a proprietary or closed-source product, or in any
+context where you cannot comply with the AGPL v3, a commercial license is
 available from NEER AI.
 
 ---
@@ -14,7 +14,7 @@ available from NEER AI.
 
 Most people do not. The AGPL asks something of you only when you **distribute
 Hydra's code inside your own work**, or **serve a modified Hydra over a network**.
-Using it — however much of it, however commercially — asks nothing.
+Using it, however much of it and however commercially, asks nothing.
 
 **No commercial license needed:**
 
@@ -32,8 +32,8 @@ Using it — however much of it, however commercially — asks nothing.
 
 **Commercial license needed:**
 
-- Shipping a product that links Hydra's crates — a desktop application, a plugin,
-  an appliance — without releasing that product's source under AGPL v3.
+- Shipping a product that links Hydra's crates (a desktop application, a plugin,
+  an appliance) without releasing that product's source under AGPL v3.
 - Running a hosted or subscription service built on a modified Hydra, where you
   cannot publish the modified source to the people using it.
 - Embedding Hydra in software you distribute to customers under terms of your own.
@@ -41,7 +41,7 @@ Using it — however much of it, however commercially — asks nothing.
 The line is distribution and network service, not money. A consultancy earning fees
 with Hydra needs nothing; a vendor shipping Hydra inside a closed product does.
 
-If your case sits between these, [ask](mailto:matthew@neer.ai) — the answer is
+If your case sits between these, [ask](mailto:matthew@neer.ai). The answer is
 usually short, and we would rather give it than have you guess.
 
 ---
@@ -77,7 +77,7 @@ The commercial license does not grant the licensee the right to:
 All commercial licensees must include the following notice in a location visible to
 end users of the product (e.g. an "About" screen, credits page, or equivalent):
 
-> Powered by [Hydra](https://github.com/neeraip/hydra) — © NEER AI
+> Powered by [Hydra](https://github.com/neeraip/hydra), © NEER AI
 
 The exact placement and styling may be agreed upon in the Order Form, but the notice
 must be present and reasonably visible.

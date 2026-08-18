@@ -66,8 +66,8 @@ pub const EXAMPLES: &[Example] = &[
         // bundled example as a broken example.
         note: Some(
             "Several short channels in this model would Courant-limit the run, \
-             which the engine reports as it goes. The warnings are expected — \
-             the same ones appear at a terminal.",
+             which the engine reports as it goes. The warnings are expected. The \
+             same ones appear at a terminal.",
         ),
         description: "A drainage network routed by dynamic wave with Horton \
                       infiltration, over a day and a half.",

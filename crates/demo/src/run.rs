@@ -386,7 +386,7 @@ fn resolve_engine(
         // Only ambiguity is worth suggesting an engine for — naming one is
         // exactly the evidence routing lacked.
         let message = if matches!(e, hydra::engines::RouteError::Ambiguous { .. }) {
-            format!("{e} — choose one explicitly")
+            format!("{e}. Choose one explicitly")
         } else {
             e.to_string()
         };
@@ -480,8 +480,8 @@ fn open_uds(
                 pending.push(Diagnostic::warning(
                     "input/notice",
                     format!(
-                        "the model declares a climate file ({name:?}) that was not supplied — \
-                         temperature-driven processes run without it"
+                        "the model declares a climate file ({name:?}) that was not supplied, \
+                         so temperature-driven processes run without it"
                     ),
                 ));
                 Vec::new()
@@ -551,7 +551,7 @@ fn open_uds(
     if iface.outflows.is_some() {
         pending.push(Diagnostic::warning(
             "input/unsupported",
-            "routing-outflow files cannot be saved in a browser — ignored",
+            "routing-outflow files cannot be saved in a browser, so this one is ignored",
         ));
     }
 
@@ -566,8 +566,8 @@ fn open_uds(
             None => pending.push(Diagnostic::warning(
                 "input/notice",
                 format!(
-                    "the model declares a hotstart file ({name:?}) that was not supplied — \
-                     the run starts from the model's initial state"
+                    "the model declares a hotstart file ({name:?}) that was not supplied, \
+                     so the run starts from the model's initial state"
                 ),
             )),
         }
@@ -585,7 +585,7 @@ fn open_uds(
                 "input/notice",
                 format!(
                     "the model declares a routing inflows file ({name:?}) that was not \
-                     supplied — those boundary inflows are zero"
+                     supplied, so those boundary inflows are zero"
                 ),
             )),
         }
