@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootOverride } from "./bootOverride";
+import { bootOverride, launchSession } from "./bootOverride";
 
 describe("bootOverride", () => {
   it("is inert outside dev builds, whatever the environment says", () => {
@@ -45,5 +45,64 @@ describe("bootOverride", () => {
         }),
       ).toEqual({ projectId: "p", view: null });
     }
+  });
+});
+
+describe("launchSession", () => {
+  const noStoredView = () => null;
+
+  it("opens the stored project and lets the session be remembered", () => {
+    expect(launchSession(null, "p1", noStoredView)).toEqual({
+      projectId: "p1",
+      view: "canvas",
+      remember: true,
+    });
+  });
+
+  it("lands on Home with nothing stored, and still allows remembering", () => {
+    // `remember` is about whether writes are permitted, not about
+    // whether there is anything to write yet: opening a project during
+    // this session has to be stored.
+    expect(launchSession(null, null, noStoredView)).toEqual({
+      projectId: null,
+      view: "canvas",
+      remember: true,
+    });
+  });
+
+  it("prefers the project's own stored view", () => {
+    expect(launchSession(null, "p1", () => "analysis").view).toBe("analysis");
+  });
+
+  it("opens the staged project and refuses to remember it", () => {
+    // The whole point of the override: it borrows the real profile, so
+    // the session already in it must survive the run.
+    expect(
+      launchSession(
+        { projectId: "staged", view: "overview" },
+        "p1",
+        noStoredView,
+      ),
+    ).toEqual({ projectId: "staged", view: "overview", remember: false });
+  });
+
+  it("takes the staged project's stored view when the override names none", () => {
+    expect(
+      launchSession({ projectId: "staged", view: null }, "p1", (id) =>
+        id === "staged" ? "editor" : "canvas",
+      ),
+    ).toEqual({ projectId: "staged", view: "editor", remember: false });
+  });
+
+  it("never opens the stored project when an override is present", () => {
+    // Two questions, one answer each: what is on screen is the staged
+    // project, what may be written is nothing.
+    const launch = launchSession(
+      { projectId: "staged", view: null },
+      "the-real-session",
+      noStoredView,
+    );
+    expect(launch.projectId).toBe("staged");
+    expect(launch.remember).toBe(false);
   });
 });

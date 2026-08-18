@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { bootOverride } from "./bootOverride";
+import { bootOverride, launchSession } from "./bootOverride";
 import {
   type EngineInfo,
   engineByKey,
@@ -328,6 +328,20 @@ function restoreProjectId(): string | null {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Decided once, and read by three places that must agree: the initial
+  // state, the effect that remembers the open project, and the effect
+  // that checks the reopened one still exists. They disagreed before,
+  // and the third worked only because the second had run first.
+  const launch = useMemo(
+    () =>
+      launchSession(
+        bootOverride(import.meta.env),
+        restoreProjectId(),
+        readProjectView,
+      ),
+    [],
+  );
+
   const [s, setS] = useState<AppState>(() => {
     const base: AppState = {
       page: "home",
@@ -371,13 +385,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // network-load effect keys on activeProjectId, so seeding it here loads
     // the model automatically; a deleted project falls back to Home via the
     // validation effect below. In dev builds the screenshot driver's boot
-    // override (bootOverride.ts) takes precedence over the stored session,
-    // without writing to it: a staged launch must not become the session
-    // the next real launch restores.
-    const boot = bootOverride(import.meta.env);
-    const restoreId = boot ? boot.projectId : restoreProjectId();
+    // override takes precedence, and `launch.remember` is what keeps a
+    // staged launch from becoming the session the next real launch reopens.
+    const restoreId = launch.projectId;
     if (!restoreId) return base;
-    const projectView = boot?.view ?? readProjectView(restoreId) ?? "canvas";
+    const projectView = launch.view;
     return {
       ...base,
       page: "project",
@@ -414,12 +426,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mistaken for a departure — not because this condition enumerates the
   // exceptions correctly, but because there are none to enumerate.
   useEffect(() => {
+    // A staged launch writes nothing at all, neither the set nor the
+    // remove: the screenshot driver borrows the real profile, and the
+    // session it finds there has to survive the run untouched.
+    if (!launch.remember) return;
     if (s.page === "project" && s.activeProjectId) {
       localStorage.setItem(STORAGE_LAST_PROJECT, s.activeProjectId);
     } else if (s.page !== "project") {
       localStorage.removeItem(STORAGE_LAST_PROJECT);
     }
-  }, [s.page, s.activeProjectId]);
+  }, [s.page, s.activeProjectId, launch.remember]);
 
   useEffect(() => {
     const resolved =
@@ -762,15 +778,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // project, verify it still exists once the project list resolves and drop
   // back to Home if it was deleted since the last session. One-shot.
   useEffect(() => {
-    const id = restoreProjectId();
+    // The project this launch actually opened, not whatever localStorage
+    // holds now. Reading storage here meant validating the stored id
+    // rather than the open one, which happened to agree only because the
+    // effect above had already written it.
+    const id = launch.projectId;
     if (!id) return;
     return fetchInto(fetchProjectsShared(), (rows) => {
       if (rows !== null && !rows.some((p) => p.id === id)) {
-        localStorage.removeItem(STORAGE_LAST_PROJECT);
+        if (launch.remember) localStorage.removeItem(STORAGE_LAST_PROJECT);
         setPage("projects");
       }
     });
-  }, [setPage]);
+  }, [setPage, launch.projectId, launch.remember]);
 
   const createProject = useCallback(
     (p: Project) => {
