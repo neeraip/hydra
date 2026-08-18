@@ -12,6 +12,19 @@ name: Licence Notices
 # A bump that changes what the app links will fail this. The fix is
 # `just licenses` and committing the result, which is a real part of the
 # change rather than an afterthought.
+#
+# Dependabot cannot run that command, so every bump of a shipped dependency
+# arrived incomplete and failed here — which is how gui-v2.19.0 came to ship
+# notices that do not match its dependencies. On a Dependabot pull request
+# this job therefore regenerates the file and pushes it onto the branch
+# instead of failing, so the bump completes itself.
+#
+# That push needs a token whose pushes re-trigger CI: GITHUB_TOKEN's do not,
+# so the branch would land a new head commit with no check runs and auto-merge
+# would wait forever. Store a fine-grained PAT with `contents: write` on this
+# repository as the Dependabot secret LICENSES_BOT_TOKEN (Settings → Secrets
+# and variables → Dependabot). Without it this job fails exactly as it does
+# today and says what to do, so nothing is worse than before it existed.
 
 on:
   push:
@@ -31,7 +44,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   notices:
@@ -47,6 +60,10 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
+          # The branch, not the merge ref, so a regenerated file can be
+          # pushed back onto the pull request.
+          ref: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' && github.head_ref || '' }}
+          token: ${{ secrets.LICENSES_BOT_TOKEN || secrets.GITHUB_TOKEN }}
 
       # The script walks both dependency graphs and reads the licence text
       # out of each package, so both toolchains and both sets of fetched
@@ -80,8 +97,36 @@ jobs:
           cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts: the generator reads package metadata and licence
+        # text, so no lifecycle script needs to run, and this job holds a
+        # token that can write to the repository.
+        run: pnpm install --frozen-lockfile --ignore-scripts
         working-directory: crates/gui/frontend
 
       - name: Check the notices match the dependencies
+        id: check
+        # A Dependabot bump is expected to move these, and the step below
+        # completes it. Every other pull request fails here.
+        continue-on-error: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' }}
         run: python3 scripts/licenses.py --check
+
+      - name: Complete the bump with regenerated notices
+        if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' && steps.check.outcome == 'failure' }}
+        env:
+          HAS_TOKEN: ${{ secrets.LICENSES_BOT_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::The notices are out of date and no LICENSES_BOT_TOKEN is set, so they cannot be pushed. Run 'just licenses' and commit the result, or add the token (see this workflow's header)."
+            exit 1
+          fi
+          python3 scripts/licenses.py
+          if git diff --quiet -- crates/gui/resources/third-party-licenses.json; then
+            echo "::error::--check reported drift but regenerating changed nothing. The generator may be non-deterministic on this runner."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/gui/resources/third-party-licenses.json
+          git commit -m "chore(gui): regenerate third-party licenses for this bump"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+          echo "Pushed regenerated notices onto ${GITHUB_HEAD_REF}." >> "$GITHUB_STEP_SUMMARY"
