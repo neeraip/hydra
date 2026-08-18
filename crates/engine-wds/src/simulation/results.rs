@@ -177,11 +177,20 @@ impl Simulation {
                 }
             }
             LinkQuantity::FrictionFactor => {
-                // Only meaningful for DW; return 0 for other formulae or non-pipes.
-                use crate::HeadLossFormula;
-                if network.options.head_loss_formula != HeadLossFormula::DarcyWeisbach {
-                    return Ok(0.0);
-                }
+                // Every pipe, whatever head-loss formula ran (§8.2). The
+                // quantity is back-computed from the head loss the solve
+                // actually produced, so under Hazen-Williams or Chezy-Manning
+                // it reports the equivalent Darcy-Weisbach factor that would
+                // reproduce the observed loss.
+                //
+                // This used to return 0 unless the formula was Darcy-Weisbach,
+                // and Hazen-Williams is the default, so the column was zero
+                // for most models. EPANET has no such gate: `output.c`'s
+                // FRICTION case tests only `Type <= PIPE` and
+                // `ABS(flow) > TINY` before applying the same inversion, and
+                // this is a file format we call EPANET-compatible. Zero
+                // belongs to non-pipes and negligible flow, where the
+                // inversion is undefined, not to formulas.
                 if let LinkKind::Pipe(pipe) = &link.kind {
                     let from_node_index = link.base.from_idx();
                     let to_node_index = link.base.to_idx();

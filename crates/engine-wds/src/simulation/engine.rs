@@ -546,17 +546,32 @@ mod tests {
         assert!(flow >= 0.0, "flow = {flow}");
     }
 
+    /// §8.2: friction factor is produced for every pipe whatever head-loss
+    /// formula ran, back-computed from the loss the solve actually produced.
+    /// It returned 0 for anything but Darcy-Weisbach, and Hazen-Williams is
+    /// the default, so the column was zero for most models — in a file format
+    /// called EPANET-compatible, whose own `output.c` gates the same
+    /// inversion on `Type <= PIPE && ABS(flow) > TINY` and nothing else.
     #[test]
-    fn friction_factor_zero_for_non_darcy_weisbach() {
+    fn friction_factor_is_produced_under_hazen_williams() {
         let mut sess = Simulation::create();
-        sess.load(simple_network()).expect("load failed");
+        let network = simple_network();
+        assert_eq!(
+            network.options.head_loss_formula,
+            HeadLossFormula::HazenWilliams,
+            "this fixture is the default-formula case"
+        );
+        sess.load(network).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
         let snap_t = sess.hyd_snapshots[0].t;
-        let friction_factor = sess
+        let f = sess
             .get_link_result("P1", LinkQuantity::FrictionFactor, snap_t)
             .expect("get_link_result failed");
 
-        assert_eq!(friction_factor, 0.0);
+        assert!(f > 0.0, "friction factor should be reported, got {f}");
+        // Plausible for turbulent flow in a pipe; the point is that it is a
+        // real inversion of the observed loss, not a placeholder.
+        assert!(f < 1.0, "friction factor implausibly large: {f}");
     }
 
     #[test]
