@@ -1,0 +1,128 @@
+name: Release Rehearsal
+
+# Nothing outside a real release ever builds the app the way a release does.
+# `just ci` builds the frontend and runs the workspace in the dev profile; the
+# release profile's fat LTO, the embedded frontend, the regenerated CRS
+# catalog and the bundler only meet each other when a tag is pushed, which is
+# the worst moment to learn they disagree.
+#
+# gui-v2.18.0 and gui-v2.18.1 were both tagged and both failed here: a
+# dependency sweep had removed the package the CRS catalog is generated from,
+# which only a fresh install could notice. That specific hole now has a unit
+# test, but the shape of it does not, and this is the shape.
+#
+# It builds and throws the result away. Signing uses a key generated in the
+# job and discarded with it, because `createUpdaterArtifacts` is on and the
+# bundler will not finish without one — rehearsing the build without
+# rehearsing the signature would skip the step most likely to be misconfigured.
+
+on:
+  schedule:
+    # Tuesday, a day clear of the Monday sweep so a red rehearsal is not read
+    # as fallout from those.
+    - cron: "0 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  gui:
+    name: Release Rehearsal / GUI
+    runs-on: ubuntu-latest
+    # The release profile builds the whole workspace with fat LTO from cold on
+    # a scheduled run; the ordinary 30 minutes is not enough.
+    timeout-minutes: 60
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      # Mirrors draft-release.yml's `gui` job from here. The two are meant to
+      # stay in step, and this failing while a release succeeds (or the
+      # reverse) is the signal that they have not.
+      - name: Install Tauri system dependencies
+        uses: ./.github/actions/tauri-deps
+
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          # Read the caches main saves; never save from here. A release-profile
+          # target directory is large and this runs weekly, so saving would
+          # evict the caches every other workflow depends on.
+          save-if: false
+
+      - uses: cargo-bins/cargo-binstall@v1.21.1
+
+      - name: Cache Tauri CLI
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-2.11.4-${{ runner.os }}
+
+      - name: Install Tauri CLI
+        run: command -v cargo-tauri || cargo binstall tauri-cli --version "=2.11.4" --no-confirm --force
+
+      - name: Regenerate CRS catalog
+        run: node scripts/update-crs-catalog.mjs
+
+      # The catalog is committed, so regenerating it must be a no-op. A diff
+      # here means the committed copy has drifted from its source data and a
+      # release would ship one thing while the repository claims another.
+      - name: Check the regenerated catalog matches the committed one
+        run: git diff --exit-code -- crates/gui/resources/crs-catalog.json
+
+      - name: Generate a throwaway signing key
+        run: |
+          set -eu
+          cargo tauri signer generate -w "$RUNNER_TEMP/rehearsal.key" -p "" --force --ci
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
+            cat "$RUNNER_TEMP/rehearsal.key"
+            echo "EOF"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+          } >> "$GITHUB_ENV"
+
+      - name: Build the GUI bundle
+        run: cd crates/gui && cargo tauri build --target x86_64-unknown-linux-gnu
+
+      # The bundler can succeed and still produce nothing under the name the
+      # release expects, which is how a green build becomes a release with
+      # missing assets. `verify-assets` checks this on a real release; this is
+      # the same question asked a week earlier.
+      - name: Check the bundle exists
+        run: |
+          set -eu
+          root=target/x86_64-unknown-linux-gnu/release/bundle
+          test -d "$root" || { echo "::error::no bundle directory at $root"; exit 1; }
+          found=$(find "$root" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) | sort)
+          test -n "$found" || { echo "::error::bundler produced no installer"; find "$root" -type f | head -50; exit 1; }
+          echo "$found"
+          # The updater artifact and its signature are what the manifest
+          # publishes; a build that skips them breaks in-app updates only.
+          sig=$(find "$root" -type f -name '*.AppImage.sig' | head -1)
+          test -n "$sig" || { echo "::error::no updater signature produced"; exit 1; }
+          echo "signature: $sig"
