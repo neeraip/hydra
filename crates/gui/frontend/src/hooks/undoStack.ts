@@ -322,9 +322,15 @@ function setStacks(key: string, next: UndoStacks): void {
   emit();
 }
 
-/** Stack address for a project/scenario pair (`null` scenario = base model). */
+/** Stack address for a project/scenario pair (`null` scenario = base model).
+ *
+ *  Separated by NUL because it is the one character an id cannot contain,
+ *  so no pair of ids can collide on a key. Written as the escape and not
+ *  as the byte: a raw NUL makes the whole file binary to grep, and this
+ *  one hid `undoStack.ts` from every text sweep of the repo until a
+ *  search for its own exports came back empty. */
 export function stackKey(projectId: string, scenarioId: string | null): string {
-  return `${projectId} ${scenarioId ?? ""}`;
+  return `${projectId}\u0000${scenarioId ?? ""}`;
 }
 
 export function getUndoStacks(key: string): UndoStacks {
