@@ -394,8 +394,9 @@ temperature index snapping to air temperature during snowfall above
 0.02 in/hr and otherwise relaxing by the user weight rescaled from its
 6-hour basis to the step, the index capped at the surface's base melt
 temperature; below base temperature the deficit accumulates,
-capped by the pack's heat capacity (0.007 water-equivalent per °F per
-*foot* of pack); melt debits the deficit before releasing. A **free-water
+capped by the pack's heat capacity (0.007 *inches* of water equivalent per
+°F per *foot* of pack, so the ratio applied to a pack depth is 0.007/12 per
+°F); melt debits the deficit before releasing. A **free-water
 reservoir** of the pack's holding capacity must also fill before release —
 rain on the covered fraction joins it, so rain-on-snow is delayed by the
 pack — and an over-specified initial free water is clamped to capacity.

@@ -441,7 +441,10 @@ fn update_cold_content(s: &mut SurfaceState, asc: f64, snowfall: f64, dt: f64, c
     s.ati = s.ati.min(s.t_base);
     s.coldc += cl.rnm * s.dhm(cl.season) * (s.ati - cl.ta) * dt * asc;
     s.coldc = s.coldc.max(0.0);
-    // 0.007 per °F per foot, in SI: per (5/9 °C) per 0.3048 m.
+    // 0.007 *inches* of water equivalent per °F per foot of pack, which is
+    // where the /12 comes from: SWMM holds cold content in feet and converts
+    // the numerator (snow.c:788-789). The 9/5 converts this engine's °C
+    // difference to the °F the constant is defined against.
     let cc_max = s.wsnow * (0.007 / 12.0) * ((s.t_base - s.ati) * 9.0 / 5.0);
     s.coldc = s.coldc.min(cc_max.max(0.0));
 }
