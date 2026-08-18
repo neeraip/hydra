@@ -14,7 +14,7 @@ Download the installer for your platform from the [releases page](https://github
 
 | Platform | Installer type |
 |---|---|
-| macOS (Apple Silicon / Intel) | `.dmg` disk image, or portable `.app.tar.gz` |
+| macOS (Apple Silicon) | `.dmg` disk image, or portable `.app.tar.gz` |
 | Windows | `.msi` or `.exe` installer |
 | Linux | `.AppImage`, `.deb`, or `.rpm` package |
 
