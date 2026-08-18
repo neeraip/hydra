@@ -1,8 +1,8 @@
-// hydra-cli — thin I/O shell around hydra-engine.
+// hydra-cli — thin I/O shell around the SDK.
 //
-// Acquires model file bytes (local path or HTTP), drives hydra-engine's session
-// API, and writes output bytes. No parsing, unit conversion, or simulation
-// logic lives here.
+// Acquires model file bytes (local path or HTTP), drives the session API of
+// whichever engine the model routes to, and writes output bytes. No parsing,
+// unit conversion, or simulation logic lives here.
 //
 // Exit codes:
 //   0 — simulation completed (warnings may appear in the report)
@@ -37,7 +37,7 @@ const EXIT_INTERNAL: i32 = 4;
 // Per-engine run knowledge (phases, streaming, persistence timing) lives in
 // hydra::engines::EngineSession — the CLI drives every engine through it.
 
-/// Hydra — water infrastructure simulation.
+/// Hydra: water infrastructure simulation.
 #[derive(Parser, Debug)]
 #[command(
     name = "hydra",
@@ -86,7 +86,7 @@ struct RunArgs {
     model: String,
 
     /// Engine to run the model with (e.g. `wds`). Omit to detect the engine
-    /// from the model's contents — there is no default engine.
+    /// from the model's contents. There is no default engine.
     #[arg(long, value_name = "KEY")]
     engine: Option<String>,
 
@@ -176,7 +176,7 @@ fn legacy_grammar_hint(e: &clap::Error) -> Option<String> {
     ))
 }
 
-/// `hydra engines` — the registry, including engines that are not yet usable.
+/// `hydra engines` — the registry, with each engine's availability.
 fn list_engines() -> i32 {
     let mut out = std::io::stdout().lock();
     for engine in hydra::common::ENGINES {
