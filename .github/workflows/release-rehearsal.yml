@@ -32,11 +32,20 @@ concurrency:
 
 jobs:
   gui:
-    name: Release Rehearsal / GUI
+    name: Release Rehearsal / GUI ${{ matrix.platform }}
     runs-on: ubuntu-latest
     # The release profile builds the whole workspace with fat LTO from cold on
     # a scheduled run; the ordinary 30 minutes is not enough.
     timeout-minutes: 60
+
+    # One entry, shaped like the release's matrix so the steps below read
+    # identically to the ones they stand in for, and so a second rehearsal
+    # platform is one line rather than a rewrite.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, target: x86_64-unknown-linux-gnu }
 
     env:
       CARGO_TERM_COLOR: always
@@ -61,10 +70,12 @@ jobs:
           node-version: 24
 
       - name: Install frontend dependencies
+        working-directory: crates/gui/frontend
         run: pnpm install --frozen-lockfile
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
+          target: ${{ matrix.target }}
           cache: false
 
       - uses: Swatinem/rust-cache@v2.9.2
@@ -81,10 +92,11 @@ jobs:
         with:
           path: |
             ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
           key: tauri-cli-2.11.4-${{ runner.os }}
 
       - name: Install Tauri CLI
-        run: command -v cargo-tauri || cargo binstall tauri-cli --version "=2.11.4" --no-confirm --force
+        run: cargo binstall tauri-cli --version "=2.11.4" --no-confirm
 
       - name: Regenerate CRS catalog
         run: node scripts/update-crs-catalog.mjs
@@ -107,7 +119,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build the GUI bundle
-        run: cd crates/gui && cargo tauri build --target x86_64-unknown-linux-gnu
+        run: cd crates/gui && cargo tauri build --target ${{ matrix.target }}
 
       # The bundler can succeed and still produce nothing under the name the
       # release expects, which is how a green build becomes a release with
@@ -116,7 +128,7 @@ jobs:
       - name: Check the bundle exists
         run: |
           set -eu
-          root=target/x86_64-unknown-linux-gnu/release/bundle
+          root=target/${{ matrix.target }}/release/bundle
           test -d "$root" || { echo "::error::no bundle directory at $root"; exit 1; }
           found=$(find "$root" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) | sort)
           test -n "$found" || { echo "::error::bundler produced no installer"; find "$root" -type f | head -50; exit 1; }

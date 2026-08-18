@@ -37,5 +37,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      # The only third-party import in the suite. `test_release_rehearsal`
+      # compares two workflow files structurally, and skips itself without
+      # this — a skip nobody would notice, on the test that keeps the release
+      # rehearsal honest.
+      - name: Install test dependencies
+        run: python3 -m pip install --disable-pip-version-check pyyaml==6.0.3
+
       - name: Run Python script tests
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py" -v
