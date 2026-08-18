@@ -2524,8 +2524,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     fontFamily: "var(--font-ui)",
                   }}
                 >
-                  Results predate the current network topology — re-run the
-                  simulation
+                  Results predate the current network topology. Re-run the
+                  simulation.
                 </span>
                 <button
                   type="button"

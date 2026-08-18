@@ -370,7 +370,7 @@ export async function listCrsCatalogPage(params: {
   const payload = {
     query: params.query,
     page: params.page,
-    page_size: params.pageSize,
+    pageSize: params.pageSize,
   };
   return tryInvokeOr<CrsCatalogPage>("list_crs_catalog_page", payload, {
     items: [],

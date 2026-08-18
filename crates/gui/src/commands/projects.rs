@@ -2685,8 +2685,8 @@ mod tests {
 
         // Slice the array into one block per engine, so a value can be
         // attributed to the engine that declares it. Checking the whole array
-        // for `"planned"` would pass while the wrong engine carried it — with
-        // three engines present the string is in the text either way.
+        // for `"planned"` would pass while the wrong engine carried it: the
+        // string is in the text either way.
         let block_for = |key: &str| -> String {
             let start = fallback
                 .find(&format!("key: \"{key}\""))
@@ -3115,7 +3115,7 @@ mod tests {
     /// tank-volume and valve-headloss curves from pump ones.
     ///
     /// So the claim is pinned on both sides. This half notices the engine
-    /// changing; the frontend half — `editorRail.test.ts` — notices the
+    /// changing; the frontend half — `railGroups.test.ts` — notices the
     /// rail changing, and asserts every kind listed here reaches exactly
     /// one section under its own label. Changing this list without
     /// changing that one fails the pair, which is the point.
@@ -3140,7 +3140,7 @@ mod tests {
                 ("rule", "Rules"),
             ],
             "the wds catalog changed — update the Editor rail in \
-             crates/gui/frontend/src/pages/project/NetworkEditor/editorRail.ts \
+             crates/gui/frontend/src/pages/project/ElementsView/railGroups.ts \
              and the CATALOG mirror in its test, then update this list"
         );
     }

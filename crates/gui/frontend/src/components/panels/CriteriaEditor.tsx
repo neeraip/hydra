@@ -75,8 +75,8 @@ export function CriteriaEditor({
         <span
           style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}
         >
-          The standard this network is assessed against — used by the figures
-          below and by the map's Criteria colour scale.
+          The standard this network is assessed against. It is used by the
+          figures below and by the map's Criteria colour scale.
         </span>
         {!isDefault && (
           <button

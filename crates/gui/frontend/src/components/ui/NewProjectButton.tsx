@@ -8,8 +8,7 @@
  *
  * A split button rather than two: they begin the same thing, and the
  * difference between them is what you happen to have in your hand. The
- * menu grows one entry per way in — a second lands when the open-channel
- * engine ships.
+ * menu grows one entry per way in.
  */
 
 import { ChevronDownIcon } from "@heroicons/react/16/solid";

@@ -200,7 +200,7 @@ function HydraTab({ info }: { info: LicenseInfo }) {
         >
           Hydra is published under the GNU Affero General Public License v3.0 (
           {info.spdx}). You may run it for any purpose, including commercial
-          work, and the models, results and reports it produces are yours — the
+          work, and the models, results and reports it produces are yours. The
           licence covers the software, not its output.
         </p>
         <p

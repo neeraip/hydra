@@ -354,7 +354,7 @@ export function CanvasToolbar({
                       fontFamily: "var(--font-ui)",
                     }}
                   >
-                    All styles hidden — use Manage basemaps…
+                    All styles hidden. Use Manage basemaps…
                   </div>
                 )}
                 {/* Opacity slider — dims the basemap live while the dropdown

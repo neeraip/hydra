@@ -713,7 +713,7 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
               </span>
               <span>
                 Hydra uses its own solver. Results for an imported model may
-                differ slightly from the tool it came from — this is expected.
+                differ slightly from the tool it came from. This is expected.
                 Hydra defines correctness by its own convergence criteria and
                 physical conservation laws.
               </span>

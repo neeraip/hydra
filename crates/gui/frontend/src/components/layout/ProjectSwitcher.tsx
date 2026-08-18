@@ -394,7 +394,7 @@ export function ProjectSwitcher() {
                   color: "var(--text-tertiary)",
                 }}
               >
-                +{overflow} more — filter to narrow
+                +{overflow} more. Filter to narrow.
               </div>
             )}
           </div>
