@@ -1,6 +1,7 @@
-# hydra-engine-wds — Analysis Sub-Specification
+# Water Distribution — Analysis Sub-Specification
 
-This document is the analysis sub-specification for `hydra-engine-wds`.
+This document is the analysis sub-specification of the water-distribution
+engine.
 
 ## 1. Overview
 
@@ -9,7 +10,7 @@ interactive UI transformations. Its results are published through the foundation
 layer's reportable-output contract as **report blocks** (§4), produced on demand
 from a completed run.
 
-`hydra-engine-wds`'s analysis module does not run hydraulics or quality simulation. It consumes
+The analysis module does not run hydraulics or quality simulation. It consumes
 completed simulation outputs and publishes derived statistics.
 
 Analysis owns no persisted format of its own. Derived results are not written to a
@@ -30,7 +31,7 @@ is a Hydra design decision rather than a reproduction of prior art.
 ## 2. Design Goals
 
 1. Derived results reach an interface through **one** contract — the foundation
-   layer's reportable-output contract (hydra-common spec §3). A second, analysis-owned
+   layer's reportable-output contract (foundation contract §3). A second, analysis-owned
    delivery path would have to be re-specified for every future engine, while the
    block catalog is already engine-neutral at the contract level.
 2. Analysis compute must be deterministic for a given simulation output.
@@ -41,7 +42,7 @@ is a Hydra design decision rather than a reproduction of prior art.
 
 ## 3. Computation Ownership
 
-`hydra-engine-wds`'s analysis module owns:
+The analysis module owns:
 
 1. Full-run aggregation across reporting periods — global extremes, and per-element
    minima and maxima.
@@ -162,7 +163,7 @@ under a pressure-dependent model it is the physical result being sought.
 ## 4. Report Blocks
 
 The analysis module implements the foundation layer's reportable-output
-contract (hydra-common spec §3) for the water-distribution engine: a
+contract (foundation contract §3) for the water-distribution engine: a
 statically-queryable catalog of blocks, and deterministic production of
 neutral content fragments for one completed simulation.
 
@@ -188,7 +189,7 @@ neutral content fragments for one completed simulation.
 
 ### 4.1.1 Block options
 
-Per the foundation contract (hydra-common spec §3.4) options are opaque
+Per the foundation contract (§3.4) options are opaque
 JSON authored per template block; this engine defines:
 
 | Block | Option | Meaning | Default |
@@ -211,7 +212,7 @@ where a magnitude is required) fail production with the foundation
 contract's `failed` error naming the field.
 
 **Descriptions.** This engine implements the foundation contract's option
-description (hydra-common spec §3.2.1) for the options above, resolved against
+description (foundation contract §3.2.1) for the options above, resolved against
 a loaded network — with one deliberate omission. `deficitTolerance` is accepted
 but never described: it is a floating-point noise floor rather than an
 engineering criterion, so its default is imperceptible in any unit
@@ -301,8 +302,8 @@ periods including the first and last). When the file holds more periods than
 the sample budget, the fragment carries a note disclosing sampling; below
 the budget, the scan is exhaustive.
 
-**Units (revised with hydra-common v1.7):** quantity-bearing numbers are
-**quantity-tagged** (hydra-common spec §3.3): produced in the referenced
+**Units (revised with foundation contract v1.7):** quantity-bearing numbers are
+**quantity-tagged** (foundation contract §3.3): produced in the referenced
 quantity's SI display unit, wearing its SI label, and re-expressed in a
 display family by whichever consumer presents them. The results file
 carries the model's declared display units, so production converts:
@@ -343,7 +344,7 @@ never renders placeholders — that is the report layer's decision.
 ## 5. Criteria
 
 The engine publishes a criteria catalog under the foundation criteria
-contract (hydra-common §7) — the standard a water-distribution network is
+contract (foundation contract §7) — the standard a water-distribution network is
 assessed against:
 
 | Key | Kind | Quantity | Defaults (SI display units) |
@@ -358,7 +359,7 @@ The quality criteria brought two quantities into the engine's §5 catalog —
 `concentration` (mg/L) and `age` (h) — both identical in the two display
 systems, so their conversions are the identity.
 
-**Consumption (hydra-common §7.4).** A valuation derives options for the
+**Consumption (foundation contract §7.4).** A valuation derives options for the
 criteria-shaped blocks: `minPressure` becomes `wds.service-compliance`'s
 `minPressure` option; the `pressure` and `velocity` bands become the
 `edges` of `wds.pressure-thresholds` and `wds.velocity-thresholds`; and
@@ -372,14 +373,14 @@ specific gravity included, because an option participates in computation
 against file values and is not presentation. A band that is not strictly
 ascending after conversion cannot make threshold edges; its block is
 omitted from the answer and runs on its documented defaults — a
-degenerate band is an editing state, not an error (hydra-common §7.3).
+degenerate band is an editing state, not an error (foundation contract §7.3).
 Absent keys take the catalog defaults; a malformed valuation (wrong
 shape, non-finite number) is refused with a message naming the
 criterion.
 
 A `flow` band was cataloged once, for the map's threshold colour scale
 and for nothing else. It is retired: flow's ramp is **diverging**
-(hydra-common §6.1) because the sign carries direction, so it can never
+(foundation contract §6.1) because the sign carries direction, so it can never
 resolve to a criterion under §6.1's banded rule, and the scale it existed
 for cannot be offered for it. A valuation saved while it existed still
 parses — §7.3 ignores keys the catalog does not declare.

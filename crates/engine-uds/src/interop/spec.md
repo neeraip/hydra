@@ -1,4 +1,4 @@
-# hydra-engine-uds — Interoperability Specification
+# Urban Drainage — Interoperability Specification
 
 This document holds §14 of the urban drainage specification: the predecessor
 file formats, what importing them means, and what exporting to them promises.
@@ -380,7 +380,7 @@ and structure all carry meaning that omission would change.
 ### 14.11 Recognition
 
 This engine answers the foundation layer's recognition question
-(hydra-common spec §2.5) — "are these bytes yours?" — so an application
+(foundation contract §2.5) — "are these bytes yours?" — so an application
 holding a model of unknown provenance can route it without guessing. The
 verdict is derived from section names alone, requiring no field parsing:
 

@@ -1,16 +1,15 @@
-# Hydra Report — Report Generation
+# Hydra — Report Generation
 
 Status: **v1.1 — 2026-08-08** (v1.1 added display-family formatting of
-quantity-tagged values, §4.0, following hydra-common v1.7).
-This file is the module documentation of the
-`hydra-report` crate and follows the spec-first workflow: implementation
-changes flow from changes here, never the reverse.
+quantity-tagged values, §4.0, following the foundation contract v1.7).
+This document follows the spec-first workflow: implementation changes flow
+from changes here, never the reverse.
 
 ---
 
 ## 1. Purpose and Scope
 
-The report layer turns neutral content fragments (hydra-common spec §3)
+The report layer turns neutral content fragments (foundation contract §3)
 into presentable documents. Its entire job is presentation: given blocks
 of data, produce txt / csv / html output. It knows **nothing about
 engines or the results they produce** — no engine names, block semantics,
@@ -48,7 +47,7 @@ headless CLI generation.
 | `title` | Document title | Plain text, non-empty. |
 | `blocks[].id` | Block reference | Opaque to this layer — validated only by the producing engine at assembly time. |
 | `blocks[].title` | Optional heading override | Plain text; replaces the block's default heading. |
-| `blocks[].options` | Optional per-block options | A JSON value passed to the producing engine verbatim (hydra-common spec §3.4); fully opaque to this layer. |
+| `blocks[].options` | Optional per-block options | A JSON value passed to the producing engine verbatim (foundation contract §3.4); fully opaque to this layer. |
 | `removed` | Optional list of block ids the author deliberately excluded | Ignored by assembly and rendering. Template-editing consumers use it to distinguish "removed by the author" from "did not exist when this template was saved", so a block an engine adds later can join existing reports by default while deliberate removals stay removed. Absent (any template written before the field existed) means nothing was deliberately removed. |
 
 Unknown fields are ignored on read (additive evolution); a breaking
@@ -63,7 +62,7 @@ Assembly pairs a template with a **producer** — a function the
 application supplies that maps a block id and the block's optional
 options value to a fragment or a block error (the engine's
 `produce_report_block` behind the scenes) — and with the **block
-catalog** the template's ids refer to (hydra-common spec §3.1). The
+catalog** the template's ids refer to (foundation contract §3.1). The
 result is a render-ready document:
 
 - **Title** — from the template.
@@ -109,9 +108,9 @@ settings (§4.0).
 ### 4.0 Display settings
 
 Rendering takes optional **display settings**: a display family (`si` or
-`us`) and the producing engine's quantity catalog (hydra-common spec §5),
+`us`) and the producing engine's quantity catalog (foundation contract §5),
 supplied by the application alongside the document. They govern
-quantity-tagged values only (hydra-common spec §3.3):
+quantity-tagged values only (foundation contract §3.3):
 
 - A tagged number is converted from its SI display unit to the chosen
   family by the descriptor's affine map, and its unit text (value unit,
@@ -124,9 +123,9 @@ quantity-tagged values only (hydra-common spec §3.3):
   with its SI text. Untagged values are never touched.
 
 Settings default to family `si` with no catalog, which renders every
-fragment exactly as its producer wrote it. The report layer still depends
-only on `hydra-common`: the catalog is neutral descriptor data handed in
-by the composition root, never looked up here.
+fragment exactly as its producer wrote it. The report layer still knows
+nothing beyond the foundation contract: the catalog is neutral descriptor
+data handed in by the composition root, never looked up here.
 
 **Fidelity tiering (ratified 2026-07-28).** pdf is the flagship deliverable
 format: new visual features (charts, future branding/layout work) land
@@ -136,7 +135,7 @@ artifacts and data interchange respectively — frozen at tabular fidelity:
 new fragment kinds degrade to their tabular derivation there and never
 require visual support.
 
-**Charts (hydra-common spec §3.3).** pdf and html render charts as static
+**Charts (foundation contract §3.3).** pdf and html render charts as static
 vector graphics sharing one SVG generator; txt and csv render the chart's
 derived data table. Chart graphics follow fixed marks: bars ≤ 24 units
 thick with rounded data-ends and square baselines, 2-unit surface gaps

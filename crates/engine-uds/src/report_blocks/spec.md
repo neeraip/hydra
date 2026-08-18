@@ -1,4 +1,4 @@
-# hydra-engine-uds — Analysis Specification
+# Urban Drainage — Analysis Specification
 
 This document owns §13 of the urban drainage specification (§1.6):
 post-simulation analytics, published as report blocks under the
@@ -225,7 +225,7 @@ malformed `edges` value refuses production.
 ### 13.6 Criteria
 
 The engine publishes a criteria catalog under the foundation criteria
-contract (hydra-common §7) — the standard a drainage network is assessed
+contract (foundation contract §7) — the standard a drainage network is assessed
 against:
 
 | Key | Kind | Quantity | Defaults (SI display units) |
@@ -234,7 +234,7 @@ against:
 | `capacity` | value | percent | 80 % of conduit capacity |
 | `velocity` | band `selfCleansing`/`erosive` | velocity | 0.6 / 3.0 m/s |
 
-**Consumption (hydra-common §7.4).** `freeboard` becomes
+**Consumption (foundation contract §7.4).** `freeboard` becomes
 `uds.surcharge-summary`'s `freeboard` option; `capacity`, divided by
 one hundred, becomes `uds.capacity-summary`'s `threshold`; the
 `velocity` band becomes `uds.velocity-thresholds`' `edges`. Options are

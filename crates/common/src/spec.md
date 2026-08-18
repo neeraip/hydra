@@ -1,4 +1,4 @@
-# Hydra Common — Foundation Contract
+# Hydra — Foundation Contract
 
 Status: **v1.16 — 2026-08-17** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
@@ -37,10 +37,8 @@ refuse; v1.16 withdrew the planned open-channel engine from the registry,
 §2.4, when 2D overland flow was re-planned as future functionality of the
 urban drainage engine — a breaking change, since the registry lost an entry
 and its key now resolves as unknown).
-This file is the module documentation
-of the `hydra-common` crate and follows the same spec-first workflow as the
-engine specs: implementation changes flow from changes here, never the
-reverse.
+This document follows the same spec-first workflow as the engine specs:
+implementation changes flow from changes here, never the reverse.
 
 ---
 
@@ -1242,9 +1240,9 @@ option defaults. Consumption of a well-formed valuation never fails.
 
 Persistence is the application's concern: where a valuation lives, and
 per what scope (a project, a scenario), is not this contract's business.
-The layering of §3.5 applies unchanged: engines depend on this crate,
+The layering of §3.5 applies unchanged: engines depend on this contract,
 applications compose catalogs, valuations, and production, and this
-crate depends on nothing.
+contract depends on nothing.
 
 ## 8. Evolution
 

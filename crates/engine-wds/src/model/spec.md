@@ -1,4 +1,4 @@
-# hydra-engine-wds — Model Specification
+# Water Distribution — Model Specification
 
 This document is the sub-specification for the WD network data model, unit system, and model file formats.
 
@@ -472,7 +472,7 @@ The defaults match EPANET: US-customary models report pressure in psi, and SI mo
 
 ## 4. Model File Formats
 
-A **model file** is a structured document that describes a complete network (topology, physical properties, operational data, and simulation options) as defined in §2. `hydra-engine-wds` owns all format parsing and output serialisation — callers supply raw bytes and receive a validated `Network`, or supply a completed `Simulation` and receive serialised output bytes.
+A **model file** is a structured document that describes a complete network (topology, physical properties, operational data, and simulation options) as defined in §2. The engine owns all format parsing and output serialisation — callers supply raw bytes and receive a validated `Network`, or supply a completed `Simulation` and receive serialised output bytes.
 
 One format is currently defined. Additional formats may be added in future.
 
@@ -527,7 +527,7 @@ All three outcomes must remain distinguishable by the caller — not merely desc
 
 #### 4.1.3 Recognition
 
-This engine answers the foundation layer's recognition question (hydra-common spec §2.5) — "are these bytes yours?" — so an application holding a model of unknown provenance can route it without guessing. The verdict is derived from section names alone, requiring no field parsing:
+This engine answers the recognition question (foundation contract §2.5) — "are these bytes yours?" — so an application holding a model of unknown provenance can route it without guessing. The verdict is derived from section names alone, requiring no field parsing:
 
 | Condition | Verdict |
 |---|---|

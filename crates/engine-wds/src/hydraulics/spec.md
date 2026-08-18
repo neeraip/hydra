@@ -1,8 +1,8 @@
-# hydra-engine-wds — Hydraulics Sub-Specification
+# Water Distribution — Hydraulics Sub-Specification
 
 ## 1. Overview
 
-This document is the hydraulics sub-specification for `hydra-engine-wds`. It defines the hydraulic engine algorithm used by Hydra's extended-period simulation.
+This document is the hydraulics sub-specification of the water-distribution engine. It defines the hydraulic engine algorithm used by Hydra's extended-period simulation.
 
 The network data model consumed by this subsystem is defined in [model spec](../model/spec.md). The orchestration contract that invokes this engine is defined in [simulation spec](../simulation/spec.md).
 
