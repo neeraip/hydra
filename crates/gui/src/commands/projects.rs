@@ -384,14 +384,49 @@ pub(crate) fn persist_new_project(
 // waiting to redraw.
 #[tauri::command(async)]
 /// Remove the project directory tree.
-pub fn delete_project(app: tauri::AppHandle, id: String) -> Result<bool, String> {
+pub fn delete_project(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    id: String,
+) -> Result<bool, String> {
     validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
     let dir = bundle::project_dir(&app_data, &id);
     if !dir.exists() {
         return Ok(false);
     }
+
+    // Every target, for the reason delete_all_simulations gives: unlinking a
+    // `results.out.tmp` an active run still holds open costs that run its
+    // whole result and reports the loss as an engine failure.
+    let mut targets: Vec<Option<String>> = vec![None];
+    targets.extend(scenario_ids(&app_data, &id)?.into_iter().map(Some));
+    let _guards = targets
+        .iter()
+        .map(|sid| try_acquire_run_target(&id, sid.as_deref()))
+        .collect::<Result<Vec<_>, _>>()?;
+
     bundle::delete_project_dir(&app_data, &id).map_err(|e| e.to_string())?;
+
+    // The loaded network still claimed this project, so the next edit saved
+    // through it — and `atomic_write` creates parent directories, so the save
+    // rebuilt `base/model.inp` under a bundle with no `meta.json`. That is a
+    // project `list_projects` skips forever and no UI can reach or delete.
+    {
+        let mut guard = state.0.lock();
+        let owns = match &*guard {
+            NetworkStateInner::Loaded {
+                owner_project_id, ..
+            }
+            | NetworkStateInner::LoadedUds {
+                owner_project_id, ..
+            } => owner_project_id.as_deref() == Some(id.as_str()),
+            NetworkStateInner::Empty => false,
+        };
+        if owns {
+            *guard = NetworkStateInner::Empty;
+        }
+    }
     Ok(true)
 }
 
@@ -1420,7 +1455,10 @@ fn scenario_descendants(
 /// attached, rather than a set of orphans promoted to roots.
 ///
 /// Returns how many scenarios were removed; `0` when the id was not found.
-#[tauri::command]
+// Off the main thread for the reason delete_project is: a scenario's
+// `results.out` is the same size as the base model's, and a cascade removes
+// several at once.
+#[tauri::command(async)]
 /// Remove the scenario directory tree, optionally with its descendants.
 pub fn delete_scenario(
     app: tauri::AppHandle,
@@ -1434,6 +1472,21 @@ pub fn delete_scenario(
     if !bundle::scenario_dir(&app_data, &project_id, &scenario_id).exists() {
         return Ok(0);
     }
+
+    // Every scenario this call will remove, held for the whole function.
+    // Deleting one mid-run unlinks the `results.out.tmp` the engine still has
+    // open: the run writes on into an unlinked inode and then fails at the
+    // rename, reporting "results could not be written" for a target the user
+    // deliberately deleted, after spending the entire run.
+    let mut targets = vec![scenario_id.clone()];
+    if cascade {
+        targets.extend(scenario_descendants(&app_data, &project_id, &scenario_id)?);
+    }
+    let _guards = targets
+        .iter()
+        .map(|sid| try_acquire_run_target(&project_id, Some(sid.as_str())))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut removed = 0u32;
     if cascade {
         for id in scenario_descendants(&app_data, &project_id, &scenario_id)? {
@@ -2233,6 +2286,24 @@ fn check_save_target(
     Ok(())
 }
 
+/// Whether a save may write into this project's bundle at all.
+///
+/// `bundle::atomic_write` calls `create_dir_all`, so a save aimed at a
+/// project whose directory is gone rebuilds `base/model.inp` under a bundle
+/// with no `meta.json` beside it. `list_projects` skips such a directory
+/// forever while the storage figures still count it: a project no UI can
+/// open, reach, or delete. Deleting the project you had open used to reach
+/// exactly that state, because the loaded network went on claiming it and the
+/// next edit saved.
+///
+/// The manifest, not the directory: a bundle can outlive its manifest (an
+/// interrupted delete), and it is the manifest that makes it a project.
+pub(crate) fn save_target_exists(app_data: &std::path::Path, id: &str) -> bool {
+    bundle::project_dir(app_data, id)
+        .join("meta.json")
+        .is_file()
+}
+
 #[tauri::command(async)]
 /// Flush in-memory patches to `base/model.inp`; update node/link counts in `meta.json`.
 pub fn save_project(
@@ -2285,6 +2356,11 @@ pub fn save_project(
         }
     };
     let app_data = app_data_dir(&app)?;
+    if !save_target_exists(&app_data, &id) {
+        return Err(format!(
+            "save refused: project {id} no longer exists on disk"
+        ));
+    }
     bundle::atomic_write(
         &model_path_for(&app_data, &id, scenario_id.as_deref()),
         &raw,
@@ -3726,6 +3802,36 @@ R1  0.0  0.0
 
 /// What `get_model_unit_system` reports, and what the project override
 /// persists — the two inputs the GUI's display-unit resolution reads.
+#[cfg(test)]
+mod deleted_project_is_not_resurrected {
+    use super::*;
+
+    #[test]
+    fn a_save_needs_the_manifest_that_makes_it_a_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path();
+        let id = "11111111-1111-4111-8111-111111111111";
+
+        // Nothing there at all.
+        assert!(!save_target_exists(app_data, id));
+
+        // The tree a resurrecting save would leave behind: directories, model
+        // bytes, no manifest. Still not a project.
+        let project_dir = bundle::project_dir(app_data, id);
+        std::fs::create_dir_all(project_dir.join("base")).unwrap();
+        std::fs::write(project_dir.join("base").join("model.inp"), b"[JUNCTIONS]\n").unwrap();
+        assert!(
+            !save_target_exists(app_data, id),
+            "a bundle without meta.json is invisible to list_projects, so a save \
+             must not create one"
+        );
+
+        // A real project.
+        std::fs::write(project_dir.join("meta.json"), b"{}").unwrap();
+        assert!(save_target_exists(app_data, id));
+    }
+}
+
 #[cfg(test)]
 mod unit_preference {
     use super::*;
