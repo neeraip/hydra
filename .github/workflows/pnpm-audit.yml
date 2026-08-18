@@ -10,7 +10,7 @@ on:
     - cron: "45 6 * * 1"
 
 concurrency:
-  group: pnpm-audit-${{ github.event.pull_request.number || github.ref }}
+  group: pnpm-audit-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

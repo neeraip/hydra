@@ -9,6 +9,11 @@
 # redeploys the site so /try updates itself the moment the release is
 # real. Demo work on main therefore stays invisible on /try until it is
 # released, which is the point: visitors try released engines.
+#
+# A release run executes on the tag ref, so the github-pages environment
+# needs a deployment policy for tags matching `v*` alongside the one for
+# `main`. That policy lives in repository settings, not here; without it the
+# Deploy job is rejected before its first step with no log to explain why.
 name: Site
 
 on:
