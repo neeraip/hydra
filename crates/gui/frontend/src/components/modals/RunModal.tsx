@@ -8,6 +8,8 @@ import {
   fetchValidationFindings,
   getSimParams,
   projectHasNetwork,
+  resumableTargets,
+  resumeRun,
   type SimParams,
   useScenarios,
 } from "../../hooks";
@@ -59,13 +61,15 @@ const linkBtn: React.CSSProperties = {
   fontFamily: "var(--font-ui)",
 };
 
-function ScenarioRow({
+export function ScenarioRow({
   scenario,
   isChecked,
   isActive,
   isLast,
   errorCount,
   onToggle,
+  isResumable,
+  onResume,
 }: {
   scenario: ScenarioOption;
   isChecked: boolean;
@@ -74,6 +78,9 @@ function ScenarioRow({
   /** Blocking validation errors; > 0 means the solver would reject it. */
   errorCount: number;
   onToggle: () => void;
+  /** This target has an interrupted run that could be continued instead. */
+  isResumable: boolean;
+  onResume: () => void;
 }) {
   const blocked = errorCount > 0;
   return (
@@ -118,6 +125,28 @@ function ScenarioRow({
       >
         {scenario.label}
       </span>
+      {isResumable && !blocked && (
+        <button
+          type="button"
+          // Inside the row's label, so a plain click would toggle the
+          // checkbox as well and queue the opposite of what was asked for.
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onResume();
+          }}
+          className="badge"
+          style={{
+            cursor: "pointer",
+            color: "var(--accent)",
+            background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+            borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
+          }}
+          title="Continue this target's interrupted run from where it stopped. Running it instead starts the model again from the beginning."
+        >
+          Continue
+        </button>
+      )}
       {isActive && <ActiveBadge />}
       {blocked ? (
         <span
@@ -225,6 +254,36 @@ export function RunModal() {
   const runnableIds = useMemo(
     () => runnableScenarioIds(checkedIds, errorCounts),
     [checkedIds, errorCounts],
+  );
+
+  // Targets with an interrupted run, read from the checkpoints on disk so
+  // one interrupted by closing the application is still offered. Fetched
+  // when the modal opens, which is the only time it is on screen.
+  const [resumable, setResumable] = useState<Set<string | null>>(new Set());
+  useEffect(() => {
+    if (!runModalOpen || !activeProjectId) {
+      setResumable(new Set());
+      return;
+    }
+    let cancelled = false;
+    resumableTargets(activeProjectId).then((ids) => {
+      if (!cancelled) setResumable(new Set(ids));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runModalOpen, activeProjectId]);
+
+  const continueRun = useCallback(
+    (targetId: string | null) => {
+      if (!activeProjectId) return;
+      closeRunModal();
+      setTimeout(() => openTaskTray(), 200);
+      resumeRun(activeProjectId, targetId).catch((err) => {
+        showToast(`Failed to continue run: ${formatIpcError(err)}`, "error");
+      });
+    },
+    [activeProjectId, closeRunModal, openTaskTray, showToast],
   );
 
   const runSimulation = useCallback(() => {
@@ -471,6 +530,8 @@ export function RunModal() {
                 isLast={scenarios.length === 1}
                 errorCount={errorsFor(scenarios[0].id)}
                 onToggle={() => toggleScenario(scenarios[0].id)}
+                isResumable={resumable.has(scenarios[0].id)}
+                onResume={() => continueRun(scenarios[0].id)}
               />
 
               {/* Scenarios section header + rows */}
@@ -500,6 +561,8 @@ export function RunModal() {
                       isLast={i === scenarios.length - 2}
                       errorCount={errorsFor(s.id)}
                       onToggle={() => toggleScenario(s.id)}
+                      isResumable={resumable.has(s.id)}
+                      onResume={() => continueRun(s.id)}
                     />
                   ))}
                 </>
