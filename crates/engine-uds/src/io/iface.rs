@@ -5,6 +5,23 @@
 //! bracketing periods, unmatched pollutants read as zero, and flows
 //! convert from the *file's* declared units.
 
+//
+// `just mutants crates/engine-uds/src/io/iface.rs` reports three mutants no
+// test catches, and all three are equivalent rather than uncovered. They are
+// listed here so the next reader does not chase them again:
+//
+//   `if t1 > t0` read as `>=` when choosing whether to interpolate between
+//   two bracketing records, where equal adjacent instants cannot arise —
+//   the reader merges a record within a microsecond of the one before it,
+//   so the `else` branch is unreachable from any file that parses;
+//
+//   the two `(*te - epoch).abs() < 1e-6` record-merge tolerances read as
+//   `<=`, where a difference of exactly one microsecond cannot arise from
+//   instants built out of whole hours, minutes and seconds.
+//
+// Everything else the tool suggests is caught. When this file changes, run
+// it again rather than trusting this note.
+
 use std::io::{self, Write};
 
 use crate::io::lex::FiniteParse;
@@ -15,6 +32,16 @@ use crate::simulation::engine::Snapshot;
 /// against an allocation attack.
 const MAX_IFACE_CONSTITUENTS: usize = 100;
 const MAX_IFACE_NODES: usize = 100_000;
+
+/// How far outside its own span (s) a routing interface file is still
+/// served (§14.8). The instants compared are absolute epoch seconds, near
+/// 1.6e9 by now, where consecutive representable values are already a
+/// quarter of a microsecond apart: a tolerance finer than that rounds away
+/// to an exact comparison, and a clock that reaches the file's last instant
+/// by accumulating steps rather than by the same arithmetic then loses that
+/// period's inflow. A millisecond is far above the spacing and far below
+/// any routing step.
+const ROUTING_SPAN_TOLERANCE: f64 = 1.0e-3;
 
 const FLOW_WORDS: [(&str, f64); 6] = [
     ("CFS", 0.028_316_846_592),
@@ -53,9 +80,10 @@ impl RoutingInterface {
         }
         // Bracketing records: the series' own span is served inclusive
         // of both end instants, nothing beyond (§14.8).
+        let last = self.records.len() - 1;
         let first_t = self.records[0].0;
-        let last_t = self.records[self.records.len() - 1].0;
-        if epoch < first_t - 1e-9 || epoch > last_t + 1e-9 {
+        let last_t = self.records[last].0;
+        if epoch < first_t - ROUTING_SPAN_TOLERANCE || epoch > last_t + ROUTING_SPAN_TOLERANCE {
             return out;
         }
         if self.records.len() == 1 {
@@ -75,12 +103,17 @@ impl RoutingInterface {
             return out;
         }
         let e = epoch.clamp(first_t, last_t);
+        // `e` is clamped into the span and the last record's instant is its
+        // end, so the search always finds an upper bracket; the first record
+        // is never one, so the index is at least one. Both bounds are the
+        // `last` computed above rather than the arithmetic repeated, so a
+        // mistake in it has one place to be made and shows up in the span.
         let i = self
             .records
             .iter()
             .position(|(t, _)| *t >= e)
-            .unwrap_or(self.records.len() - 1)
-            .clamp(1, self.records.len() - 1);
+            .unwrap_or(last)
+            .clamp(1, last);
         let (t0, r0) = &self.records[i - 1];
         let (t1, r1) = &self.records[i];
         let f = if t1 > t0 {
@@ -945,6 +978,18 @@ TSS  MG/L  0  0  0  0
         ifc.inflows_at(day + hour * 3600.0, 1)
     }
 
+    /// The same, addressed in seconds from midnight, for instants that are
+    /// not a whole number of hours.
+    fn at_secs(ifc: &RoutingInterface, secs: f64) -> Vec<(usize, f64, Vec<f64>)> {
+        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
+            year: 2020,
+            month: 1,
+            day: 1,
+        }) as f64
+            * 86_400.0;
+        ifc.inflows_at(day + secs, 1)
+    }
+
     /// The file's own span is served inclusive of both ends and nothing
     /// beyond: an instant outside it contributes no inflow rather than
     /// the nearest record held flat, which would invent hours of it.
@@ -1061,6 +1106,252 @@ TSS  MG/L  0  0  0  0
         let none = "SWMM5\ntitle\n60\n0\n";
         let err = parse_routing_file(none, &net).unwrap_err();
         assert!(err.contains("no FLOW column"), "{err}");
+    }
+
+    /// The span's tolerance is a real one. The instants compared are epoch
+    /// seconds near 1.6e9, where representable values are a quarter of a
+    /// microsecond apart, so a tolerance written finer than that would round
+    /// to an exact comparison and a clock arriving at the last instant by
+    /// accumulation rather than by the same arithmetic would lose its inflow.
+    #[test]
+    fn the_spans_ends_are_tolerant_by_a_millisecond() {
+        let net = model();
+        let text = file(
+            "CMS",
+            &[(1, [1.0, 10.0], [2.0, 20.0]), (3, [3.0, 30.0], [4.0, 40.0])],
+        );
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+        let (first, last) = (3_600.0, 3.0 * 3_600.0);
+
+        assert_eq!(
+            2,
+            at_secs(&ifc, first - 5.0e-4).len(),
+            "just before the first"
+        );
+        assert_eq!(2, at_secs(&ifc, last + 5.0e-4).len(), "just after the last");
+        assert!(
+            at_secs(&ifc, first - 2.0e-3).is_empty(),
+            "a hair further out"
+        );
+        assert!(
+            at_secs(&ifc, last + 2.0e-3).is_empty(),
+            "and past the other end"
+        );
+
+        // The edge of the tolerance is inside it. An instant exactly a
+        // millisecond out cannot be built by arithmetic independent of the
+        // record's own: at this magnitude the two orderings differ by an
+        // ulp and the comparison could land either side. So it is built
+        // from the record, which makes the boundary exact.
+        let (first_t, last_t) = (ifc.records[0].0, ifc.records[1].0);
+        assert_eq!(
+            2,
+            ifc.inflows_at(first_t - 1.0e-3, 1).len(),
+            "exactly a millisecond before the first"
+        );
+        assert_eq!(
+            2,
+            ifc.inflows_at(last_t + 1.0e-3, 1).len(),
+            "exactly a millisecond after the last"
+        );
+    }
+
+    /// Which two records bracket an instant is a search, and a file of two
+    /// records cannot tell a working one from a broken one: every index it
+    /// can produce clamps to the same pair. Three can.
+    #[test]
+    fn the_bracketing_pair_is_the_one_the_instant_falls_between() {
+        let net = model();
+        let text = file(
+            "CMS",
+            &[
+                (1, [1.0, 0.0], [0.0, 0.0]),
+                (2, [10.0, 0.0], [0.0, 0.0]),
+                (3, [100.0, 0.0], [0.0, 0.0]),
+            ],
+        );
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+
+        let early = at(&ifc, 1.5)[0].1;
+        assert!((early - 5.5).abs() < 1e-9, "between the first two: {early}");
+        let late = at(&ifc, 2.5)[0].1;
+        assert!((late - 55.0).abs() < 1e-9, "between the last two: {late}");
+        // And the middle record is itself, not an average of its neighbours.
+        let mid = at(&ifc, 2.0)[0].1;
+        assert!((mid - 10.0).abs() < 1e-9, "on the middle record: {mid}");
+    }
+
+    /// The interpolated path converts flows too. Every unit test above this
+    /// one asks a file of a single record, which is a different path, so the
+    /// conversion on this one had never run against anything but CMS.
+    #[test]
+    fn an_interpolated_flow_converts_from_the_files_own_unit() {
+        let net = model();
+        let text = file(
+            "CFS",
+            &[(1, [1.0, 0.0], [0.0, 0.0]), (3, [3.0, 0.0], [0.0, 0.0])],
+        );
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+        let mid = at(&ifc, 2.0)[0].1;
+        assert!(
+            (mid - 2.0 * 0.028_316_846_592).abs() < 1e-9,
+            "two CFS interpolated is 0.0566 m³/s, not two: {mid}"
+        );
+    }
+
+    /// Megalitres per day is the one unit word whose factor is written as a
+    /// division, and nothing had ever asked for it.
+    #[test]
+    fn megalitres_per_day_is_a_thousand_cubic_metres_a_day() {
+        let net = model();
+        let text = file("MLD", &[(1, [1.0, 0.0], [0.0, 0.0])]);
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+        let q = at(&ifc, 1.0)[0].1;
+        assert!(
+            (q - 1_000.0 / 86_400.0).abs() < 1e-12,
+            "one MLD is 1000 m³ a day: {q}"
+        );
+    }
+
+    /// A limit is a boundary, and a test that clears it by six figures says
+    /// only that the check exists, not where it sits.
+    #[test]
+    fn the_declared_count_limits_sit_where_they_are_declared() {
+        let net = model();
+        // 100 constituents beside FLOW is the limit, so 101 is allowed
+        // through to the file's own truncation and 102 is refused by count.
+        let at_limit = "SWMM5\ntitle\n60\n101\nFLOW CMS\n";
+        let err = parse_routing_file(at_limit, &net).unwrap_err();
+        assert!(err.contains("truncated constituent list"), "{err}");
+        let over = "SWMM5\ntitle\n60\n102\nFLOW CMS\n";
+        let err = parse_routing_file(over, &net).unwrap_err();
+        assert!(err.contains("102 constituents"), "{err}");
+
+        let at_limit = "SWMM5\ntitle\n60\n1\nFLOW CMS\n100000\n";
+        let err = parse_routing_file(at_limit, &net).unwrap_err();
+        assert!(err.contains("truncated node list"), "{err}");
+        let over = "SWMM5\ntitle\n60\n1\nFLOW CMS\n100001\n";
+        let err = parse_routing_file(over, &net).unwrap_err();
+        assert!(err.contains("100001 nodes"), "{err}");
+    }
+
+    /// A file of FLOW alone has rows of exactly eight fields, which is the
+    /// shortest a record can be. Every file above this one carries a
+    /// pollutant as well, so the shortest row had never been read.
+    #[test]
+    fn a_row_of_exactly_eight_fields_is_a_record() {
+        let net = model();
+        let text = "SWMM5 interface file\ntitle\n60\n1\nFLOW CMS\n2\nJ1\nJ2\n\
+                    J1  2020 01 01 1 0 0  1.5\n\
+                    J2  2020 01 01 1 0 0  2.5\n";
+        let ifc = parse_routing_file(text, &net).expect("parse");
+        let one = at(&ifc, 1.0);
+        assert_eq!(2, one.len(), "both rows are records");
+        assert!((one[0].1 - 1.5).abs() < 1e-9, "J1 flow {}", one[0].1);
+        assert!((one[1].1 - 2.5).abs() < 1e-9, "J2 flow {}", one[1].1);
+
+        // And a row shorter than that is not a record at all.
+        let short = "SWMM5 interface file\ntitle\n60\n1\nFLOW CMS\n1\nJ1\n\
+                     J1  2020 01 01 1 0\n";
+        let ifc = parse_routing_file(short, &net).expect("parse");
+        assert!(ifc.records.is_empty(), "a truncated row is not read short");
+    }
+
+    /// An instant is hours, minutes and seconds. Every record above this one
+    /// falls on a whole hour, so the two smaller terms contributed nothing
+    /// and could have been added, subtracted or multiplied alike.
+    #[test]
+    fn a_records_minutes_and_seconds_are_part_of_its_instant() {
+        let net = model();
+        let text = "SWMM5 interface file\ntitle\n60\n1\nFLOW CMS\n1\nJ1\n\
+                    J1  2020 01 01 1 30 45  7.0\n";
+        let ifc = parse_routing_file(text, &net).expect("parse");
+        let secs = 3_600.0 + 30.0 * 60.0 + 45.0;
+        assert!(
+            (at_secs(&ifc, secs)[0].1 - 7.0).abs() < 1e-9,
+            "the record is at 01:30:45"
+        );
+        assert!(at_secs(&ifc, secs - 1.0).is_empty(), "not a second earlier");
+        assert!(at_secs(&ifc, 3_600.0).is_empty(), "and not on the hour");
+    }
+
+    /// A snapshot carrying nothing but the two series the writer reads, so
+    /// a field added to the record forces this test to say what it writes
+    /// rather than defaulting quietly.
+    fn snapshot(t: f64, inflow: [f64; 3], tss: [f64; 3]) -> Snapshot {
+        Snapshot {
+            t,
+            depths: vec![0.0; 3],
+            flows: vec![0.0; 2],
+            node_head: vec![0.0; 3],
+            node_volume: vec![0.0; 3],
+            node_lateral: vec![0.0; 3],
+            node_inflow: inflow.to_vec(),
+            node_flooding: vec![0.0; 3],
+            node_quality: vec![tss.to_vec()],
+            link_depth: vec![0.0; 2],
+            link_velocity: vec![0.0; 2],
+            link_volume: vec![0.0; 2],
+            link_capacity: vec![0.0; 2],
+            link_quality: vec![vec![0.0; 2]],
+            subcatch: Vec::new(),
+            system: [0.0; 15],
+        }
+    }
+
+    /// The writer splits an instant into hours, minutes and seconds, and
+    /// this is asserted against the text rather than against a read-back:
+    /// a round trip through this file's own reader would call a shared
+    /// misunderstanding of the columns correct in both directions.
+    #[test]
+    fn the_writer_splits_an_instant_into_hours_minutes_and_seconds() {
+        let net = model();
+        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
+            year: 2020,
+            month: 1,
+            day: 1,
+        }) as f64
+            * 86_400.0;
+        let mut out = Vec::new();
+        write_routing_file(
+            &net,
+            &[
+                snapshot(
+                    3_600.0 + 30.0 * 60.0 + 45.0,
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, 5.0],
+                ),
+                snapshot(
+                    23.0 * 3_600.0 + 59.0 * 60.0 + 59.0,
+                    [0.0, 0.0, 2.0],
+                    [0.0, 0.0, 6.0],
+                ),
+            ],
+            day,
+            60.0,
+            &mut out,
+        )
+        .expect("write");
+        let text = String::from_utf8(out).expect("utf8");
+
+        assert!(
+            text.contains("2020 01  01  01  30  45"),
+            "01:30:45 is not three hours and not one hour flat:\n{text}"
+        );
+        assert!(
+            text.contains("2020 01  01  23  59  59"),
+            "the last second of the day stays inside it:\n{text}"
+        );
+        // Only the outfall is written, and its own series reach the row.
+        assert_eq!(
+            2,
+            text.lines()
+                .filter(|l| l.starts_with("O1") && l.contains("2020"))
+                .count(),
+            "one dated row per snapshot, beside the header's node list"
+        );
+        assert!(text.contains("1.000000"), "the outfall's inflow:\n{text}");
+        assert!(text.contains("5.000000"), "and its concentration:\n{text}");
     }
 }
 
@@ -1312,6 +1603,101 @@ TS1  1:00  0.0
         );
     }
 
+    /// The vertex-position bound is an index bound: a position one past
+    /// the end of the array is out, and the refusal names the file rather
+    /// than indexing past the model to say so.
+    #[test]
+    fn a_position_one_past_the_last_vertex_is_out_of_the_model() {
+        let net = model();
+        let last = net.vertices.len() as i32;
+        let bytes = binary(&[last], 3600, &[(25_569.0, &[1.0])]);
+        let err = parse_rdii_file(&bytes, &net, 1.0).unwrap_err();
+        assert!(err.contains(&format!("vertex position {last}")), "{err}");
+        // And the last real position is in, whatever else it fails on.
+        let bytes = binary(&[last - 1], 3600, &[(25_569.0, &[1.0])]);
+        let err = parse_rdii_file(&bytes, &net, 1.0).unwrap_err();
+        assert!(err.contains("no RDII assignment"), "{err}");
+    }
+
+    /// A declared count sizes an allocation before a byte of the file is
+    /// read, so the limit is the point of the check and 100 000 is where
+    /// it sits.
+    #[test]
+    fn the_vertex_count_limits_sit_where_they_are_declared() {
+        let net = model();
+        let header = |count: i32| {
+            let mut b = b"SWMM5-RDII".to_vec();
+            b.extend_from_slice(&3600i32.to_le_bytes());
+            b.extend_from_slice(&count.to_le_bytes());
+            b
+        };
+        let err = parse_rdii_file(&header(100_000), &net, 1.0).unwrap_err();
+        assert!(err.contains("truncated"), "at the limit, read on: {err}");
+        let err = parse_rdii_file(&header(100_001), &net, 1.0).unwrap_err();
+        assert!(err.contains("100001 vertices (limit"), "{err}");
+
+        let at_limit = "SWMM5\nA title\n3600\n1\nFLOW CMS\n100000\n";
+        let err = parse_rdii_file(at_limit.as_bytes(), &net, 1.0).unwrap_err();
+        assert!(err.contains("truncated RDII vertex list"), "{err}");
+        let over = "SWMM5\nA title\n3600\n1\nFLOW CMS\n100001\n";
+        let err = parse_rdii_file(over.as_bytes(), &net, 1.0).unwrap_err();
+        assert!(err.contains("100001 vertices (limit"), "{err}");
+    }
+
+    /// How many records a binary file holds is decided by a stride, and a
+    /// file of one record cannot tell a right stride from a wrong one:
+    /// whatever the stride, the first record starts where it starts.
+    #[test]
+    fn a_binary_file_holds_exactly_the_records_it_declares() {
+        let net = model();
+        let t0 = 25_569.0;
+        let bytes = binary(
+            &[0, 1],
+            3600,
+            &[
+                (t0, &[1.0, 2.0]),
+                (t0 + 1.0 / 24.0, &[3.0, 4.0]),
+                (t0 + 2.0 / 24.0, &[5.0, 6.0]),
+            ],
+        );
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        assert_eq!(3, f.records.len(), "three records, no more and no fewer");
+        assert_eq!(vec![1.0, 2.0], f.records[0].1);
+        assert_eq!(vec![3.0, 4.0], f.records[1].1);
+        assert_eq!(vec![5.0, 6.0], f.records[2].1);
+    }
+
+    /// A row too short to be a record is not one. Reading it would take
+    /// the flow from a field that is not there.
+    #[test]
+    fn a_text_row_shorter_than_a_record_is_skipped() {
+        let net = model();
+        let f = parse_rdii_file(
+            text("J1  2020 01 01 0 0\nJ1  2020 01 01 1 0 0  4.0\n").as_bytes(),
+            &net,
+            1.0,
+        )
+        .expect("parse");
+        assert_eq!(1, f.records.len(), "only the whole row is a record");
+        assert_eq!(4.0, f.records[0].1[0]);
+    }
+
+    /// An instant is hours, minutes and seconds here too, and every row
+    /// above this one falls on a whole hour.
+    #[test]
+    fn a_text_records_minutes_and_seconds_are_part_of_its_instant() {
+        let net = model();
+        let f = parse_rdii_file(text("J1  2020 01 01 1 30 45  4.0\n").as_bytes(), &net, 1.0)
+            .expect("parse");
+        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
+            year: 2020,
+            month: 1,
+            day: 1,
+        }) as f64
+            * 86_400.0;
+        assert_eq!(day + 3_600.0 + 30.0 * 60.0 + 45.0, f.records[0].0);
+    }
+
     #[test]
     fn a_gap_between_records_carries_no_flow() {
         let net = model();
@@ -1554,6 +1940,41 @@ TS1  1:00  0.0
         close(u.gw_elev, 1.0, "water-table elevation is feet");
         close(u.soil_moisture, 0.31, "soil moisture is dimensionless");
         assert_eq!(vec![4.0], u.washoff, "washoff is a concentration");
+    }
+
+    /// The read direction's conversions, computed from the predecessor's
+    /// own factors rather than by inverting `from_si`, which would call a
+    /// shared mistake correct in both directions. The model these tests
+    /// parse is metric, where a metre and a cubic metre per second are
+    /// both one, so groundwater flow and water-table elevation had never
+    /// been converted by anything but unity.
+    #[test]
+    fn the_read_units_are_the_predecessors() {
+        let cfs = 0.3048_f64.powi(3);
+        let user = ParcelReplay {
+            rainfall: 1.0,
+            snow_depth: 1.0,
+            evap: 1.0,
+            infil: 1.0,
+            runoff: 1.0,
+            gw_flow: 2.0,
+            gw_elev: 3.0,
+            soil_moisture: 0.31,
+            washoff: vec![4.0],
+        };
+        let si = user.to_si(true, cfs);
+        let close = |a: f64, b: f64, what: &str| {
+            assert!((a - b).abs() < 1e-12, "{what}: {a} not {b}");
+        };
+        close(si.rainfall, 0.0254 / 3_600.0, "an inch an hour in m/s");
+        close(si.snow_depth, 0.0254, "an inch of snow in metres");
+        close(si.evap, 0.0254 / 86_400.0, "an inch a DAY, not an hour");
+        close(si.infil, 0.0254 / 3_600.0, "an inch an hour in m/s");
+        close(si.runoff, cfs, "one CFS in m³/s");
+        close(si.gw_flow, 2.0 * cfs, "groundwater flow is a flow");
+        close(si.gw_elev, 3.0 * 0.3048, "the water table is in feet");
+        close(si.soil_moisture, 0.31, "soil moisture is dimensionless");
+        assert_eq!(vec![4.0], si.washoff, "washoff is a concentration");
     }
 
     /// Metric models carry the same distinction: millimetres, and per day
@@ -1801,16 +2222,25 @@ pub fn parse_rain_iface(bytes: &[u8]) -> Result<RainInterface, String> {
 ///
 /// Assembled whole before anything is written, so each gage's byte range
 /// is known rather than patched in a second pass.
+/// The byte length of the rainfall interface file holding `gages` gage
+/// headers and `readings` readings in total (§14.8.3).
+///
+/// Separated from the writer because the only thing this length decides is
+/// whether the format's signed 32-bit offsets can address the file, and
+/// that is a claim about counts far larger than a test can allocate.
+fn rain_iface_len(gages: usize, readings: usize) -> usize {
+    RAIN_STAMP.len() + 4 + gages * RAIN_GAGE_HEADER + readings * RAIN_READING
+}
+
 pub fn write_rain_iface(
     gages: &[RainGageRecord],
     w: &mut impl std::io::Write,
 ) -> std::io::Result<()> {
-    let header_end = RAIN_STAMP.len() + 4 + gages.len() * RAIN_GAGE_HEADER;
-    let total = header_end
-        + gages
-            .iter()
-            .map(|g| g.readings.len() * RAIN_READING)
-            .sum::<usize>();
+    let header_end = rain_iface_len(gages.len(), 0);
+    let total = rain_iface_len(
+        gages.len(),
+        gages.iter().map(|g| g.readings.len()).sum::<usize>(),
+    );
     // The offsets are signed 32-bit, so the format cannot describe a file
     // this large. Refusing beats writing offsets that have wrapped.
     if i32::try_from(total).is_err() {
@@ -1989,6 +2419,60 @@ mod rain_iface_tests {
         b.extend_from_slice(&5000i32.to_le_bytes());
         let err = parse_rain_iface(&b).unwrap_err();
         assert!(err.contains("declares 5000 gages"), "{err}");
+    }
+
+    /// A file of no gages is a file. Nothing rules it out, the predecessor
+    /// writes one when a run has no rain, and refusing it would turn an
+    /// empty record set into a failed import.
+    #[test]
+    fn a_file_of_no_gages_is_still_a_file() {
+        let mut b = RAIN_STAMP.to_vec();
+        b.extend_from_slice(&0i32.to_le_bytes());
+        let ifc = parse_rain_iface(&b).expect("a file of no gages");
+        assert!(ifc.gages.is_empty());
+    }
+
+    /// The header's own length is the boundary: a file one byte short of
+    /// it is refused for the reason it is short, not read into whatever
+    /// follows.
+    #[test]
+    fn a_file_a_byte_short_of_its_header_is_refused_by_count() {
+        let mut b = RAIN_STAMP.to_vec();
+        b.extend_from_slice(&1i32.to_le_bytes());
+        b.resize(rain_iface_len(1, 0) - 1, 0);
+        let err = parse_rain_iface(&b).unwrap_err();
+        assert!(err.contains("declares 1 gages"), "{err}");
+
+        // And exactly its header is a whole file, of one gage whose
+        // readings are an empty range at the file's own end.
+        let end = rain_iface_len(1, 0);
+        let mut b = RAIN_STAMP.to_vec();
+        b.extend_from_slice(&1i32.to_le_bytes());
+        b.resize(end, 0);
+        b[14..14 + 1].copy_from_slice(b"A");
+        b[end - 12..end - 8].copy_from_slice(&3600i32.to_le_bytes());
+        b[end - 8..end - 4].copy_from_slice(&(end as i32).to_le_bytes());
+        b[end - 4..end].copy_from_slice(&(end as i32).to_le_bytes());
+        let ifc = parse_rain_iface(&b).expect("a header is a file");
+        assert_eq!(1, ifc.gages.len());
+        assert_eq!("A", ifc.gages[0].station);
+        assert!(ifc.gages[0].readings.is_empty());
+    }
+
+    /// The written length decides whether the format's signed 32-bit
+    /// offsets can address the file at all, which is a claim about counts
+    /// no test can allocate — so it is asserted on the arithmetic.
+    #[test]
+    fn the_written_length_is_its_header_plus_its_readings() {
+        assert_eq!(14, rain_iface_len(0, 0), "the stamp and the gage count");
+        assert_eq!(14 + 1037, rain_iface_len(1, 0), "and one gage header");
+        assert_eq!(14 + 1037 + 12, rain_iface_len(1, 1), "and one reading");
+        assert_eq!(14 + 2 * 1037 + 3 * 12, rain_iface_len(2, 3));
+
+        // Two hundred million readings is past what the offsets describe.
+        assert!(i32::try_from(rain_iface_len(2, 100_000_000)).is_ok());
+        let big = rain_iface_len(2, 200_000_000);
+        assert!(i32::try_from(big).is_err(), "{big} bytes still fits an i32");
     }
 
     /// The offsets address the file, so each is a way to read outside it.

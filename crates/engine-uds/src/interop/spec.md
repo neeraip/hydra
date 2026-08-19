@@ -240,7 +240,16 @@ each read and written. Routing interface files:
 inflow files are read-only boundary inflows, outflow files written from
 outlet vertices, one file never serving both roles in a run; values
 interpolate between bracketing periods, unmatched pollutants read as zero,
-and flows convert from the *file's* declared units. Declared counts are
+and flows convert from the *file's* declared units. A file's span is served
+inclusive of both its end instants, and an instant within a millisecond of
+either end is inside it; beyond that the file contributes nothing rather than
+its nearest record held flat, which would invent hours of inflow. That
+tolerance is part of the definition and not a rounding convenience: the
+instants being compared are absolute epoch seconds, whose representable
+values are already spaced a fraction of a microsecond apart, so a tolerance
+finer than that is no tolerance at all — and a run whose clock reaches the
+file's last instant by accumulating steps rather than by the same arithmetic
+would lose that period's inflow entirely. Declared counts are
 bounded (100 constituents, 100 000 nodes) — each period allocates their
 product, so an unbounded declaration would let a kilobyte-scale file
 demand gigabytes. A run resumed from a
