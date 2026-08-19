@@ -3072,3 +3072,108 @@ TS1  0:20  0.5
         "lowering the floor changed nothing: {lowered_steps} steps against {default_steps}"
     );
 }
+
+/// An RDII interface file replaces the convolution rather than adding to it.
+///
+/// The file exists so a model whose unit hydrographs and rainfall have not
+/// changed need not recompute them (§14.8.1), so a run that both convolved
+/// *and* applied the file would double the hydrograph it was given. Three
+/// runs of one model separate the two: no file, a file of zeros, and a file
+/// of large flows.
+#[test]
+fn an_rdii_interface_file_replaces_the_convolution() {
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             06:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:15:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+USE RDII \"rdii.txt\"
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT  0.5  1.0  2.0
+
+[RDII]
+J1  UH1  100
+
+[TIMESERIES]
+TS1  0:00  25.0
+TS1  1:00  0.0
+TS1  6:00  0.0
+
+[REPORT]
+";
+
+    // A text file covering the run at a quarter-hour step.
+    fn rdii_text(flow: f64) -> String {
+        let mut s = String::from(
+            "SWMM5\nRDII for the test\n900\n1\nFLOW CMS\n1\nJ1\nNode Year Mon Day Hr Min Sec Flow\n",
+        );
+        for q in 0..24 {
+            let (hr, min) = (q / 4, (q % 4) * 15);
+            s.push_str(&format!("J1 1998 1 1 {hr} {min} 0 {flow}\n"));
+        }
+        s
+    }
+
+    fn inflow(file: Option<&str>) -> f64 {
+        // The model declares USE RDII, which used to refuse the model
+        // outright; it now opens and waits for the bytes.
+        let (mut sim, diags, findings) = Simulation::open(MODEL).expect("open");
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
+        if let Some(text) = file {
+            sim.supply_rdii(text.as_bytes()).expect("supply");
+        }
+        sim.run();
+        sim.ledgers().network.inflow
+    }
+
+    let convolved = inflow(None);
+    let zeroed = inflow(Some(&rdii_text(0.0)));
+    let supplied = inflow(Some(&rdii_text(2.0)));
+
+    assert!(
+        convolved > 0.0,
+        "the convolution produced nothing, so this proves nothing"
+    );
+    // A file of zeros is a hydrograph of zero, not an absent one: the
+    // convolution must not go on running underneath it.
+    assert!(
+        zeroed < convolved * 0.01,
+        "a zero file left {zeroed} against the convolution's {convolved}: \
+         the convolution is still running"
+    );
+    // And the file's own flows are what the run receives. Nothing else
+    // feeds this model, so the whole inflow is the file's: 2 m³/s across
+    // the six hours its records cover.
+    let expected = 2.0 * 6.0 * 3600.0;
+    assert!(
+        (supplied - expected).abs() < expected * 0.02,
+        "the file declares {expected} m³ and the run received {supplied}"
+    );
+}

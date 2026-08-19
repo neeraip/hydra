@@ -322,6 +322,9 @@ pub struct Simulation {
     climate_state: ClimateDayState,
     /// A supplied routing interface inflow file (§14.8).
     iface_in: Option<crate::io::iface::RoutingInterface>,
+    /// A supplied RDII interface file (§14.8.1). When present it *is* the
+    /// RDII hydrograph and the convolutions are not run.
+    rdii_in: Option<crate::io::iface::RdiiInterface>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -512,7 +515,6 @@ impl Simulation {
         for (role, slot) in [
             ("rainfall", &net.interface_files.rainfall),
             ("runoff", &net.interface_files.runoff),
-            ("RDII", &net.interface_files.rdii),
         ] {
             match slot {
                 Some((crate::model::FileMode::Use, _)) => {
@@ -526,6 +528,15 @@ impl Simulation {
                 }),
                 None => {}
             }
+        }
+        // §14.8.1: RDII files are read. `USE` opens and waits for the
+        // caller to supply the bytes, as routing inflows do; writing is
+        // still deferred and says so.
+        if let Some((crate::model::FileMode::Save, _)) = &net.interface_files.rdii {
+            findings.push(ValidationDiagnostic {
+                element: String::new(),
+                kind: crate::io::validate::ValidationKind::InterfaceFileNotWritten { role: "RDII" },
+            });
         }
         // One routing file never serves both roles in a run (§14.8).
         if let (Some(a), Some(b)) = (&net.interface_files.inflows, &net.interface_files.outflows) {
@@ -593,6 +604,7 @@ impl Simulation {
                 inlets,
                 climate_records,
                 iface_in: None,
+                rdii_in: None,
                 climate_state: ClimateDayState {
                     last_day: i64::MIN,
                     ..ClimateDayState::default()
@@ -673,7 +685,14 @@ impl Simulation {
         let nv = self.net.vertices.len();
         while self.hydro_t < period_end - 1e-9 {
             let epoch = self.start_epoch + self.hydro_t;
-            let wet = surface.is_wet(epoch) || self.rdii.iter().any(|r| r.flow > 0.0);
+            // A supplied file leaves the convolution states at zero, so
+            // asking them whether it is wet would run every RDII event on
+            // the dry step (§14.8.1).
+            let rdii_wet = match &self.rdii_in {
+                Some(ifc) => ifc.inflows_at(epoch).iter().any(|(_, q)| *q > 0.0),
+                None => self.rdii.iter().any(|r| r.flow > 0.0),
+            };
+            let wet = surface.is_wet(epoch) || rdii_wet;
             let mut dt = if wet {
                 self.net.options.wet_step
             } else {
@@ -824,19 +843,33 @@ impl Simulation {
             }
             // §4.3: RDII convolutions on the same clock, with the monthly
             // rainfall adjustment applied during preprocessing (§3.1).
-            for r in &mut self.rdii {
-                let rain = r
-                    .gage(&self.net)
-                    .map_or(0.0, |g| surface.gage_rate(g, epoch))
-                    * rain_factor;
-                let q = r.step(&self.net, rain, month, dt);
-                lats[r.vertex] += q;
+            //
+            // §14.8.1: a supplied interface file *is* the hydrograph. The
+            // convolution is precisely what such a file exists to avoid
+            // recomputing, so the two are alternatives and never a sum.
+            let rdii_flows: Vec<(usize, f64)> = match &self.rdii_in {
+                Some(ifc) => ifc.inflows_at(epoch),
+                None => self
+                    .rdii
+                    .iter_mut()
+                    .map(|r| {
+                        let rain = r
+                            .gage(&self.net)
+                            .map_or(0.0, |g| surface.gage_rate(g, epoch))
+                            * rain_factor;
+                        let q = r.step(&self.net, rain, month, dt);
+                        (r.vertex, q)
+                    })
+                    .collect(),
+            };
+            for (vertex, q) in rdii_flows {
+                lats[vertex] += q;
                 if routing_active {
                     self.vol_rdii += q * dt;
                 }
                 // §8.1: sewer inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
-                    mass[2][ci][r.vertex] += q * c.c_rdii;
+                    mass[2][ci][vertex] += q * c.c_rdii;
                 }
             }
             self.hydro_t += dt;
@@ -1947,6 +1980,15 @@ impl Simulation {
     /// periods and add as boundary inflows at their vertices.
     pub fn supply_routing_inflows(&mut self, text: &str) -> Result<(), String> {
         self.iface_in = Some(crate::io::iface::parse_routing_file(text, &self.net)?);
+        Ok(())
+    }
+
+    /// Supply the RDII interface file's bytes (§14.8.1); the caller owns
+    /// reading it. Either of the predecessor's encodings is accepted, and
+    /// the file replaces the RDII convolutions rather than adding to them.
+    pub fn supply_rdii(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
+        self.rdii_in = Some(crate::io::iface::parse_rdii_file(bytes, &self.net, cv)?);
         Ok(())
     }
 

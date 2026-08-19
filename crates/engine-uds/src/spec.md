@@ -288,9 +288,10 @@ orchestration (§10), accounting and statistics (§11), the session (§12), and
 interoperability (§14).
 
 Deferred capabilities are typed refusals, never approximations: a model
-needing one is refused with a named reason. Currently deferred: rainfall,
-runoff, and RDII *interface-file formats* (§14.8 specifies routing and
-hotstart files; the other three are declared but not yet served), the
+needing one is refused with a named reason. Currently deferred: rainfall
+and runoff *interface-file formats*, and *writing* an RDII one (§14.8
+specifies routing, hotstart and RDII files; RDII is read but not yet
+written, and the other two are declared but not served), the
 engine's own native checkpoint format (§12.3 — predecessor hotstart files
 version 3+ are served), archival climate-record formats (user-format
 climate files are served), archival rain-record formats (user-format rain

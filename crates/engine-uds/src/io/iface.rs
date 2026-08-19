@@ -286,3 +286,544 @@ pub fn write_routing_file(
     }
     Ok(())
 }
+
+// ── RDII interface files (§14.8.1) ────────────────────────────────────────────
+
+/// Days between the predecessor's date origin and the Unix epoch.
+///
+/// Its `DateDelta` is 693594 days before 01/01/0000, which its own
+/// `datetime_encodeDate` puts exactly this many days before 1970-01-01.
+/// Getting it wrong shifts every hydrograph by decades rather than failing.
+const SWMM_EPOCH_DAYS: f64 = 25_569.0;
+
+/// How far off an instant may be and still count as the same one (s).
+///
+/// The predecessor dates records as a decimal day, which cannot hold a
+/// whole number of seconds exactly: an hour after midnight reads back as
+/// 3600.000000104774 s. A record therefore begins a fraction of a
+/// microsecond after the instant it means, and a query at exactly that
+/// instant would otherwise fall into the gap and read as no flow. A
+/// millisecond is far above the encoding's noise and far below any step
+/// a model would use.
+const DATE_TOL: f64 = 1e-3;
+
+/// A parsed RDII interface file, resolved against a model.
+#[derive(Debug)]
+pub struct RdiiInterface {
+    /// The file's step (s): how long each record's flows apply.
+    pub step: f64,
+    /// Model vertex per file column, in the file's own column order.
+    pub vertices: Vec<usize>,
+    /// Dated records: (epoch s, flow per column in m³/s).
+    pub records: Vec<(f64, Vec<f64>)>,
+}
+
+impl RdiiInterface {
+    /// The (vertex, flow m³/s) additions at epoch `t`.
+    ///
+    /// Piecewise constant, never interpolated: a record's flows apply from
+    /// its own instant until `step` later, and the hydrograph is zero
+    /// before the first record, after the last, and in any gap between
+    /// them. An RDII hydrograph is a volume already apportioned to a step,
+    /// so interpolating would move water between the steps the unit
+    /// hydrographs put it in.
+    pub fn inflows_at(&self, epoch: f64) -> Vec<(usize, f64)> {
+        // The last record at or before `epoch`, within the encoding's own
+        // precision. Records are written in time order and read in it.
+        let target = epoch + DATE_TOL;
+        let idx = match self
+            .records
+            .binary_search_by(|(t, _)| t.partial_cmp(&target).unwrap_or(std::cmp::Ordering::Less))
+        {
+            Ok(i) => i,
+            Err(0) => return Vec::new(),
+            Err(i) => i - 1,
+        };
+        let (t, flows) = &self.records[idx];
+        if epoch >= *t + self.step - DATE_TOL {
+            return Vec::new();
+        }
+        self.vertices
+            .iter()
+            .zip(flows)
+            .map(|(v, q)| (*v, *q))
+            .collect()
+    }
+}
+
+/// m³/s per unit of a model's declared flow unit.
+///
+/// Matched by name rather than by position: the two lists happen to be in
+/// the same order today, and a reordering of either would otherwise
+/// silently rescale every flow read from a binary file.
+pub fn flow_cv_of(units: crate::io::options::FlowUnits) -> f64 {
+    use crate::io::options::FlowUnits::*;
+    let word = match units {
+        Cfs => "CFS",
+        Gpm => "GPM",
+        Mgd => "MGD",
+        Cms => "CMS",
+        Lps => "LPS",
+        Mld => "MLD",
+    };
+    FLOW_WORDS
+        .iter()
+        .find(|(w, _)| *w == word)
+        .map(|(_, cv)| *cv)
+        .unwrap_or(1.0)
+}
+
+/// Parse an RDII interface file against the model.
+///
+/// The encoding is chosen by the first ten bytes, as the predecessor
+/// chooses it: `SWMM5-RDII` begins the binary form and anything else is
+/// read as text.
+pub fn parse_rdii_file(
+    bytes: &[u8],
+    net: &Network,
+    model_flow_cv: f64,
+) -> Result<RdiiInterface, String> {
+    if bytes.starts_with(b"SWMM5-RDII") {
+        parse_rdii_binary(&bytes[10..], net, model_flow_cv)
+    } else {
+        let text = String::from_utf8_lossy(bytes);
+        parse_rdii_text(&text, net)
+    }
+}
+
+/// The binary form: stamp, step, count, that many vertex *positions*, then
+/// one record per period.
+fn parse_rdii_binary(
+    body: &[u8],
+    net: &Network,
+    model_flow_cv: f64,
+) -> Result<RdiiInterface, String> {
+    let i32_at = |o: usize| -> Result<i32, String> {
+        body.get(o..o + 4)
+            .and_then(|s| s.try_into().ok())
+            .map(i32::from_le_bytes)
+            .ok_or_else(|| "truncated RDII interface file".to_string())
+    };
+    let step = i32_at(0)?;
+    if step <= 0 {
+        return Err(format!("RDII interface file declares a step of {step}s"));
+    }
+    let count = i32_at(4)?;
+    if count <= 0 {
+        return Err(format!("RDII interface file declares {count} vertices"));
+    }
+    let count = count as usize;
+    if count > MAX_IFACE_NODES {
+        return Err(format!(
+            "RDII interface file declares {count} vertices (limit {MAX_IFACE_NODES})"
+        ));
+    }
+    // §14.8.1: the format stores positions in the *writing* model's vertex
+    // array, not names, so a file is readable only against a model ordered
+    // as the writer's was. The predecessor checks only that the vertex at
+    // each position happens to have RDII defined; both checks are applied
+    // here, and a failure is a refusal naming the file rather than a
+    // hydrograph silently landing on the wrong vertex.
+    let mut vertices = Vec::with_capacity(count);
+    for i in 0..count {
+        let raw = i32_at(8 + 4 * i)?;
+        let v = usize::try_from(raw)
+            .ok()
+            .filter(|v| *v < net.vertices.len())
+            .ok_or_else(|| {
+                format!(
+                    "RDII interface file names vertex position {raw}, which this \
+                     model does not have: the file was written against a model \
+                     with a different vertex order"
+                )
+            })?;
+        if !net.rdii.iter().any(|r| r.vertex == v) {
+            return Err(format!(
+                "RDII interface file names vertex '{}', which has no RDII \
+                 assignment in this model: the file was written against a \
+                 different model",
+                net.vertices[v].id
+            ));
+        }
+        vertices.push(v);
+    }
+    // Records: a date as the predecessor's decimal day, then one 32-bit
+    // float of flow per vertex. Binary files carry no units, so the flows
+    // are in those of the model that wrote it, which can only be assumed
+    // to be this one's.
+    let mut records = Vec::new();
+    let mut o = 8 + 4 * count;
+    let record = 8 + 4 * count;
+    while o + record <= body.len() {
+        let date = f64::from_le_bytes(
+            body[o..o + 8]
+                .try_into()
+                .map_err(|_| "truncated RDII record")?,
+        );
+        let mut flows = Vec::with_capacity(count);
+        for i in 0..count {
+            let b = o + 8 + 4 * i;
+            let q = f32::from_le_bytes(
+                body[b..b + 4]
+                    .try_into()
+                    .map_err(|_| "truncated RDII record")?,
+            );
+            flows.push(f64::from(q) * model_flow_cv);
+        }
+        records.push(((date - SWMM_EPOCH_DAYS) * 86_400.0, flows));
+        o += record;
+    }
+    Ok(RdiiInterface {
+        step: f64::from(step),
+        vertices,
+        records,
+    })
+}
+
+/// The text form: a `SWMM5` line, a title, the step, a constituent count,
+/// the flow units, a vertex count, that many named vertices, a heading
+/// line, then one line per vertex per period.
+fn parse_rdii_text(text: &str, net: &Network) -> Result<RdiiInterface, String> {
+    let mut lines = text.lines();
+    let head = lines.next().ok_or("empty RDII interface file")?;
+    if head.split_whitespace().next() != Some("SWMM5") {
+        return Err("not a SWMM5 RDII interface file".into());
+    }
+    let _title = lines.next().ok_or("truncated RDII interface file")?;
+    let step = first_number(lines.next().ok_or("missing RDII time step")?)?;
+    if step <= 0.0 {
+        return Err(format!("RDII interface file declares a step of {step}s"));
+    }
+    let _constituents = lines.next().ok_or("missing RDII constituent count")?;
+    let unit_line = lines.next().ok_or("missing RDII flow units")?;
+    let unit = unit_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("CMS")
+        .to_ascii_uppercase();
+    let flow_cv = FLOW_WORDS
+        .iter()
+        .find(|(w, _)| *w == unit)
+        .map(|(_, cv)| *cv)
+        .ok_or_else(|| format!("unknown RDII flow unit '{unit}'"))?;
+    let count = first_number(lines.next().ok_or("missing RDII vertex count")?)? as usize;
+    if count > MAX_IFACE_NODES {
+        return Err(format!(
+            "RDII interface file declares {count} vertices (limit {MAX_IFACE_NODES})"
+        ));
+    }
+    let mut vertices = Vec::with_capacity(count);
+    let mut column_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for i in 0..count {
+        let line = lines.next().ok_or("truncated RDII vertex list")?;
+        let name = line.split_whitespace().next().unwrap_or("");
+        let v = net
+            .vertices
+            .iter()
+            .position(|v| v.id == name)
+            .ok_or_else(|| format!("RDII interface file names unknown vertex '{name}'"))?;
+        column_of.insert(name.to_string(), i);
+        vertices.push(v);
+    }
+    let _heading = lines.next().ok_or("truncated RDII interface file")?;
+    // §14.8.1: rows are matched by the name each row carries. The
+    // predecessor reads that name into a variable its own comment marks
+    // "not used" and matches by position instead, so a file whose rows are
+    // ordered differently from its header is read there without complaint
+    // and every hydrograph is misassigned.
+    let mut records: Vec<(f64, Vec<f64>)> = Vec::new();
+    for line in lines {
+        let t: Vec<&str> = line.split_whitespace().collect();
+        if t.len() < 8 {
+            continue;
+        }
+        let column = *column_of
+            .get(t[0])
+            .ok_or_else(|| format!("RDII interface file row names unlisted vertex '{}'", t[0]))?;
+        let date = crate::io::options::Date {
+            year: t[1].parse().map_err(|_| "bad RDII year")?,
+            month: t[2].parse().map_err(|_| "bad RDII month")?,
+            day: t[3].parse().map_err(|_| "bad RDII day")?,
+        };
+        let secs = t[4].finite_f64().map_err(|_| "bad RDII hour")? * 3600.0
+            + t[5].finite_f64().map_err(|_| "bad RDII minute")? * 60.0
+            + t[6].finite_f64().map_err(|_| "bad RDII second")?;
+        let epoch = crate::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
+        let q = t[7].finite_f64().map_err(|_| "bad RDII flow")? * flow_cv;
+        match records.last_mut() {
+            Some((te, flows)) if (*te - epoch).abs() < 1e-6 => flows[column] = q,
+            _ => {
+                let mut flows = vec![0.0; count];
+                flows[column] = q;
+                records.push((epoch, flows));
+            }
+        }
+    }
+    Ok(RdiiInterface {
+        step,
+        vertices,
+        records,
+    })
+}
+
+#[cfg(test)]
+mod rdii_tests {
+    use super::*;
+    use crate::io::objects::parse_network;
+
+    /// A model with two RDII vertices, so a file can name them in either
+    /// order and the difference is visible.
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  TS1
+
+[JUNCTIONS]
+J1  100  4
+J2  99   4
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  J2  400  0.013  0  0
+C2  J2  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+C2  CIRCULAR  1.5  0  0  0
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT  0.5  1.0  2.0
+
+[RDII]
+J1  UH1  12.5
+J2  UH1  12.5
+
+[TIMESERIES]
+TS1  0:00  1.0
+TS1  1:00  0.0
+";
+
+    fn model() -> Network {
+        let (net, diags) = parse_network(MODEL);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    fn epoch_of(y: i32, m: u32, d: u32) -> f64 {
+        crate::simulation::time::days_from_civil(crate::io::options::Date {
+            year: y,
+            month: m,
+            day: d,
+        }) as f64
+            * 86_400.0
+    }
+
+    /// The binary form dates records as the predecessor's decimal day. The
+    /// origin is 25569 days before the Unix epoch, and a wrong constant
+    /// does not fail — it silently moves every hydrograph by decades.
+    #[test]
+    fn the_binary_date_origin_matches_the_predecessors() {
+        let net = model();
+        // 1970-01-01 is day 25569 in the predecessor's encoding.
+        let bytes = binary(&[0], 3600, &[(25_569.0, &[1.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        assert_eq!(epoch_of(1970, 1, 1), f.records[0].0);
+        // And a real date well away from the origin.
+        let bytes = binary(&[0], 3600, &[(45_000.0, &[1.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        assert_eq!(epoch_of(2023, 3, 15), f.records[0].0);
+    }
+
+    /// Build a binary file: stamp, step, count, positions, then records.
+    fn binary(positions: &[i32], step: i32, records: &[(f64, &[f32])]) -> Vec<u8> {
+        let mut b = b"SWMM5-RDII".to_vec();
+        b.extend_from_slice(&step.to_le_bytes());
+        b.extend_from_slice(&(positions.len() as i32).to_le_bytes());
+        for p in positions {
+            b.extend_from_slice(&p.to_le_bytes());
+        }
+        for (date, flows) in records {
+            b.extend_from_slice(&date.to_le_bytes());
+            for q in *flows {
+                b.extend_from_slice(&q.to_le_bytes());
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn a_binary_file_reads_its_vertices_and_flows() {
+        let net = model();
+        let bytes = binary(&[0, 1], 3600, &[(25_569.0, &[2.0, 3.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        assert_eq!(3600.0, f.step);
+        assert_eq!(vec![0, 1], f.vertices);
+        assert_eq!(vec![2.0, 3.0], f.records[0].1);
+    }
+
+    #[test]
+    fn a_binary_file_converts_from_the_models_units() {
+        let net = model();
+        // Read as if the writing model used L/s: 1000 L/s is 1 m³/s.
+        let bytes = binary(&[0], 3600, &[(25_569.0, &[1000.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0e-3).expect("parse");
+        assert!(
+            (f.records[0].1[0] - 1.0).abs() < 1e-9,
+            "{:?}",
+            f.records[0].1
+        );
+    }
+
+    /// The format stores positions in the writing model's vertex array, so
+    /// a file written against a different model can name a position this
+    /// one does not have. The predecessor would index past its own array.
+    #[test]
+    fn a_binary_position_outside_the_model_is_refused_by_name() {
+        let net = model();
+        let bytes = binary(&[99], 3600, &[(25_569.0, &[1.0])]);
+        let err = parse_rdii_file(&bytes, &net, 1.0).unwrap_err();
+        assert!(err.contains("99"), "{err}");
+        assert!(err.contains("vertex order"), "{err}");
+    }
+
+    /// The one check the format does allow, which the predecessor makes
+    /// too: the named position must have an RDII assignment. Position 2 is
+    /// the outfall.
+    #[test]
+    fn a_binary_position_without_rdii_is_refused() {
+        let net = model();
+        let bytes = binary(&[2], 3600, &[(25_569.0, &[1.0])]);
+        let err = parse_rdii_file(&bytes, &net, 1.0).unwrap_err();
+        assert!(err.contains("no RDII assignment"), "{err}");
+    }
+
+    #[test]
+    fn a_non_positive_binary_step_or_count_is_refused() {
+        let net = model();
+        assert!(parse_rdii_file(&binary(&[0], 0, &[]), &net, 1.0).is_err());
+        let mut b = b"SWMM5-RDII".to_vec();
+        b.extend_from_slice(&3600i32.to_le_bytes());
+        b.extend_from_slice(&(-1i32).to_le_bytes());
+        assert!(parse_rdii_file(&b, &net, 1.0).is_err());
+    }
+
+    fn text(rows: &str) -> String {
+        format!(
+            "SWMM5\nA title\n3600\n1\nFLOW CMS\n2\nJ1\nJ2\nNode Year Mon Day Hr Min Sec Flow\n{rows}"
+        )
+    }
+
+    #[test]
+    fn a_text_file_reads_its_vertices_flows_and_units() {
+        let net = model();
+        let f = parse_rdii_file(
+            text("J1 1970 1 1 0 0 0 2.0\nJ2 1970 1 1 0 0 0 3.0\n").as_bytes(),
+            &net,
+            1.0,
+        )
+        .expect("parse");
+        assert_eq!(3600.0, f.step);
+        assert_eq!(vec![0, 1], f.vertices);
+        assert_eq!(epoch_of(1970, 1, 1), f.records[0].0);
+        assert_eq!(vec![2.0, 3.0], f.records[0].1);
+    }
+
+    #[test]
+    fn a_text_file_converts_from_its_declared_units() {
+        let net = model();
+        let body =
+            text("J1 1970 1 1 0 0 0 1000\nJ2 1970 1 1 0 0 0 0\n").replace("FLOW CMS", "FLOW LPS");
+        let f = parse_rdii_file(body.as_bytes(), &net, 1.0).expect("parse");
+        assert!(
+            (f.records[0].1[0] - 1.0).abs() < 1e-9,
+            "{:?}",
+            f.records[0].1
+        );
+    }
+
+    /// The predecessor reads the row's vertex name into a variable its own
+    /// comment marks "not used" and matches by position, so a file whose
+    /// rows are ordered differently from its header is misassigned there
+    /// without complaint. Here the name on the row decides.
+    #[test]
+    fn text_rows_are_matched_by_the_name_they_carry_not_their_order() {
+        let net = model();
+        let f = parse_rdii_file(
+            text("J2 1970 1 1 0 0 0 3.0\nJ1 1970 1 1 0 0 0 2.0\n").as_bytes(),
+            &net,
+            1.0,
+        )
+        .expect("parse");
+        // Column order follows the header, so J1's 2.0 stays in column 0
+        // however the rows were ordered.
+        assert_eq!(vec![2.0, 3.0], f.records[0].1);
+    }
+
+    #[test]
+    fn a_text_row_naming_an_unlisted_vertex_is_refused() {
+        let net = model();
+        let err =
+            parse_rdii_file(text("O1 1970 1 1 0 0 0 1.0\n").as_bytes(), &net, 1.0).unwrap_err();
+        assert!(err.contains("O1"), "{err}");
+    }
+
+    #[test]
+    fn a_text_header_naming_an_unknown_vertex_is_refused() {
+        let net = model();
+        let body = text("").replace("J2\n", "NOPE\n");
+        let err = parse_rdii_file(body.as_bytes(), &net, 1.0).unwrap_err();
+        assert!(err.contains("NOPE"), "{err}");
+    }
+
+    #[test]
+    fn the_encoding_is_chosen_by_the_stamp() {
+        let net = model();
+        assert!(parse_rdii_file(b"SWMM5-RDIInot really", &net, 1.0).is_err());
+        // Text that does not open with SWMM5 is refused as text, not read
+        // as binary.
+        let err = parse_rdii_file(b"HELLO\n", &net, 1.0).unwrap_err();
+        assert!(err.contains("not a SWMM5"), "{err}");
+    }
+
+    /// A record's flows hold until the next record, and the hydrograph is
+    /// zero outside the file's own span. Routing interface files
+    /// interpolate; these do not.
+    #[test]
+    fn flows_are_piecewise_constant_and_zero_outside_the_span() {
+        let net = model();
+        let t0 = 25_569.0;
+        let bytes = binary(&[0], 3600, &[(t0, &[1.0]), (t0 + 1.0 / 24.0, &[2.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        let start = epoch_of(1970, 1, 1);
+        assert!(
+            f.inflows_at(start - 1.0).is_empty(),
+            "before the first record"
+        );
+        assert_eq!(vec![(0, 1.0)], f.inflows_at(start));
+        // Held, not ramped, right up to the next record.
+        assert_eq!(vec![(0, 1.0)], f.inflows_at(start + 3599.0));
+        assert_eq!(vec![(0, 2.0)], f.inflows_at(start + 3600.0));
+        assert!(
+            f.inflows_at(start + 7200.0).is_empty(),
+            "after the last record's own step"
+        );
+    }
+
+    #[test]
+    fn a_gap_between_records_carries_no_flow() {
+        let net = model();
+        let t0 = 25_569.0;
+        // Two records an hour apart in a file whose step is a minute.
+        let bytes = binary(&[0], 60, &[(t0, &[1.0]), (t0 + 1.0 / 24.0, &[2.0])]);
+        let f = parse_rdii_file(&bytes, &net, 1.0).expect("parse");
+        let start = epoch_of(1970, 1, 1);
+        assert_eq!(vec![(0, 1.0)], f.inflows_at(start));
+        assert!(f.inflows_at(start + 600.0).is_empty(), "inside the gap");
+        assert_eq!(vec![(0, 2.0)], f.inflows_at(start + 3600.0));
+    }
+}

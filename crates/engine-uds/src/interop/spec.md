@@ -234,9 +234,10 @@ factor of 1.
 
 Rainfall, runoff, and RDII interface files are declared per the
 predecessor's syntax, the hotstart type alone holding `USE` and `SAVE`
-separately so one run may both load and save. Those three formats are
-deferred (charter §1.8), and the two usages fail differently because they
-are different requests. `USE` names an input the results depend on, so the
+separately so one run may both load and save. The RDII format is served
+(§14.8.1); rainfall and runoff remain deferred (charter §1.8), and for
+those two the usages fail differently because they are different
+requests. `USE` names an input the results depend on, so the
 model is refused with the file named. `SAVE` and the scratch mode ask for
 an output artifact: the predecessor builds its rainfall file on every run
 and merely keeps rather than deletes it, so a run that does not write one
@@ -279,6 +280,71 @@ the lossless form.
 > *Source: `hotstart.c:414–423` (writer, `fwrite(x, sizeof(double),
 > Nobjects[POLLUT], f)` inside the per-pollutant loop) against `:483–491`
 > (reader, one `readDouble` per slot).*
+
+#### 14.8.1 RDII interface files
+
+An RDII interface file replays a hydrograph of rainfall-derived infiltration
+and inflow per vertex, so a model whose unit hydrographs and rainfall have
+not changed need not recompute them. It is read (`USE`) in either of the
+predecessor's two encodings, chosen by the first ten bytes: `SWMM5-RDII`
+begins the binary form, and anything else is parsed as the text form.
+Writing (`SAVE`) is deferred and reports itself as such (charter §1.8): a
+declared file opens the model and is named as not written, since the results
+do not depend on it.
+
+**Binary.** The stamp, then a signed 32-bit step in seconds, a signed 32-bit
+vertex count, and that many signed 32-bit values, followed by one record per
+period: a date as the predecessor's decimal day, then one 32-bit float of
+flow per vertex in declaration order. A non-positive step or count is
+refused. Flows are in the units of the model that wrote the file, which the
+format does not record.
+
+**Text.** A first line whose first token is `SWMM5`, a title line, the step
+in seconds, a constituent count (always 1), a line whose second token names
+the flow units, a vertex count, that many lines each naming a vertex, and a
+column-heading line. Then one line per vertex per period: the vertex's name,
+year, month, day, hour, minute, second, and flow. Unlike the binary form the
+text form declares its units, and flows convert from them.
+
+> **DEVIATION from SWMM:** the binary form identifies its vertices by
+> *position in the writing model's vertex array*, not by name, so a file is
+> readable only against a model whose vertices are ordered exactly as the
+> writer's were. The predecessor checks only that the vertex at each stored
+> position happens to have RDII defined, which a reordered or edited model
+> can satisfy while every hydrograph lands on the wrong vertex. This engine
+> applies the same check and adds the one the format allows: a stored
+> position outside the model's range, or one naming a vertex without RDII,
+> is a refusal naming the file rather than a silent misassignment. The
+> ambiguity is inherent to the format; what is removed is answering it
+> silently.
+>
+> *Source: `rdii.c:1156` (writer stores `j`, the array index) against
+> `:583–587` (reader indexes `Node[j]` and tests `rdiiInflow` alone).*
+
+> **DEVIATION from SWMM:** the text form carries the vertex's name on every
+> data row and the predecessor reads it into a variable its own comment marks
+> "not used", matching rows to vertices by position instead. A file whose
+> rows are ordered differently from its header is therefore read without
+> complaint and every hydrograph is misassigned. This engine matches each row
+> by the name the row carries, so such a file reads correctly; a row naming a
+> vertex absent from the header is a refusal.
+>
+> *Source: `rdii.c:698` (`char s[MAXLINE+1]; // node ID label (not used)`)
+> and `:705–708` (parsed, then discarded in favour of the loop index).*
+
+**In time.** A record's flows apply from its own instant until the next
+record's, and the file is read forward once rather than searched: before the
+first record and after the last, the hydrograph is zero. Routing interface
+files interpolate between bracketing periods and these do not, which is the
+predecessor's behaviour and the right one for this file — an RDII hydrograph
+is a volume already apportioned to a step, and interpolating it would move
+water between steps that the unit hydrographs put where they did.
+
+**Writing, when it arrives,** will emit the text form. It is the encoding
+that survives a model whose vertices have been reordered, it declares its own
+units, and it is the one a modeller can read; the binary form's only
+advantage is size, which the format's inability to identify its own vertices
+does not earn. Both forms are read.
 
 ### 14.9 Output
 
