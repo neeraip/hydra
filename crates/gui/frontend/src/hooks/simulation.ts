@@ -144,6 +144,10 @@ export interface UdsSimParams {
   endTime: number;
   reportStep: number;
   routingStep: number;
+  /** Smallest routing step the solver may fall to; 0 = the engine's own. */
+  minRoutingStep: number;
+  /** Courant factor bounding the step; 0 = the engine's own stepping. */
+  courantFactor: number;
   wetStep: number;
   dryStep: number;
 

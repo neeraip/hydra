@@ -271,6 +271,33 @@ export function UdsSettingsView({ projectId }: SettingsViewProps) {
           }
         />
         <Field
+          label="Smallest routing step (s)"
+          help="The shortest step the solver may fall to when a model is unstable. 0 leaves the engine's own floor in force"
+          editing
+          control={
+            <NumberInput
+              value={draft.minRoutingStep}
+              onChange={(v) => update("minRoutingStep", v)}
+              step={0.1}
+              min={0}
+            />
+          }
+        />
+        <Field
+          label="Courant factor"
+          help="Bounds the routing step by the wave it has to resolve, between 0 and 1. 0 leaves the engine's own stepping in force"
+          editing
+          control={
+            <NumberInput
+              value={draft.courantFactor}
+              onChange={(v) => update("courantFactor", v)}
+              step={0.05}
+              min={0}
+              max={1}
+            />
+          }
+        />
+        <Field
           label="Wet step (min)"
           help="Hydrology step during rainfall"
           editing

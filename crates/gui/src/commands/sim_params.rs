@@ -354,6 +354,15 @@ pub fn get_sim_summary_pairs(
         pairs.push(pair("Duration", format!("{hr:.2} hr")));
     }
     pairs.push(pair("Routing step", step(o.routing_step)));
+    // Both of these are shown only when they are set, because zero means
+    // the engine's own default and a row reading "0 s" would say the
+    // opposite of what it means.
+    if o.min_routing_step > 0.0 {
+        pairs.push(pair("Smallest routing step", step(o.min_routing_step)));
+    }
+    if o.courant_factor > 0.0 {
+        pairs.push(pair("Courant factor", format!("{:.2}", o.courant_factor)));
+    }
     pairs.push(pair("Report step", step(o.report_step)));
     Ok(pairs)
 }
@@ -578,6 +587,12 @@ pub struct UdsSimParamsDto {
     pub report_step: f64,
     /// Routing step cap (s).
     pub routing_step: f64,
+    /// Smallest routing step the solver may fall to (s). Zero leaves the
+    /// engine's own floor in force.
+    pub min_routing_step: f64,
+    /// Courant factor bounding the routing step (`VARIABLE_STEP`); zero
+    /// is the constraint-seeded stepping the engine uses by default.
+    pub courant_factor: f64,
     /// Wet hydrology step (s).
     pub wet_step: f64,
     /// Dry hydrology step (s).
@@ -601,6 +616,8 @@ fn uds_options_to_dto(o: &hydra::uds::io::options::AnalysisOptions) -> UdsSimPar
         end_time: o.end_time,
         report_step: o.report_step,
         routing_step: o.routing_step,
+        min_routing_step: o.min_routing_step,
+        courant_factor: o.courant_factor,
         wet_step: o.wet_step,
         dry_step: o.dry_step,
         flow_units: format!("{:?}", o.flow_units).to_uppercase(),
@@ -683,6 +700,20 @@ fn apply_uds_dto(
         }
     }
 
+    // Zero is meaningful for both of these and not for the steps above:
+    // it asks for the engine's own default rather than for no step at
+    // all. Negative is not, and neither is a Courant factor past one,
+    // which would let a step outrun the wave it is resolving.
+    if !dto.min_routing_step.is_finite() || dto.min_routing_step < 0.0 {
+        return Err("the smallest routing step cannot be negative".into());
+    }
+    if dto.min_routing_step > dto.routing_step {
+        return Err("the smallest routing step has to be no larger than the routing step".into());
+    }
+    if !dto.courant_factor.is_finite() || !(0.0..=1.0).contains(&dto.courant_factor) {
+        return Err("the Courant factor has to be between 0 and 1".into());
+    }
+
     let flow_units = match dto.flow_units.as_str() {
         "CFS" => FlowUnits::Cfs,
         "GPM" => FlowUnits::Gpm,
@@ -736,6 +767,8 @@ fn apply_uds_dto(
     o.end_time = dto.end_time;
     o.report_step = dto.report_step;
     o.routing_step = dto.routing_step;
+    o.min_routing_step = dto.min_routing_step;
+    o.courant_factor = dto.courant_factor;
     o.wet_step = dto.wet_step;
     o.dry_step = dto.dry_step;
     Ok(())
@@ -1048,6 +1081,64 @@ mod tests {
         let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
         assert!((reparsed.options.end_time - 21_600.0).abs() < 1e-9);
         assert_eq!(reparsed.options.end_date.day, 1);
+    }
+
+    /// Both routing-step controls reach the model and survive the
+    /// engine's own writer, which is the route an edit takes.
+    #[test]
+    fn uds_routing_step_controls_round_trip() {
+        let mut net = uds_net();
+        let mut dto = uds_options_to_dto(&net.options);
+        // The fixture's run spans no time, which `apply` refuses before
+        // it reaches anything this test is about.
+        dto.end_time = 6.0 * 3600.0;
+        dto.routing_step = 20.0;
+        dto.min_routing_step = 2.5;
+        dto.courant_factor = 0.6;
+        apply_uds_dto(&mut net, &dto).expect("apply");
+        assert!((net.options.min_routing_step - 2.5).abs() < 1e-9);
+        assert!((net.options.courant_factor - 0.6).abs() < 1e-9);
+
+        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        assert!(
+            (reparsed.options.min_routing_step - 2.5).abs() < 1e-9,
+            "MINIMUM_STEP did not survive the writer"
+        );
+        assert!(
+            (reparsed.options.courant_factor - 0.6).abs() < 1e-9,
+            "VARIABLE_STEP did not survive the writer"
+        );
+    }
+
+    /// What each control refuses, and why zero is not among it: zero asks
+    /// for the engine's own default, where zero for a step would ask for
+    /// no step at all.
+    #[test]
+    fn uds_routing_step_controls_refuse_what_they_should() {
+        let net = uds_net();
+        let mut base = uds_options_to_dto(&net.options);
+        base.end_time = 6.0 * 3600.0;
+        let refused = |f: fn(&mut UdsSimParamsDto)| {
+            let mut net = uds_net();
+            let mut dto = base.clone();
+            f(&mut dto);
+            apply_uds_dto(&mut net, &dto).err()
+        };
+        assert!(refused(|d| d.min_routing_step = -1.0).is_some(), "negative");
+        assert!(
+            refused(|d| {
+                d.routing_step = 10.0;
+                d.min_routing_step = 20.0;
+            })
+            .is_some(),
+            "a floor above the cap is not a floor"
+        );
+        assert!(refused(|d| d.courant_factor = 1.5).is_some(), "past one");
+        assert!(refused(|d| d.courant_factor = -0.1).is_some(), "negative");
+        // Zero is the engine's own default for both, and accepted.
+        assert!(refused(|d| d.min_routing_step = 0.0).is_none());
+        assert!(refused(|d| d.courant_factor = 0.0).is_none());
     }
 
     /// The rule this surface exists to enforce: a run spanning no time

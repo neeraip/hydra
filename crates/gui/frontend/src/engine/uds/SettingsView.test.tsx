@@ -23,6 +23,8 @@ const PARAMS: UdsSimParams = {
   endTime: 0,
   reportStep: 900,
   routingStep: 20,
+  minRoutingStep: 0,
+  courantFactor: 0,
   wetStep: 300,
   dryStep: 3600,
   flowUnits: "CFS",
@@ -73,9 +75,24 @@ beforeEach(() => {
 describe("UdsSettingsView", () => {
   it("offers the timing and the model choices for editing", async () => {
     await renderView();
-    // The timing: real inputs carrying the model's values.
-    const inputs = document.querySelectorAll("input");
-    expect(inputs.length).toBe(8);
+    // The timing, named rather than counted: a count says a control was
+    // added or removed and not which, and this assertion existed to say
+    // the timing is editable at all.
+    for (const label of [
+      "Start date",
+      "Start time",
+      "End date",
+      "End time",
+      "Report step (min)",
+      "Routing step (s)",
+      "Smallest routing step (s)",
+      "Courant factor",
+      "Wet step (min)",
+      "Dry step (min)",
+    ]) {
+      expect(screen.getByText(label), `${label} is offered`).toBeTruthy();
+    }
+    expect(document.querySelectorAll("input").length).toBe(10);
     // The choices: real selects, not read-only text.
     const selects = [...document.querySelectorAll("select")].map(
       (s) => (s as HTMLSelectElement).value,
