@@ -335,6 +335,13 @@ pub struct Simulation {
     runoff_in: Option<(crate::io::iface::RunoffInterface, usize)>,
     /// Said once when a replayed file runs out before the run does.
     runoff_exhausted: bool,
+    /// The replayed record now in force, per parcel, in engine units.
+    ///
+    /// The reported parcel series are built from the live surface, which a
+    /// replayed run never steps, so without this a replay routed the
+    /// file's flows correctly and reported every parcel as producing
+    /// nothing (§14.8.2).
+    runoff_now: Vec<crate::io::iface::ParcelReplay>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -618,6 +625,7 @@ impl Simulation {
                 rdii_in: None,
                 runoff_in: None,
                 runoff_exhausted: false,
+                runoff_now: Vec::new(),
                 rdii_out: matches!(
                     net.interface_files.rdii,
                     Some((
@@ -743,15 +751,20 @@ impl Simulation {
             };
             let mut lats = vec![0.0; nv];
             let mut mass = vec![vec![vec![0.0; nv]; np]; 3];
+            let us = self.net.options.flow_units.is_us();
+            self.runoff_now = parcels
+                .as_ref()
+                .map(|rows| rows.iter().map(|r| r.to_si(us, cv)).collect())
+                .unwrap_or_default();
             // Parcels draining to another parcel report nothing at the
             // vertex boundary: the receiving parcel's own runoff already
             // carries what they sent it, exactly as it does when the
             // surface computes the cascade itself.
             for (pi, parcel) in self.net.parcels.iter().enumerate() {
-                let Some(r) = parcels.as_ref().and_then(|p| p.get(pi)) else {
+                let Some(r) = self.runoff_now.get(pi) else {
                     continue;
                 };
-                let q = r.runoff * cv;
+                let q = r.runoff;
                 if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
                     lats[v] += q;
                     // §8.2–§8.3: the runoff stream joins at the washoff
@@ -769,12 +782,7 @@ impl Simulation {
             let gw_flows: Vec<(usize, f64)> = self
                 .aquifers
                 .iter()
-                .filter_map(|(pi, gw)| {
-                    parcels
-                        .as_ref()
-                        .and_then(|p| p.get(*pi))
-                        .map(|r| (gw.vertex, r.gw_flow * cv))
-                })
+                .filter_map(|(pi, gw)| self.runoff_now.get(*pi).map(|r| (gw.vertex, r.gw_flow)))
                 .collect();
             for (vertex, q) in gw_flows {
                 lats[vertex] += q;
@@ -1481,7 +1489,25 @@ impl Simulation {
         }
         // Surface and subsurface records.
         let mut subcatch = Vec::with_capacity(self.net.parcels.len());
-        if let Some(surface) = &self.surface {
+        // §14.8.2: a replayed run never steps the surface, so its live
+        // state says nothing. The record in force is what the file put
+        // there, already in engine units.
+        if self.runoff_in.is_some() {
+            for pi in 0..self.net.parcels.len() {
+                let r = self.runoff_now.get(pi);
+                subcatch.push(SubcatchRecord {
+                    rain: r.map_or(0.0, |r| r.rainfall),
+                    snow_depth: r.map_or(0.0, |r| r.snow_depth),
+                    evap: r.map_or(0.0, |r| r.evap),
+                    infil: r.map_or(0.0, |r| r.infil),
+                    runoff: r.map_or(0.0, |r| r.runoff),
+                    gw_flow: r.map_or(0.0, |r| r.gw_flow),
+                    gw_elev: r.map_or(0.0, |r| r.gw_elev),
+                    soil_moisture: r.map_or(0.0, |r| r.soil_moisture),
+                    washoff: r.map_or_else(|| vec![0.0; np], |r| r.washoff.clone()),
+                });
+            }
+        } else if let Some(surface) = &self.surface {
             for pi in 0..self.net.parcels.len() {
                 let q = surface.qstep(pi);
                 let (infil, evap) = surface.parcel_infil_evap(pi);

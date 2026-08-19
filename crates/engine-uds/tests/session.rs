@@ -3584,3 +3584,117 @@ TS1  1:00  0.0
         "received {inflow} m³ where the file carries 600"
     );
 }
+
+/// A replayed run reports the file's parcel results, not the surface's.
+///
+/// The reported per-parcel series are built from the live surface, which a
+/// replayed run never steps. Without taking them from the file instead, a
+/// replay routed the file's flows correctly and reported every parcel as
+/// producing nothing: the results file contradicted the routing, and the
+/// first version of this feature shipped exactly that, because its tests
+/// only ever looked at the network total.
+#[test]
+fn a_replayed_run_reports_the_files_parcel_results() {
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             00:30:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+USE RUNOFF runoff.bin
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  50  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  30.0
+TS1  1:00  0.0
+
+[REPORT]
+";
+    // SI, so depths are millimetres: 12 mm/hr of rain, 3 mm/hr infiltration,
+    // 24 mm/day evaporation, 50 mm of snow, 0.75 m³/s of runoff.
+    let mut b = b"SWMM5-RUNOFF".to_vec();
+    for v in [1i32, 0, 3, 8] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for _ in 0..8 {
+        b.extend_from_slice(&300.0f32.to_le_bytes());
+        for x in [12.0f32, 50.0, 24.0, 3.0, 0.75, 0.0, 0.0, 0.3] {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+
+    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    sim.supply_runoff(&b).expect("supply");
+    sim.run();
+
+    let snaps = &sim.snapshots;
+    let last = snaps.last().expect("a run produces snapshots");
+    let p = &last.subcatch[0];
+
+    // Runoff is the flow the file carries, not the zero a surface that
+    // never ran would report.
+    assert!(
+        (p.runoff - 0.75).abs() < 1e-6,
+        "parcel runoff {} where the file carries 0.75 m³/s",
+        p.runoff
+    );
+    // The depth quantities convert from the file's units, and each has its
+    // own: rain and infiltration per hour, evaporation per day.
+    assert!(
+        (p.rain - 12.0e-3 / 3600.0).abs() < 1e-12,
+        "rain {} m/s from 12 mm/hr",
+        p.rain
+    );
+    assert!(
+        (p.infil - 3.0e-3 / 3600.0).abs() < 1e-12,
+        "infiltration {} m/s from 3 mm/hr",
+        p.infil
+    );
+    assert!(
+        (p.evap - 24.0e-3 / 86_400.0).abs() < 1e-12,
+        "evaporation {} m/s from 24 mm/day, which is not 24 mm/hr",
+        p.evap
+    );
+    assert!(
+        (p.snow_depth - 50.0e-3).abs() < 1e-12,
+        "snow {} m from 50 mm",
+        p.snow_depth
+    );
+    // The format stores 32-bit floats, so equality is to their precision.
+    assert!(
+        (p.soil_moisture - 0.3).abs() < 1e-6,
+        "soil moisture {} is dimensionless and must pass through",
+        p.soil_moisture
+    );
+}

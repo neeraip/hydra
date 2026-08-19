@@ -659,6 +659,32 @@ pub struct ParcelReplay {
     pub washoff: Vec<f64>,
 }
 
+impl ParcelReplay {
+    /// This record in the engine's own units.
+    ///
+    /// The file holds the writing model's user units, and which unit each
+    /// field carries differs by quantity: rainfall and infiltration are
+    /// depth per *hour* where evaporation is depth per *day*, and the
+    /// depth itself is inches or millimetres by the model's system. These
+    /// invert `out_writer`'s conversions exactly, since the predecessor
+    /// writes one result vector to both files.
+    pub fn to_si(&self, us: bool, flow_cv: f64) -> ParcelReplay {
+        let depth = if us { 0.0254 } else { 1.0e-3 };
+        let length = if us { 0.3048 } else { 1.0 };
+        ParcelReplay {
+            rainfall: self.rainfall * depth / 3600.0,
+            snow_depth: self.snow_depth * depth,
+            evap: self.evap * depth / 86_400.0,
+            infil: self.infil * depth / 3600.0,
+            runoff: self.runoff * flow_cv,
+            gw_flow: self.gw_flow * flow_cv,
+            gw_elev: self.gw_elev * length,
+            soil_moisture: self.soil_moisture,
+            washoff: self.washoff.clone(),
+        }
+    }
+}
+
 /// A parsed runoff interface file, checked against a model.
 #[derive(Debug)]
 pub struct RunoffInterface {
