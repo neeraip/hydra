@@ -326,6 +326,11 @@ pub struct Simulation {
     series_warned: Vec<bool>,
     /// Per-vertex lateral overrides (§12.4 boundary forcing).
     lateral_override: HashMap<usize, f64>,
+    /// §12.4: injected outfall stages and link settings, held so a rule
+    /// cannot move an element a caller has taken over, and so a restored
+    /// checkpoint takes it over again.
+    stage_override: HashMap<usize, f64>,
+    setting_override: HashMap<usize, f64>,
     /// The compiled §9 control system, when the model has rules.
     controls: Option<super::controls::Controls>,
     /// §8.4 network quality, when the model declares constituents.
@@ -684,6 +689,8 @@ impl Simulation {
                 link_by_id,
                 series_warned: vec![false; n_series],
                 lateral_override: HashMap::new(),
+                stage_override: HashMap::new(),
+                setting_override: HashMap::new(),
                 controls,
                 quality,
                 surface_quality,
@@ -763,6 +770,90 @@ impl Simulation {
         self.link_by_id
             .get(id)
             .map(|&l| self.router.flow(l, &self.net))
+    }
+
+    /// Inject an intensity at a gage (m/s), superseding its record for
+    /// every parcel it drives; `None` releases it (§12.4).
+    ///
+    /// `false` for a gage this model does not carry, or for a run with no
+    /// surface to rain on.
+    pub fn set_precipitation(&mut self, id: &str, rate: Option<f64>) -> bool {
+        let Some(gi) = self
+            .net
+            .gages
+            .iter()
+            .position(|g| g.id.eq_ignore_ascii_case(id))
+        else {
+            return false;
+        };
+        self.surface
+            .as_mut()
+            .is_some_and(|s| s.set_precipitation(gi, rate))
+    }
+
+    /// Inject a boundary stage at an outfall (m, as an elevation);
+    /// `None` releases it (§12.4).
+    ///
+    /// `false` for a vertex this model does not carry, or one that is not
+    /// an outfall: a stage on a junction is not a thing to set, and
+    /// accepting it silently would leave a caller believing it had.
+    pub fn set_outfall_stage(&mut self, id: &str, elevation: Option<f64>) -> bool {
+        let Some(&v) = self.vertex_by_id.get(id) else {
+            return false;
+        };
+        if !matches!(
+            self.net.vertices[v].kind,
+            crate::model::VertexKind::Outfall { .. }
+        ) {
+            return false;
+        }
+        match elevation {
+            Some(e) => {
+                self.stage_override.insert(v, e);
+                self.router.force_outfall_stage(v, Some(e), &self.net);
+            }
+            None => {
+                self.stage_override.remove(&v);
+                // Releasing returns the outfall to the boundary its model
+                // declares, whatever that was.
+                self.router.force_outfall_stage(v, None, &self.net);
+            }
+        }
+        true
+    }
+
+    /// Inject a target setting on a controllable link; `None` releases it
+    /// (§12.4).
+    ///
+    /// While an injection stands, no rule moves this link: a caller
+    /// injecting a setting is replacing the model's decision for it, not
+    /// entering a priority contest. The change is logged in the action
+    /// record beside the rules', named as an injection.
+    pub fn set_link_setting(&mut self, id: &str, value: Option<f64>) -> bool {
+        let Some(&li) = self.link_by_id.get(id) else {
+            return false;
+        };
+        match value {
+            Some(v) => {
+                if self.router.set_setting(li, v).is_none() {
+                    return false;
+                }
+                self.setting_override.insert(li, v);
+                let t = self.router.time();
+                if let Some(controls) = &mut self.controls {
+                    controls.log.push((
+                        t,
+                        self.net.links[li].id.clone(),
+                        v,
+                        "injected (§12.4)".to_string(),
+                    ));
+                }
+            }
+            None => {
+                self.setting_override.remove(&li);
+            }
+        }
+        true
     }
 
     /// Override the lateral inflow at a vertex (§12.4 boundary forcing);
@@ -1802,6 +1893,12 @@ impl Simulation {
             dt: self.router.last_dt(),
         });
         for (li, v, ai) in applied {
+            // §12.4: an injection has taken this link over until it is
+            // released, so a rule acting on it does nothing at all rather
+            // than fighting it step by step.
+            if self.setting_override.contains_key(&li) {
+                continue;
+            }
             if self.router.set_setting(li, v) == Some(true) {
                 controls.log_action(t, ai, &self.net.links[li].id, v);
             }
@@ -2359,6 +2456,18 @@ impl Simulation {
         for flag in &self.series_warned {
             cp::put_b(w, *flag).map_err(io)?;
         }
+        // §12.4: an injection standing when a checkpoint is taken stands
+        // when it is restored, or the restored run quietly returns the
+        // element to the model and diverges from the run it continues.
+        for held in [&self.stage_override, &self.setting_override] {
+            cp::put_u(w, held.len() as u64).map_err(io)?;
+            let mut rows: Vec<_> = held.iter().collect();
+            rows.sort_by_key(|(k, _)| **k);
+            for (at, v) in rows {
+                cp::put_u(w, *at as u64).map_err(io)?;
+                cp::put_f(w, *v).map_err(io)?;
+            }
+        }
         cp::put_u(w, self.lateral_override.len() as u64).map_err(io)?;
         // Sorted so a checkpoint of one state is one file: a map's own
         // order is not part of the state and must not reach the bytes.
@@ -2532,6 +2641,22 @@ impl Simulation {
         }
         for flag in self.series_warned.iter_mut() {
             *flag = r.b()?;
+        }
+        for held in [&mut self.stage_override, &mut self.setting_override] {
+            let n = r.u()? as usize;
+            held.clear();
+            for _ in 0..n {
+                let at = r.u()? as usize;
+                held.insert(at, r.f()?);
+            }
+        }
+        // A restored stage has to reach the router as well as the map, or
+        // the run continues with the injection recorded and not applied.
+        for (v, e) in self.stage_override.clone() {
+            self.router.force_outfall_stage(v, Some(e), &self.net);
+        }
+        for (li, v) in self.setting_override.clone() {
+            self.router.set_setting(li, v);
         }
         let n = r.u()? as usize;
         self.lateral_override.clear();

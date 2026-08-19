@@ -4305,3 +4305,187 @@ fn a_file_that_is_neither_layout_names_both_reasons() {
         "and the archival reason is kept: {err}"
     );
 }
+
+// ── §12.4 mid-run forcing ───────────────────────────────────────────────
+
+/// A model with a gage, a controllable orifice and an outfall, so every
+/// injection has something to act on.
+const FORCING_MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         00:00:15
+REPORT_STEP          00:05:00
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+P1  G1  J1  10  75  500  0.01  0
+
+[SUBAREAS]
+P1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+P1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+J2  9   4  0  0  0
+
+[OUTFALLS]
+O1  6  FREE  NO
+
+[CONDUITS]
+C1  J1  J2  200  0.013  0  0  0  0
+
+[ORIFICES]
+R1  J2  O1  SIDE  0  0.65  NO  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+R1  CIRCULAR  1  0  0  0
+
+[TIMESERIES]
+RAIN  0:00  0.0
+RAIN  1:00  0.0
+
+[REPORT]
+";
+
+/// Run the model, calling `force` once at each step, and return the
+/// rainfall and outflow the run produced.
+fn forced_run(model: &str, mut force: impl FnMut(&mut Simulation, usize)) -> (f64, Vec<f64>) {
+    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    let mut step = 0;
+    while {
+        force(&mut sim, step);
+        step += 1;
+        sim.step()
+    } {}
+    let rain: f64 = sim.snapshots.iter().map(|s| s.subcatch[0].rain).sum();
+    let depths = sim.snapshots.iter().map(|s| s.depths[1]).collect();
+    (rain, depths)
+}
+
+/// Injected precipitation drives a run whose own record is dry.
+#[test]
+fn injected_precipitation_supersedes_a_dry_record() {
+    let (dry, _) = forced_run(FORCING_MODEL, |_, _| {});
+    assert_eq!(0.0, dry, "the model's own record must be dry");
+
+    // 20 mm/h for the first half of the run, then released.
+    let (wet, _) = forced_run(FORCING_MODEL, |sim, step| {
+        if step == 0 {
+            assert!(sim.set_precipitation("G1", Some(20.0e-3 / 3600.0)));
+        } else if step == 12 {
+            assert!(sim.set_precipitation("G1", None));
+        }
+    });
+    assert!(wet > 0.0, "the injection produced no rain at all");
+
+    // Releasing returns the gage to its record, which is dry: the tail of
+    // the run must stop raining.
+    //
+    // Measured in reporting instants, not in `step` calls: a step is a
+    // routing period and there are twenty of them to a reporting one, so
+    // counting steps released the injection before the first instant and
+    // then compared the whole run against itself.
+    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    assert!(sim.set_precipitation("G1", Some(20.0e-3 / 3600.0)));
+    while sim.snapshots.len() < 4 {
+        assert!(sim.step(), "the run ended before the release");
+    }
+    let before = sim.snapshots.len();
+    let raining: f64 = sim.snapshots.iter().map(|s| s.subcatch[0].rain).sum();
+    assert!(
+        raining > 0.0,
+        "the injection produced no rain before release"
+    );
+    assert!(sim.set_precipitation("G1", None));
+    while sim.step() {}
+    let after: f64 = sim.snapshots[before..]
+        .iter()
+        .map(|s| s.subcatch[0].rain)
+        .sum();
+    assert!(
+        sim.snapshots.len() > before,
+        "no reporting instant followed the release"
+    );
+    assert_eq!(0.0, after, "the released gage kept raining");
+}
+
+/// An injected stage holds an outfall that declares none.
+#[test]
+fn an_injected_stage_holds_a_free_outfall() {
+    // A free outfall discharges at critical depth; held at an elevation
+    // above its invert it backs the network up instead.
+    let (_, free) = forced_run(FORCING_MODEL, |sim, step| {
+        if step == 0 {
+            assert!(sim.set_precipitation("G1", Some(40.0e-3 / 3600.0)));
+        }
+    });
+    let (_, held) = forced_run(FORCING_MODEL, |sim, step| {
+        if step == 0 {
+            assert!(sim.set_precipitation("G1", Some(40.0e-3 / 3600.0)));
+            // Above J2's invert of 9: a stage below it holds nothing back,
+            // which is what the first version of this test asked for.
+            assert!(sim.set_outfall_stage("O1", Some(10.5)));
+        }
+    });
+    let peak = |d: &[f64]| d.iter().cloned().fold(0.0_f64, f64::max);
+    assert!(peak(&free) > 0.0, "nothing reached the network at all");
+    assert!(
+        peak(&held) > peak(&free) + 1e-6,
+        "a held outfall must back the network up: {} against {}",
+        peak(&held),
+        peak(&free)
+    );
+}
+
+/// A stage is refused where it is not a thing to set.
+#[test]
+fn a_stage_on_a_junction_is_refused() {
+    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    assert!(!sim.set_outfall_stage("J1", Some(9.0)), "J1 is a junction");
+    assert!(
+        !sim.set_outfall_stage("nowhere", Some(9.0)),
+        "no such vertex"
+    );
+    assert!(sim.set_outfall_stage("O1", Some(9.0)), "O1 is an outfall");
+}
+
+/// An injected setting closes a regulator, and is logged as an injection.
+#[test]
+fn an_injected_setting_closes_a_regulator_and_says_so() {
+    let (_, open) = forced_run(FORCING_MODEL, |sim, step| {
+        if step == 0 {
+            assert!(sim.set_precipitation("G1", Some(40.0e-3 / 3600.0)));
+        }
+    });
+    let (_, shut) = forced_run(FORCING_MODEL, |sim, step| {
+        if step == 0 {
+            assert!(sim.set_precipitation("G1", Some(40.0e-3 / 3600.0)));
+            assert!(sim.set_link_setting("R1", Some(0.0)));
+        }
+    });
+    let peak = |d: &[f64]| d.iter().cloned().fold(0.0_f64, f64::max);
+    assert!(
+        peak(&shut) > peak(&open) + 1e-6,
+        "a closed orifice must hold water back: {} against {}",
+        peak(&shut),
+        peak(&open)
+    );
+
+    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    assert!(sim.set_link_setting("R1", Some(0.0)));
+    assert!(!sim.set_link_setting("nowhere", Some(0.0)), "no such link");
+}

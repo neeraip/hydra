@@ -1131,3 +1131,64 @@ fn a_collecting_run_keeps_what_it_has_collected() {
     );
     assert!(want == got, "the restored run's runoff file differs");
 }
+
+/// An injection standing when a checkpoint is taken stands when it is
+/// restored (§12.4).
+///
+/// Nothing else here would notice: the models above inject nothing, so
+/// the fields sat unwritten and every test stayed green. `Simulation` is
+/// the one type the checkpoint does not read through an exhaustive
+/// destructure, so a field added to it is caught by a test or not at all.
+#[test]
+fn a_standing_injection_survives_a_checkpoint() {
+    let model = parcel_model("", "");
+    let (mut first, _, _) = Simulation::open(&model).expect("open");
+    assert!(first.set_precipitation("G1", Some(30.0e-3 / 3600.0)));
+    assert!(first.set_lateral_inflow("J1", Some(0.4)));
+    while first.snapshots.len() < 3 {
+        assert!(first.step(), "the run ended early");
+    }
+    let mut cp = Vec::new();
+    first.save_checkpoint(&mut cp).expect("checkpoint");
+    while first.step() {}
+
+    let (mut second, _, _) = Simulation::open(&model).expect("open");
+    second.load_checkpoint(&cp).expect("restore");
+    second.run();
+
+    // The restored run must keep raining and keep receiving the injected
+    // inflow, which the model's own record does not supply.
+    assert_eq!(
+        every_output(&first).results,
+        every_output(&second).results,
+        "the restored run diverged, so an injection was not carried"
+    );
+    let tail: f64 = second.snapshots[3..]
+        .iter()
+        .map(|s| s.subcatch[0].rain)
+        .sum();
+    assert!(tail > 0.0, "the restored run stopped raining");
+}
+
+/// And a checkpoint of a run with an injection round-trips, which is what
+/// would catch one written but never read back.
+#[test]
+fn an_injection_survives_a_checkpoint_round_trip() {
+    let model = parcel_model("", "");
+    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    assert!(sim.set_precipitation("G1", Some(30.0e-3 / 3600.0)));
+    assert!(sim.set_lateral_inflow("J1", Some(0.4)));
+    while sim.snapshots.len() < 3 {
+        assert!(sim.step(), "the run ended early");
+    }
+    let mut once = Vec::new();
+    sim.save_checkpoint(&mut once).expect("checkpoint");
+
+    let (mut second, _, _) = Simulation::open(&model).expect("open");
+    second.load_checkpoint(&once).expect("restore");
+    let mut twice = Vec::new();
+    second
+        .save_checkpoint(&mut twice)
+        .expect("checkpoint again");
+    assert!(once == twice, "the two checkpoints differ");
+}

@@ -292,6 +292,10 @@ pub struct ParcelTotals {
 /// hydrology clock, supplying vertex laterals and parcel run-on.
 pub struct Surface {
     gages: Vec<GageRain>,
+    /// §12.4: an injected intensity per gage, superseding its record
+    /// until released. Read wherever a gage's rate is read, so a run
+    /// driven from outside is driven everywhere at once.
+    gage_override: Vec<Option<f64>>,
     parcels: Vec<ParcelState>,
     /// The run's absolute start instant (s), anchoring elapsed clocks.
     start_epoch: f64,
@@ -516,6 +520,7 @@ impl Surface {
             }
         }
         let mut surface = Surface {
+            gage_override: vec![None; gages.len()],
             gages,
             parcels,
             start_epoch,
@@ -536,7 +541,7 @@ impl Surface {
     /// Whether any gage is raining or any sub-area holds water above its
     /// depression storage — the wet-step condition (§10.1).
     pub fn is_wet(&self, epoch: f64) -> bool {
-        self.gages.iter().any(|g| g.rate(epoch) > 0.0)
+        (0..self.gages.len()).any(|g| self.rate_of(g, epoch) > 0.0)
             || self.parcels.iter().any(|p| {
                 p.sub.iter().any(|s| s.depth > s.dstore + 1e-9)
                     || p.snow.as_ref().is_some_and(|sp| sp.stored_depth() > 0.0)
@@ -594,9 +599,9 @@ impl Surface {
         let mut runon_to_parcel = vec![0.0_f64; self.parcels.len()];
         let mut snow_transfers: Vec<(usize, f64)> = Vec::new();
         for pi in 0..self.parcels.len() {
-            let gage = &self.gages[self.parcels[pi].gage];
-            let precip = gage.rate(epoch) * rain_factor;
-            let scf = gage.scf;
+            let gi = self.parcels[pi].gage;
+            let precip = self.rate_of(gi, epoch) * rain_factor;
+            let scf = self.gages[gi].scf;
             let e = if dry_only && precip > 0.0 { 0.0 } else { evap };
             let p = &mut self.parcels[pi];
             // §4.2: the pack's volume basis is the full parcel — the
@@ -1059,7 +1064,27 @@ impl Surface {
     /// A gage's rain rate at an absolute epoch time (m/s), for the §4.3
     /// convolution.
     pub fn gage_rate(&self, gi: usize, epoch: f64) -> f64 {
+        self.rate_of(gi, epoch)
+    }
+
+    /// A gage's intensity (m/s), the injected one where one stands
+    /// (§12.4). Every reader of a gage goes through here, so an injection
+    /// cannot reach one path and miss another.
+    fn rate_of(&self, gi: usize, epoch: f64) -> f64 {
+        if let Some(Some(forced)) = self.gage_override.get(gi) {
+            return *forced;
+        }
         self.gages.get(gi).map_or(0.0, |g| g.rate(epoch))
+    }
+
+    /// Inject an intensity at a gage (m/s), or release it with `None`
+    /// (§12.4). `false` for a gage this compartment does not carry.
+    pub fn set_precipitation(&mut self, gi: usize, rate: Option<f64>) -> bool {
+        let Some(slot) = self.gage_override.get_mut(gi) else {
+            return false;
+        };
+        *slot = rate;
+        true
     }
 
     /// A parcel's infiltration and exerted pervious-evaporation rates
@@ -1357,6 +1382,7 @@ impl Surface {
             gages: _,
             start_epoch: _,
             // State.
+            gage_override,
             parcels,
             degraded,
             losses,
@@ -1368,6 +1394,14 @@ impl Surface {
             snow_plowed,
             initial_storage,
         } = self;
+        // §12.4: an injection standing when a checkpoint is taken stands
+        // when it is restored, or the restored run quietly reverts to the
+        // model's own forcing and reports a different storm.
+        put_u(w, gage_override.len() as u64)?;
+        for slot in gage_override {
+            put_b(w, slot.is_some())?;
+            put_f(w, slot.unwrap_or(0.0))?;
+        }
         put_u(w, parcels.len() as u64)?;
         for p in parcels {
             p.checkpoint_put(w)?;
@@ -1393,6 +1427,18 @@ impl Surface {
         &mut self,
         r: &mut crate::simulation::checkpoint::Reader<'_>,
     ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.gage_override.len() {
+            return Err(format!(
+                "checkpoint holds {n} gages where this model has {}",
+                self.gage_override.len()
+            ));
+        }
+        for slot in self.gage_override.iter_mut() {
+            let has = r.b()?;
+            let v = r.f()?;
+            *slot = has.then_some(v);
+        }
         let n = r.u()? as usize;
         if n != self.parcels.len() {
             return Err(format!(

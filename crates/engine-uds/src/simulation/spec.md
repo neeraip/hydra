@@ -503,11 +503,26 @@ act on, under the same conflict resolution, logged in the action record.
 Injection never mutates geometry, and no injection has undocumented side
 effects on the stepping policy.
 
-Of that vocabulary, **lateral inflow per vertex is served**. Gage
-precipitation, outfall stage, and link target settings are deferred: the
-last two are reachable inside the router but are not published on the
-session, and gage precipitation has no implementation. Writes to loss
+**An injection is an override, not a competing rule.** While one stands on
+a link, vertex, outfall or gage, the model's own forcing for it does not
+apply and no rule moves it; releasing it returns that element to the
+model. This is the resolution the served lateral-inflow operation already
+has, and it is the one a caller means: someone injecting a setting is
+replacing the model's decision for that element, not entering a priority
+contest with it. A caller who does want to compete writes a rule.
+
+Every injection that changes a link's setting is logged in the action
+record beside the rules', named as an injection, so a run driven partly
+from outside can still be read afterwards.
+
+Of that vocabulary, **lateral inflow per vertex, gage precipitation,
+outfall stage, and link target settings are served**. Writes to loss
 coefficients, flow limits, control-measure drain parameters, and
-concentrations are likewise deferred. They are listed in the charter's
-deferred set (§1.8), because a capability this section describes and the
-engine does not serve is exactly what that set exists to record.
+concentrations remain deferred, and are listed in the charter's deferred
+set (§1.8): a capability this section describes and the engine does not
+serve is exactly what that set exists to record.
+
+**Precipitation is injected as an intensity** and supersedes the gage's
+own record entirely, for every parcel the gage drives, until released. It
+is not added to what the record holds: a caller who wanted the sum can
+read the gage and inject it.

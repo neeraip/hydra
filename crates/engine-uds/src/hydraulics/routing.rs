@@ -1413,6 +1413,39 @@ impl Router {
         }
     }
 
+    /// Hold a vertex's outfall boundary at an injected stage, or release
+    /// it back to the one its model declares (§12.4).
+    ///
+    /// Unlike `set_outfall_stage`, which moves a stage the model already
+    /// declares fixed, this replaces the boundary whatever it was: an
+    /// injection on a free outfall that quietly did nothing would be
+    /// worse than one refused.
+    pub fn force_outfall_stage(&mut self, vi: usize, elev: Option<f64>, net: &Network) {
+        if !matches!(self.verts[vi].class, VertClass::Outfall(_)) {
+            return;
+        }
+        let invert = self.verts[vi].invert;
+        let boundary = match elev {
+            Some(e) => Boundary::Fixed(e),
+            None => {
+                let VertexKind::Outfall { stage, .. } = &net.vertices[vi].kind else {
+                    return;
+                };
+                match stage {
+                    OutfallStage::Free => Boundary::Free,
+                    OutfallStage::Normal => Boundary::Normal,
+                    OutfallStage::Fixed(e) => Boundary::Fixed(*e),
+                    // As at build: a dynamic stage is a fixed one the
+                    // session moves each period, and it moves it next.
+                    OutfallStage::Tidal { .. } | OutfallStage::Series { .. } => {
+                        Boundary::Fixed(invert)
+                    }
+                }
+            }
+        };
+        self.verts[vi].class = VertClass::Outfall(boundary);
+    }
+
     /// Advance the clock without routing: the §10.3 between-events freeze.
     /// State and ledgers hold; the head history resets so the error
     /// estimate restarts cleanly after the gap.
