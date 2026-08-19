@@ -104,10 +104,16 @@ test-wasm:
 # minutes. Run it on what you changed, and on anything whose semantics a
 # reader would have to take on trust.
 #
+# Every test target, not just `--lib`: much of this engine is covered by
+# the integration tests in `crates/engine-uds/tests/`, and restricting the
+# run to lib tests reported all of that as uncovered. The first run on
+# `io/iface.rs` came back 185 missed of 407 that way, nearly all of them
+# phantoms.
+#
 # Usage: just mutants crates/engine-uds/src/io/rain.rs
 # Needs `cargo install cargo-mutants`.
 mutants FILE:
-    cargo mutants -p hydra-engine-uds --file {{FILE}} -- --lib
+    cargo mutants -p hydra-engine-uds --file {{FILE}}
 
 # Run Python script unit tests
 test-scripts:
