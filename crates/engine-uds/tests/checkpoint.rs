@@ -14,9 +14,7 @@
 //! **What is still not covered:** a parcel's return-to-pervious volume in
 //! flight. It is zero at every instant these models reach, so dropping it
 //! on restore changes neither the results nor the bytes. It is written.
-//!
-//! One thing found along the way and not chased: no treatment placed on a
-//! storage vertex in these models changes anything, `C = 0` included.
+
 //!
 //! That property is the contract, and it is the only thing that can
 //! establish it: an omitted state does not fail, it continues from a
@@ -800,4 +798,67 @@ fn a_returned_drain_checkpoint_survives_a_round_trip() {
         "the drain must return to the pervious area"
     );
     resaves_identically(&returned, 0.4);
+}
+
+/// A storage vertex whose treatment reads how long water has been sitting
+/// in it, which is the only thing that reads the residence time.
+///
+/// The predecessor shipped its hotstart without this field and added it
+/// in 5.1.008. It is exactly as easy to leave out of a checkpoint.
+#[test]
+fn a_restored_storage_residence_time_continues_bit_identically() {
+    restores_identically(&treated_storage(), 0.35);
+}
+
+/// The treatment must actually be treating when the checkpoint is taken,
+/// and the storage must be holding water long enough for its residence
+/// time to be worth carrying.
+#[test]
+fn the_treated_storage_is_treating() {
+    let model = treated_storage();
+    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    sim.run();
+    let snap = sim
+        .snapshots
+        .iter()
+        .find(|s| s.depths[2] > 0.1)
+        .expect("the storage never filled");
+    // Constituent first, then vertex: reading these the other way round
+    // is what made this test look impossible the first time, since it
+    // reported the junction upstream of the treatment in both runs.
+    let untreated = model.replace("[TREATMENT]\nS1  TSS  C = 20 / (1 + HRT)\n\n", "");
+    let (mut plain, _, _) = Simulation::open(&untreated).expect("open");
+    plain.run();
+    let at = sim
+        .snapshots
+        .iter()
+        .position(|s| s.t == snap.t)
+        .expect("instant");
+    let with = sim.snapshots[at].node_quality[0][2];
+    let without = plain.snapshots[at].node_quality[0][2];
+    assert!(
+        without > with + 1.0,
+        "treated {with} against untreated {without}: the treatment is doing nothing"
+    );
+}
+
+/// The routed model with a constituent reaching its storage vertex and a
+/// treatment there whose effluent depends on the residence time.
+fn treated_storage() -> String {
+    MODEL
+        .replace(
+            "[JUNCTIONS]",
+            "[POLLUTANTS]\nTSS  MG/L  10  0  0  0.1\n\n[JUNCTIONS]",
+        )
+        .replace(
+            "[TIMESERIES]",
+            "[TREATMENT]\nS1  TSS  C = 20 / (1 + HRT)\n\n[TIMESERIES]",
+        )
+        // Without mass arriving there is nothing to treat, which is how
+        // the first attempt at this test came to prove nothing.
+        .replace("J1  FLOW  TS1", "J1  FLOW  TS1\nJ1  TSS   TS2  CONCEN")
+        .replace(
+            "TS1  1:00  0.0",
+            "TS1  1:00  0.0\nTS2  0:00  50.0\nTS2  1:00  50.0",
+        )
 }
