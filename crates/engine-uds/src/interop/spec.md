@@ -234,10 +234,10 @@ factor of 1.
 
 Rainfall, runoff, and RDII interface files are declared per the
 predecessor's syntax, the hotstart type alone holding `USE` and `SAVE`
-separately so one run may both load and save. The RDII format is served
-(§14.8.1); rainfall and runoff remain deferred (charter §1.8), and for
-those two the usages fail differently because they are different
-requests. `USE` names an input the results depend on, so the
+separately so one run may both load and save. The RDII
+(§14.8.1) and runoff (§14.8.2) formats are served; rainfall remains
+deferred (charter §1.8), and its two usages fail differently because they
+are different requests. `USE` names an input the results depend on, so the
 model is refused with the file named. `SAVE` and the scratch mode ask for
 an output artifact: the predecessor builds its rainfall file on every run
 and merely keeps rather than deletes it, so a run that does not write one
@@ -251,9 +251,8 @@ and flows convert from the *file's* declared units. Declared counts are
 bounded (100 constituents, 100 000 nodes) — each period allocates their
 product, so an unbounded declaration would let a kilobyte-scale file
 demand gigabytes. A run resumed from a
-runoff interface file would start with cold antecedent state, the file
-replaying results rather than state, and the engine would say so at
-start-up; that path is unreachable while the format is deferred.
+runoff interface file starts with cold antecedent state, the file replaying
+results rather than state, and the engine says so at start-up (§14.8.2).
 
 **Predecessor hotstart files** (`SWMM5-HOTSTART` versions 3 and 4; the
 1–2 layouts are refused with a typed error, their node-record tails and
@@ -371,9 +370,11 @@ A runoff interface file replays a hydrology run so its routing can be redone
 without recomputing the surface. It is the heavier of the two savings an
 interface file offers, and the narrower: it replays *results*, not state.
 
-Reading (`USE`) is served. Writing (`SAVE`) is deferred: a model asking for
-one opens and is told the file will not appear, as §14.8 says for a deferred
-format.
+Reading (`USE`) and writing (`SAVE`) are both served, and a model declares one
+or the other, never both: a run either replays a hydrology or records the one
+it computes. Supplying a file to replay to a run that is recording one is
+refused for the same reason, rather than silently producing a file that merely
+copies its input.
 
 **Layout.** The stamp `SWMM5-RUNOFF`, then four signed 32-bit values: the
 parcel count, the constituent count, the writing model's flow unit as the
@@ -412,6 +413,49 @@ agreeing is the whole of the check available.
 >
 > *Source: `runoff.c:379–383` — `nSubcatch`, `nPollut` and `flowUnits`
 > compared, and nothing else.*
+
+**Writing.** A record is written at the end of every hydrology step, from the
+start of the run rather than from the reporting start, and each carries that
+step's own length in seconds. Both follow from what the file is for: a run
+replays it step by step in place of the surface, so a file written at the
+reporting cadence, or beginning where reporting begins, could not replay the
+run that produced it. Under a wet/dry split the step lengths differ from record
+to record, which is why the length is stored per record and not once in the
+header.
+
+The values written are the same nine per parcel that the results file reports
+for that parcel (§14.9), converted from the engine's own units to the writing
+model's, which is the exact inverse of the conversion a reader applies. The
+step count in the header is the number of records the run actually produced,
+so a run that stops early still leaves a file that describes itself correctly.
+
+> **DEVIATION from SWMM:** the predecessor's rainfall column holds whatever the
+> gage last reported to the *results* file, not the intensity that drove the
+> step being saved. In a three-hour run at a fifteen-minute step this leaves the
+> column zero in eleven records of twelve, while the parcel is visibly producing
+> runoff from rain throughout. This engine writes the intensity that drove each
+> step, so the column means what its name says and a replayed run reports the
+> rainfall that produced its flows.
+>
+> *Source: `subcatch.c:876` reads `Gage[k].reportRainfall`, which `gage.c:573`
+> sets only when a reporting instant falls due; `runoff.c:290` saves at every
+> runoff step.*
+
+> **DEVIATION from SWMM:** the predecessor does not read its own file back
+> faithfully. Its writer records evaporation as a depth per day and its reader
+> divides by a depth per hour, so the value is recovered twenty-four times too
+> large; its writer multiplies groundwater flow by the parcel's area and its
+> reader does not divide by it, so that flow is recovered scaled by an area;
+> and its writer stores the water-table elevation while its reader subtracts it
+> from the aquifer bottom instead of the bottom from it, inverting the depth.
+> This engine writes and reads one convention, the writer's, so a file it
+> writes replays as the run that wrote it. The consequence is worth stating
+> plainly: the predecessor reading a file this engine wrote will misread those
+> three fields, and it misreads its own files the same way.
+>
+> *Source: writer at `subcatch.c:885` (evaporation), `:905` (groundwater flow,
+> area-multiplied) and `:907` (water-table elevation); reader at `runoff.c:452`,
+> `:461` and `:462–463`.*
 
 **Balances.** A replayed run reports no surface or subsurface balance
 (§11.1). The file carries the flows those compartments produced, not the

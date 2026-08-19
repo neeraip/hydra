@@ -683,6 +683,31 @@ impl ParcelReplay {
             washoff: self.washoff.clone(),
         }
     }
+
+    /// This record in the writing model's user units, the inverse of
+    /// [`ParcelReplay::to_si`].
+    ///
+    /// A file is written in the units of the model that wrote it, so this
+    /// is what a writer applies on the way out. The two directions are
+    /// stated separately rather than one deriving from the other: a single
+    /// shared table would round-trip perfectly while being wrong in both
+    /// directions, and the units are pinned against the predecessor's own
+    /// conversion factors in the tests.
+    pub fn from_si(&self, us: bool, flow_cv: f64) -> ParcelReplay {
+        let depth = if us { 0.0254 } else { 1.0e-3 };
+        let length = if us { 0.3048 } else { 1.0 };
+        ParcelReplay {
+            rainfall: self.rainfall * 3600.0 / depth,
+            snow_depth: self.snow_depth / depth,
+            evap: self.evap * 86_400.0 / depth,
+            infil: self.infil * 3600.0 / depth,
+            runoff: self.runoff / flow_cv,
+            gw_flow: self.gw_flow / flow_cv,
+            gw_elev: self.gw_elev / length,
+            soil_moisture: self.soil_moisture,
+            washoff: self.washoff.clone(),
+        }
+    }
 }
 
 /// A parsed runoff interface file, checked against a model.
@@ -783,6 +808,61 @@ pub fn parse_runoff_file(bytes: &[u8], net: &Network) -> Result<RunoffInterface,
         o += record;
     }
     Ok(RunoffInterface { steps })
+}
+
+/// Write a runoff interface file (§14.8.2).
+///
+/// `records` are `(step length in seconds, one row per parcel in model
+/// order)` in engine units, one record per hydrology step in the order the
+/// run produced them. The header's step count is taken from what is
+/// actually here, so a run that stopped early still describes itself.
+pub fn write_runoff_file(
+    net: &Network,
+    records: &[(f64, Vec<ParcelReplay>)],
+    w: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    let us = net.options.flow_units.is_us();
+    let cv = flow_cv_of(net.options.flow_units);
+    let nc = net.constituents.len();
+    let unit = FILE_FLOW_UNITS
+        .iter()
+        .position(|u| *u == flow_unit_word(net.options.flow_units))
+        .unwrap_or(0) as i32;
+    w.write_all(b"SWMM5-RUNOFF")?;
+    for v in [
+        net.parcels.len() as i32,
+        nc as i32,
+        unit,
+        records.len() as i32,
+    ] {
+        w.write_all(&v.to_le_bytes())?;
+    }
+    for (dt, rows) in records {
+        w.write_all(&(*dt as f32).to_le_bytes())?;
+        for row in rows {
+            let u = row.from_si(us, cv);
+            for x in [
+                u.rainfall,
+                u.snow_depth,
+                u.evap,
+                u.infil,
+                u.runoff,
+                u.gw_flow,
+                u.gw_elev,
+                u.soil_moisture,
+            ] {
+                w.write_all(&(x as f32).to_le_bytes())?;
+            }
+            // Every declared constituent gets a slot whether the row
+            // carries one or not: the record length is fixed by the
+            // header, and a short row would misalign every parcel after it.
+            for ci in 0..nc {
+                let c = u.washoff.get(ci).copied().unwrap_or(0.0);
+                w.write_all(&(c as f32).to_le_bytes())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The predecessor's word for a model's flow unit.
@@ -1217,5 +1297,168 @@ TS1  1:00  0.0
         assert_eq!(6.0, p.gw_flow);
         assert_eq!(7.0, p.gw_elev);
         assert_eq!(8.0, p.soil_moisture);
+    }
+
+    /// The nine conversions, each against the predecessor's own factor
+    /// rather than against `to_si`. A shared table would let one mistake
+    /// round-trip unnoticed in both directions, so these numbers are
+    /// computed from `Ucf` by hand: rainfall 43 200 (in/hr), evaporation
+    /// 1 036 800 (in/day), rain depth 12 (in), length 1 (ft), all as
+    /// ft-per-second or ft, and CFS for flow.
+    #[test]
+    fn the_written_units_are_the_predecessors() {
+        // One inch per hour is 1/43200 ft/s, and a foot is 0.3048 m.
+        let in_per_hour = 0.3048 / 43_200.0;
+        let in_per_day = 0.3048 / 1_036_800.0;
+        let inch = 0.3048 / 12.0;
+        let cfs = 0.3048_f64.powi(3);
+        let si = ParcelReplay {
+            rainfall: in_per_hour,
+            snow_depth: inch,
+            evap: in_per_day,
+            infil: in_per_hour,
+            runoff: cfs,
+            gw_flow: 2.0 * cfs,
+            gw_elev: 0.3048,
+            soil_moisture: 0.31,
+            washoff: vec![4.0],
+        };
+        let u = si.from_si(true, cfs);
+        let close = |a: f64, b: f64, what: &str| {
+            assert!((a - b).abs() < 1e-9, "{what}: {a} not {b}");
+        };
+        close(u.rainfall, 1.0, "rainfall is inches per hour");
+        close(u.snow_depth, 1.0, "snow depth is inches");
+        close(u.evap, 1.0, "evaporation is inches per DAY, not per hour");
+        close(u.infil, 1.0, "infiltration is inches per hour");
+        close(u.runoff, 1.0, "runoff is the model's flow unit");
+        close(u.gw_flow, 2.0, "groundwater flow is the model's flow unit");
+        close(u.gw_elev, 1.0, "water-table elevation is feet");
+        close(u.soil_moisture, 0.31, "soil moisture is dimensionless");
+        assert_eq!(vec![4.0], u.washoff, "washoff is a concentration");
+    }
+
+    /// Metric models carry the same distinction: millimetres, and per day
+    /// for evaporation alone.
+    #[test]
+    fn the_written_units_are_the_predecessors_in_metric() {
+        let si = ParcelReplay {
+            rainfall: 1.0e-3 / 3600.0,
+            snow_depth: 1.0e-3,
+            evap: 1.0e-3 / 86_400.0,
+            infil: 1.0e-3 / 3600.0,
+            runoff: 1.0,
+            gw_flow: 1.0,
+            gw_elev: 1.0,
+            soil_moisture: 0.2,
+            washoff: vec![],
+        };
+        let u = si.from_si(false, 1.0);
+        for (got, what) in [
+            (u.rainfall, "rainfall mm/hr"),
+            (u.snow_depth, "snow depth mm"),
+            (u.evap, "evaporation mm/day"),
+            (u.infil, "infiltration mm/hr"),
+            (u.runoff, "runoff CMS"),
+            (u.gw_elev, "water table m"),
+        ] {
+            assert!((got - 1.0).abs() < 1e-9, "{what}: {got}");
+        }
+    }
+
+    #[test]
+    fn a_written_file_reads_back_as_what_was_written() {
+        let net = model();
+        let cv = flow_cv_of(net.options.flow_units);
+        let us = net.options.flow_units.is_us();
+        let mk = |runoff: f64| ParcelReplay {
+            rainfall: 1.0e-6,
+            snow_depth: 0.02,
+            evap: 3.0e-8,
+            infil: 2.0e-6,
+            runoff,
+            gw_flow: 0.01,
+            gw_elev: 9.5,
+            soil_moisture: 0.28,
+            washoff: vec![],
+        };
+        let records = vec![
+            (300.0, vec![mk(0.5), mk(1.5)]),
+            (600.0, vec![mk(0.25), mk(0.75)]),
+        ];
+        let mut bytes = Vec::new();
+        write_runoff_file(&net, &records, &mut bytes).expect("write");
+        let back = parse_runoff_file(&bytes, &net).expect("read back");
+        assert_eq!(2, back.steps.len(), "step count");
+        for (i, (dt, rows)) in back.steps.iter().enumerate() {
+            assert_eq!(records[i].0, *dt, "step {i} length");
+            for (j, row) in rows.iter().enumerate() {
+                let si = row.to_si(us, cv);
+                let want = &records[i].1[j];
+                for (got, want, what) in [
+                    (si.rainfall, want.rainfall, "rainfall"),
+                    (si.snow_depth, want.snow_depth, "snow depth"),
+                    (si.evap, want.evap, "evaporation"),
+                    (si.infil, want.infil, "infiltration"),
+                    (si.runoff, want.runoff, "runoff"),
+                    (si.gw_flow, want.gw_flow, "groundwater flow"),
+                    (si.gw_elev, want.gw_elev, "water-table elevation"),
+                    (si.soil_moisture, want.soil_moisture, "soil moisture"),
+                ] {
+                    // Single precision on the way through the file.
+                    assert!(
+                        (got - want).abs() <= want.abs() * 1e-6,
+                        "step {i} parcel {j} {what}: {got} not {want}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The header is the predecessor's, byte for byte.
+    #[test]
+    fn a_written_file_has_the_predecessors_header() {
+        let net = model();
+        let mut bytes = Vec::new();
+        write_runoff_file(&net, &[(60.0, vec![])], &mut bytes).expect("write");
+        assert_eq!(b"SWMM5-RUNOFF", &bytes[..12], "stamp");
+        let word = |o: usize| i32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        assert_eq!(2, word(12), "parcel count");
+        assert_eq!(0, word(16), "constituent count");
+        // CMS is the fourth of the six, and the enumeration is the format.
+        assert_eq!(3, word(20), "flow unit");
+        assert_eq!(1, word(24), "step count is what the run produced");
+    }
+
+    /// A file the reference implementation itself wrote, read by this
+    /// engine. The literal assertions above encode what this engine
+    /// believes the format to be; only this one encodes what the format
+    /// actually is.
+    #[test]
+    fn reads_a_file_the_predecessor_wrote() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/uds");
+        let text = std::fs::read_to_string(dir.join("runoff_interface.inp")).expect("model");
+        let (net, diags) = parse_network(&text);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        let bytes = std::fs::read(dir.join("runoff_interface.rff")).expect("reference file");
+        let f = parse_runoff_file(&bytes, &net).expect("parse the reference file");
+        // Three hours at a fifteen-minute wet step.
+        assert_eq!(12, f.steps.len(), "step count");
+        assert!(f.steps.iter().all(|(dt, _)| *dt == 900.0), "step lengths");
+        assert!(f.steps.iter().all(|(_, r)| r.len() == 1), "one parcel each");
+        // The reference run's fifth record, in the model's own units.
+        let p = &f.steps[4].1[0];
+        assert!((p.runoff - 2.260_708).abs() < 1e-4, "runoff {}", p.runoff);
+        assert!((p.infil - 0.75).abs() < 1e-6, "infiltration {}", p.infil);
+        // 2.26 cfs is 0.064 m³/s, and 0.75 in/hr is 5.29e-6 m/s.
+        let cv = flow_cv_of(net.options.flow_units);
+        let si = p.to_si(net.options.flow_units.is_us(), cv);
+        assert!((si.runoff - 0.064_016).abs() < 1e-5, "runoff {}", si.runoff);
+        assert!(
+            (si.infil - 5.291_67e-6).abs() < 1e-10,
+            "infiltration {}",
+            si.infil
+        );
     }
 }

@@ -357,6 +357,23 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             return EXIT_IO;
         }
     }
+    // §14.8.2: SAVE keeps the hydrology this run computed so a later run
+    // can redo its routing without recomputing the surface.
+    if let Some((hydra::uds::model::FileMode::Save, name)) = &iface.runoff {
+        let path = match resolve_aux_path(&args.model, name) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        if let Err(e) = create_and_write(&path, |w| sim.write_runoff(w).map(|_| ())) {
+            emit_error(
+                "io/interface",
+                &format!("runoff interface file {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_IO;
+        }
+    }
     if let Err(e) = es.finish_results() {
         emit_error("io/output", &e.to_string(), None, None);
         return EXIT_IO;

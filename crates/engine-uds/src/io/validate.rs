@@ -159,7 +159,7 @@ pub enum ValidationKind {
     /// is unaffected: the file is an output artifact rather than an input,
     /// so the results are the ones the model would have produced anyway.
     InterfaceFileNotWritten {
-        /// Which file: "rainfall", "runoff" or "RDII".
+        /// Which file. Only "rainfall" remains deferred (§14.8).
         role: &'static str,
     },
 }

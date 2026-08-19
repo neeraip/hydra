@@ -3698,3 +3698,196 @@ TS1  1:00  0.0
         p.soil_moisture
     );
 }
+
+// ── §14.8.2 writing a runoff interface file ─────────────────────────────
+
+/// A model that both computes a hydrology worth recording and routes it.
+///
+/// The clock is explicit so the wet step and the reporting step can differ:
+/// the file must follow the hydrology, not the reporting.
+const RUNOFF_SAVE_MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+REPORT_START_TIME    00:30:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         00:00:15
+REPORT_STEP          00:15:00
+
+[FILES]
+SAVE RUNOFF runoff.bin
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  75  500  0.01  0
+S2  G1  J1  6   60  400  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+S2  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+S2  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  30.0
+TS1  0:30  0.0
+
+[REPORT]
+";
+
+/// The same model with the file read instead of written.
+fn runoff_use_model() -> String {
+    RUNOFF_SAVE_MODEL.replace("SAVE RUNOFF runoff.bin", "USE RUNOFF runoff.bin")
+}
+
+/// The saved file covers the run at the hydrology step, from time zero.
+///
+/// Both halves matter and neither follows from the other. Written at the
+/// reporting cadence the file would be four records rather than twelve;
+/// begun at the reporting start it would omit the first half hour, which
+/// is where all the rain falls.
+#[test]
+fn a_saved_runoff_file_covers_every_hydrology_step() {
+    let (mut sim, diags, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let mut bytes = Vec::new();
+    assert!(sim.write_runoff(&mut bytes).expect("write"), "file written");
+
+    let word = |o: usize| i32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+    assert_eq!(2, word(12), "two parcels");
+    assert_eq!(0, word(16), "no constituents");
+    // An hour at a five-minute wet step, from zero rather than from the
+    // reporting start half an hour in.
+    assert_eq!(12, word(24), "records");
+    let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+    let record = 4 + 2 * 8 * 4;
+    for i in 0..12 {
+        assert_eq!(300.0, f32_at(28 + i * record), "record {i} step length");
+    }
+    // The rain stops at 0:30, so the first six records carry rainfall and
+    // the parcels are still draining after. A file that began at the
+    // reporting start would show the opposite.
+    let rain_of = |i: usize| f32_at(28 + i * record + 4);
+    assert!(rain_of(0) > 0.0, "no rain in the first record");
+    assert_eq!(0.0, rain_of(11), "rain in the last record");
+}
+
+/// Saving one changes nothing else the run reports.
+///
+/// The writer only observes, so every other surface must be untouched:
+/// the ledgers, the report, and the results file the run produces.
+#[test]
+fn saving_a_runoff_file_changes_nothing_else() {
+    let run = |model: &str| {
+        let (mut sim, _, _) = Simulation::open(model).expect("open");
+        sim.run();
+        let mut out = Vec::new();
+        sim.write_out(&mut out).expect("out");
+        let mut rpt = Vec::new();
+        sim.write_report(&mut rpt).expect("report");
+        (sim.ledgers().network, out, rpt)
+    };
+    let plain = RUNOFF_SAVE_MODEL.replace("[FILES]\nSAVE RUNOFF runoff.bin\n\n", "");
+    let (led_a, out_a, rpt_a) = run(&plain);
+    let (led_b, out_b, rpt_b) = run(RUNOFF_SAVE_MODEL);
+    assert_eq!(led_a.inflow, led_b.inflow, "network inflow");
+    assert_eq!(led_a.outflow, led_b.outflow, "network outflow");
+    assert_eq!(out_a, out_b, "the results file differs");
+    assert_eq!(rpt_a, rpt_b, "the report differs");
+}
+
+/// A saved file replays as the run that wrote it.
+///
+/// This is the whole point of the format, and it is the one assertion that
+/// exercises writer and reader together against real hydrology rather than
+/// against hand-built rows.
+#[test]
+fn a_saved_runoff_file_replays_as_the_run_that_wrote_it() {
+    let (mut a, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open save");
+    a.run();
+    let mut bytes = Vec::new();
+    assert!(a.write_runoff(&mut bytes).expect("write"), "file written");
+
+    let (mut b, _, _) = Simulation::open(&runoff_use_model()).expect("open use");
+    b.supply_runoff(&bytes).expect("supply");
+    b.run();
+
+    let (la, lb) = (a.ledgers().network, b.ledgers().network);
+    assert!(la.inflow > 0.0, "the computed run produced no inflow");
+    assert!(
+        (la.inflow - lb.inflow).abs() < la.inflow * 1e-3,
+        "replayed inflow {} against the computed {}",
+        lb.inflow,
+        la.inflow
+    );
+
+    // Per parcel and per reporting instant, not just the total: a file
+    // that scaled every parcel by the same factor, or swapped two of
+    // them, would leave the total untouched.
+    assert_eq!(a.snapshots.len(), b.snapshots.len(), "reporting instants");
+    for (i, (sa, sb)) in a.snapshots.iter().zip(&b.snapshots).enumerate() {
+        for (pi, (pa, pb)) in sa.subcatch.iter().zip(&sb.subcatch).enumerate() {
+            for (got, want, what) in [
+                (pb.runoff, pa.runoff, "runoff"),
+                (pb.rain, pa.rain, "rainfall"),
+                (pb.infil, pa.infil, "infiltration"),
+                (pb.evap, pa.evap, "evaporation"),
+            ] {
+                assert!(
+                    (got - want).abs() <= want.abs() * 1e-5 + 1e-12,
+                    "instant {i} parcel {pi} {what}: replayed {got}, computed {want}"
+                );
+            }
+        }
+    }
+}
+
+/// A run cannot both record a hydrology and replay one.
+#[test]
+fn a_run_that_saves_a_runoff_file_cannot_also_replay_one() {
+    let (mut a, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
+    a.run();
+    let mut bytes = Vec::new();
+    a.write_runoff(&mut bytes).expect("write");
+
+    let (mut b, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
+    let err = b
+        .supply_runoff(&bytes)
+        .expect_err("both at once is refused");
+    assert!(err.contains("cannot also replay"), "{err}");
+}
+
+/// A model that saves no file writes none, and says so by returning false
+/// rather than by producing an empty one.
+#[test]
+fn a_model_that_asks_for_no_runoff_file_writes_none() {
+    let plain = RUNOFF_SAVE_MODEL.replace("[FILES]\nSAVE RUNOFF runoff.bin\n\n", "");
+    let (mut sim, _, _) = Simulation::open(&plain).expect("open");
+    sim.run();
+    let mut bytes = Vec::new();
+    assert!(!sim.write_runoff(&mut bytes).expect("write"), "no file");
+    assert!(bytes.is_empty(), "wrote {} bytes", bytes.len());
+}
