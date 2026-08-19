@@ -734,9 +734,62 @@ the gage's declaration, exactly as for a supplied series (§3.1 of the
 hydrology specification). A malformed line is a parse error naming its line
 number, never skipped.
 
-The predecessor's archival formats (NWS and Environment-Canada tape and
-DSI layouts) are deferred (§1): a file in one of those layouts fails this
-format's parse and is refused with the parse's own reason.
+#### 14.12.1 Archival station records
+
+The predecessor also reads the layouts national weather services publish.
+Three of them are served here — the US National Weather Service's fixed-
+field tape layout and its space- and comma-delimited DSI exports. The
+online retrieval layouts and the Environment-Canada ones remain deferred
+(§1): a file in one of those fails the parse and is refused with its own
+reason.
+
+An archival record parses into exactly what a rainfall interface file
+holds (§14.8.3): depths in inches over a recording interval the file
+itself declares. That is not a convenience — it is what the archives are,
+and it is why the interface file has that shape at all. A caller therefore
+reads an archive and a cache of one through the same path.
+
+**Which layout, and at what interval.** The layout is recognised from the
+first five lines, and the recording interval from the element code the
+line carries: `HPCP` is hourly, `QPCP` and `QGAG` are quarter-hourly. A
+file whose element code is none of those is not one of these layouts, and
+is refused rather than read at a guessed interval.
+
+**The stamp is the end of its interval.** A reading marked 01:00 in an
+hourly record is the hour that *ended* at 01:00, so every reading is
+shifted back one interval to the instant it began. Reading them as
+starting instants shifts a whole record forward by an hour, which no
+single value reveals.
+
+**Values are hundredths of an inch.** A reading of 9999 or more is
+missing, as is one flagged `M`, and so is every reading inside a deleted
+or missing period. A missing reading is not a dry one: it is absent from
+the record this parse produces, and the gage's own treatment of a gap
+applies.
+
+**Accumulation periods.** A flag `a` opens a period whose readings were
+not measured separately, and a later `A` closes it carrying the total that
+fell across the whole of it. That total is divided evenly among the
+intervals from the opening instant to the closing one inclusive, and each
+receives its share. An accumulation whose total is missing contributes
+nothing but is still counted as that many missing periods.
+
+> **DEVIATION from SWMM:** the predecessor divides an accumulated total
+> evenly and says nothing about having done so. A modeller reading the
+> results sees a uniform hour of rain where the record only ever claimed a
+> total. This engine divides it the same way, because any other division
+> would be invented, and reports each accumulation period it spread, with
+> its span and total, so the uniformity is known to be an artefact of the
+> record rather than a measurement.
+>
+> *Source: `rain.c:saveAccumRainfall`, which spreads `v/n` and writes each
+> interval.*
+
+**Condition codes.** `{` and `}` bracket a deleted period, `[` and `]` a
+missing one, and both are missing for this purpose. The closing flags, and
+the `A` that closes an accumulation, clear the condition; a record that
+opens a period and never closes it leaves every later reading missing,
+which is what the record says.
 
 ### 14.13 Model Export
 

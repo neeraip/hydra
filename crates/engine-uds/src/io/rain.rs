@@ -118,3 +118,375 @@ sta1 2012 6 29 0 2 0.25
         assert!(err.contains("not a number"), "{err}");
     }
 }
+
+// ── Archival station records (§14.12.1) ─────────────────────────────────────
+
+/// The archival layouts this engine reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// Fixed-field tape: 12-byte groups from column 30.
+    Tape,
+    /// Space-delimited DSI export, with or without a station name.
+    Space { named: bool },
+    /// Comma-delimited DSI export.
+    Comma,
+}
+
+impl Layout {
+    /// Where a line's readings begin, and how wide each one is.
+    fn groups(self) -> (usize, usize) {
+        match self {
+            Layout::Tape => (30, 12),
+            Layout::Space { named: false } => (28, 16),
+            Layout::Space { named: true } => (59, 16),
+            Layout::Comma => (28, 16),
+        }
+    }
+}
+
+/// The recording interval an element code declares (§14.12.1).
+fn nws_interval(element: &str) -> Option<f64> {
+    match element {
+        "HPCP" => Some(3600.0),
+        "QPCP" | "QGAG" => Some(900.0),
+        _ => None,
+    }
+}
+
+/// Recognise the layout and interval from a file's opening lines.
+///
+/// The first five lines are examined, as the predecessor does: an export
+/// may carry header lines before its first record, and a layout that
+/// cannot be recognised in five is not one of these.
+fn recognise(text: &str) -> Option<(Layout, f64, String)> {
+    for line in text.lines().take(5) {
+        // Tape carries a three-character record type before the station.
+        if line.len() > 30 {
+            let station = line.get(3..9).unwrap_or("").trim();
+            let element = line.get(11..15).unwrap_or("");
+            if !station.is_empty()
+                && station.bytes().all(|b| b.is_ascii_digit())
+                && line
+                    .get(9..11)
+                    .is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit()))
+            {
+                if let Some(interval) = nws_interval(element) {
+                    return Some((Layout::Tape, interval, station.to_string()));
+                }
+            }
+        }
+        // Space and comma exports both open with the station, then the
+        // division and element, separated by their own delimiter.
+        let head = line.get(..18).unwrap_or("");
+        let comma = head.contains(',');
+        let fields: Vec<&str> = if comma {
+            head.split(',').collect()
+        } else {
+            head.split_whitespace().collect()
+        };
+        if fields.len() >= 3 {
+            let station = fields[0].trim();
+            if !station.is_empty() && station.bytes().all(|b| b.is_ascii_digit()) {
+                if let Some(interval) = nws_interval(fields[2].trim()) {
+                    let layout = if comma {
+                        Layout::Comma
+                    } else {
+                        Layout::Space { named: false }
+                    };
+                    return Some((layout, interval, station.to_string()));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse an archival station record into the form a rainfall interface
+/// file holds: depths in inches over the interval the file declares
+/// (§14.12.1).
+///
+/// The layout and interval are the file's own. A file in a layout this
+/// engine does not read is refused rather than read at a guess.
+pub fn parse_archive_file(
+    text: &str,
+) -> Result<(crate::io::iface::RainGageRecord, Vec<String>), String> {
+    let Some((layout, interval, station)) = recognise(text) else {
+        return Err(
+            "not an archival station record this engine reads: no line in the \
+             first five carries a station, division and a recording element of \
+             HPCP, QPCP or QGAG (§14.12.1)"
+                .into(),
+        );
+    };
+    let (start, width) = layout.groups();
+    let mut readings: Vec<(f64, f64)> = Vec::new();
+    let mut notices = Vec::new();
+    // The condition a bracket opened, which outlives the line that opened
+    // it: a record that opens a missing period and never closes it leaves
+    // everything after it missing, which is what the record says.
+    let mut missing_period = false;
+    let mut accum_start: Option<f64> = None;
+
+    for (n, line) in text.lines().enumerate() {
+        let bad = |what: &str| format!("archival record line {}: {what}", n + 1);
+        let Some((date, day_seconds)) = archive_date(line, layout) else {
+            continue;
+        };
+        let mut k = start;
+        while k + width <= line.len() {
+            let group = &line[k..k + width];
+            k += width;
+            let Some((hour, minute, value, flag)) = archive_group(group, layout) else {
+                break;
+            };
+            if hour >= 25 {
+                break;
+            }
+            let condition = match flag {
+                'a' | 'A' => Some(false),
+                '{' | '[' => Some(true),
+                '}' | ']' => Some(false),
+                _ => None,
+            };
+            if let Some(open) = condition {
+                if flag == '{' || flag == '[' {
+                    missing_period = true;
+                } else if !open {
+                    missing_period = false;
+                }
+            }
+            let absent = missing_period || flag == 'M' || value >= 9999;
+            let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64;
+            match flag {
+                'a' => accum_start = Some(at),
+                'A' => {
+                    let Some(from) = accum_start.take() else {
+                        return Err(bad("an accumulation closes that never opened"));
+                    };
+                    let spans = ((at - from) / interval).round().max(0.0) as usize + 1;
+                    if !absent {
+                        let each = value as f64 / spans as f64 / 100.0;
+                        for j in 0..spans {
+                            let t = from + j as f64 * interval - interval;
+                            readings.push((archive_day(date, t), each));
+                        }
+                        notices.push(format!(
+                            "an accumulated total of {:.2} in was divided evenly over \
+                             {spans} periods ending at line {}, because the record \
+                             carries no measurement within them (§14.12.1)",
+                            value as f64 / 100.0,
+                            n + 1
+                        ));
+                    }
+                }
+                _ => {
+                    // Missing is absent from the record, not dry, and a
+                    // zero the predecessor drops is dropped here too.
+                    if !absent && value > 0 {
+                        let t = at - interval;
+                        readings.push((archive_day(date, t), value as f64 / 100.0));
+                    }
+                }
+            }
+        }
+    }
+    if readings.is_empty() && notices.is_empty() {
+        return Err(format!(
+            "archival station record for {station:?} holds no rainfall at all"
+        ));
+    }
+    Ok((
+        crate::io::iface::RainGageRecord {
+            station,
+            interval,
+            readings,
+        },
+        notices,
+    ))
+}
+
+/// A line's calendar date and the seconds its midnight sits at, or `None`
+/// when the line is a header rather than a record.
+fn archive_date(line: &str, layout: Layout) -> Option<(Date, f64)> {
+    let (y, m, d) = match layout {
+        Layout::Tape => {
+            let f = line.get(17..30)?;
+            (
+                f.get(..4)?.trim().parse().ok()?,
+                f.get(4..6)?.trim().parse().ok()?,
+                f.get(6..10)?.trim().parse().ok()?,
+            )
+        }
+        Layout::Space { named } => {
+            let at = if named { 49 } else { 18 };
+            let f = line.get(at..at + 10)?;
+            (
+                f.get(..4)?.trim().parse().ok()?,
+                f.get(5..7)?.trim().parse().ok()?,
+                f.get(8..10)?.trim().parse().ok()?,
+            )
+        }
+        Layout::Comma => {
+            let f = line.get(18..28)?;
+            (
+                f.get(..4)?.trim().parse().ok()?,
+                f.get(5..7)?.trim().parse().ok()?,
+                f.get(8..10)?.trim().parse().ok()?,
+            )
+        }
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some((
+        Date {
+            year: y,
+            month: m,
+            day: d,
+        },
+        0.0,
+    ))
+}
+
+/// One reading group: its hour, minute, hundredths of an inch, and flag.
+fn archive_group(group: &str, layout: Layout) -> Option<(u32, u32, i64, char)> {
+    let (hour, minute, value, flag) = match layout {
+        Layout::Tape => (
+            group.get(..2)?,
+            group.get(2..4)?,
+            group.get(4..10)?,
+            group.get(10..11)?,
+        ),
+        Layout::Space { .. } => (
+            group.get(1..3)?,
+            group.get(3..5)?,
+            group.get(6..12)?,
+            group.get(13..14)?,
+        ),
+        Layout::Comma => (
+            group.get(1..3)?,
+            group.get(3..5)?,
+            group.get(6..12)?,
+            group.get(13..14)?,
+        ),
+    };
+    Some((
+        hour.trim().parse().ok()?,
+        minute.trim().parse().ok()?,
+        value.trim().parse().ok()?,
+        flag.chars().next().unwrap_or(' '),
+    ))
+}
+
+/// A date and an offset in seconds as the decimal day these records are
+/// stamped with. An offset past midnight, or before it, carries the date.
+fn archive_day(date: Date, seconds: f64) -> f64 {
+    const SWMM_EPOCH_DAYS: f64 = 25_569.0;
+    SWMM_EPOCH_DAYS + crate::simulation::time::days_from_civil(date) as f64 + seconds / 86_400.0
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+
+    /// Every expectation here is what SWMM 5 itself made of the same file:
+    /// each fixture was run through the reference implementation with
+    /// `SAVE RAINFALL`, and these are the readings its interface file
+    /// held. See `tests/fixtures/uds/archive/README.txt`.
+    fn fixture(name: &str) -> String {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/archive")
+            .join(name);
+        std::fs::read_to_string(path).expect("fixture readable")
+    }
+
+    /// Readings as `(hour of 2020-01-01, inches)`, rounded past the noise
+    /// the decimal-day encoding carries.
+    fn hours(rec: &crate::io::iface::RainGageRecord) -> Vec<(f64, f64)> {
+        rec.readings
+            .iter()
+            .map(|(day, v)| {
+                let hour = ((day - 43_831.0) * 24.0 * 1e6).round() / 1e6;
+                (hour, (v * 1e6).round() / 1e6)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_space_delimited_record_reads_as_the_predecessor_reads_it() {
+        let (rec, notices) = parse_archive_file(&fixture("nws_space.dat")).expect("parse");
+        assert_eq!("123456", rec.station);
+        assert_eq!(3600.0, rec.interval, "HPCP is hourly");
+        // Stamped one interval before the instant the record marks: the
+        // 01:00 reading is the hour that ended at 01:00.
+        assert_eq!(vec![(0.0, 0.25), (1.0, 0.10)], hours(&rec));
+        assert!(notices.is_empty(), "{notices:?}");
+    }
+
+    #[test]
+    fn the_comma_and_tape_layouts_read_the_same_record() {
+        let space = parse_archive_file(&fixture("nws_space.dat"))
+            .expect("space")
+            .0;
+        for name in ["nws_comma.dat", "nws_tape.dat"] {
+            let (rec, _) = parse_archive_file(&fixture(name)).expect(name);
+            assert_eq!(space.station, rec.station, "{name}: station");
+            assert_eq!(space.interval, rec.interval, "{name}: interval");
+            assert_eq!(hours(&space), hours(&rec), "{name}: readings");
+        }
+    }
+
+    /// A missing reading is absent, and so is a zero. Neither is a dry
+    /// interval this parse invents.
+    #[test]
+    fn a_missing_reading_and_a_zero_are_both_absent() {
+        let (rec, _) = parse_archive_file(&fixture("nws_space.dat")).expect("parse");
+        assert_eq!(2, rec.readings.len(), "the record carries four readings");
+        assert!(
+            !hours(&rec).iter().any(|(h, _)| *h == 2.0 || *h == 3.0),
+            "the flagged and zero readings must not appear: {:?}",
+            hours(&rec)
+        );
+    }
+
+    /// An accumulated total is divided evenly, and said so.
+    #[test]
+    fn an_accumulation_is_spread_and_reported() {
+        let (rec, notices) = parse_archive_file(&fixture("nws_accum.dat")).expect("parse");
+        assert_eq!(
+            vec![
+                (0.0, 0.15),
+                (1.0, 0.15),
+                (2.0, 0.15),
+                (3.0, 0.15),
+                (5.0, 0.05),
+            ],
+            hours(&rec),
+            "0.60 in over four periods, then a measured 0.05 in"
+        );
+        // The uniformity is an artefact of the record, and a modeller who
+        // is not told reads four identical hours as a measurement.
+        assert_eq!(1, notices.len(), "{notices:?}");
+        assert!(notices[0].contains("0.60 in"), "{}", notices[0]);
+        assert!(notices[0].contains("4 periods"), "{}", notices[0]);
+    }
+
+    #[test]
+    fn a_layout_this_engine_does_not_read_is_refused() {
+        // The standard station format, which §14.12 serves by another path.
+        let err = parse_archive_file("STA01  2020  1  1  0  0  0.10\n").unwrap_err();
+        assert!(err.contains("not an archival station record"), "{err}");
+        // An element code that declares no interval.
+        let err = parse_archive_file("123456 21 ZZZZ  HI2020 01 01 0100     25    \n").unwrap_err();
+        assert!(err.contains("HPCP"), "{err}");
+    }
+
+    #[test]
+    fn a_quarter_hourly_element_reads_at_its_own_interval() {
+        let (rec, _) =
+            parse_archive_file("123456 21 QPCP  HI2020 01 01 0015     25    \n").expect("parse");
+        assert_eq!(900.0, rec.interval, "QPCP is quarter-hourly");
+        // Stamped a quarter hour before the instant the record marks.
+        assert_eq!(vec![(0.0, 0.25)], hours(&rec));
+    }
+}
