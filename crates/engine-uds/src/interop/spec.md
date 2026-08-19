@@ -737,11 +737,10 @@ number, never skipped.
 #### 14.12.1 Archival station records
 
 The predecessor also reads the layouts national weather services publish.
-Six of them are served here: the US National Weather Service's fixed-field
-tape layout and its space- and comma-delimited DSI exports, and the
-Environment-Canada hourly and quarter-hourly layouts. The NWS online
-retrieval layouts remain deferred (§1): a file in one of those fails the
-parse and is refused with its own reason.
+All of them are served here: the US National Weather Service's fixed-field
+tape layout, its space- and comma-delimited DSI exports, its online
+retrieval exports, and the Environment-Canada hourly and quarter-hourly
+layouts.
 
 An archival record parses into exactly what a rainfall interface file
 holds (§14.8.3): depths in inches over a recording interval the file
@@ -813,6 +812,19 @@ hourly layouts, 159 in the quarter-hourly one.
 >
 > *Source: `rain.c:937–938`, and a record whose year field is 120 lands in
 > 1120 when the reference implementation reads it.*
+
+**The online retrieval exports.** One reading per line, and neither the
+date nor the value is at a column the layout fixes. The quantity's own
+name in the header line marks the column its values are written in, and
+the date's column is eleven characters before the last colon of the first
+line that names a station, which is the colon inside that line's clock.
+Both are read from the file rather than assumed, because a file that
+carries an extra column moves them.
+
+Midnight belongs to the day before: a reading marked 00:00 is the interval
+that ended at that midnight. Values are decimal inches where the field
+carries a decimal point and hundredths where it does not, which is how a
+newer export and an older one are told apart.
 
 **Condition codes.** `{` and `}` bracket a deleted period, `[` and `]` a
 missing one, and both are missing for this purpose. The closing flags, and

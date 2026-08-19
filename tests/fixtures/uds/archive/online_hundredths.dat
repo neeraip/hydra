@@ -1,0 +1,3 @@
+STATION           DATE            HPCP   MEASUREMENT_FLAG QUALITY_FLAG
+COOP:123456       20200102 00:00     25                             
+COOP:123456       20200102 01:00     10                             

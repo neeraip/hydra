@@ -37,3 +37,18 @@ aes_hly.dat     Environment-Canada hourly with a three-digit year of 120
   The reference file for this one therefore records the readings SWMM
   produced, at the wrong year, and is kept as the evidence for that
   deviation rather than as an expectation to match.
+
+online60.dat    NWS online retrieval, hourly (HPCP), decimal inches
+  00:00 = 0.25, 01:00 = 0.10, 02:00 = 0.05
+
+online15.dat    the same export at a quarter-hourly quantity (QPCP)
+  00:45 = 0.25, 01:00 = 0.10
+
+online_hundredths.dat   an older export writing hundredths, and a
+  reading marked 00:00, which belongs to the previous day:
+  2020-01-01 23:00 = 0.25, 2020-01-02 00:00 = 0.10
+
+The rows in these three are padded well past their last column on
+purpose. SWMM refuses a line of 41 characters or fewer here whatever it
+holds, so a narrower file is recognised as this layout and then yields
+no readings at all.

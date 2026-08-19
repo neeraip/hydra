@@ -1,0 +1,3 @@
+STATION           DATE            QPCP   MEASUREMENT_FLAG QUALITY_FLAG
+COOP:123456       20200101 01:00  0.25                                
+COOP:123456       20200101 01:15  0.10                                

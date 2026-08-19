@@ -134,6 +134,9 @@ enum Layout {
     /// groups. `wide` is the quarter-hourly layout, `short_year` the
     /// hourly one whose year field is three digits.
     Canada { wide: bool, short_year: bool },
+    /// The online retrieval export: one reading per line, at columns the
+    /// file's own header and first record fix rather than the layout.
+    Online { value: usize, data: usize },
 }
 
 impl Layout {
@@ -145,6 +148,8 @@ impl Layout {
             Layout::Space { named: true } => (59, 16),
             Layout::Comma => (28, 16),
             Layout::Canada { short_year, .. } => (if short_year { 17 } else { 18 }, 7),
+            // One reading per line, so the whole line is the group.
+            Layout::Online { data, .. } => (data, 0),
         }
     }
 
@@ -199,6 +204,32 @@ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
                 }
             }
         }
+        // The online export names its quantity in a header line, and
+        // puts its values in that word's own column.
+        if let Some(header) = text.lines().next() {
+            let quarter = header.find("QPCP");
+            if let Some(value) = header.find("HPCP").or(quarter) {
+                // The date's column is fixed by the first record that
+                // names a station: eleven characters before the last
+                // colon on it, which is the one inside its clock time.
+                let data = text
+                    .lines()
+                    .take(5)
+                    .filter(|l| l.contains("COOP:"))
+                    .find_map(|l| l.rfind(':')?.checked_sub(11));
+                if let Some(data) = data {
+                    let interval = if quarter.is_some() { 900.0 } else { 3600.0 };
+                    // The station is the record's own, not the header's.
+                    let station = text
+                        .lines()
+                        .find_map(|l| l.split_once("COOP:"))
+                        .map(|(_, rest)| rest.split_whitespace().next().unwrap_or("").to_string())
+                        .unwrap_or_default();
+                    return Some((Layout::Online { value, data }, interval, station));
+                }
+            }
+        }
+
         // Environment-Canada: station, year, month, day, quantity, all
         // fixed-width, and a line long enough to hold its own readings.
         for (wide, short_year, year_width, groups) in [
@@ -279,6 +310,43 @@ pub fn parse_archive_file(
         let Some((date, day_seconds)) = archive_date(line, layout) else {
             continue;
         };
+        // The online export puts one reading on a line, its clock beside
+        // the date and its value in the column the header named. Both are
+        // the file's own positions, so nothing here is fixed by layout.
+        if let Layout::Online { value: at, .. } = layout {
+            let Some(clock) = line.get(start + 8..start + 14) else {
+                continue;
+            };
+            let Some((h, m)) = clock.trim().split_once(':') else {
+                continue;
+            };
+            let (Ok(hour), Ok(minute)) = (h.trim().parse::<i64>(), m.trim().parse::<i64>()) else {
+                continue;
+            };
+            let Some(field) = line.get(at..) else {
+                continue;
+            };
+            let Some(token) = field.split_whitespace().next() else {
+                continue;
+            };
+            // Newer exports write decimal inches, older ones hundredths.
+            let inches = if token.contains('.') {
+                token.parse::<f64>().ok()
+            } else {
+                token.parse::<f64>().ok().map(|v| v / 100.0)
+            };
+            let Some(inches) = inches else {
+                continue;
+            };
+            if inches <= 0.0 {
+                continue;
+            }
+            // Midnight ends the previous day rather than opening this one.
+            let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64 - interval;
+            readings.push((archive_day(date, at), inches));
+            continue;
+        }
+
         // The Canadian layouts carry no clock: a group's instant is its
         // position on the line, so they are read by counting rather than
         // by parsing, and every other semantic is shared.
@@ -406,6 +474,14 @@ fn archive_date(line: &str, layout: Layout) -> Option<(Date, f64)> {
                 f.get(8..10)?.trim().parse().ok()?,
             )
         }
+        Layout::Online { data, .. } => {
+            let f = line.get(data..data + 8)?;
+            (
+                f.get(..4)?.trim().parse().ok()?,
+                f.get(4..6)?.trim().parse().ok()?,
+                f.get(6..8)?.trim().parse().ok()?,
+            )
+        }
         Layout::Canada { short_year, .. } => {
             let w = if short_year { 3 } else { 4 };
             let f = line.get(7..7 + w + 4)?;
@@ -454,9 +530,10 @@ fn archive_group(group: &str, layout: Layout) -> Option<(u32, u32, i64, char)> {
             group.get(6..12)?,
             group.get(13..14)?,
         ),
-        // A Canadian group carries a value and a flag and no clock at
-        // all: its instant is its position on the line.
-        Layout::Canada { .. } => return None,
+        // Neither of these is read group by group: a Canadian reading's
+        // instant is its position on the line, and an online export puts
+        // one reading on each.
+        Layout::Canada { .. } | Layout::Online { .. } => return None,
     };
     Some((
         hour.trim().parse().ok()?,
@@ -688,5 +765,44 @@ mod canada_archive_tests {
         );
         let err = parse_archive_file(&temperature).unwrap_err();
         assert!(err.contains("not an archival station record"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod online_archive_tests {
+    use super::archive_tests::{fixture, hours};
+    use super::*;
+
+    #[test]
+    fn an_hourly_online_export_reads_as_the_predecessor_reads_it() {
+        let (rec, _) = parse_archive_file(&fixture("online60.dat")).expect("parse");
+        assert_eq!("123456", rec.station, "the station is the record's own");
+        assert_eq!(3600.0, rec.interval);
+        assert_eq!(
+            vec![(0.0, 0.25), (1.0, 0.10), (2.0, 0.05)],
+            hours(&rec),
+            "decimal inches, each stamped an hour before the record marks"
+        );
+    }
+
+    #[test]
+    fn a_quarter_hourly_export_reads_at_its_own_interval() {
+        let (rec, _) = parse_archive_file(&fixture("online15.dat")).expect("parse");
+        assert_eq!(900.0, rec.interval, "QPCP is quarter-hourly");
+        assert_eq!(vec![(0.75, 0.25), (1.0, 0.10)], hours(&rec));
+    }
+
+    /// An older export writes hundredths where a newer one writes decimal
+    /// inches, and the two are told apart by the value itself.
+    #[test]
+    fn an_older_export_writes_hundredths() {
+        let (rec, _) = parse_archive_file(&fixture("online_hundredths.dat")).expect("parse");
+        let got = hours(&rec);
+        // Its readings are on 2020-01-02, one day past the other
+        // fixtures, and midnight belongs to the day before it.
+        assert!((got[0].1 - 0.25).abs() < 1e-9, "{got:?}");
+        assert!((got[1].1 - 0.10).abs() < 1e-9, "{got:?}");
+        assert_eq!(23.0, got[0].0, "midnight ends the previous day: {got:?}");
+        assert_eq!(24.0, got[1].0, "{got:?}");
     }
 }

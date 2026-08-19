@@ -289,9 +289,8 @@ interoperability (§14).
 
 Deferred capabilities are typed refusals, never approximations: a model
 needing one is refused with a named reason. Currently deferred: archival
-climate-record formats (user-format
-climate files are served), archival rain-record formats (user-format rain
-files are served, §14.12), and most of §12.4's mid-run forcing (lateral
+climate-record formats (user-format climate files are served) and most of
+§12.4's mid-run forcing (lateral
 inflow per vertex is served; gage precipitation, outfall stage, link
 target settings, loss coefficients, flow limits, control-measure drain
 parameters, and concentrations are not). The forcing entries differ in kind
