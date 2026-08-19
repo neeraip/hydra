@@ -3,8 +3,11 @@
 //! `station year month day hour minute value` — blank lines and `;`
 //! comments ignored, stations interleaved freely, unlisted intervals dry.
 //!
-//! The archival formats (NWS and Environment-Canada layouts) are deferred
-//! (§1): their files fail this parse and are refused with its reason.
+//! The archival layouts of §14.12.1 are read as well: the NWS fixed-field
+//! tape, space-delimited, comma-delimited and online-retrieval exports, and
+//! Environment-Canada's hourly and quarter-hourly records. Which layout a
+//! file is written in is recognised from the file, so a caller names a file
+//! and never a format.
 
 use crate::io::options::Date;
 
