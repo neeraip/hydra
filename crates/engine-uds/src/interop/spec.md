@@ -365,6 +365,62 @@ instant it wants.
 >
 > *Source: `rdii.c:733` — `RdiiStep = WetStep`.*
 
+#### 14.8.2 Runoff interface files
+
+A runoff interface file replays a hydrology run so its routing can be redone
+without recomputing the surface. It is the heavier of the two savings an
+interface file offers, and the narrower: it replays *results*, not state.
+
+**Deferred** (charter §1.8): this section defines the format and the run's
+behaviour, and neither is implemented yet. `USE` refuses the model with the
+file named and `SAVE` opens and reports the file as not written, as §14.8
+says for a deferred format. Specifying it first is the order the workflow
+requires; a section absent from the specification would be unspecified
+behaviour rather than deferred behaviour.
+
+**Layout.** The stamp `SWMM5-RUNOFF`, then four signed 32-bit values: the
+parcel count, the constituent count, the writing model's flow unit as the
+predecessor's own enumeration, and the number of steps. Then one record per
+step: a 32-bit float of the step's length in seconds, followed per parcel by
+`8 + c` 32-bit floats, where `c` is the constituent count — rainfall
+intensity, snow depth, evaporation loss, infiltration loss, runoff flow,
+groundwater flow, groundwater elevation, soil moisture, and then one washoff
+concentration per constituent, in that order.
+
+**What it drives.** Everything the surface would have produced: runoff flow
+and its washoff concentrations reach the network, groundwater flow, elevation
+and soil moisture reach the aquifer, and snow depth and the evaporation and
+infiltration losses stand in for what the compartment would have computed.
+The hydrology is not run at all, which is the point.
+
+**Units.** Values are in the units of the model that wrote the file, which is
+why the flow unit is recorded. That word also fixes the unit *system*, since
+each of the six belongs to one, so a file written by a US model cannot be
+read into an SI one without the mismatch being seen.
+
+**Identity.** The format holds no names. A file is matched to a model by
+parcel count, constituent count and flow unit alone, and those three
+agreeing is the whole of the check available.
+
+> **DEVIATION from SWMM:** the counts agreeing is a weak test — two models
+> with the same number of parcels and constituents accept each other's files
+> and every hydrograph lands on the wrong parcel — and the format offers
+> nothing better, since it stores no identity at all. The predecessor makes
+> that check and says nothing further. This engine makes the same check,
+> because there is no other, and additionally reports at start-up that the
+> parcels were matched by position: a modeller who has reordered a parcel
+> list since writing the file is told what the run assumed rather than left
+> to discover it in the results. The check cannot be strengthened; what is
+> removed is its silence.
+>
+> *Source: `runoff.c:379–383` — `nSubcatch`, `nPollut` and `flowUnits`
+> compared, and nothing else.*
+
+**Antecedent state.** A run reading one begins with cold antecedent state:
+the file carries what the surface produced, not the moisture, depression
+storage and buildup it produced them from. The engine says so at start-up
+rather than presenting the run as a continuation.
+
 ### 14.9 Output
 
 **The binary results file** is written to the predecessor's layout: magic
