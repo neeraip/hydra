@@ -1462,3 +1462,364 @@ TS1  1:00  0.0
         );
     }
 }
+
+// ── Rainfall interface files (§14.8.3) ───────────────────────────────────────
+
+/// Bytes of the rainfall format's file stamp.
+const RAIN_STAMP: &[u8] = b"SWMM5-RAIN";
+/// Bytes the station identifier occupies in a gage header.
+const RAIN_STATION_FIELD: usize = 1025;
+/// Bytes of one gage header: the station, then three 32-bit values.
+const RAIN_GAGE_HEADER: usize = RAIN_STATION_FIELD + 12;
+/// Bytes of one reading: a decimal day and a depth.
+const RAIN_READING: usize = 12;
+
+/// One station's cached record (§14.8.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RainGageRecord {
+    /// The recording station's identifier, which is what a gage is
+    /// matched by. Not the gage's own name.
+    pub station: String,
+    /// The gage's recording interval (s).
+    pub interval: f64,
+    /// Readings as `(decimal day, depth in inches over the interval)`.
+    /// Zero depths are present and mean a dry interval, not a gap.
+    pub readings: Vec<(f64, f64)>,
+}
+
+/// A parsed rainfall interface file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RainInterface {
+    /// The stations the file caches, in the order it holds them.
+    pub gages: Vec<RainGageRecord>,
+}
+
+impl RainInterface {
+    /// The record for a station, compared without case as every other
+    /// identifier in this engine is.
+    pub fn station(&self, station: &str) -> Option<&RainGageRecord> {
+        self.gages
+            .iter()
+            .find(|g| g.station.eq_ignore_ascii_case(station))
+    }
+}
+
+/// Parse a rainfall interface file (§14.8.3).
+///
+/// The file carries its own identity, so unlike the runoff format it is
+/// read without a model: a gage finds its station afterwards.
+pub fn parse_rain_iface(bytes: &[u8]) -> Result<RainInterface, String> {
+    if !bytes.starts_with(RAIN_STAMP) {
+        return Err("not a SWMM5 rainfall interface file".into());
+    }
+    let i32_at = |o: usize| -> Result<i32, String> {
+        bytes
+            .get(o..o + 4)
+            .and_then(|s| s.try_into().ok())
+            .map(i32::from_le_bytes)
+            .ok_or_else(|| "truncated rainfall interface file".to_string())
+    };
+    let count = i32_at(RAIN_STAMP.len())?;
+    if count < 0 {
+        return Err(format!("rainfall interface file declares {count} gages"));
+    }
+    let count = count as usize;
+    // The declared count sizes the header, so a file claiming more gages
+    // than it has room for is refused before anything is allocated.
+    let header_end = RAIN_STAMP.len() + 4 + count * RAIN_GAGE_HEADER;
+    if header_end > bytes.len() {
+        return Err(format!(
+            "rainfall interface file declares {count} gages, which needs \
+             {header_end} bytes of header and the file holds {}",
+            bytes.len()
+        ));
+    }
+    let mut gages = Vec::with_capacity(count);
+    for g in 0..count {
+        let o = RAIN_STAMP.len() + 4 + g * RAIN_GAGE_HEADER;
+        let field = &bytes[o..o + RAIN_STATION_FIELD];
+        let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
+        let station = String::from_utf8_lossy(&field[..end]).trim().to_string();
+        let interval = i32_at(o + RAIN_STATION_FIELD)?;
+        let start = i32_at(o + RAIN_STATION_FIELD + 4)?;
+        let stop = i32_at(o + RAIN_STATION_FIELD + 8)?;
+        // The offsets are absolute byte positions into this file, so every
+        // one of them is a way to read somewhere it should not.
+        let (start, stop) = match (usize::try_from(start), usize::try_from(stop)) {
+            (Ok(a), Ok(b)) if a <= b && b <= bytes.len() && a >= header_end => (a, b),
+            _ => {
+                return Err(format!(
+                    "rainfall interface file: station {station:?} claims bytes \
+                     {start}..{stop} of a {}-byte file",
+                    bytes.len()
+                ))
+            }
+        };
+        if (stop - start) % RAIN_READING != 0 {
+            return Err(format!(
+                "rainfall interface file: station {station:?} claims {} bytes, \
+                 which is not a whole number of readings",
+                stop - start
+            ));
+        }
+        let readings = (start..stop)
+            .step_by(RAIN_READING)
+            .map(|q| {
+                let day = f64::from_le_bytes(bytes[q..q + 8].try_into().unwrap_or([0; 8]));
+                let depth = f32::from_le_bytes(bytes[q + 8..q + 12].try_into().unwrap_or([0; 4]));
+                (day, f64::from(depth))
+            })
+            .collect();
+        gages.push(RainGageRecord {
+            station,
+            interval: f64::from(interval),
+            readings,
+        });
+    }
+    Ok(RainInterface { gages })
+}
+
+/// Write a rainfall interface file (§14.8.3).
+///
+/// Assembled whole before anything is written, so each gage's byte range
+/// is known rather than patched in a second pass.
+pub fn write_rain_iface(
+    gages: &[RainGageRecord],
+    w: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    let header_end = RAIN_STAMP.len() + 4 + gages.len() * RAIN_GAGE_HEADER;
+    let total = header_end
+        + gages
+            .iter()
+            .map(|g| g.readings.len() * RAIN_READING)
+            .sum::<usize>();
+    // The offsets are signed 32-bit, so the format cannot describe a file
+    // this large. Refusing beats writing offsets that have wrapped.
+    if i32::try_from(total).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "a rainfall interface file of {total} bytes cannot be \
+                 addressed by the format's 32-bit offsets (§14.8.3)"
+            ),
+        ));
+    }
+    w.write_all(RAIN_STAMP)?;
+    w.write_all(&(gages.len() as i32).to_le_bytes())?;
+    let mut at = header_end;
+    for g in gages {
+        let mut field = [0u8; RAIN_STATION_FIELD];
+        let id = g.station.as_bytes();
+        let n = id.len().min(RAIN_STATION_FIELD - 1);
+        field[..n].copy_from_slice(&id[..n]);
+        w.write_all(&field)?;
+        let stop = at + g.readings.len() * RAIN_READING;
+        for v in [g.interval as i32, at as i32, stop as i32] {
+            w.write_all(&v.to_le_bytes())?;
+        }
+        at = stop;
+    }
+    for g in gages {
+        for (day, depth) in &g.readings {
+            w.write_all(&day.to_le_bytes())?;
+            w.write_all(&(*depth as f32).to_le_bytes())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod rain_iface_tests {
+    use super::*;
+
+    fn record(station: &str, readings: &[(f64, f64)]) -> RainGageRecord {
+        RainGageRecord {
+            station: station.to_string(),
+            interval: 900.0,
+            readings: readings.to_vec(),
+        }
+    }
+
+    /// A file the reference implementation itself wrote. The assertions
+    /// below this one encode what this engine believes the format to be;
+    /// only this one encodes what it is.
+    #[test]
+    fn reads_a_rain_file_the_predecessor_wrote() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/rainfall_interface.rain");
+        let bytes = std::fs::read(&path).expect("reference file");
+        let f = parse_rain_iface(&bytes).expect("parse the reference file");
+        assert_eq!(2, f.gages.len(), "gage count");
+        assert_eq!("STA01", f.gages[0].station);
+        assert_eq!("STAB", f.gages[1].station);
+        assert!(f.gages.iter().all(|g| g.interval == 900.0), "interval");
+        // The zero at 00:30 is in the file: a dry interval is recorded,
+        // not omitted, whatever the predecessor's own description says.
+        let a: Vec<f64> = f.gages[0].readings.iter().map(|(_, v)| *v).collect();
+        assert_eq!(vec![0.10, 0.25, 0.0, 0.05], round4(&a), "STA01 depths");
+        let b: Vec<f64> = f.gages[1].readings.iter().map(|(_, v)| *v).collect();
+        assert_eq!(vec![0.40, 0.20, 0.30], round4(&b), "STAB depths");
+        // 2020-01-01 is day 43831 of the predecessor's calendar, and the
+        // readings are a quarter of an hour apart.
+        assert_eq!(43_831.0, f.gages[0].readings[0].0, "first instant");
+        let step = f.gages[0].readings[1].0 - f.gages[0].readings[0].0;
+        assert!((step - 900.0 / 86_400.0).abs() < 1e-9, "spacing {step}");
+        // Both stations start at the same instant, so a reader that had
+        // run the two blocks together would show STAB continuing STA01.
+        assert_eq!(f.gages[0].readings[0].0, f.gages[1].readings[0].0);
+    }
+
+    fn round4(v: &[f64]) -> Vec<f64> {
+        v.iter().map(|x| (x * 1e4).round() / 1e4).collect()
+    }
+
+    /// The layout, against the reference file's own byte positions.
+    #[test]
+    fn the_header_is_the_predecessors() {
+        let gages = [
+            record("STA01", &[(43_831.0, 0.1), (43_831.010_416_667, 0.25)]),
+            record("STAB", &[(43_831.0, 0.4)]),
+        ];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        assert_eq!(b"SWMM5-RAIN", &b[..10], "the stamp is ten bytes, no more");
+        let word = |o: usize| i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        assert_eq!(2, word(10), "gage count follows the stamp");
+        // 14 + 2 x 1037.
+        assert_eq!(2088, 14 + 2 * 1037, "the gage header is 1037 bytes");
+        assert_eq!(900, word(14 + 1025), "interval");
+        assert_eq!(
+            2088,
+            word(14 + 1025 + 4),
+            "first gage starts after the header"
+        );
+        assert_eq!(2088 + 24, word(14 + 1025 + 8), "and ends one past its last");
+        assert_eq!(
+            2088 + 24,
+            word(14 + 1037 + 1025 + 4),
+            "the second follows it"
+        );
+        assert_eq!(
+            2088 + 36,
+            word(14 + 1037 + 1025 + 8),
+            "to the end of the file"
+        );
+        assert_eq!(2088 + 36, b.len(), "nothing after the readings");
+        // The identifier is padded with zero bytes, not spaces.
+        assert_eq!(b"STA01", &b[14..19]);
+        assert!(b[19..14 + 1025].iter().all(|c| *c == 0), "padding");
+    }
+
+    #[test]
+    fn a_written_file_reads_back_as_what_was_written() {
+        let gages = vec![
+            record("A", &[(43_831.0, 0.1), (43_831.25, 0.0), (43_831.5, 2.5)]),
+            record("B", &[]),
+            record("C", &[(43_900.125, 0.75)]),
+        ];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        let back = parse_rain_iface(&b).expect("read back");
+        assert_eq!(gages.len(), back.gages.len(), "gage count");
+        for (want, got) in gages.iter().zip(&back.gages) {
+            assert_eq!(want.station, got.station, "station");
+            assert_eq!(want.interval, got.interval, "interval");
+            assert_eq!(
+                want.readings.len(),
+                got.readings.len(),
+                "{}: reading count",
+                want.station
+            );
+            for (a, b) in want.readings.iter().zip(&got.readings) {
+                // The instant is a 64-bit double and survives exactly. The
+                // depth is a 32-bit float, so 0.1 comes back as 0.100000001
+                // and only its precision can be asserted.
+                assert_eq!(a.0, b.0, "{}: instant", want.station);
+                assert!(
+                    (a.1 - b.1).abs() <= a.1.abs() * 1e-7,
+                    "{}: depth {} came back {}",
+                    want.station,
+                    a.1,
+                    b.1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_station_is_found_without_case() {
+        let gages = [record("Sta7", &[(43_831.0, 0.1)])];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        let f = parse_rain_iface(&b).expect("parse");
+        assert!(f.station("STA7").is_some(), "STA7 must find Sta7");
+        assert!(f.station("sta7").is_some(), "sta7 must find Sta7");
+        assert!(f.station("sta8").is_none(), "sta8 must find nothing");
+    }
+
+    #[test]
+    fn the_stamp_is_required() {
+        let err = parse_rain_iface(b"SWMM5-RUNOFF\0\0\0\0").unwrap_err();
+        assert!(err.contains("not a SWMM5 rainfall"), "{err}");
+    }
+
+    /// A declared count is a length claim about a file that may not hold
+    /// it, and is checked before anything is sized from it.
+    #[test]
+    fn a_gage_count_larger_than_the_file_is_refused() {
+        let mut b = RAIN_STAMP.to_vec();
+        b.extend_from_slice(&5000i32.to_le_bytes());
+        let err = parse_rain_iface(&b).unwrap_err();
+        assert!(err.contains("declares 5000 gages"), "{err}");
+    }
+
+    /// The offsets address the file, so each is a way to read outside it.
+    #[test]
+    fn an_offset_outside_the_file_is_refused() {
+        let gages = [record("A", &[(43_831.0, 0.1)])];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        let mut past = b.clone();
+        past[14 + 1025 + 8..14 + 1025 + 12].copy_from_slice(&99_999i32.to_le_bytes());
+        let err = parse_rain_iface(&past).unwrap_err();
+        assert!(err.contains("claims bytes"), "{err}");
+        // An offset inside the header would let a gage read the station
+        // names as if they were readings.
+        let mut into_header = b.clone();
+        into_header[14 + 1025 + 4..14 + 1025 + 8].copy_from_slice(&20i32.to_le_bytes());
+        let err = parse_rain_iface(&into_header).unwrap_err();
+        assert!(err.contains("claims bytes"), "{err}");
+        // A backwards range is not an empty one.
+        let mut backwards = b.clone();
+        backwards[14 + 1025 + 4..14 + 1025 + 8].copy_from_slice(&(b.len() as i32).to_le_bytes());
+        backwards[14 + 1025 + 8..14 + 1025 + 12].copy_from_slice(&2088i32.to_le_bytes());
+        let err = parse_rain_iface(&backwards).unwrap_err();
+        assert!(err.contains("claims bytes"), "{err}");
+    }
+
+    #[test]
+    fn a_partial_reading_is_refused() {
+        let gages = [record("A", &[(43_831.0, 0.1)])];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        b.truncate(b.len() - 4);
+        let end = b.len() as i32;
+        b[14 + 1025 + 8..14 + 1025 + 12].copy_from_slice(&end.to_le_bytes());
+        let err = parse_rain_iface(&b).unwrap_err();
+        assert!(err.contains("whole number of readings"), "{err}");
+    }
+
+    /// An identifier longer than the field is truncated to fit rather
+    /// than running into the interval that follows it.
+    #[test]
+    fn a_long_station_name_stays_inside_its_field() {
+        let long = "S".repeat(4000);
+        let gages = [record(&long, &[(43_831.0, 0.1)])];
+        let mut b = Vec::new();
+        write_rain_iface(&gages, &mut b).expect("write");
+        assert_eq!(14 + 1037 + 12, b.len(), "the field is a fixed width");
+        let f = parse_rain_iface(&b).expect("parse");
+        assert_eq!(1024, f.gages[0].station.len(), "truncated, and terminated");
+        assert_eq!(900.0, f.gages[0].interval, "the interval is still readable");
+    }
+}

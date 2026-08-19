@@ -17,9 +17,16 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+# Listed by suffix rather than detected from content: a file's bytes cannot
+# be the test of whether its bytes are allowed, which is what let the NUL in
+# `undoStack.ts` look like an ordinary binary file to git.
 BINARY_SUFFIXES = {
     ".png", ".ico", ".icns", ".jpg", ".jpeg", ".gif", ".pdf", ".wasm",
     ".woff", ".woff2", ".ttf", ".otf", ".zip", ".gz",
+    # Reference interface files written by the predecessor itself, kept so
+    # this engine's readers are checked against the formats rather than
+    # against their own writers (uds §14.8.2, §14.8.3).
+    ".rff", ".rain",
 }
 
 # Tab, newline and carriage return are the control bytes text is made of.

@@ -1,0 +1,23 @@
+How tests/fixtures/uds/rainfall_interface.rain was produced.
+
+It is a SWMM5-RAIN file written by SWMM 5 itself, kept so this engine's
+reader is checked against the format rather than against its own writer
+(§14.8.3). Two gages, because a single-gage file cannot catch a mistake in
+the byte offsets that address each gage's readings.
+
+Two rain records in the predecessor's standard station format:
+
+    rain2.dat                       rainB.dat
+    STA01  2020  1  1  0   0   0.10     STAB  2020  1  1  0   0   0.40
+    STA01  2020  1  1  0   15  0.25     STAB  2020  1  1  0   15  0.20
+    STA01  2020  1  1  0   30  0.00     STAB  2020  1  1  0   30  0.30
+    STA01  2020  1  1  0   45  0.05
+
+and a model reading both, run with SAVE RAINFALL:
+
+    [RAINGAGES]
+    G1  VOLUME  0:15  1.0  FILE  "rain2.dat"  STA01  IN
+    G2  VOLUME  0:15  1.0  FILE  "rainB.dat"  STAB   IN
+
+The result is 2172 bytes: a 14-byte preamble, two 1037-byte gage headers,
+then STA01's four readings and STAB's three.

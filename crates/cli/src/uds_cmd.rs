@@ -81,10 +81,37 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         _ => Vec::new(),
     };
 
+    // §14.8.3: a rainfall interface file caches records already parsed, so
+    // when the model reads one the gages' own records are not read at all.
+    let rain_iface = match &net.interface_files.rainfall {
+        Some((hydra::uds::model::FileMode::Use, name)) => {
+            let path = match resolve_aux_path(&args.model, name) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            match std::fs::read(&path) {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    emit_error(
+                        "io/interface",
+                        &format!("rainfall interface file {}: {e}", path.display()),
+                        None,
+                        None,
+                    );
+                    return EXIT_IO;
+                }
+            }
+        }
+        _ => None,
+    };
+
     // External rain records (§14.12): one read per distinct file a gage
     // names, resolved beside the model like every auxiliary file.
     let mut rain_files: Vec<(String, Vec<hydra::uds::io::rain::RainReading>)> = Vec::new();
     for gage in &net.gages {
+        if rain_iface.is_some() {
+            break;
+        }
         let hydra::uds::model::GageSource::File { file, .. } = &gage.source else {
             continue;
         };
@@ -122,34 +149,37 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     }
 
     // ── Open: parse, validate, build ──────────────────────────────────────────
-    let (mut sim, diags, findings) =
-        match Simulation::open_with_files(&text, climate_records, rain_files) {
-            Ok(session) => session,
-            Err(OpenError::Parse(diags)) => {
-                for d in diags.iter().filter(|d| d.kind.is_error()) {
-                    emit_error("input/parse", &d.to_string(), None, None);
-                }
-                return EXIT_INPUT;
+    let opened = match &rain_iface {
+        Some(bytes) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
+        None => Simulation::open_with_files(&text, climate_records, rain_files),
+    };
+    let (mut sim, diags, findings) = match opened {
+        Ok(session) => session,
+        Err(OpenError::Parse(diags)) => {
+            for d in diags.iter().filter(|d| d.kind.is_error()) {
+                emit_error("input/parse", &d.to_string(), None, None);
             }
-            Err(OpenError::Validation(findings)) => {
-                for v in findings.iter().filter(|v| v.kind.is_error()) {
-                    emit_error("validation/network", &v.to_string(), None, None);
-                }
-                return EXIT_INPUT;
+            return EXIT_INPUT;
+        }
+        Err(OpenError::Validation(findings)) => {
+            for v in findings.iter().filter(|v| v.kind.is_error()) {
+                emit_error("validation/network", &v.to_string(), None, None);
             }
-            Err(OpenError::Routing(r)) => {
-                emit_error("input/unsupported", &r.to_string(), None, None);
-                return EXIT_INPUT;
-            }
-            Err(OpenError::Surface(s)) => {
-                emit_error("input/unsupported", &s.to_string(), None, None);
-                return EXIT_INPUT;
-            }
-            Err(OpenError::Controls(msg)) | Err(OpenError::Transport(msg)) => {
-                emit_error("input/unsupported", &msg, None, None);
-                return EXIT_INPUT;
-            }
-        };
+            return EXIT_INPUT;
+        }
+        Err(OpenError::Routing(r)) => {
+            emit_error("input/unsupported", &r.to_string(), None, None);
+            return EXIT_INPUT;
+        }
+        Err(OpenError::Surface(s)) => {
+            emit_error("input/unsupported", &s.to_string(), None, None);
+            return EXIT_INPUT;
+        }
+        Err(OpenError::Controls(msg)) | Err(OpenError::Transport(msg)) => {
+            emit_error("input/unsupported", &msg, None, None);
+            return EXIT_INPUT;
+        }
+    };
 
     // Warning-class import and validation findings, before the run so they
     // are visible even if it is long.
@@ -351,6 +381,23 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             emit_error(
                 "io/interface",
                 &format!("RDII interface file {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_IO;
+        }
+    }
+    // §14.8.3: SAVE keeps the parsed rain records so a later run need not
+    // parse them again.
+    if let Some((hydra::uds::model::FileMode::Save, name)) = &iface.rainfall {
+        let path = match resolve_aux_path(&args.model, name) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        if let Err(e) = create_and_write(&path, |w| sim.write_rain(w).map(|_| ())) {
+            emit_error(
+                "io/interface",
+                &format!("rainfall interface file {}: {e}", path.display()),
                 None,
                 None,
             );

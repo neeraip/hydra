@@ -3891,3 +3891,288 @@ fn a_model_that_asks_for_no_runoff_file_writes_none() {
     assert!(!sim.write_runoff(&mut bytes).expect("write"), "no file");
     assert!(bytes.is_empty(), "wrote {} bytes", bytes.len());
 }
+
+// ── §14.8.3 rainfall interface files ────────────────────────────────────
+
+/// A model whose gage reads an external record, so it has something to
+/// cache. The clock is explicit and the record covers the first half hour.
+fn rain_model(form: &str, unit: &str, files: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+WET_STEP             00:15:00
+DRY_STEP             00:15:00
+ROUTING_STEP         00:00:30
+REPORT_STEP          00:15:00
+
+{files}
+
+[RAINGAGES]
+G1  {form}  0:15  1.0  FILE  \"rain.dat\"  STA01  {unit}
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  75  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[REPORT]
+"
+    )
+}
+
+/// The record the gage reads: four quarter-hour readings, one of them dry.
+const RAIN_RECORD: &str = "\
+STA01  2020  1  1  0   0   0.40
+STA01  2020  1  1  0   15  0.80
+STA01  2020  1  1  0   30  0.00
+STA01  2020  1  1  0   45  0.20
+";
+
+fn rain_readings() -> Vec<(String, Vec<hydra_engine_uds::io::rain::RainReading>)> {
+    vec![(
+        "rain.dat".to_string(),
+        hydra_engine_uds::io::rain::parse_rain_file(RAIN_RECORD).expect("record parses"),
+    )]
+}
+
+/// A run reading the cache matches the run that wrote it, on every
+/// surface that observes rainfall.
+///
+/// This is the assertion that matters: the file exists so the second run
+/// need not parse the record, and the two runs are supposed to be the same
+/// run. Comparing the results file compares the parcel rainfall series,
+/// the runoff it produced, and the system totals in one go.
+#[test]
+fn a_cached_record_runs_as_the_record_it_cached() {
+    let model = rain_model("VOLUME", "IN", "[FILES]\nSAVE RAINFALL rain.rff");
+    let (mut a, _, _) = Simulation::open_with_files(&model, Vec::new(), rain_readings())
+        .expect("open with the record");
+    a.run();
+    let mut cache = Vec::new();
+    assert!(a.write_rain(&mut cache).expect("write"), "file written");
+
+    let use_model = rain_model("VOLUME", "IN", "[FILES]\nUSE RAINFALL rain.rff");
+    let (mut b, _, _) = Simulation::open_with_rain_interface(&use_model, Vec::new(), &cache)
+        .expect("open with the cache");
+    b.run();
+
+    // The results agree to the precision the cache stores: depths are
+    // 32-bit on the file, so 0.4 in returns as 0.40000000596 and the
+    // runoff it drives differs in the last bit. Byte equality of the two
+    // results files is therefore the wrong assertion, and asserting it
+    // was how this limit got noticed.
+    assert_eq!(a.snapshots.len(), b.snapshots.len(), "reporting instants");
+    for (i, (sa, sb)) in a.snapshots.iter().zip(&b.snapshots).enumerate() {
+        for (pi, (pa, pb)) in sa.subcatch.iter().zip(&sb.subcatch).enumerate() {
+            for (x, y, what) in [
+                (pa.rain, pb.rain, "rainfall"),
+                (pa.runoff, pb.runoff, "runoff"),
+                (pa.infil, pb.infil, "infiltration"),
+            ] {
+                assert!(
+                    (x - y).abs() <= x.abs() * 1e-6 + 1e-12,
+                    "instant {i} parcel {pi} {what}: cached {y}, computed {x}"
+                );
+            }
+        }
+    }
+
+    let (la, lb) = (a.ledgers(), b.ledgers());
+    let (sa, sb) = (
+        la.surface.expect("surface ledger").inflow,
+        lb.surface.expect("surface ledger").inflow,
+    );
+    assert!(sa > 0.0, "the run received no rain to cache");
+    assert!(
+        (sa - sb).abs() <= sa * 1e-6,
+        "precipitation volume: cached {sb}, computed {sa}"
+    );
+    assert!(
+        (la.network.inflow - lb.network.inflow).abs() <= la.network.inflow * 1e-6,
+        "network inflow: cached {}, computed {}",
+        lb.network.inflow,
+        la.network.inflow
+    );
+}
+
+/// The cache holds interval depths in inches whatever the gage declared.
+///
+/// An intensity record and a volume record describing the same rain cache
+/// identically, which is the normalisation the format is built on. Written
+/// as literals rather than by comparing the two runs, so a normalisation
+/// that was wrong in the same way for both would still fail.
+#[test]
+fn a_cached_record_holds_interval_depths_in_inches() {
+    let cache_of = |form: &str, unit: &str, record: &str| {
+        let model = rain_model(form, unit, "[FILES]\nSAVE RAINFALL rain.rff");
+        let readings = vec![(
+            "rain.dat".to_string(),
+            hydra_engine_uds::io::rain::parse_rain_file(record).expect("record parses"),
+        )];
+        let (sim, _, _) = Simulation::open_with_files(&model, Vec::new(), readings).expect("open");
+        let mut bytes = Vec::new();
+        assert!(sim.write_rain(&mut bytes).expect("write"), "written");
+        let f = hydra_engine_uds::io::iface::parse_rain_iface(&bytes).expect("parse");
+        f.gages[0]
+            .readings
+            .iter()
+            .map(|(_, v)| (v * 1e6).round() / 1e6)
+            .collect::<Vec<f64>>()
+    };
+
+    // A volume record in inches is already what the file holds.
+    assert_eq!(
+        vec![0.4, 0.8, 0.0, 0.2],
+        cache_of("VOLUME", "IN", RAIN_RECORD),
+        "volume in inches"
+    );
+    // The same rain as an intensity: 1.6 in/hr over a quarter hour is
+    // 0.4 in, so the depths must come out identical.
+    let intensity = "\
+STA01  2020  1  1  0   0   1.6
+STA01  2020  1  1  0   15  3.2
+STA01  2020  1  1  0   30  0.0
+STA01  2020  1  1  0   45  0.8
+";
+    assert_eq!(
+        vec![0.4, 0.8, 0.0, 0.2],
+        cache_of("INTENSITY", "IN", intensity),
+        "an intensity record caches as a depth per interval"
+    );
+    // And as a running total, differenced.
+    let cumulative = "\
+STA01  2020  1  1  0   0   0.4
+STA01  2020  1  1  0   15  1.2
+STA01  2020  1  1  0   30  1.2
+STA01  2020  1  1  0   45  1.4
+";
+    assert_eq!(
+        vec![0.4, 0.8, 0.0, 0.2],
+        cache_of("CUMULATIVE", "IN", cumulative),
+        "a cumulative record caches as its increments"
+    );
+    // A record in millimetres holds the same rain: 10.16 mm is 0.4 in.
+    let metric = "\
+STA01  2020  1  1  0   0   10.16
+STA01  2020  1  1  0   15  20.32
+STA01  2020  1  1  0   30  0.0
+STA01  2020  1  1  0   45  5.08
+";
+    assert_eq!(
+        vec![0.4, 0.8, 0.0, 0.2],
+        cache_of("VOLUME", "MM", metric),
+        "the file is inches whatever the record declared"
+    );
+}
+
+/// A gage whose station the cache does not carry is refused by name, not
+/// left reading nothing.
+#[test]
+fn a_gage_missing_from_the_cache_is_refused() {
+    let model = rain_model("VOLUME", "IN", "[FILES]\nSAVE RAINFALL rain.rff");
+    let (sim, _, _) = Simulation::open_with_files(&model, Vec::new(), rain_readings())
+        .expect("open with the record");
+    let mut cache = Vec::new();
+    sim.write_rain(&mut cache).expect("write");
+
+    let other =
+        rain_model("VOLUME", "IN", "[FILES]\nUSE RAINFALL rain.rff").replace("STA01", "STA99");
+    let err = Simulation::open_with_rain_interface(&other, Vec::new(), &cache)
+        .err()
+        .expect("a station that is not there must refuse");
+    let text = err.to_string();
+    assert!(text.contains("STA99"), "{text}");
+}
+
+/// A model that asks for no cache writes none.
+#[test]
+fn a_model_that_asks_for_no_rainfall_file_writes_none() {
+    let model = rain_model("VOLUME", "IN", "");
+    let (sim, _, _) =
+        Simulation::open_with_files(&model, Vec::new(), rain_readings()).expect("open");
+    let mut bytes = Vec::new();
+    assert!(!sim.write_rain(&mut bytes).expect("write"), "no file");
+    assert!(bytes.is_empty(), "wrote {} bytes", bytes.len());
+}
+
+/// A metric model reads the cache as inches and converts.
+///
+/// Every other test here runs a US model, where the conversion is 1 and a
+/// missing one is invisible. Deleting it left the whole suite green: a
+/// metric model would have read 0.4 inches as 0.4 mm and run on a
+/// twenty-fifth of its rain.
+#[test]
+fn a_metric_model_reads_the_cache_in_inches() {
+    let metric = |files: &str| {
+        rain_model("VOLUME", "MM", files)
+            .replace("FLOW_UNITS           CFS", "FLOW_UNITS           CMS")
+    };
+    // 10.16 mm per quarter hour is 0.4 in, so the cache holds 0.4.
+    let record = "\
+STA01  2020  1  1  0   0   10.16
+STA01  2020  1  1  0   15  20.32
+STA01  2020  1  1  0   30  0.00
+STA01  2020  1  1  0   45  5.08
+";
+    let readings = vec![(
+        "rain.dat".to_string(),
+        hydra_engine_uds::io::rain::parse_rain_file(record).expect("record parses"),
+    )];
+    let (mut a, _, _) = Simulation::open_with_files(
+        &metric("[FILES]\nSAVE RAINFALL rain.rff"),
+        Vec::new(),
+        readings,
+    )
+    .expect("open with the record");
+    a.run();
+    let mut cache = Vec::new();
+    assert!(a.write_rain(&mut cache).expect("write"), "written");
+
+    let f = hydra_engine_uds::io::iface::parse_rain_iface(&cache).expect("parse");
+    let depths: Vec<f64> = f.gages[0]
+        .readings
+        .iter()
+        .map(|(_, v)| (v * 1e6).round() / 1e6)
+        .collect();
+    assert_eq!(vec![0.4, 0.8, 0.0, 0.2], depths, "the file is in inches");
+
+    let (mut b, _, _) = Simulation::open_with_rain_interface(
+        &metric("[FILES]\nUSE RAINFALL rain.rff"),
+        Vec::new(),
+        &cache,
+    )
+    .expect("open with the cache");
+    b.run();
+    let (sa, sb) = (
+        a.ledgers().surface.expect("surface").inflow,
+        b.ledgers().surface.expect("surface").inflow,
+    );
+    assert!(sa > 0.0, "the metric run received no rain");
+    assert!(
+        (sa - sb).abs() <= sa * 1e-6,
+        "a metric model read {sb} m³ of the {sa} m³ it cached"
+    );
+}

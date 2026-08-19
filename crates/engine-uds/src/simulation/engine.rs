@@ -346,6 +346,11 @@ pub struct Simulation {
     /// at each hydrology step. Collected only when the model asks for a
     /// file, since a long run holds one row per step per assignment.
     rdii_out: Option<Vec<(f64, Vec<f64>)>>,
+    /// §14.8.3: when the model asks to save a rainfall interface file,
+    /// every file-sourced gage's record normalised to interval depths in
+    /// inches. Fixed at load: the cache is of the records, and no part of
+    /// a run changes them.
+    rain_out: Option<Vec<crate::io::iface::RainGageRecord>>,
     /// §14.8.2: when the model asks to save a runoff interface file
     /// (`SAVE`), one `(step length, per-parcel record)` per hydrology step,
     /// in engine units. Held rather than streamed so the header's step
@@ -427,6 +432,32 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        Simulation::open_inner(input, climate_records, rain_files, None)
+    }
+
+    /// Load a model whose file-sourced gages read a rainfall interface
+    /// file (§14.8.3) rather than their own records.
+    ///
+    /// The file caches records already parsed and normalised, so it stands
+    /// in for every external record the model would otherwise need: a gage
+    /// is matched to it by station identifier, and one whose station the
+    /// file does not carry refuses the load by name.
+    pub fn open_with_rain_interface(
+        input: &str,
+        climate_records: Vec<crate::model::DailyClimate>,
+        rain_interface: &[u8],
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        let iface = crate::io::iface::parse_rain_iface(rain_interface)
+            .map_err(|e| OpenError::Transport(format!("rainfall interface file: {e}")))?;
+        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface))
+    }
+
+    fn open_inner(
+        input: &str,
+        climate_records: Vec<crate::model::DailyClimate>,
+        rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
+        rain_interface: Option<crate::io::iface::RainInterface>,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let (mut net, diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
@@ -438,8 +469,27 @@ impl Simulation {
         // among them. Realising afterwards left file-sourced gages
         // silently skipping all of it, running a coarser hydrology step
         // than the same model with the record inlined.
-        realise_file_gages(&mut net, &rain_files).map_err(OpenError::Surface)?;
-        let mut findings = validate(&mut net);
+        // §14.8.3: a model asking to read the cache must read the cache.
+        // Falling through to each gage's own record would run a model on
+        // inputs it did not ask for, and produce results silently unlike
+        // the ones the file holds.
+        if let (Some((crate::model::FileMode::Use, name)), None) =
+            (&net.interface_files.rainfall, &rain_interface)
+        {
+            if net
+                .gages
+                .iter()
+                .any(|g| matches!(g.source, crate::model::GageSource::File { .. }))
+            {
+                return Err(OpenError::Transport(format!(
+                    "this model reads its rainfall from the interface file {name:?}, \
+                     which was not supplied (§14.8.3)"
+                )));
+            }
+        }
+        let rain_records = realise_file_gages(&mut net, &rain_files, rain_interface.as_ref())
+            .map_err(OpenError::Surface)?;
+        let findings = validate(&mut net);
         if findings.iter().any(|f| f.kind.is_error()) {
             return Err(OpenError::Validation(findings));
         }
@@ -553,20 +603,6 @@ impl Simulation {
         // is otherwise perfectly runnable, and saying nothing — which is what
         // happened before — leaves a modeller waiting for a file that will
         // never appear. Loud and non-destructive, per §1.8.
-        for (role, slot) in [("rainfall", &net.interface_files.rainfall)] {
-            match slot {
-                Some((crate::model::FileMode::Use, _)) => {
-                    return Err(OpenError::Transport(format!(
-                        "{role} interface files arrive with a follow-up stage"
-                    )));
-                }
-                Some(_) => findings.push(ValidationDiagnostic {
-                    element: String::new(),
-                    kind: crate::io::validate::ValidationKind::InterfaceFileNotWritten { role },
-                }),
-                None => {}
-            }
-        }
         // One routing file never serves both roles in a run (§14.8).
         if let (Some(a), Some(b)) = (&net.interface_files.inflows, &net.interface_files.outflows) {
             if a == b {
@@ -650,6 +686,11 @@ impl Simulation {
                     Some((crate::model::FileMode::Save, _))
                 )
                 .then(Vec::new),
+                rain_out: matches!(
+                    net.interface_files.rainfall,
+                    Some((crate::model::FileMode::Save, _))
+                )
+                .then(|| rain_records.clone()),
                 climate_state: ClimateDayState {
                     last_day: i64::MIN,
                     ..ClimateDayState::default()
@@ -2242,6 +2283,19 @@ impl Simulation {
         Ok(())
     }
 
+    /// Write the rainfall interface file for this model's gages, if it
+    /// asked for one (§14.8.3). `false` when it did not.
+    ///
+    /// The file caches the records rather than anything the run computed,
+    /// so it is complete from the moment the model opens.
+    pub fn write_rain(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
+        let Some(gages) = &self.rain_out else {
+            return Ok(false);
+        };
+        crate::io::iface::write_rain_iface(gages, w)?;
+        Ok(true)
+    }
+
     /// Write the runoff interface file this run recorded, if it recorded
     /// one (§14.8.2). `false` when the model asked for no such file.
     pub fn write_runoff(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
@@ -2719,9 +2773,12 @@ impl Simulation {
 fn realise_file_gages(
     net: &mut Network,
     rain_files: &[(String, Vec<crate::io::rain::RainReading>)],
-) -> Result<(), crate::hydrology::runoff::SurfaceRefusal> {
+    rain_interface: Option<&crate::io::iface::RainInterface>,
+) -> Result<Vec<crate::io::iface::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal> {
     use crate::hydrology::runoff::SurfaceRefusal;
     use crate::model::{GageSource, RainFileUnit};
+
+    let mut cached = Vec::new();
 
     let basename = |name: &str| {
         name.rsplit(['/', '\\'])
@@ -2738,6 +2795,56 @@ fn realise_file_gages(
         else {
             continue;
         };
+        // §14.8.3: an interface file caches records already parsed and
+        // normalised, so it stands in for the record this gage names.
+        if let Some(iface) = rain_interface {
+            let Some(rec) = iface.station(station) else {
+                return Err(SurfaceRefusal::Incomplete(format!(
+                    "gage {}: the rainfall interface file holds no station \
+                     {station:?}. Check the station name, or supply the file \
+                     that has it",
+                    net.gages[gi].id
+                )));
+            };
+            if rec.readings.is_empty() {
+                return Err(SurfaceRefusal::Incomplete(format!(
+                    "gage {}: the rainfall interface file holds station \
+                     {station:?} with no readings at all",
+                    net.gages[gi].id
+                )));
+            }
+            // Readings on the file are interval depths in inches whatever
+            // the gage declared, so the gage reads as a volume record at
+            // the file's own interval (§14.8.3).
+            let to_model = if net.options.flow_units.is_us() {
+                1.0
+            } else {
+                25.4
+            };
+            let points: Vec<crate::model::TimeSeriesPoint> = rec
+                .readings
+                .iter()
+                .map(|(day, depth)| {
+                    let (date, seconds) = civil_from_decimal_day(*day);
+                    crate::model::TimeSeriesPoint {
+                        time: crate::model::SeriesTime::Absolute { date, seconds },
+                        value: depth * to_model,
+                    }
+                })
+                .collect();
+            let series = net.timeseries.len();
+            net.timeseries.push(crate::model::TimeSeries {
+                id: format!("[rain interface {station}]"),
+                source: crate::model::TimeSeriesSource::Points(points),
+            });
+            net.gages[gi].form = crate::model::RainForm::Volume;
+            if rec.interval > 0.0 {
+                net.gages[gi].interval = rec.interval;
+            }
+            net.gages[gi].source = GageSource::Series { series };
+            cached.push(rec.clone());
+            continue;
+        }
         let supplied = rain_files
             .iter()
             .find(|(name, _)| name == file)
@@ -2808,10 +2915,94 @@ fn realise_file_gages(
             id: format!("[rain record {file}:{station}]"),
             source: crate::model::TimeSeriesSource::Points(points),
         });
+        cached.push(cacheable_record(
+            station,
+            net.gages[gi].interval,
+            net.gages[gi].form,
+            unit,
+            net.options.flow_units.is_us(),
+            readings,
+        ));
         net.gages[gi].source = GageSource::Series { series };
     }
-    Ok(())
+    Ok(cached)
 }
+
+/// One gage's record as a rainfall interface file holds it (§14.8.3):
+/// interval depths in inches, whatever form and unit the record declared.
+///
+/// This is the normalisation the predecessor performs while building the
+/// file, and it is why a gage reading one back reads volumes: the form a
+/// gage declares describes its record, not the cache.
+fn cacheable_record(
+    station: &str,
+    interval: f64,
+    form: crate::model::RainForm,
+    unit: Option<crate::model::RainFileUnit>,
+    model_is_us: bool,
+    readings: &[crate::io::rain::RainReading],
+) -> crate::io::iface::RainGageRecord {
+    use crate::model::{RainFileUnit, RainForm};
+    // The record's own declared unit, not the model's: an undeclared unit
+    // is the model unit system's depth unit (§14.12).
+    let to_inches = match unit {
+        Some(RainFileUnit::Inches) => 1.0,
+        Some(RainFileUnit::Millimetres) => 1.0 / 25.4,
+        None if model_is_us => 1.0,
+        None => 1.0 / 25.4,
+    };
+    let mut accum = 0.0;
+    let mut out = Vec::new();
+    for r in readings
+        .iter()
+        .filter(|r| r.station.eq_ignore_ascii_case(station))
+    {
+        let depth = match form {
+            RainForm::Volume => r.value,
+            RainForm::Intensity => r.value * interval / 3600.0,
+            RainForm::Cumulative => {
+                // A total that falls is a record that restarted, and the
+                // reading is then the increment itself.
+                if r.value >= accum {
+                    let d = r.value - accum;
+                    accum += d;
+                    d
+                } else {
+                    accum = r.value;
+                    r.value
+                }
+            }
+        };
+        let day = SWMM_EPOCH_DAYS_ENGINE + days_from_civil(r.date) as f64 + r.seconds / 86_400.0;
+        out.push((day, depth * to_inches));
+    }
+    crate::io::iface::RainGageRecord {
+        station: station.to_string(),
+        interval,
+        readings: out,
+    }
+}
+
+/// A decimal day as a calendar date and seconds past its midnight.
+///
+/// The encoding cannot hold whole seconds exactly — a quarter hour reads
+/// back as 899.9999999 s — so the second is rounded to the nearest
+/// millisecond, far above the encoding's noise and far below any interval
+/// a record uses.
+fn civil_from_decimal_day(day: f64) -> (crate::io::options::Date, f64) {
+    let since_epoch = day - SWMM_EPOCH_DAYS_ENGINE;
+    let days = since_epoch.floor();
+    let seconds = ((since_epoch - days) * 86_400.0 * 1000.0).round() / 1000.0;
+    // A second rounded up to the day's end belongs to the next day.
+    if seconds >= 86_400.0 {
+        return (civil_from_days(days as i64 + 1), 0.0);
+    }
+    (civil_from_days(days as i64), seconds)
+}
+
+/// Days between the predecessor's date origin and the Unix epoch, as
+/// `io::iface` states it.
+const SWMM_EPOCH_DAYS_ENGINE: f64 = 25_569.0;
 
 fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
     if points.is_empty() {
@@ -2921,7 +3112,6 @@ fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64, hold_en
 #[cfg(test)]
 mod interface_file_modes {
     use super::*;
-    use crate::io::validate::ValidationKind;
 
     fn model_with(files: &str) -> String {
         let base = std::fs::read_to_string(
@@ -2932,47 +3122,48 @@ mod interface_file_modes {
         format!("{base}\n{files}\n")
     }
 
-    /// USE is an input the results depend on, so the model is refused.
+    /// Every interface format §14.8 declares is now served, so declaring
+    /// one neither refuses the model nor reports anything about it. The
+    /// two tests this replaced asserted the opposite for rainfall.
     #[test]
-    fn reading_a_deferred_interface_file_refuses_the_model() {
-        let Err(err) = Simulation::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")) else {
-            panic!("a model that needs an unserved input must not open");
-        };
-        assert!(err.to_string().contains("rainfall interface file"), "{err}");
+    fn declaring_an_interface_file_neither_refuses_nor_reports() {
+        for files in [
+            "[FILES]\nSAVE RAINFALL rain.rff",
+            "[FILES]\nSAVE RUNOFF runoff.bin",
+            "[FILES]\nSAVE RDII rdii.txt",
+            "",
+        ] {
+            let Ok((_sim, _diags, findings)) = Simulation::open(&model_with(files)) else {
+                panic!("a served format must not block the model: {files:?}");
+            };
+            let errors: Vec<_> = findings.iter().filter(|f| f.kind.is_error()).collect();
+            assert!(errors.is_empty(), "{files:?}: {errors:?}");
+        }
     }
 
-    /// SAVE asks for an output artifact. The predecessor builds the rainfall
-    /// file on every run and merely keeps it rather than deleting it
-    /// (`rain.c`, default mode SCRATCH_FILE), so a run without it produces
-    /// the same results. Refusing would block a runnable model; saying
-    /// nothing — which is what happened before — leaves a modeller waiting
-    /// for a file that never appears.
+    /// `USE RAINFALL` names an input the results depend on. A caller who
+    /// does not supply it is refused, rather than the run quietly falling
+    /// back to each gage's own record and producing different results.
     #[test]
-    fn writing_a_deferred_interface_file_runs_and_says_so() {
-        let Ok((_sim, _diags, findings)) =
-            Simulation::open(&model_with("[FILES]\nSAVE RAINFALL rain.rff"))
-        else {
-            panic!("an output artifact we cannot write must not block the run");
+    fn reading_a_rainfall_file_without_its_bytes_is_refused() {
+        let file_gage = model_with("[FILES]\nUSE RAINFALL rain.rff").replace(
+            "G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1",
+            "G1  INTENSITY  0:15  1.0  FILE  \"rain.dat\"  STA01  IN",
+        );
+        let Err(err) = Simulation::open(&file_gage) else {
+            panic!("a model reading an unsupplied cache must not open");
         };
-
-        let notice = findings
-            .iter()
-            .find(|f| matches!(f.kind, ValidationKind::InterfaceFileNotWritten { .. }))
-            .expect("the unwritten file must be reported");
-        assert!(!notice.kind.is_error(), "it must not refuse the run");
-        let text = notice.to_string();
-        assert!(text.contains("rainfall"), "{text}");
-        assert!(text.contains("not written"), "{text}");
+        let text = err.to_string();
+        assert!(text.contains("rain.rff"), "{text}");
     }
 
-    /// A model declaring none of them says nothing about them.
+    /// A model with no file-sourced gage has nothing to read from the
+    /// cache, so declaring one is harmless and opens.
     #[test]
-    fn a_model_without_interface_files_is_silent() {
-        let Ok((_sim, _diags, findings)) = Simulation::open(&model_with("")) else {
-            panic!("fixture opens");
-        };
-        assert!(!findings
-            .iter()
-            .any(|f| matches!(f.kind, ValidationKind::InterfaceFileNotWritten { .. })));
+    fn a_rainfall_file_no_gage_reads_does_not_block_the_model() {
+        assert!(
+            Simulation::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")).is_ok(),
+            "a cache nothing reads must not refuse the model"
+        );
     }
 }

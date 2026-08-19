@@ -235,15 +235,8 @@ factor of 1.
 Rainfall, runoff, and RDII interface files are declared per the
 predecessor's syntax, the hotstart type alone holding `USE` and `SAVE`
 separately so one run may both load and save. The RDII
-(§14.8.1) and runoff (§14.8.2) formats are served; rainfall remains
-deferred (charter §1.8), and its two usages fail differently because they
-are different requests. `USE` names an input the results depend on, so the
-model is refused with the file named. `SAVE` and the scratch mode ask for
-an output artifact: the predecessor builds its rainfall file on every run
-and merely keeps rather than deletes it, so a run that does not write one
-produces the same results. Those open normally and report the file as not
-written, since refusing would block a runnable model and silence would
-leave a modeller waiting for a file that never arrives. Routing interface files:
+(§14.8.1), runoff (§14.8.2) and rainfall (§14.8.3) formats are all served,
+each read and written. Routing interface files:
 inflow files are read-only boundary inflows, outflow files written from
 outlet vertices, one file never serving both roles in a run; values
 interpolate between bracketing periods, unmatched pollutants read as zero,
@@ -474,6 +467,98 @@ through without saying so.
 the file carries what the surface produced, not the moisture, depression
 storage and buildup it produced them from. The engine says so at start-up
 rather than presenting the run as a continuation.
+
+#### 14.8.3 Rainfall interface files
+
+A rainfall interface file is a cache of parsed external rain records
+(§14.12). Reading archival records is the slow part of starting a run that
+uses them, so the predecessor parses once, normalises what it read, and
+keeps the result; a later run reads the cache instead of the records.
+Reading (`USE`) and writing (`SAVE`) are both served. The scratch mode
+builds the same file and discards it, so it is not written and the results
+are identical either way.
+
+**Layout.** The stamp `SWMM5-RAIN`, ten bytes with no terminator, then a
+signed 32-bit gage count. Then one header per gage, each 1037 bytes: the
+recording station's identifier in 1025 bytes, padded with zero bytes, then
+three signed 32-bit values — the recording interval in seconds, the first
+byte of that gage's readings, and the byte one past their last. The
+readings follow, each a 64-bit decimal day (§14.1) and a 32-bit depth.
+
+The offsets are absolute positions in the file, so a gage's readings can be
+found without reading any other gage's. They are also signed 32-bit, which
+is the format's own limit: it cannot describe a file of two gigabytes or
+more, and this engine refuses to write one rather than emit an offset that
+has wrapped.
+
+**Identity.** A gage is matched to the file by its recording *station*
+identifier, not by the gage's own name — one station's record may feed
+gages named differently in different models, which is the point of caching
+it. A gage whose station does not appear, or whose byte range is empty, is
+refused by name: the file is an input its results depend on, and a gage
+silently reading nothing is a dry model.
+
+> This is the opposite of the runoff format (§14.8.2), which stores no
+> identity at all and can only count. The difference is the formats', not a
+> choice available here.
+
+**Units and meaning.** Every reading is a depth in inches, accumulated over
+the gage's recording interval, whatever the gage declared. The predecessor
+normalises on the way in: a record read as an intensity is multiplied by
+the interval, a cumulative record is differenced against the running total,
+and a record in millimetres is divided by 25.4. A gage's declared form
+therefore describes its *record*, not this file, and a run reading one
+reads interval depths whichever form it declares. This engine writes and
+reads the same normalisation, so a model's own unit system converts on the
+way out of the file and never appears in it.
+
+> *Source: `rain.c:1028–1043` normalises by `RainType` and then by
+> `UnitsFactor`; `gage.c:293` converts back for metric models, its comment
+> stating that depths on the interface file are in inches; `rain.c:407`
+> reads every gage as interval depths regardless of its declared form.*
+
+**Zero readings.** A reading of zero is written like any other and skipped
+when read: a gage advances to its next non-zero depth, so the periods
+between are dry rather than absent. Writing them costs twelve bytes each
+and keeps a record's own spacing visible in the file it was cached from.
+
+> **CORRESPONDENCE:** the predecessor's own description of this format says
+> it stores each period with non-zero rain. Its writer stores every reading
+> it parsed, zero or not, and its reader skips the zeros while advancing.
+> The behaviour is consistent; only the description is wrong. This engine
+> follows the behaviour, since that is what the files hold.
+>
+> *Source: `rain.c:27–38` (the description) against `rain.c:1044–1046`
+> (the writer, which excludes only missing readings) and `gage.c:668–693`
+> (the reader, which loops while the converted value is zero).*
+
+> **DEVIATION from SWMM:** the predecessor writes the station field from an
+> uninitialised buffer, so the bytes after the identifier's terminator are
+> whatever was on its stack — two files it writes from the same record
+> differ, and neither is reproducible. This engine writes zeros there. Both
+> readers stop at the terminator, so nothing reads differently; what
+> changes is that a file this engine writes can be compared with another.
+>
+> *Source: `rain.c:216` declares `char staID[MAXMSG+1]` as a local,
+> `:255–257` copies the identifier into it and writes all 1025 bytes.*
+
+**Precision.** Depths are stored at single precision, so a run reading a
+cache is not bit-identical to the run that wrote it: a depth of 0.4 inches
+returns as 0.40000000596, and the runoff it drives differs in its last bit.
+The cache is a cache of a record, not of a result, and this is the record's
+own resolution being rounded rather than a result being approximated.
+
+**Which gages appear.** Only those sourcing an external record. A gage
+reading an inline series has nothing to cache and is absent, so a model
+whose gages all read series writes a file declaring no gages. Reading such
+a file back is not an error in itself; a gage looking for a station in it
+is the thing that fails.
+
+**Writing.** The predecessor writes the file in two passes, laying down
+placeholder headers and returning to overwrite each with the byte range its
+gage's readings turned out to occupy. This engine knows every reading
+before it writes anything, so it computes the ranges first and writes the
+file once. The bytes are the same.
 
 ### 14.9 Output
 
