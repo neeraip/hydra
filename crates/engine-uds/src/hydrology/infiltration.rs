@@ -1005,6 +1005,637 @@ mod horton_step_tests {
 }
 
 #[cfg(test)]
+mod modified_horton_step_tests {
+    use super::*;
+
+    fn mmhr(v: f64) -> f64 {
+        v * 1.0e-3 / 3600.0
+    }
+
+    fn modified(f0: f64, f_min: f64, kd_per_hour: f64, kr: f64, f_max: f64) -> InfilState {
+        InfilState::ModHorton {
+            f0: mmhr(f0),
+            f_min: mmhr(f_min),
+            kd: kd_per_hour / 3600.0,
+            kr,
+            f_max,
+            fe: 0.0,
+        }
+    }
+
+    fn fe_of(s: &InfilState) -> f64 {
+        let InfilState::ModHorton { fe, .. } = s else {
+            panic!("model changed")
+        };
+        *fe
+    }
+
+    /// §3.3: capacity declines with *cumulative excess* infiltration
+    /// rather than with elapsed time, which is what makes this form
+    /// better behaved under light rain.
+    #[test]
+    fn capacity_declines_with_the_cumulative_excess() {
+        let dt = 900.0;
+        let (f0, f_min, kd) = (mmhr(20.0), mmhr(5.0), 1.0 / 3600.0);
+        let mut s = modified(20.0, 5.0, 1.0, 0.0, 0.0);
+
+        let first = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        assert!((first - f0).abs() < 1e-18, "the first step is f0: {first}");
+        // Only the excess above the steady rate accumulates.
+        let excess = (f0 - f_min) * dt;
+        assert!((fe_of(&s) - excess).abs() < 1e-18, "{}", fe_of(&s));
+
+        let second = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        assert!(
+            (second - (f0 - kd * excess)).abs() < 1e-18,
+            "the second step is f0 - kd·Fe: {second}"
+        );
+        assert!(second < first, "and it declined");
+    }
+
+    /// §3.3: the steady share drains away and never counts against the
+    /// cap. Rain arriving at exactly the equilibrium rate therefore never
+    /// seals the surface, however long it falls.
+    #[test]
+    fn the_steady_share_never_counts_against_the_cap() {
+        let dt = 900.0;
+        // A cap of one millimetre, and rain at exactly the floor.
+        let mut s = modified(20.0, 5.0, 1.0, 0.0, 1.0e-3);
+        for step in 0..40 {
+            let fp = s.step(dt, mmhr(5.0), 0.0, InfilFactors::default());
+            assert!(
+                (fp - mmhr(5.0)).abs() < 1e-18,
+                "step {step} infiltrated {fp}, so the cap counted the steady share"
+            );
+        }
+        assert_eq!(0.0, fe_of(&s), "nothing accumulated against the cap");
+    }
+
+    /// §3.3: the cap is a finite store above the steady drainage. Once the
+    /// excess fills it the surface seals, and dry weather reopens it.
+    ///
+    /// > DEVIATION: the predecessor's cap line is inverted, so any wet
+    /// > step under a configured cap seals the surface at once. The
+    /// > documented meaning is implemented here instead, which is exactly
+    /// > what this asserts.
+    #[test]
+    fn the_cap_seals_the_surface_and_dry_weather_reopens_it() {
+        let dt = 900.0;
+        let cap = 2.0e-3;
+        let mut s = modified(20.0, 5.0, 1.0, 1.0 / 86_400.0, cap);
+
+        // The first wet step does not seal it: that is the predecessor's
+        // defect, and the whole point of the deviation.
+        let first = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        assert!(first > 0.0, "a capped surface still infiltrates at first");
+
+        // It seals once the excess reaches the cap.
+        let mut sealed = false;
+        for _ in 0..40 {
+            if s.step(dt, mmhr(25.0), 0.0, InfilFactors::default()) == 0.0 {
+                sealed = true;
+                break;
+            }
+        }
+        assert!(sealed, "the cap never sealed the surface");
+        assert!((fe_of(&s) - cap).abs() < 1e-12, "{}", fe_of(&s));
+
+        // A long dry spell decays the excess and reopens it.
+        for _ in 0..200 {
+            assert_eq!(0.0, s.step(dt, 0.0, 0.0, InfilFactors::default()));
+        }
+        assert!(fe_of(&s) < cap, "the store drained to {}", fe_of(&s));
+        assert!(
+            s.step(dt, mmhr(25.0), 0.0, InfilFactors::default()) > 0.0,
+            "and the surface takes water again"
+        );
+    }
+
+    /// §3.3: dry-weather decay is exponential in the regeneration
+    /// coefficient, and the monthly recovery pattern scales it.
+    #[test]
+    fn a_dry_step_decays_the_excess_exponentially() {
+        let dt = 3600.0;
+        let kr = 1.0 / 86_400.0;
+        let wet = |fe| InfilState::ModHorton {
+            f0: mmhr(20.0),
+            f_min: mmhr(5.0),
+            kd: 1.0 / 3600.0,
+            kr,
+            f_max: 0.0,
+            fe,
+        };
+
+        let mut s = wet(1.0e-3);
+        assert_eq!(0.0, s.step(dt, 0.0, 0.0, InfilFactors::default()));
+        assert!(
+            (fe_of(&s) - 1.0e-3 * (-kr * dt).exp()).abs() < 1e-18,
+            "{}",
+            fe_of(&s)
+        );
+
+        let mut faster = wet(1.0e-3);
+        faster.step(
+            dt,
+            0.0,
+            0.0,
+            InfilFactors {
+                conductivity: 1.0,
+                recovery: 2.0,
+            },
+        );
+        assert!(
+            fe_of(&faster) < fe_of(&s),
+            "a doubled recovery pattern decays further"
+        );
+    }
+
+    /// The same degenerate cases as the plain form, on their own arm.
+    #[test]
+    fn degenerate_parameters_mean_a_constant_capacity() {
+        let dt = 900.0;
+        let default = InfilFactors::default();
+        let mut flat = modified(5.0, 5.0, 1.0, 0.0, 0.0);
+        let fp = flat.step(dt, mmhr(25.0), 0.0, default);
+        assert!((fp - mmhr(5.0)).abs() < 1e-18, "{fp}");
+
+        let mut undecayed = modified(20.0, 5.0, 0.0, 0.0, 0.0);
+        let fp = undecayed.step(dt, mmhr(25.0), 0.0, default);
+        assert!((fp - mmhr(20.0)).abs() < 1e-18, "{fp}");
+
+        let mut inverted = modified(2.0, 5.0, 1.0, 0.0, 0.0);
+        assert_eq!(0.0, inverted.step(dt, mmhr(25.0), 0.0, default));
+    }
+
+    /// Availability bounds this arm too, ponded water included.
+    #[test]
+    fn ponded_water_is_available_and_bounds_the_rate() {
+        let dt = 900.0;
+        let ponded = 1.0e-4;
+        let mut s = modified(20.0, 5.0, 1.0, 0.0, 0.0);
+        let fp = s.step(dt, 0.0, ponded, InfilFactors::default());
+        assert!((fp - ponded / dt).abs() < 1e-20, "{fp} of {}", ponded / dt);
+    }
+}
+
+#[cfg(test)]
+mod green_ampt_step_tests {
+    use super::*;
+
+    const INCH: f64 = 0.0254;
+    /// One inch an hour, the conductivity these tests use.
+    const KS: f64 = INCH / 3600.0;
+    /// Four inches of wetting-front suction.
+    const PSI: f64 = 4.0 * INCH;
+    const THETA: f64 = 0.3;
+
+    fn green_ampt(modified: bool, deficit: f64) -> InfilState {
+        InfilState::build(
+            &Infiltration::GreenAmpt {
+                suction: PSI,
+                conductivity: KS,
+                initial_deficit: deficit,
+            },
+            if modified {
+                InfiltrationModel::ModifiedGreenAmpt
+            } else {
+                InfiltrationModel::GreenAmpt
+            },
+        )
+    }
+
+    fn cumulative(s: &InfilState) -> f64 {
+        let InfilState::GreenAmpt { f, .. } = s else {
+            panic!("model changed")
+        };
+        *f
+    }
+
+    fn upper_zone(s: &InfilState) -> f64 {
+        let InfilState::GreenAmpt { fu, .. } = s else {
+            panic!("model changed")
+        };
+        *fu
+    }
+
+    /// §3.3: rain at or below the conductivity infiltrates whole, without
+    /// the two-stage solve running at all.
+    #[test]
+    fn rain_at_or_below_the_conductivity_infiltrates_whole() {
+        let dt = 900.0;
+        let mut s = green_ampt(false, THETA);
+        let light = 0.5 * KS;
+        let fp = s.step(dt, light, 0.0, InfilFactors::default());
+        assert!((fp - light).abs() < 1e-20, "{fp} of {light}");
+
+        // The plain form resets its event afterwards, so its cumulative
+        // is back to nothing; the modified form is where the volume shows.
+        let mut m = green_ampt(true, THETA);
+        let fp = m.step(dt, light, 0.0, InfilFactors::default());
+        assert!((fp - light).abs() < 1e-20, "{fp} of {light}");
+        assert!(
+            (cumulative(&m) - light * dt).abs() < 1e-20,
+            "and all of it is cumulative"
+        );
+    }
+
+    /// Rain at *exactly* the conductivity is light rain. Both arms
+    /// return the same rate there, so the difference is in the state:
+    /// the light arm lets the plain form reset its event and the other
+    /// arm does not.
+    #[test]
+    fn rain_at_exactly_the_conductivity_takes_the_light_arm() {
+        let dt = 900.0;
+        let mut s = green_ampt(false, THETA);
+        let fp = s.step(dt, KS, 0.0, InfilFactors::default());
+        assert!((fp - KS).abs() < 1e-20, "{fp}");
+        assert_eq!(
+            0.0,
+            cumulative(&s),
+            "the plain form reset its event, which only the light arm does"
+        );
+    }
+
+    /// §3.3: a zero moisture deficit bypasses the solve for infiltration
+    /// at exactly the conductivity. Dividing by that deficit would be a
+    /// division by zero.
+    #[test]
+    fn a_zero_moisture_deficit_infiltrates_at_the_conductivity() {
+        let dt = 900.0;
+        let mut s = green_ampt(false, 0.0);
+        let fp = s.step(dt, 11.0 * KS, 0.0, InfilFactors::default());
+        assert!((fp - KS).abs() < 1e-18, "{fp} is not Ks {KS}");
+    }
+
+    /// §3.3: all rain infiltrates until the cumulative reaches
+    /// $F_s = K_s(\psi_s + d)\theta_d/(i_a - K_s)$, and capacity limits it
+    /// thereafter. With rain at twice the conductivity that threshold is
+    /// $\psi_s\theta_d$, which these steps straddle.
+    #[test]
+    fn all_rain_infiltrates_until_the_cumulative_reaches_saturation() {
+        let dt = 900.0;
+        let rain = 2.0 * KS;
+        let fs = PSI * THETA;
+        let mut s = green_ampt(false, THETA);
+
+        // Two steps of 12.7 mm each stay under the 30.5 mm threshold.
+        for step in 0..2 {
+            let fp = s.step(dt, rain, 0.0, InfilFactors::default());
+            assert!(
+                (fp - rain).abs() < 1e-20,
+                "step {step} took {fp}, not all of it"
+            );
+        }
+        assert!(cumulative(&s) < fs, "still below saturation");
+
+        // The third would carry it past, so saturation arrives inside it
+        // and less than the whole falls in.
+        let third = s.step(dt, rain, 0.0, InfilFactors::default());
+        assert!(third < rain, "saturation arrived mid-step: {third}");
+        assert!(third > 0.0, "but the surface still takes water");
+
+        // And capacity keeps falling as the front advances.
+        let fourth = s.step(dt, rain, 0.0, InfilFactors::default());
+        assert!(fourth < third, "{fourth} is not below {third}");
+    }
+
+    /// The suction head is half of what sets that threshold, so a soil
+    /// that pulls harder saturates later on the same rain.
+    #[test]
+    fn a_larger_suction_delays_saturation() {
+        let dt = 900.0;
+        let rain = 2.0 * KS;
+        let run = |psi: f64| {
+            let mut s = InfilState::build(
+                &Infiltration::GreenAmpt {
+                    suction: psi,
+                    conductivity: KS,
+                    initial_deficit: THETA,
+                },
+                InfiltrationModel::GreenAmpt,
+            );
+            let mut taken = 0.0;
+            for _ in 0..4 {
+                taken += s.step(dt, rain, 0.0, InfilFactors::default()) * dt;
+            }
+            taken
+        };
+        assert!(
+            run(2.0 * PSI) > run(PSI),
+            "twice the suction should take more water before it seals"
+        );
+    }
+
+    /// §3.3: the modified form differs in exactly one thing — a
+    /// low-intensity period does not reset the event — so it arrives at
+    /// saturation sooner under light rain.
+    #[test]
+    fn the_modified_form_keeps_its_event_through_light_rain() {
+        let dt = 900.0;
+        let light = 0.5 * KS;
+        let mut plain = green_ampt(false, THETA);
+        let mut modified = green_ampt(true, THETA);
+        for _ in 0..4 {
+            plain.step(dt, light, 0.0, InfilFactors::default());
+            modified.step(dt, light, 0.0, InfilFactors::default());
+        }
+        assert!(
+            cumulative(&modified) > cumulative(&plain),
+            "the modified form kept {} against the plain form's {}",
+            cumulative(&modified),
+            cumulative(&plain)
+        );
+        assert_eq!(0.0, cumulative(&plain), "the plain form reset its event");
+    }
+
+    /// §3.3: recovery drains the upper zone during dry weather, and the
+    /// monthly recovery pattern scales how fast.
+    ///
+    /// The zone is filled with rain light enough not to saturate the
+    /// surface, because a saturated one takes a different arm that
+    /// returns before recovering — the predecessor does the same, and
+    /// clears the saturated flag only on a step whose rain the surface
+    /// can outpace.
+    #[test]
+    fn a_dry_spell_drains_the_upper_zone() {
+        let dt = 900.0;
+        let wet = || {
+            let mut s = green_ampt(true, THETA);
+            for _ in 0..4 {
+                s.step(dt, 0.5 * KS, 0.0, InfilFactors::default());
+            }
+            s
+        };
+
+        let mut s = wet();
+        let held = upper_zone(&s);
+        assert!(held > 0.0, "the storm filled the upper zone");
+        assert_eq!(0.0, s.step(dt, 0.0, 0.0, InfilFactors::default()));
+        let after = upper_zone(&s);
+        assert!(after < held, "a dry step drained it: {after} of {held}");
+
+        let mut faster = wet();
+        faster.step(
+            dt,
+            0.0,
+            0.0,
+            InfilFactors {
+                conductivity: 1.0,
+                recovery: 2.0,
+            },
+        );
+        assert!(
+            upper_zone(&faster) < after,
+            "a doubled recovery pattern drains further"
+        );
+    }
+}
+
+#[cfg(test)]
+mod curve_number_step_tests {
+    use super::*;
+
+    fn mmhr(v: f64) -> f64 {
+        v * 1.0e-3 / 3600.0
+    }
+
+    fn curve_number(cn: f64, dry_days: f64) -> InfilState {
+        InfilState::build(
+            &Infiltration::CurveNumber {
+                curve_number: cn,
+                dry_time: dry_days * 86_400.0,
+            },
+            InfiltrationModel::CurveNumber,
+        )
+    }
+
+    fn remaining(s: &InfilState) -> f64 {
+        let InfilState::CurveNumber { s: cap, .. } = s else {
+            panic!("model changed")
+        };
+        *cap
+    }
+
+    /// §3.3: event totals update by $F = P - P^2/(P + S_e)$ and the
+    /// applied rate is that total's increment over the step. Stated as
+    /// the specification states it, not as the code arranges it.
+    #[test]
+    fn the_event_total_is_the_scs_relation() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let mut s = curve_number(80.0, 7.0);
+        let se = remaining(&s);
+
+        let fp = s.step(dt, rain, 0.0, InfilFactors::default());
+        let p = rain * dt;
+        let expected = (p - p * p / (p + se)) / dt;
+        assert!(
+            (fp - expected).abs() < 1e-12 * expected,
+            "{fp} is not the relation's increment {expected}"
+        );
+        // And it is less than the rain, which is the point of the curve.
+        assert!(fp < rain, "{fp} is not below the rainfall {rain}");
+    }
+
+    /// §3.3: the previous rate is held through rainless gaps so ponded
+    /// water keeps infiltrating, bounded by what capacity is left.
+    #[test]
+    fn ponded_water_keeps_infiltrating_at_the_held_rate() {
+        let dt = 900.0;
+        let mut s = curve_number(80.0, 7.0);
+        let wet = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+
+        // No rain, but water still standing.
+        let held = s.step(dt, 0.0, 1.0e-3, InfilFactors::default());
+        assert!(
+            (held - wet.min(1.0e-3 / dt)).abs() < 1e-18,
+            "{held} is not the held rate bounded by what is there"
+        );
+
+        // No rain and nothing standing: nothing infiltrates.
+        let mut dry = curve_number(80.0, 7.0);
+        dry.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        assert_eq!(0.0, dry.step(dt, 0.0, 0.0, InfilFactors::default()));
+    }
+
+    /// §3.3: capacity recovers at $k_r S_{max}$ through dry weather, and
+    /// never past its own maximum.
+    #[test]
+    fn capacity_recovers_between_events() {
+        let dt = 900.0;
+        let mut s = curve_number(80.0, 7.0);
+        let full = remaining(&s);
+        for _ in 0..4 {
+            s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        }
+        let spent = remaining(&s);
+        assert!(spent < full, "the storm spent capacity: {spent} of {full}");
+
+        s.step(dt, 0.0, 0.0, InfilFactors::default());
+        let recovered = remaining(&s);
+        assert!(recovered > spent, "a dry step recovers some: {recovered}");
+
+        // And a very long dry spell stops at the maximum rather than
+        // growing without bound.
+        for _ in 0..10_000 {
+            s.step(dt, 0.0, 0.0, InfilFactors::default());
+        }
+        assert!(
+            (remaining(&s) - full).abs() < 1e-15,
+            "recovery stopped at {} rather than {full}",
+            remaining(&s)
+        );
+    }
+
+    /// §3.3: an event's relation uses the capacity the soil had *when the
+    /// event began*, not its maximum. A second storm arriving on a soil
+    /// that has only partly recovered infiltrates less because of it.
+    #[test]
+    fn an_event_uses_the_capacity_it_began_with() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let mut s = curve_number(80.0, 7.0);
+        let full = remaining(&s);
+        for _ in 0..4 {
+            s.step(dt, rain, 0.0, InfilFactors::default());
+        }
+        // Long enough to begin a new event, far too short to recover.
+        for _ in 0..41 {
+            s.step(dt, 0.0, 0.0, InfilFactors::default());
+        }
+        let se = remaining(&s);
+        assert!(se < full, "the soil is still short: {se} of {full}");
+
+        let fp = s.step(dt, rain, 0.0, InfilFactors::default());
+        let p = rain * dt;
+        let expected = (p - p * p / (p + se)) / dt;
+        assert!(
+            (fp - expected).abs() < 1e-12 * expected,
+            "{fp} is not the relation on the capacity it began with, {expected}"
+        );
+    }
+
+    /// The held rate is bounded by the capacity that is left, not only by
+    /// the water that is standing.
+    #[test]
+    fn the_held_rate_is_bounded_by_the_capacity_left() {
+        let dt = 900.0;
+        let nearly_spent = 1.0e-5;
+        let mut s = InfilState::CurveNumber {
+            s_max: 0.0635,
+            regen: 1.0 / 604_800.0,
+            t_max: 36_288.0,
+            s: nearly_spent,
+            se: 0.0635,
+            p: 0.0,
+            f: 0.0,
+            f_prev: mmhr(25.0),
+            t: 0.0,
+        };
+        let held = s.step(dt, 0.0, 1.0e-3, InfilFactors::default());
+        assert!(
+            (held - nearly_spent / dt).abs() < 1e-20,
+            "{held} is not what capacity remains over the step"
+        );
+    }
+
+    /// §3.1: the monthly recovery pattern scales the regeneration.
+    #[test]
+    fn the_recovery_pattern_scales_the_regeneration() {
+        let dt = 900.0;
+        let spent = || {
+            let mut s = curve_number(80.0, 7.0);
+            for _ in 0..4 {
+                s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+            }
+            s
+        };
+        let mut plain = spent();
+        plain.step(dt, 0.0, 0.0, InfilFactors::default());
+        let mut faster = spent();
+        faster.step(
+            dt,
+            0.0,
+            0.0,
+            InfilFactors {
+                conductivity: 1.0,
+                recovery: 2.0,
+            },
+        );
+        assert!(
+            remaining(&faster) > remaining(&plain),
+            "a doubled pattern recovers further: {} against {}",
+            remaining(&faster),
+            remaining(&plain)
+        );
+    }
+
+    /// The inter-event gap is inclusive of its own length: a dry spell of
+    /// exactly $0.06/k_r$ begins a new event.
+    ///
+    /// The state is built here rather than derived from a drying time,
+    /// because `0.06/k_r` computes to 899.999999999 for the parameters
+    /// that would give a gap of one step, and an accumulated `t` never
+    /// lands on it exactly. Setting the gap directly is the only way to
+    /// stand on the boundary at all.
+    #[test]
+    fn a_gap_of_exactly_the_inter_event_time_begins_a_new_event() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let s_max = 0.0635;
+        let mut s = InfilState::CurveNumber {
+            s_max,
+            regen: 1.0 / 604_800.0,
+            t_max: dt,
+            s: s_max,
+            se: s_max,
+            p: 0.0,
+            f: 0.0,
+            f_prev: 0.0,
+            t: 0.0,
+        };
+        let first = s.step(dt, rain, 0.0, InfilFactors::default());
+        s.step(dt, 0.0, 0.0, InfilFactors::default());
+        let se = remaining(&s);
+        let renewed = s.step(dt, rain, 0.0, InfilFactors::default());
+        let p = rain * dt;
+        let expected = (p - p * p / (p + se)) / dt;
+        assert!(
+            (renewed - expected).abs() < 1e-12 * expected,
+            "a gap of exactly the inter-event time starts over: {renewed} \
+             against {expected}"
+        );
+        assert!(renewed > 0.0 && first > 0.0);
+    }
+
+    /// §3.3: a new event begins after a dry spell of $0.06/k_r$, which
+    /// resets the event totals so the relation starts over.
+    #[test]
+    fn a_new_event_begins_after_the_inter_event_gap() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let mut s = curve_number(80.0, 7.0);
+        let first = s.step(dt, rain, 0.0, InfilFactors::default());
+        // Straight after, the same rain infiltrates less: the event is
+        // continuing and its totals have grown.
+        let second = s.step(dt, rain, 0.0, InfilFactors::default());
+        assert!(second < first, "{second} is not below {first}");
+
+        // Long enough both to pass the inter-event gap and to let the
+        // spent capacity regenerate: a new event starting on a soil that
+        // has not fully recovered would take slightly less.
+        for _ in 0..200 {
+            s.step(dt, 0.0, 0.0, InfilFactors::default());
+        }
+        let renewed = s.step(dt, rain, 0.0, InfilFactors::default());
+        assert!(
+            (renewed - first).abs() < 1e-12 * first,
+            "a new event should start over at {first}, not {renewed}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod build_tests {
     use super::*;
 
