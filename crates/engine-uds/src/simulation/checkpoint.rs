@@ -78,6 +78,15 @@ pub fn put_fs(w: &mut impl Write, vs: &[f64]) -> io::Result<()> {
     Ok(())
 }
 
+/// Write a length-prefixed slice of float rows.
+pub fn put_rows(w: &mut impl Write, rows: &[Vec<f64>]) -> io::Result<()> {
+    put_u(w, rows.len() as u64)?;
+    for row in rows {
+        put_fs(w, row)?;
+    }
+    Ok(())
+}
+
 /// Reads the format back, one value at a time, refusing a short file
 /// rather than reading a default.
 pub struct Reader<'a> {
@@ -152,6 +161,12 @@ impl<'a> Reader<'a> {
         let n = self.u()? as usize;
         let b = self.take(n)?;
         String::from_utf8(b.to_vec()).map_err(|_| "checkpoint holds a malformed name".into())
+    }
+
+    /// Read length-prefixed float rows.
+    pub fn rows(&mut self) -> Result<Vec<Vec<f64>>, String> {
+        let n = self.u()? as usize;
+        (0..n).map(|_| self.fs()).collect()
     }
 
     /// Whether every byte has been read. A checkpoint with bytes left

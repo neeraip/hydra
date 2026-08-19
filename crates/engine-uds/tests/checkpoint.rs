@@ -5,10 +5,13 @@
 //! on restore and finding every test still green. The router's mid-step
 //! flow areas and quiet-period streak, and a parcel's run-on rate, its
 //! return-to-pervious volume in flight, its current runoff and its quality
-//! context. Each is plausibly recomputed before it is next read, which
-//! would make it derived rather than state; none of that is established,
-//! so all are written, and this list is what a reader should not mistake
-//! for coverage.
+//! context: each is plausibly recomputed before it is next read, which
+//! would make it derived rather than state, though none of that is
+//! established. Two more are uncovered because no fixture has the shape
+//! that would show them — the time each land use was last swept, which
+//! needs a model that sweeps, and a storage vertex's residence time,
+//! which needs one whose treatment depends on it. All are written. This
+//! list is what a reader should not mistake for coverage.
 //!
 //! That property is the contract, and it is the only thing that can
 //! establish it: an omitted state does not fail, it continues from a
@@ -197,14 +200,14 @@ fn a_reordered_model_is_refused() {
 /// A model whose state is not yet carried is refused by name.
 #[test]
 fn a_model_whose_state_is_not_carried_is_refused() {
-    let with_quality = MODEL.replace(
+    let with_rules = MODEL.replace(
         "[JUNCTIONS]",
-        "[POLLUTANTS]\nTSS  MG/L  10  0  0  0.1\n\n[JUNCTIONS]",
+        "[CONTROLS]\nRULE R1\nIF NODE J1 DEPTH > 1.0\nTHEN CONDUIT C1 STATUS = CLOSED\n\n[JUNCTIONS]",
     );
-    let (sim, _, _) = Simulation::open(&with_quality).expect("open");
+    let (sim, _, _) = Simulation::open(&with_rules).expect("open");
     let mut cp = Vec::new();
-    let err = sim.save_checkpoint(&mut cp).expect_err("constituent state");
-    assert!(err.contains("constituent state"), "{err}");
+    let err = sim.save_checkpoint(&mut cp).expect_err("control state");
+    assert!(err.contains("control state"), "{err}");
     assert!(cp.is_empty(), "nothing may be written when it is refused");
 }
 
@@ -555,5 +558,55 @@ fn the_cascade_instant_has_run_on_in_flight() {
     assert!(
         snap.subcatch[0].runoff > 0.0,
         "the upper parcel was not shedding, so nothing was in flight"
+    );
+}
+
+// ── Constituent state ───────────────────────────────────────────────────
+
+/// Surface buildup, wash-off and network transport, checkpointed while
+/// mass is on the ground, in the water and being treated at once.
+#[test]
+fn a_restored_quality_run_continues_bit_identically() {
+    restores_identically(&fixture("buildup_washoff_treatment.inp"), 0.3);
+}
+
+/// The same model checkpointed before the storm, where the mass is still
+/// on the ground rather than in the water.
+///
+/// Wash-off empties the surface early, so a checkpoint taken partway
+/// through carries almost no buildup and cannot tell whether buildup
+/// survived: zeroing it on restore passed the test above.
+#[test]
+fn a_restored_quality_run_keeps_the_mass_on_the_ground() {
+    // Five antecedent dry days, so there is buildup on the ground when the
+    // run opens. Without them the fixture accumulates none during its own
+    // two rainy hours, and the surface mass is zero either way.
+    let dirty = fixture("buildup_washoff_treatment.inp")
+        .replace("[REPORT]\n", "[OPTIONS]\nDRY_DAYS 5\n\n[REPORT]\n");
+    assert!(dirty.contains("DRY_DAYS"), "the fixture must start dirty");
+    restores_identically(&dirty, 0.02);
+}
+
+/// And the constituent state must be non-trivial when it is taken.
+#[test]
+fn the_quality_instant_carries_mass() {
+    let model = fixture("buildup_washoff_treatment.inp");
+    let (mut whole, _, _) = Simulation::open(&model).expect("open");
+    whole.run();
+    let target = ((whole.snapshots.len() as f64 * 0.3) as usize).max(1);
+    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    while sim.snapshots.len() < target {
+        assert!(sim.step(), "the run ended early");
+    }
+    let snap = sim.snapshots.last().expect("a reporting instant");
+    assert!(
+        snap.subcatch
+            .iter()
+            .any(|s| s.washoff.iter().any(|c| *c > 0.0)),
+        "nothing was washing off, so the checkpoint carried no surface mass"
+    );
+    assert!(
+        snap.node_quality.iter().any(|c| c.iter().any(|v| *v > 0.0)),
+        "no mass was in the network, so the checkpoint carried none"
     );
 }

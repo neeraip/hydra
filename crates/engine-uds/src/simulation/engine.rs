@@ -2320,8 +2320,15 @@ impl Simulation {
             cp::put_f(w, *at).map_err(io)?;
             cp::put_fs(w, lats).map_err(io)?;
         }
-        cp::put_fs(w, &self.hydro_mass_prev.concat().concat()).map_err(io)?;
-        cp::put_fs(w, &self.hydro_mass_now.concat().concat()).map_err(io)?;
+        // Written with its own shape rather than flattened: the nesting is
+        // source by constituent by vertex, and a flat run of values cannot
+        // say which of the three is empty when a model has no constituents.
+        for field in [&self.hydro_mass_prev, &self.hydro_mass_now] {
+            cp::put_u(w, field.len() as u64).map_err(io)?;
+            for rows in field {
+                cp::put_rows(w, rows).map_err(io)?;
+            }
+        }
         // Latches: a restored run must neither repeat a warning nor
         // swallow one it has not issued (§12.3).
         cp::put_b(w, self.hydro_degraded_warned).map_err(io)?;
@@ -2351,6 +2358,15 @@ impl Simulation {
             cp::put_f(w, notice.t).map_err(io)?;
             cp::put_u(w, notice.message.len() as u64).map_err(io)?;
             w.write_all(notice.message.as_bytes()).map_err(io)?;
+        }
+        // Constituent state, on the surface and in the network (§12.3).
+        cp::put_b(w, self.surface_quality.is_some()).map_err(io)?;
+        if let Some(sq) = &self.surface_quality {
+            sq.checkpoint_put(w).map_err(io)?;
+        }
+        cp::put_b(w, self.quality.is_some()).map_err(io)?;
+        if let Some(q) = &self.quality {
+            q.checkpoint_put(w).map_err(io)?;
         }
         // The surface compartment and the aquifers beneath it (§12.3).
         cp::put_b(w, self.surface.is_some()).map_err(io)?;
@@ -2415,22 +2431,9 @@ impl Simulation {
             slot.0 = r.f()?;
             slot.1 = r.fs()?;
         }
-        let shape = |v: &Vec<Vec<Vec<f64>>>| (v.len(), v.first().map_or(0, Vec::len));
         for slot in [&mut self.hydro_mass_prev, &mut self.hydro_mass_now] {
-            let (outer, middle) = shape(slot);
-            let flat = r.fs()?;
-            let inner = flat.len().checked_div(outer * middle).unwrap_or(0);
-            if flat.len() != outer * middle * inner {
-                return Err("checkpoint holds a constituent mass field of another shape".into());
-            }
-            let mut it = flat.into_iter();
-            *slot = (0..outer)
-                .map(|_| {
-                    (0..middle)
-                        .map(|_| it.by_ref().take(inner).collect())
-                        .collect()
-                })
-                .collect();
+            let n = r.u()? as usize;
+            *slot = (0..n).map(|_| r.rows()).collect::<Result<_, _>>()?;
         }
         self.hydro_degraded_warned = r.b()?;
         self.runoff_exhausted = r.b()?;
@@ -2463,6 +2466,22 @@ impl Simulation {
                 t,
                 message: r.text()?,
             });
+        }
+        if r.b()? {
+            match &mut self.surface_quality {
+                Some(sq) => sq.checkpoint_get(&mut r)?,
+                None => return Err("checkpoint holds surface loading this model has not".into()),
+            }
+        } else if self.surface_quality.is_some() {
+            return Err("this model tracks surface loading the checkpoint does not".into());
+        }
+        if r.b()? {
+            match &mut self.quality {
+                Some(q) => q.checkpoint_get(&mut r)?,
+                None => return Err("checkpoint holds network quality this model has not".into()),
+            }
+        } else if self.quality.is_some() {
+            return Err("this model tracks network quality the checkpoint does not".into());
         }
         if r.b()? {
             match &mut self.surface {
@@ -2535,9 +2554,6 @@ impl Simulation {
                  refused rather than restored from a default (§12.3)"
             ))
         };
-        if !self.net.constituents.is_empty() {
-            return unmet("constituent state");
-        }
         if self.controls.is_some() {
             return unmet("control state");
         }

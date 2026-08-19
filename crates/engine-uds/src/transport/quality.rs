@@ -760,3 +760,98 @@ impl NetworkQuality {
             .map(|&(_, from, to, q)| self.c_vertex[p][if q >= 0.0 { from } else { to }])
     }
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl NetworkQuality {
+    /// Write the network's constituent state (§12.3).
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_fs, put_rows, put_u};
+        let NetworkQuality {
+            // Parameters: compiled treatment expressions and unit factors,
+            // which the model rebuilds identically.
+            treatments: _,
+            cv_len: _,
+            cv_flow: _,
+            // State.
+            c_vertex,
+            c_channel,
+            final_storage,
+            outfall_mass,
+            reacted,
+            seepage_mass,
+            flooded_mass,
+            inflow_mass,
+            inflow_by_source,
+            initial_mass,
+            outfall_load,
+            link_load,
+            vol_prev,
+            chan_vol_prev,
+            hrt,
+        } = self;
+        for rows in [c_vertex, c_channel, outfall_load, link_load] {
+            put_rows(w, rows)?;
+        }
+        for vs in [
+            final_storage,
+            outfall_mass,
+            reacted,
+            seepage_mass,
+            flooded_mass,
+            inflow_mass,
+            initial_mass,
+            vol_prev,
+            chan_vol_prev,
+            hrt,
+        ] {
+            put_fs(w, vs)?;
+        }
+        put_u(w, inflow_by_source.len() as u64)?;
+        for row in inflow_by_source {
+            for v in row {
+                put_f(w, *v)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.c_vertex = r.rows()?;
+        self.c_channel = r.rows()?;
+        self.outfall_load = r.rows()?;
+        self.link_load = r.rows()?;
+        for slot in [
+            &mut self.final_storage,
+            &mut self.outfall_mass,
+            &mut self.reacted,
+            &mut self.seepage_mass,
+            &mut self.flooded_mass,
+            &mut self.inflow_mass,
+            &mut self.initial_mass,
+            &mut self.vol_prev,
+            &mut self.chan_vol_prev,
+            &mut self.hrt,
+        ] {
+            *slot = r.fs()?;
+        }
+        let n = r.u()? as usize;
+        if n != self.inflow_by_source.len() {
+            return Err(format!(
+                "checkpoint holds {n} constituent inflow rows where this model \
+                 has {}",
+                self.inflow_by_source.len()
+            ));
+        }
+        for row in &mut self.inflow_by_source {
+            for v in row.iter_mut() {
+                *v = r.f()?;
+            }
+        }
+        Ok(())
+    }
+}

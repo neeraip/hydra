@@ -612,3 +612,114 @@ fn buildup_mass(b: &Buildup, days: f64) -> f64 {
         _ => 0.0,
     }
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl LandState {
+    /// Write one parcel's surface loading (§12.3).
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_fs, put_rows};
+        let LandState {
+            buildup,
+            last_swept,
+            ponded,
+            runon_mass,
+        } = self;
+        put_rows(w, buildup)?;
+        put_fs(w, last_swept)?;
+        put_fs(w, ponded)?;
+        put_fs(w, runon_mass)
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.buildup = r.rows()?;
+        self.last_swept = r.fs()?;
+        self.ponded = r.fs()?;
+        self.runon_mass = r.fs()?;
+        Ok(())
+    }
+}
+
+impl SurfaceQuality {
+    /// Write the surface's constituent state (§12.3).
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_fs, put_rows, put_u};
+        let SurfaceQuality {
+            // Parameters: unit factors the model builds.
+            mass_cv: _,
+            cv_area: _,
+            cv_rain: _,
+            cv_flow: _,
+            // State.
+            parcels,
+            conc,
+            runon_next,
+            buildup_in,
+            deposition,
+            swept,
+            infiltrated,
+            bmp_removed,
+            to_final,
+            initial_buildup,
+            washed_off,
+            washed_by_parcel,
+        } = self;
+        put_u(w, parcels.len() as u64)?;
+        for p in parcels {
+            p.checkpoint_put(w)?;
+        }
+        for rows in [conc, runon_next, washed_by_parcel] {
+            put_rows(w, rows)?;
+        }
+        for vs in [
+            buildup_in,
+            deposition,
+            swept,
+            infiltrated,
+            bmp_removed,
+            to_final,
+            initial_buildup,
+            washed_off,
+        ] {
+            put_fs(w, vs)?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.parcels.len() {
+            return Err(format!(
+                "checkpoint holds loading for {n} parcels where this model has {}",
+                self.parcels.len()
+            ));
+        }
+        for p in &mut self.parcels {
+            p.checkpoint_get(r)?;
+        }
+        self.conc = r.rows()?;
+        self.runon_next = r.rows()?;
+        self.washed_by_parcel = r.rows()?;
+        for slot in [
+            &mut self.buildup_in,
+            &mut self.deposition,
+            &mut self.swept,
+            &mut self.infiltrated,
+            &mut self.bmp_removed,
+            &mut self.to_final,
+            &mut self.initial_buildup,
+            &mut self.washed_off,
+        ] {
+            *slot = r.fs()?;
+        }
+        Ok(())
+    }
+}
