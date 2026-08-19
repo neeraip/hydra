@@ -1,0 +1,109 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace recognise -> Option<(Layout, f64, String)> with Some((Default::default(), 1.0, "xyzzy".into()))
+@@ -183,105 +183,17 @@
+ }
+ 
+ /// Recognise the layout and interval from a file's opening lines.
+ ///
+ /// The first five lines are examined, as the predecessor does: an export
+ /// may carry header lines before its first record, and a layout that
+ /// cannot be recognised in five is not one of these.
+ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
+-    for line in text.lines().take(5) {
+-        // Tape carries a three-character record type before the station.
+-        if line.len() > 30 {
+-            let station = line.get(3..9).unwrap_or("").trim();
+-            let element = line.get(11..15).unwrap_or("");
+-            if !station.is_empty()
+-                && station.bytes().all(|b| b.is_ascii_digit())
+-                && line
+-                    .get(9..11)
+-                    .is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit()))
+-            {
+-                if let Some(interval) = nws_interval(element) {
+-                    return Some((Layout::Tape, interval, station.to_string()));
+-                }
+-            }
+-        }
+-        // The online export names its quantity in a header line, and
+-        // puts its values in that word's own column.
+-        if let Some(header) = text.lines().next() {
+-            let quarter = header.find("QPCP");
+-            if let Some(value) = header.find("HPCP").or(quarter) {
+-                // The date's column is fixed by the first record that
+-                // names a station: eleven characters before the last
+-                // colon on it, which is the one inside its clock time.
+-                let data = text
+-                    .lines()
+-                    .take(5)
+-                    .filter(|l| l.contains("COOP:"))
+-                    .find_map(|l| l.rfind(':')?.checked_sub(11));
+-                if let Some(data) = data {
+-                    let interval = if quarter.is_some() { 900.0 } else { 3600.0 };
+-                    // The station is the record's own, not the header's.
+-                    let station = text
+-                        .lines()
+-                        .find_map(|l| l.split_once("COOP:"))
+-                        .map(|(_, rest)| rest.split_whitespace().next().unwrap_or("").to_string())
+-                        .unwrap_or_default();
+-                    return Some((Layout::Online { value, data }, interval, station));
+-                }
+-            }
+-        }
+-
+-        // Environment-Canada: station, year, month, day, quantity, all
+-        // fixed-width, and a line long enough to hold its own readings.
+-        for (wide, short_year, year_width, groups) in [
+-            (true, false, 4, 96),
+-            (false, false, 4, 24),
+-            (false, true, 3, 24),
+-        ] {
+-            let head = 7 + year_width + 2 + 2 + 3;
+-            if line.len() < head + groups * 7 {
+-                continue;
+-            }
+-            let station = &line[..7];
+-            let element = &line[head - 3..head];
+-            let layout = Layout::Canada { wide, short_year };
+-            if station.bytes().all(|b| b.is_ascii_digit())
+-                && line[7..head].bytes().all(|b| b.is_ascii_digit())
+-                && element.trim().parse::<u32>().ok() == layout.rainfall_element()
+-            {
+-                let interval = if wide { 900.0 } else { 3600.0 };
+-                return Some((layout, interval, station.trim().to_string()));
+-            }
+-        }
+-
+-        // Space and comma exports both open with the station, then the
+-        // division and element, separated by their own delimiter.
+-        let head = line.get(..18).unwrap_or("");
+-        let comma = head.contains(',');
+-        let fields: Vec<&str> = if comma {
+-            head.split(',').collect()
+-        } else {
+-            head.split_whitespace().collect()
+-        };
+-        if fields.len() >= 3 {
+-            let station = fields[0].trim();
+-            if !station.is_empty() && station.bytes().all(|b| b.is_ascii_digit()) {
+-                if let Some(interval) = nws_interval(fields[2].trim()) {
+-                    let layout = if comma {
+-                        Layout::Comma
+-                    } else {
+-                        Layout::Space { named: false }
+-                    };
+-                    return Some((layout, interval, station.to_string()));
+-                }
+-            }
+-        }
+-    }
+-    None
++    Some((Default::default(), 1.0, "xyzzy".into())) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Parse an archival station record into the form a rainfall interface
+ /// file holds: depths in inches over the interval the file declares
+ /// (§14.12.1).
+ ///
+ /// The layout and interval are the file's own. A file in a layout this
+ /// engine does not read is refused rather than read at a guess.

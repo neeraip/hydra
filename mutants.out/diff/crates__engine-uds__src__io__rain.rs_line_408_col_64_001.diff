@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace / with * in parse_archive_file
+@@ -400,17 +400,17 @@
+             match flag {
+                 'a' => accum_start = Some(at),
+                 'A' => {
+                     let Some(from) = accum_start.take() else {
+                         return Err(bad("an accumulation closes that never opened"));
+                     };
+                     let spans = ((at - from) / interval).round().max(0.0) as usize + 1;
+                     if !absent {
+-                        let each = value as f64 / spans as f64 / 100.0;
++                        let each = value as f64 / spans as f64 * /* ~ changed by cargo-mutants ~ */ 100.0;
+                         for j in 0..spans {
+                             let t = from + j as f64 * interval - interval;
+                             readings.push((archive_day(date, t), each));
+                         }
+                         notices.push(format!(
+                             "an accumulated total of {:.2} in was divided evenly over \
+                              {spans} periods ending at line {}, because the record \
+                              carries no measurement within them (§14.12.1)",

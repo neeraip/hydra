@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace / with * in parse_archive_file
+@@ -419,17 +419,17 @@
+                         ));
+                     }
+                 }
+                 _ => {
+                     // Missing is absent from the record, not dry, and a
+                     // zero the predecessor drops is dropped here too.
+                     if !absent && value > 0 {
+                         let t = at - interval;
+-                        readings.push((archive_day(date, t), value as f64 / 100.0));
++                        readings.push((archive_day(date, t), value as f64 * /* ~ changed by cargo-mutants ~ */ 100.0));
+                     }
+                 }
+             }
+         }
+     }
+     if readings.is_empty() && notices.is_empty() {
+         return Err(format!(
+             "archival station record for {station:?} holds no rainfall at all"

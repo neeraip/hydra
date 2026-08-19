@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ delete match arm 'a' in parse_archive_file
+@@ -393,17 +393,17 @@
+                     missing_period = true;
+                 } else if !open {
+                     missing_period = false;
+                 }
+             }
+             let absent = missing_period || flag == 'M' || value >= 9999;
+             let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64;
+             match flag {
+-                'a' => accum_start = Some(at),
++                 /* ~ changed by cargo-mutants ~ */
+                 'A' => {
+                     let Some(from) = accum_start.take() else {
+                         return Err(bad("an accumulation closes that never opened"));
+                     };
+                     let spans = ((at - from) / interval).round().max(0.0) as usize + 1;
+                     if !absent {
+                         let each = value as f64 / spans as f64 / 100.0;
+                         for j in 0..spans {

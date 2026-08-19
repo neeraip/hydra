@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace / with % in parse_archive_file
+@@ -328,17 +328,17 @@
+             };
+             let Some(token) = field.split_whitespace().next() else {
+                 continue;
+             };
+             // Newer exports write decimal inches, older ones hundredths.
+             let inches = if token.contains('.') {
+                 token.parse::<f64>().ok()
+             } else {
+-                token.parse::<f64>().ok().map(|v| v / 100.0)
++                token.parse::<f64>().ok().map(|v| v % /* ~ changed by cargo-mutants ~ */ 100.0)
+             };
+             let Some(inches) = inches else {
+                 continue;
+             };
+             if inches <= 0.0 {
+                 continue;
+             }
+             // Midnight ends the previous day rather than opening this one.

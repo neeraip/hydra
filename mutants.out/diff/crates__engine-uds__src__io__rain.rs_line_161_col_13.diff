@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ delete match arm Layout::Canada{wide:false, ..} in Layout::per_line
+@@ -153,17 +153,17 @@
+         }
+     }
+ 
+     /// How many readings a line of this layout carries, where that is
+     /// fixed by the layout rather than by the line's length.
+     fn per_line(self) -> Option<usize> {
+         match self {
+             Layout::Canada { wide: true, .. } => Some(96),
+-            Layout::Canada { wide: false, .. } => Some(24),
++             /* ~ changed by cargo-mutants ~ */
+             _ => None,
+         }
+     }
+ 
+     /// The quantity code a line must carry to be rainfall in this layout.
+     fn rainfall_element(self) -> Option<u32> {
+         match self {
+             Layout::Canada { wide: true, .. } => Some(159),

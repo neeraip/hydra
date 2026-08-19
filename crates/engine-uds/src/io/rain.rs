@@ -302,7 +302,6 @@ pub fn parse_archive_file(
     // The condition a bracket opened, which outlives the line that opened
     // it: a record that opens a missing period and never closes it leaves
     // everything after it missing, which is what the record says.
-    let mut missing_period = false;
     let mut accum_start: Option<f64> = None;
 
     for (n, line) in text.lines().enumerate() {
@@ -382,20 +381,13 @@ pub fn parse_archive_file(
             if hour >= 25 {
                 break;
             }
-            let condition = match flag {
-                'a' | 'A' => Some(false),
-                '{' | '[' => Some(true),
-                '}' | ']' => Some(false),
-                _ => None,
-            };
-            if let Some(open) = condition {
-                if flag == '{' || flag == '[' {
-                    missing_period = true;
-                } else if !open {
-                    missing_period = false;
-                }
-            }
-            let absent = missing_period || flag == 'M' || value >= 9999;
+            // A bracket marks its own reading and no other. The
+            // predecessor recomputes the condition from each reading's
+            // flag, so an unflagged reading between an opening bracket
+            // and its closing one is an ordinary measurement: reading the
+            // brackets as a span drops readings the record keeps.
+            let bracketed = matches!(flag, '{' | '}' | '[' | ']');
+            let absent = bracketed || flag == 'M' || value >= 9999;
             let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64;
             match flag {
                 'a' => accum_start = Some(at),
@@ -634,6 +626,41 @@ mod archive_tests {
         assert_eq!(1, notices.len(), "{notices:?}");
         assert!(notices[0].contains("0.60 in"), "{}", notices[0]);
         assert!(notices[0].contains("4 periods"), "{}", notices[0]);
+    }
+
+    /// A bracketed reading is absent, and an unflagged one between two
+    /// brackets is not.
+    ///
+    /// The implementation held the condition across readings, so it
+    /// dropped the reading between the brackets that the reference keeps.
+    /// No test here noticed until mutation testing reported that deleting
+    /// the bracket arms changed nothing anyone checked.
+    #[test]
+    fn a_bracket_marks_its_own_reading_and_no_other() {
+        for name in ["nws_deleted.dat", "nws_missingp.dat"] {
+            let (rec, _) = parse_archive_file(&fixture(name)).expect(name);
+            assert_eq!(
+                vec![(0.0, 0.25), (2.0, 0.10), (4.0, 0.50)],
+                hours(&rec),
+                "{name}: the bracketed readings go and the one between stays"
+            );
+        }
+    }
+
+    /// A reading flagged missing is absent whatever its value.
+    #[test]
+    fn a_reading_flagged_missing_is_absent() {
+        let line = |flag: char| {
+            format!("123456 21 HPCP  HI2020 01 01 0100     25 {flag}   0200     10    \n")
+        };
+        let (kept, _) = parse_archive_file(&line(' ')).expect("unflagged");
+        assert_eq!(2, kept.readings.len(), "both readings are ordinary");
+        let (dropped, _) = parse_archive_file(&line('M')).expect("flagged");
+        assert_eq!(
+            vec![(1.0, 0.10)],
+            hours(&dropped),
+            "the flagged reading must not appear"
+        );
     }
 
     #[test]

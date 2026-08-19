@@ -1,0 +1,79 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace archive_date -> Option<(Date, f64)> with None
+@@ -443,75 +443,17 @@
+         },
+         notices,
+     ))
+ }
+ 
+ /// A line's calendar date and the seconds its midnight sits at, or `None`
+ /// when the line is a header rather than a record.
+ fn archive_date(line: &str, layout: Layout) -> Option<(Date, f64)> {
+-    let (y, m, d) = match layout {
+-        Layout::Tape => {
+-            let f = line.get(17..30)?;
+-            (
+-                f.get(..4)?.trim().parse().ok()?,
+-                f.get(4..6)?.trim().parse().ok()?,
+-                f.get(6..10)?.trim().parse().ok()?,
+-            )
+-        }
+-        Layout::Space { named } => {
+-            let at = if named { 49 } else { 18 };
+-            let f = line.get(at..at + 10)?;
+-            (
+-                f.get(..4)?.trim().parse().ok()?,
+-                f.get(5..7)?.trim().parse().ok()?,
+-                f.get(8..10)?.trim().parse().ok()?,
+-            )
+-        }
+-        Layout::Comma => {
+-            let f = line.get(18..28)?;
+-            (
+-                f.get(..4)?.trim().parse().ok()?,
+-                f.get(5..7)?.trim().parse().ok()?,
+-                f.get(8..10)?.trim().parse().ok()?,
+-            )
+-        }
+-        Layout::Online { data, .. } => {
+-            let f = line.get(data..data + 8)?;
+-            (
+-                f.get(..4)?.trim().parse().ok()?,
+-                f.get(4..6)?.trim().parse().ok()?,
+-                f.get(6..8)?.trim().parse().ok()?,
+-            )
+-        }
+-        Layout::Canada { short_year, .. } => {
+-            let w = if short_year { 3 } else { 4 };
+-            let f = line.get(7..7 + w + 4)?;
+-            let year: i32 = f.get(..w)?.trim().parse().ok()?;
+-            (
+-                // §14.12.1: three digits are the year less 1900, which is
+-                // what the layout means and not what the predecessor
+-                // computes.
+-                if short_year { year + 1900 } else { year },
+-                f.get(w..w + 2)?.trim().parse().ok()?,
+-                f.get(w + 2..w + 4)?.trim().parse().ok()?,
+-            )
+-        }
+-    };
+-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+-        return None;
+-    }
+-    Some((
+-        Date {
+-            year: y,
+-            month: m,
+-            day: d,
+-        },
+-        0.0,
+-    ))
++    None /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// One reading group: its hour, minute, hundredths of an inch, and flag.
+ fn archive_group(group: &str, layout: Layout) -> Option<(u32, u32, i64, char)> {
+     let (hour, minute, value, flag) = match layout {
+         Layout::Tape => (
+             group.get(..2)?,
+             group.get(2..4)?,

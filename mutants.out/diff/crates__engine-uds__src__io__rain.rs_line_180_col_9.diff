@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ delete match arm "QPCP" | "QGAG" in nws_interval
+@@ -172,17 +172,17 @@
+         }
+     }
+ }
+ 
+ /// The recording interval an element code declares (§14.12.1).
+ fn nws_interval(element: &str) -> Option<f64> {
+     match element {
+         "HPCP" => Some(3600.0),
+-        "QPCP" | "QGAG" => Some(900.0),
++         /* ~ changed by cargo-mutants ~ */
+         _ => None,
+     }
+ }
+ 
+ /// Recognise the layout and interval from a file's opening lines.
+ ///
+ /// The first five lines are examined, as the predecessor does: an export
+ /// may carry header lines before its first record, and a layout that

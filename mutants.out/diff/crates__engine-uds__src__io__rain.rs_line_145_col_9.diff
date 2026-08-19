@@ -1,0 +1,29 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace Layout::groups -> (usize, usize) with (0, 0)
+@@ -137,25 +137,17 @@
+     /// The online retrieval export: one reading per line, at columns the
+     /// file's own header and first record fix rather than the layout.
+     Online { value: usize, data: usize },
+ }
+ 
+ impl Layout {
+     /// Where a line's readings begin, and how wide each one is.
+     fn groups(self) -> (usize, usize) {
+-        match self {
+-            Layout::Tape => (30, 12),
+-            Layout::Space { named: false } => (28, 16),
+-            Layout::Space { named: true } => (59, 16),
+-            Layout::Comma => (28, 16),
+-            Layout::Canada { short_year, .. } => (if short_year { 17 } else { 18 }, 7),
+-            // One reading per line, so the whole line is the group.
+-            Layout::Online { data, .. } => (data, 0),
+-        }
++        (0, 0) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// How many readings a line of this layout carries, where that is
+     /// fixed by the layout rather than by the line's length.
+     fn per_line(self) -> Option<usize> {
+         match self {
+             Layout::Canada { wide: true, .. } => Some(96),
+             Layout::Canada { wide: false, .. } => Some(24),

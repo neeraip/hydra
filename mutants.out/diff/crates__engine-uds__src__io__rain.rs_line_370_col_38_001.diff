@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace + with * in parse_archive_file
+@@ -362,17 +362,17 @@
+                 // Tenths of a millimetre. Missing is −99999, which this
+                 // test already excludes along with every other reading of
+                 // nothing: the layout has no positive value that means
+                 // absent, so naming it separately would be a branch no
+                 // record can take.
+                 if value <= 0 {
+                     continue;
+                 }
+-                let at = day_seconds + j as f64 * interval - interval;
++                let at = day_seconds * /* ~ changed by cargo-mutants ~ */ j as f64 * interval - interval;
+                 readings.push((archive_day(date, at), value as f64 / 10.0 / 25.4));
+             }
+             continue;
+         }
+         let mut k = start;
+         while k + width <= line.len() {
+             let group = &line[k..k + width];
+             k += width;

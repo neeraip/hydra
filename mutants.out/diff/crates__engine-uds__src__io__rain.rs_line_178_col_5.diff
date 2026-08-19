@@ -1,0 +1,25 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace nws_interval -> Option<f64> with None
+@@ -170,21 +170,17 @@
+             Layout::Canada { wide: false, .. } => Some(123),
+             _ => None,
+         }
+     }
+ }
+ 
+ /// The recording interval an element code declares (§14.12.1).
+ fn nws_interval(element: &str) -> Option<f64> {
+-    match element {
+-        "HPCP" => Some(3600.0),
+-        "QPCP" | "QGAG" => Some(900.0),
+-        _ => None,
+-    }
++    None /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Recognise the layout and interval from a file's opening lines.
+ ///
+ /// The first five lines are examined, as the predecessor does: an export
+ /// may carry header lines before its first record, and a layout that
+ /// cannot be recognised in five is not one of these.
+ fn recognise(text: &str) -> Option<(Layout, f64, String)> {

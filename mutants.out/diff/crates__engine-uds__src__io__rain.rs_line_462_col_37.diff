@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace + with - in archive_date
+@@ -454,17 +454,17 @@
+             (
+                 f.get(..4)?.trim().parse().ok()?,
+                 f.get(4..6)?.trim().parse().ok()?,
+                 f.get(6..10)?.trim().parse().ok()?,
+             )
+         }
+         Layout::Space { named } => {
+             let at = if named { 49 } else { 18 };
+-            let f = line.get(at..at + 10)?;
++            let f = line.get(at..at - /* ~ changed by cargo-mutants ~ */ 10)?;
+             (
+                 f.get(..4)?.trim().parse().ok()?,
+                 f.get(5..7)?.trim().parse().ok()?,
+                 f.get(8..10)?.trim().parse().ok()?,
+             )
+         }
+         Layout::Comma => {
+             let f = line.get(18..28)?;

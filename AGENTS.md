@@ -312,6 +312,18 @@ Every defect that reaches the running app gets a test that would have
 caught it, committed with the fix. The point is not coverage — it is that
 the same mistake cannot be made twice silently.
 
+**A passing test is not evidence until something has tried to break it.**
+Every hollow test this repository has had executed the code it was hollow
+about, so coverage would have called all of them green: a drain
+coefficient compared at two values the model could not tell apart, a snow
+model with no snow in it, a release that restored a setting nothing had
+changed. What finds them is changing the code and seeing whether the suite
+still calls it correct. Do that by hand for a decision you have just
+written, and mechanically with `just mutants <file>` for anything whose
+semantics a reader would otherwise take on trust. It is slow, so it is not
+in `just ci`; it belongs on what you changed. Its first run on the rain
+parser found the condition-code handling was wrong and untested at once.
+
 **Test the decision, not the symptom.** Most defects here have been a
 decision buried where nothing can call it: a ternary inside JSX, a branch
 inside an effect. Extract it into a named exported function taking plain

@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace - with / in parse_archive_file
+@@ -337,17 +337,17 @@
+             };
+             let Some(inches) = inches else {
+                 continue;
+             };
+             if inches <= 0.0 {
+                 continue;
+             }
+             // Midnight ends the previous day rather than opening this one.
+-            let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64 - interval;
++            let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64 / /* ~ changed by cargo-mutants ~ */ interval;
+             readings.push((archive_day(date, at), inches));
+             continue;
+         }
+ 
+         // The Canadian layouts carry no clock: a group's instant is its
+         // position on the line, so they are read by counting rather than
+         // by parsing, and every other semantic is shared.
+         if let Some(count) = layout.per_line() {

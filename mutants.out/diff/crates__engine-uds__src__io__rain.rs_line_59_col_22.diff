@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace || with && in parse_rain_file
+@@ -51,17 +51,17 @@
+             .map_err(|_| bad(&format!("year {:?} is not a whole number", t[1])))?;
+         let month = int(t[2], "month")?;
+         let day = int(t[3], "day")?;
+         let hour = int(t[4], "hour")?;
+         let minute = int(t[5], "minute")?;
+         if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+             return Err(bad(&format!("{}-{month}-{day} is not a date", year)));
+         }
+-        if hour > 23 || minute > 59 {
++        if hour > 23 && /* ~ changed by cargo-mutants ~ */ minute > 59 {
+             return Err(bad(&format!("{hour}:{minute:02} is not a clock time")));
+         }
+         let value = t[6]
+             .parse::<f64>()
+             .ok()
+             .filter(|v| v.is_finite())
+             .ok_or_else(|| bad(&format!("value {:?} is not a number", t[6])))?;
+         readings.push(RainReading {

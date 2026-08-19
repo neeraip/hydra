@@ -826,11 +826,23 @@ that ended at that midnight. Values are decimal inches where the field
 carries a decimal point and hundredths where it does not, which is how a
 newer export and an older one are told apart.
 
-**Condition codes.** `{` and `}` bracket a deleted period, `[` and `]` a
-missing one, and both are missing for this purpose. The closing flags, and
-the `A` that closes an accumulation, clear the condition; a record that
-opens a period and never closes it leaves every later reading missing,
-which is what the record says.
+**Condition codes.** `{` and `}` mark a deleted period, `[` and `]` a
+missing one, and a reading carrying any of the four is absent. They mark
+their own readings and no others: an unflagged reading between an opening
+bracket and its closing one is an ordinary measurement.
+
+> **CORRESPONDENCE:** the brackets read as though they opened and closed a
+> span, and the predecessor's own variable is named for a period. It
+> recomputes that variable from each reading's flag, so the span never
+> outlives the reading that opened it, and an unflagged reading inside one
+> is kept. This engine keeps it too: these records are written by the
+> agency that publishes them, and what matters is reading the file the way
+> its writer's tool does.
+>
+> *Source: `rain.c:828–833`, where `setCondition` runs on every reading
+> and an unflagged one sets the condition back to none. A record bracketed
+> at 02:00 and 04:00 keeps its 03:00 reading when the reference
+> implementation reads it.*
 
 ### 14.13 Model Export
 

@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ delete ! in archive_date
+@@ -491,17 +491,17 @@
+                 // what the layout means and not what the predecessor
+                 // computes.
+                 if short_year { year + 1900 } else { year },
+                 f.get(w..w + 2)?.trim().parse().ok()?,
+                 f.get(w + 2..w + 4)?.trim().parse().ok()?,
+             )
+         }
+     };
+-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
++    if !(1..=12).contains(&m) ||  /* ~ changed by cargo-mutants ~ */(1..=31).contains(&d) {
+         return None;
+     }
+     Some((
+         Date {
+             year: y,
+             month: m,
+             day: d,
+         },

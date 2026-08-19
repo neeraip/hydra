@@ -1,0 +1,25 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace Layout::rainfall_element -> Option<u32> with Some(1)
+@@ -160,21 +160,17 @@
+             Layout::Canada { wide: true, .. } => Some(96),
+             Layout::Canada { wide: false, .. } => Some(24),
+             _ => None,
+         }
+     }
+ 
+     /// The quantity code a line must carry to be rainfall in this layout.
+     fn rainfall_element(self) -> Option<u32> {
+-        match self {
+-            Layout::Canada { wide: true, .. } => Some(159),
+-            Layout::Canada { wide: false, .. } => Some(123),
+-            _ => None,
+-        }
++        Some(1) /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// The recording interval an element code declares (§14.12.1).
+ fn nws_interval(element: &str) -> Option<f64> {
+     match element {
+         "HPCP" => Some(3600.0),
+         "QPCP" | "QGAG" => Some(900.0),

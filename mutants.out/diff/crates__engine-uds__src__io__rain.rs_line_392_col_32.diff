@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace || with && in parse_archive_file
+@@ -384,17 +384,17 @@
+             }
+             let condition = match flag {
+                 'a' | 'A' => Some(false),
+                 '{' | '[' => Some(true),
+                 '}' | ']' => Some(false),
+                 _ => None,
+             };
+             if let Some(open) = condition {
+-                if flag == '{' || flag == '[' {
++                if flag == '{' && /* ~ changed by cargo-mutants ~ */ flag == '[' {
+                     missing_period = true;
+                 } else if !open {
+                     missing_period = false;
+                 }
+             }
+             let absent = missing_period || flag == 'M' || value >= 9999;
+             let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64;
+             match flag {

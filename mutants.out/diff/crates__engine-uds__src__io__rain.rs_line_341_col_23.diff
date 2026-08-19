@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace <= with > in parse_archive_file
+@@ -333,17 +333,17 @@
+             let inches = if token.contains('.') {
+                 token.parse::<f64>().ok()
+             } else {
+                 token.parse::<f64>().ok().map(|v| v / 100.0)
+             };
+             let Some(inches) = inches else {
+                 continue;
+             };
+-            if inches <= 0.0 {
++            if inches > /* ~ changed by cargo-mutants ~ */ 0.0 {
+                 continue;
+             }
+             // Midnight ends the previous day rather than opening this one.
+             let at = day_seconds + 3600.0 * hour as f64 + 60.0 * minute as f64 - interval;
+             readings.push((archive_day(date, at), inches));
+             continue;
+         }
+ 

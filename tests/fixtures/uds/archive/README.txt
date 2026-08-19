@@ -52,3 +52,10 @@ The rows in these three are padded well past their last column on
 purpose. SWMM refuses a line of 41 characters or fewer here whatever it
 holds, so a narrower file is recognised as this layout and then yields
 no readings at all.
+
+nws_deleted.dat, nws_missingp.dat   condition codes
+  A reading at 02:00 flagged `{` (or `[`), an unflagged one at 03:00, and
+  one at 04:00 flagged `}` (or `]`). SWMM 5 keeps 00:00 = 0.25,
+  02:00 = 0.10 and 04:00 = 0.50: the two bracketed readings go and the
+  unflagged one between them stays. The brackets mark their own readings
+  and do not open a span.

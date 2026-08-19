@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace != with == in parse_rain_file
+@@ -30,17 +30,17 @@
+     let mut readings = Vec::new();
+     for (i, line) in text.lines().enumerate() {
+         let line = line.trim();
+         if line.is_empty() || line.starts_with(';') {
+             continue;
+         }
+         let t: Vec<&str> = line.split_whitespace().collect();
+         let bad = |what: &str| format!("rain record line {}: {what}", i + 1);
+-        if t.len() != 7 {
++        if t.len() == /* ~ changed by cargo-mutants ~ */ 7 {
+             return Err(bad(&format!(
+                 "expected 7 fields (station year month day hour minute value), found {}",
+                 t.len()
+             )));
+         }
+         let int = |field: &str, name: &str| -> Result<u32, String> {
+             field
+                 .parse::<u32>()

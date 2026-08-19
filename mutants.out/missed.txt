@@ -1,0 +1,22 @@
+crates/engine-uds/src/io/rain.rs:59:17: replace > with >= in parse_rain_file
+crates/engine-uds/src/io/rain.rs:59:32: replace > with == in parse_rain_file
+crates/engine-uds/src/io/rain.rs:59:32: replace > with >= in parse_rain_file
+crates/engine-uds/src/io/rain.rs:70:38: replace * with / in parse_rain_file
+crates/engine-uds/src/io/rain.rs:193:23: replace > with >= in recognise
+crates/engine-uds/src/io/rain.rs:198:17: replace && with || in recognise
+crates/engine-uds/src/io/rain.rs:197:17: replace && with || in recognise
+crates/engine-uds/src/io/rain.rs:240:43: replace + with * in recognise
+crates/engine-uds/src/io/rain.rs:241:27: replace < with > in recognise
+crates/engine-uds/src/io/rain.rs:241:43: replace * with + in recognise
+crates/engine-uds/src/io/rain.rs:241:43: replace * with / in recognise
+crates/engine-uds/src/io/rain.rs:267:36: replace && with || in recognise
+crates/engine-uds/src/io/rain.rs:386:17: delete match arm 'a' | 'A' in parse_archive_file
+crates/engine-uds/src/io/rain.rs:387:17: delete match arm '{' | '[' in parse_archive_file
+crates/engine-uds/src/io/rain.rs:388:17: delete match arm '}' | ']' in parse_archive_file
+crates/engine-uds/src/io/rain.rs:392:32: replace || with && in parse_archive_file
+crates/engine-uds/src/io/rain.rs:394:27: delete ! in parse_archive_file
+crates/engine-uds/src/io/rain.rs:398:56: replace || with && in parse_archive_file
+crates/engine-uds/src/io/rain.rs:398:41: replace || with && in parse_archive_file
+crates/engine-uds/src/io/rain.rs:487:39: replace + with * in archive_date
+crates/engine-uds/src/io/rain.rs:487:35: replace + with * in archive_date
+crates/engine-uds/src/io/rain.rs:499:31: replace || with && in archive_date

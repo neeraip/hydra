@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace + with * in parse_archive_file
+@@ -369,17 +369,17 @@
+                 }
+                 let at = day_seconds + j as f64 * interval - interval;
+                 readings.push((archive_day(date, at), value as f64 / 10.0 / 25.4));
+             }
+             continue;
+         }
+         let mut k = start;
+         while k + width <= line.len() {
+-            let group = &line[k..k + width];
++            let group = &line[k..k * /* ~ changed by cargo-mutants ~ */ width];
+             k += width;
+             let Some((hour, minute, value, flag)) = archive_group(group, layout) else {
+                 break;
+             };
+             if hour >= 25 {
+                 break;
+             }
+             let condition = match flag {

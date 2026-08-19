@@ -93,6 +93,22 @@ setup-layout-tests:
 test-wasm:
     wasm-pack test --headless --chrome crates/demo --test browser
 
+# Ask which of this file's decisions no test would notice being changed.
+#
+# Coverage cannot answer that: every hollow test this repository has had
+# executed the code it was hollow about. Mutation testing changes the code
+# and reports which changes the suite still calls correct, which is the
+# only mechanical check on whether an assertion asserts anything.
+#
+# Deliberately not part of `just ci`: one engine file is around eight
+# minutes. Run it on what you changed, and on anything whose semantics a
+# reader would have to take on trust.
+#
+# Usage: just mutants crates/engine-uds/src/io/rain.rs
+# Needs `cargo install cargo-mutants`.
+mutants FILE:
+    cargo mutants -p hydra-engine-uds --file {{FILE}} -- --lib
+
 # Run Python script unit tests
 test-scripts:
     python3 -m unittest discover -s scripts/tests -p "test_*.py" -v

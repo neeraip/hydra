@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace / with % in archive_day
+@@ -542,17 +542,17 @@
+         flag.chars().next().unwrap_or(' '),
+     ))
+ }
+ 
+ /// A date and an offset in seconds as the decimal day these records are
+ /// stamped with. An offset past midnight, or before it, carries the date.
+ fn archive_day(date: Date, seconds: f64) -> f64 {
+     const SWMM_EPOCH_DAYS: f64 = 25_569.0;
+-    SWMM_EPOCH_DAYS + crate::simulation::time::days_from_civil(date) as f64 + seconds / 86_400.0
++    SWMM_EPOCH_DAYS + crate::simulation::time::days_from_civil(date) as f64 + seconds % /* ~ changed by cargo-mutants ~ */ 86_400.0
+ }
+ 
+ #[cfg(test)]
+ mod archive_tests {
+     use super::*;
+ 
+     /// Every expectation here is what SWMM 5 itself made of the same file:
+     /// each fixture was run through the reference implementation with

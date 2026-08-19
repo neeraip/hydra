@@ -1,0 +1,21 @@
+--- crates/engine-uds/src/io/rain.rs
++++ replace && with || in recognise
+@@ -190,17 +190,17 @@
+ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
+     for line in text.lines().take(5) {
+         // Tape carries a three-character record type before the station.
+         if line.len() > 30 {
+             let station = line.get(3..9).unwrap_or("").trim();
+             let element = line.get(11..15).unwrap_or("");
+             if !station.is_empty()
+                 && station.bytes().all(|b| b.is_ascii_digit())
+-                && line
++                || /* ~ changed by cargo-mutants ~ */ line
+                     .get(9..11)
+                     .is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit()))
+             {
+                 if let Some(interval) = nws_interval(element) {
+                     return Some((Layout::Tape, interval, station.to_string()));
+                 }
+             }
+         }
