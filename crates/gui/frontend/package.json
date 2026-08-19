@@ -34,6 +34,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "@biomejs/biome": "^2.5.7",
     "@esri/proj-codes": "^3.7.0",
     "@tailwindcss/vite": "^4.3.3",
