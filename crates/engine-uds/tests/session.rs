@@ -690,6 +690,81 @@ TEMP  48:00  8";
     );
 }
 
+/// Wind can be declared two ways and must mean the same thing.
+///
+/// §14.14: a monthly declaration is in the model's own speed unit, and a
+/// climate file's wind column is miles per hour whatever the model's
+/// units, which is the predecessor's file semantics. Both feed the same
+/// rain-melt relation, so equivalent declarations have to melt equally.
+/// This engine read the file column as metres per second, making a
+/// file-sourced wind 2.24 times too fast and the rain-melt it drives
+/// correspondingly too large.
+#[test]
+fn a_files_wind_and_a_monthly_wind_mean_the_same_speed() {
+    // Snow falls cold, then rain arrives just above freezing on the pack,
+    // which is where the wind function does its work.
+    let temps = "\
+TEMP  0:00   -5
+TEMP  6:00   -5
+TEMP  8:00   1
+TEMP  48:00  1";
+    let with_wind = |declaration: &str| {
+        snow_model(temps).replace(
+            "SNOWMELT    0.5  0.5  0.6  100  45  -75",
+            &format!("SNOWMELT    0.5  0.5  0.6  100  45  -75\n{declaration}"),
+        )
+    };
+    // Rain on the pack once it exists.
+    let rain_on_snow = |inp: String| {
+        inp.replace(
+            "PRECIP  5:00  5\n",
+            "PRECIP  5:00  5\nPRECIP  6:00  0\nPRECIP  9:00  4\nPRECIP  14:00  4\nPRECIP  15:00  0\n",
+        )
+    };
+    let day = |wind: Option<f64>| {
+        vec![hydra_engine_uds::model::DailyClimate {
+            date: hydra_engine_uds::io::options::Date {
+                year: 2024,
+                month: 1,
+                day: 15,
+            },
+            tmax: None,
+            tmin: None,
+            evap: None,
+            wind,
+        }]
+    };
+    let melt = |inp: String, records| {
+        let (mut sim, _, _) = Simulation::open_with_climate(&inp, records).expect("open");
+        sim.run();
+        sim.report().inflow
+    };
+
+    // Ten miles an hour, declared as a monthly average in the model's own
+    // unit (km/h, this model being metric) and as a file column (mph).
+    let monthly = format!(
+        "WINDSPEED   MONTHLY  {0} {0} {0} {0} {0} {0} {0} {0} {0} {0} {0} {0}",
+        10.0 * 1.609_344
+    );
+    let from_monthly = melt(rain_on_snow(with_wind(&monthly)), Vec::new());
+    let from_file = melt(rain_on_snow(with_wind("WINDSPEED   FILE")), day(Some(10.0)));
+    assert!(
+        (from_monthly - from_file).abs() < 1e-6 * from_monthly.max(1.0),
+        "ten miles an hour melted {from_monthly} declared monthly and \
+         {from_file} read from a file"
+    );
+
+    // And the comparison means something only if wind changes the answer
+    // at all: a still day must melt less than a windy one.
+    let still = melt(rain_on_snow(with_wind("WINDSPEED   FILE")), day(Some(0.0)));
+    assert!(
+        still < from_file - 1e-9,
+        "a still day melted {still} and a ten-mile-an-hour day {from_file}: \
+         the wind function is not reaching this run, so the comparison \
+         above proves nothing"
+    );
+}
+
 #[test]
 fn warm_rain_passes_straight_through_a_snow_parcel() {
     // The same model at +10 °C throughout: plain rain on the impervious

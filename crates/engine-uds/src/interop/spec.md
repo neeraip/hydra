@@ -853,125 +853,6 @@ bracket and its closing one is an ordinary measurement.
 > at 02:00 and 04:00 keeps its 03:00 reading when the reference
 > implementation reads it.*
 
-#### 14.12.2 Archival climate records
-
-The predecessor also reads the layouts national climate services publish,
-alongside the user-prepared climate file of §14.12. Three are served here:
-the US National Climatic Data Center's TD-3200 fixed-field layout, the
-Environment-Canada DLY02 and DLY04 daily layouts, and the NCDC Global
-Historical Climatology Network Daily exports.
-
-A climate record carries four daily quantities, any subset of which a file
-may hold: maximum air temperature, minimum air temperature, pan
-evaporation, and wind speed. Everything a climate file supplies is daily,
-and the engine's own sub-daily temperature curve (§3.1) is built from the
-day's two extremes rather than read.
-
-**A declaration names a file, not a format.** As with rain (§14.12.1),
-which layout a file is written in is recognised from the file itself. A
-file matching none of them is refused naming every layout it was tested
-against, since any of them could be the one the modeller meant.
-
-**Which layout.** The first line decides, and the tests are applied in a
-fixed order because they are not mutually exclusive by construction:
-
-1. **TD-3200** if the line begins `DLY` and carries `9999` at columns
-   23–27.
-2. **DLY02/DLY04** if the line is at least 233 characters and the element
-   code at columns 13–16 is 1, 2 or 151.
-3. **User-prepared** (§14.12) if the line reads as a station name followed
-   by a year, a month, a day and at least one value.
-4. **GHCN-Daily** if the line is a header naming a `DATE` field and at
-   least one of `TMIN`, `TMAX`, `EVAP`, `WDMV` or `AWND`.
-
-**A file is read a month at a time.** The reader positions itself at the
-first line whose year and month are the ones wanted, then consumes lines
-until it meets one belonging to a later month. That line is kept rather
-than discarded: it is the first line of the next month's read. A day
-absent from the file holds the last value read for that quantity rather
-than reverting to a default, which is what makes a file of monthly
-extremes usable at all.
-
-> **DEVIATION from SWMM:** the predecessor decides a line belongs to a
-> later month with `year > current || month > current`, which is not a
-> date comparison. A line dated an earlier year but a later month — which
-> is every January-to-December wrap in a file whose months run backwards,
-> and any out-of-order line — ends the month's read early, and the days
-> after it silently hold the previous month's values. This engine compares
-> the year and month as one date.
->
-> *Source: `climate.c:readFileValues`, `if ( y > FileYear || m >
-> FileMonth ) return;`.*
-
-**The TD-3200 layout.** One line per station per quantity per month. The
-year is at columns 17–21 and the month at 21–23. The quantity is a
-four-character element name at columns 11–15: `TMAX`, `TMIN`, `EVAP` or
-`WDMV`. A count of days present is at columns 27–30, and that many
-twelve-character groups follow from column 30. Within a group the day of
-the month is at offset 0, a sign at offset 4, a five-character value at
-offset 5, and a flag at offset 11. A value of `99999` is missing, as is
-any reading whose flag is neither `0` nor `1`. Evaporation is hundredths
-of an inch; wind is miles per day; temperatures are degrees Fahrenheit.
-
-**The Environment-Canada daily layouts.** One line per station per
-quantity per month, at least 233 characters. The year is at columns 7–11
-and the month at 11–13. The element code at columns 13–16 is 1 for
-maximum temperature, 2 for minimum, and 151 for evaporation. Thirty-one
-seven-character groups follow from column 16, one per day of the month
-whether or not the month has that many: a sign at offset 0, a
-five-character value at offset 1, and a condition code at offset 6. A
-value of `99999` or of five blanks is missing. Temperatures are tenths of
-a degree Celsius; evaporation is tenths of a millimetre.
-
-> **CORRESPONDENCE:** the predecessor reads each day's condition code and
-> discards it, so an estimated or accumulated reading is used as though it
-> were measured. This engine reads these layouts the same way. The codes
-> distinguish estimates from measurements rather than marking absence, the
-> archive documents no code as meaning "do not use", and refusing them
-> would drop readings the predecessor keeps and the record intends.
->
-> *Source: `climate.c:parseDLY0204FileLine`, which fills `code` and never
-> reads it, against `setTD3200FileValues`, which tests its flag.*
-
-**The GHCN-Daily exports.** The first line is a header naming its columns.
-Each quantity's data is read from the column at which its name begins in
-that header, and the date from the column at which `DATE` begins, as
-`YYYYMMDD`. Wind is `WDMV` (daily movement) if the header names it and
-`AWND` (average speed) otherwise. A value of 9999 or more in magnitude,
-in either direction, is missing.
-
-This is the fixed-column form. The delimited exports the same service
-publishes are a different format that this layout's column arithmetic
-cannot read, and a file recognised as GHCN-Daily whose fields do not sit
-at their header's columns is refused rather than read at the wrong
-offsets.
-
-**Declared units.** A file declaration may carry a units word, `C10`, `C`
-or `F`, defaulting to `F` for a model in US units and `C` for one in SI.
-It governs the GHCN-Daily exports alone, where it selects the unit family
-for all three of temperature, evaporation and wind together: `C10` reads
-tenths of a degree Celsius, tenths of a millimetre, and either kilometres
-per day or tenths of a metre per second; `C` reads degrees Celsius,
-millimetres, and kilometres per day or metres per second; `F` reads
-degrees Fahrenheit, inches, and miles per day or miles per hour. TD-3200
-and the Canadian layouts carry their own units, stated above, and a units
-word declared beside one of them is reported as having no effect rather
-than silently ignored.
-
-> **DEVIATION from SWMM:** a climate file that is *recognised* but whose
-> values do not sit where its layout puts them yields no readings at all,
-> and the predecessor reports nothing. Every day is missing, so every day
-> holds what the run began with: a flat 70 °F, no evaporation and no wind,
-> for the whole simulation. A misaligned file is therefore indistinguishable
-> from a working one by looking at the results, which is the same class of
-> defect as a rain file read as dry. This engine refuses a climate file
-> that is recognised as a layout and yields no readings for a month it was
-> asked for, naming the file and the layout it was read as.
->
-> *Source: `climate.c:climate_openFile` seeding `FileValue[TMIN]` and
-> `[TMAX]` from `Temp.ta`, `project.c:915` setting that to 70.0, and
-> `updateFileValues`, `if ( FileData[i][FileDay] == MISSING ) continue;`.*
-
 ### 14.13 Model Export
 
 Export writes a §2 model as predecessor input text. It is the other half of
@@ -1169,3 +1050,159 @@ built programmatically that the grammar has no form for. A refusal names
 the element and what about it cannot be written. Silently dropping such
 state would produce a file that imports cleanly and means something else,
 which is the one outcome worse than failing to write at all.
+
+### 14.14 External Climate Records
+
+A model may source daily temperature, evaporation and wind from a climate
+file rather than from the input (§3.1 of the hydrology specification). The
+engine performs no file I/O — the caller reads the file and supplies its
+text at load (§12.1); this section defines what that text means.
+
+The served format is the predecessor's **user-prepared** climate format:
+one record per line,
+
+```text
+station  year  month  day  tmax  tmin  (evap)  (wind)
+```
+
+whitespace-separated, with `*` in any value position meaning the day has
+no reading for that quantity and the trailing two optional. Blank lines
+and lines opening `;` are ignored. A day absent from the file, or absent a
+quantity, inherits the most recent recorded value rather than a default,
+so a file may list only the days on which something changed.
+
+**Column units.** Temperatures are in the model's own temperature unit,
+°F for a model in US units and °C for one in SI. Evaporation is the
+model's depth unit per day, inches or millimetres. Wind is **miles per
+hour in both unit systems**, which is not the model's speed unit and not
+what the same quantity means when declared as monthly averages.
+
+> **CORRESPONDENCE:** the predecessor converts a monthly wind declaration
+> out of the user's unit system and reads the climate file's wind column
+> without converting it, so the two ways of declaring the same quantity
+> disagree about units for a model in SI: `120` means 120 km/h as a
+> monthly average and 120 mph read from a file. This engine reproduces the
+> file semantics, because the column's meaning is part of the format and a
+> file must read here as it reads there.
+>
+> *Source: `climate.c:setTemp`, `Wind.ws = Wind.aws[mon-1] /
+> UCF(WINDSPEED);` against `Wind.ws = FileValue[WIND];`.*
+
+#### 14.14.1 Archival climate records
+
+The predecessor also reads the layouts national climate services publish,
+alongside the user-prepared climate file of §14.12. Three are served here:
+the US National Climatic Data Center's TD-3200 fixed-field layout, the
+Environment-Canada DLY02 and DLY04 daily layouts, and the NCDC Global
+Historical Climatology Network Daily exports.
+
+A climate record carries four daily quantities, any subset of which a file
+may hold: maximum air temperature, minimum air temperature, pan
+evaporation, and wind speed. Everything a climate file supplies is daily,
+and the engine's own sub-daily temperature curve (§3.1) is built from the
+day's two extremes rather than read.
+
+**A declaration names a file, not a format.** As with rain (§14.12.1),
+which layout a file is written in is recognised from the file itself. A
+file matching none of them is refused naming every layout it was tested
+against, since any of them could be the one the modeller meant.
+
+**Which layout.** The first line decides, and the tests are applied in a
+fixed order because they are not mutually exclusive by construction:
+
+1. **TD-3200** if the line begins `DLY` and carries `9999` at columns
+   23–27.
+2. **DLY02/DLY04** if the line is at least 233 characters and the element
+   code at columns 13–16 is 1, 2 or 151.
+3. **User-prepared** (§14.12) if the line reads as a station name followed
+   by a year, a month, a day and at least one value.
+4. **GHCN-Daily** if the line is a header naming a `DATE` field and at
+   least one of `TMIN`, `TMAX`, `EVAP`, `WDMV` or `AWND`.
+
+**A file is read a month at a time.** The reader positions itself at the
+first line whose year and month are the ones wanted, then consumes lines
+until it meets one belonging to a later month. That line is kept rather
+than discarded: it is the first line of the next month's read. A day
+absent from the file holds the last value read for that quantity rather
+than reverting to a default, which is what makes a file of monthly
+extremes usable at all.
+
+> **DEVIATION from SWMM:** the predecessor decides a line belongs to a
+> later month with `year > current || month > current`, which is not a
+> date comparison. A line dated an earlier year but a later month — which
+> is every January-to-December wrap in a file whose months run backwards,
+> and any out-of-order line — ends the month's read early, and the days
+> after it silently hold the previous month's values. This engine compares
+> the year and month as one date.
+>
+> *Source: `climate.c:readFileValues`, `if ( y > FileYear || m >
+> FileMonth ) return;`.*
+
+**The TD-3200 layout.** One line per station per quantity per month. The
+year is at columns 17–21 and the month at 21–23. The quantity is a
+four-character element name at columns 11–15: `TMAX`, `TMIN`, `EVAP` or
+`WDMV`. A count of days present is at columns 27–30, and that many
+twelve-character groups follow from column 30. Within a group the day of
+the month is at offset 0, a sign at offset 4, a five-character value at
+offset 5, and a flag at offset 11. A value of `99999` is missing, as is
+any reading whose flag is neither `0` nor `1`. Evaporation is hundredths
+of an inch; wind is miles per day; temperatures are degrees Fahrenheit.
+
+**The Environment-Canada daily layouts.** One line per station per
+quantity per month, at least 233 characters. The year is at columns 7–11
+and the month at 11–13. The element code at columns 13–16 is 1 for
+maximum temperature, 2 for minimum, and 151 for evaporation. Thirty-one
+seven-character groups follow from column 16, one per day of the month
+whether or not the month has that many: a sign at offset 0, a
+five-character value at offset 1, and a condition code at offset 6. A
+value of `99999` or of five blanks is missing. Temperatures are tenths of
+a degree Celsius; evaporation is tenths of a millimetre.
+
+> **CORRESPONDENCE:** the predecessor reads each day's condition code and
+> discards it, so an estimated or accumulated reading is used as though it
+> were measured. This engine reads these layouts the same way. The codes
+> distinguish estimates from measurements rather than marking absence, the
+> archive documents no code as meaning "do not use", and refusing them
+> would drop readings the predecessor keeps and the record intends.
+>
+> *Source: `climate.c:parseDLY0204FileLine`, which fills `code` and never
+> reads it, against `setTD3200FileValues`, which tests its flag.*
+
+**The GHCN-Daily exports.** The first line is a header naming its columns.
+Each quantity's data is read from the column at which its name begins in
+that header, and the date from the column at which `DATE` begins, as
+`YYYYMMDD`. Wind is `WDMV` (daily movement) if the header names it and
+`AWND` (average speed) otherwise. A value of 9999 or more in magnitude,
+in either direction, is missing.
+
+This is the fixed-column form. The delimited exports the same service
+publishes are a different format that this layout's column arithmetic
+cannot read, and a file recognised as GHCN-Daily whose fields do not sit
+at their header's columns is refused rather than read at the wrong
+offsets.
+
+**Declared units.** A file declaration may carry a units word, `C10`, `C`
+or `F`, defaulting to `F` for a model in US units and `C` for one in SI.
+It governs the GHCN-Daily exports alone, where it selects the unit family
+for all three of temperature, evaporation and wind together: `C10` reads
+tenths of a degree Celsius, tenths of a millimetre, and either kilometres
+per day or tenths of a metre per second; `C` reads degrees Celsius,
+millimetres, and kilometres per day or metres per second; `F` reads
+degrees Fahrenheit, inches, and miles per day or miles per hour. TD-3200
+and the Canadian layouts carry their own units, stated above, and a units
+word declared beside one of them is reported as having no effect rather
+than silently ignored.
+
+> **DEVIATION from SWMM:** a climate file that is *recognised* but whose
+> values do not sit where its layout puts them yields no readings at all,
+> and the predecessor reports nothing. Every day is missing, so every day
+> holds what the run began with: a flat 70 °F, no evaporation and no wind,
+> for the whole simulation. A misaligned file is therefore indistinguishable
+> from a working one by looking at the results, which is the same class of
+> defect as a rain file read as dry. This engine refuses a climate file
+> that is recognised as a layout and yields no readings for a month it was
+> asked for, naming the file and the layout it was read as.
+>
+> *Source: `climate.c:climate_openFile` seeding `FileValue[TMIN]` and
+> `[TMAX]` from `Temp.ta`, `project.c:915` setting that to 70.0, and
+> `updateFileValues`, `if ( FileData[i][FileDay] == MISSING ) continue;`.*

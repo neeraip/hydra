@@ -1593,7 +1593,11 @@ impl Simulation {
             let e = evap.unwrap_or(0.0) * pan[m];
             st.file_evap = e * if us { 0.0254 } else { 1.0e-3 } / 86_400.0;
         }
-        st.wind = wind.unwrap_or(0.0);
+        // §14.14: the climate file's wind column is miles per hour in
+        // both unit systems, unlike a monthly declaration, which arrives
+        // already converted. Both feed the same rain-melt relation, so
+        // both have to reach it in the same unit.
+        st.wind = wind.unwrap_or(0.0) * 0.447_04;
     }
 
     /// The climate temperature (°C) at run time `t` from daily records:
