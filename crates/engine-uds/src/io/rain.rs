@@ -130,6 +130,10 @@ enum Layout {
     Space { named: bool },
     /// Comma-delimited DSI export.
     Comma,
+    /// Environment-Canada, one line per day in fixed seven-character
+    /// groups. `wide` is the quarter-hourly layout, `short_year` the
+    /// hourly one whose year field is three digits.
+    Canada { wide: bool, short_year: bool },
 }
 
 impl Layout {
@@ -140,6 +144,26 @@ impl Layout {
             Layout::Space { named: false } => (28, 16),
             Layout::Space { named: true } => (59, 16),
             Layout::Comma => (28, 16),
+            Layout::Canada { short_year, .. } => (if short_year { 17 } else { 18 }, 7),
+        }
+    }
+
+    /// How many readings a line of this layout carries, where that is
+    /// fixed by the layout rather than by the line's length.
+    fn per_line(self) -> Option<usize> {
+        match self {
+            Layout::Canada { wide: true, .. } => Some(96),
+            Layout::Canada { wide: false, .. } => Some(24),
+            _ => None,
+        }
+    }
+
+    /// The quantity code a line must carry to be rainfall in this layout.
+    fn rainfall_element(self) -> Option<u32> {
+        match self {
+            Layout::Canada { wide: true, .. } => Some(159),
+            Layout::Canada { wide: false, .. } => Some(123),
+            _ => None,
         }
     }
 }
@@ -175,6 +199,29 @@ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
                 }
             }
         }
+        // Environment-Canada: station, year, month, day, quantity, all
+        // fixed-width, and a line long enough to hold its own readings.
+        for (wide, short_year, year_width, groups) in [
+            (true, false, 4, 96),
+            (false, false, 4, 24),
+            (false, true, 3, 24),
+        ] {
+            let head = 7 + year_width + 2 + 2 + 3;
+            if line.len() < head + groups * 7 {
+                continue;
+            }
+            let station = &line[..7];
+            let element = &line[head - 3..head];
+            let layout = Layout::Canada { wide, short_year };
+            if station.bytes().all(|b| b.is_ascii_digit())
+                && line[7..head].bytes().all(|b| b.is_ascii_digit())
+                && element.trim().parse::<u32>().ok() == layout.rainfall_element()
+            {
+                let interval = if wide { 900.0 } else { 3600.0 };
+                return Some((layout, interval, station.trim().to_string()));
+            }
+        }
+
         // Space and comma exports both open with the station, then the
         // division and element, separated by their own delimiter.
         let head = line.get(..18).unwrap_or("");
@@ -232,6 +279,31 @@ pub fn parse_archive_file(
         let Some((date, day_seconds)) = archive_date(line, layout) else {
             continue;
         };
+        // The Canadian layouts carry no clock: a group's instant is its
+        // position on the line, so they are read by counting rather than
+        // by parsing, and every other semantic is shared.
+        if let Some(count) = layout.per_line() {
+            for j in 0..count {
+                let k = start + j * width;
+                let Some(group) = line.get(k..k + width) else {
+                    break;
+                };
+                let Ok(value) = group[..6].trim().parse::<i64>() else {
+                    break;
+                };
+                // Tenths of a millimetre. Missing is −99999, which this
+                // test already excludes along with every other reading of
+                // nothing: the layout has no positive value that means
+                // absent, so naming it separately would be a branch no
+                // record can take.
+                if value <= 0 {
+                    continue;
+                }
+                let at = day_seconds + j as f64 * interval - interval;
+                readings.push((archive_day(date, at), value as f64 / 10.0 / 25.4));
+            }
+            continue;
+        }
         let mut k = start;
         while k + width <= line.len() {
             let group = &line[k..k + width];
@@ -334,6 +406,19 @@ fn archive_date(line: &str, layout: Layout) -> Option<(Date, f64)> {
                 f.get(8..10)?.trim().parse().ok()?,
             )
         }
+        Layout::Canada { short_year, .. } => {
+            let w = if short_year { 3 } else { 4 };
+            let f = line.get(7..7 + w + 4)?;
+            let year: i32 = f.get(..w)?.trim().parse().ok()?;
+            (
+                // §14.12.1: three digits are the year less 1900, which is
+                // what the layout means and not what the predecessor
+                // computes.
+                if short_year { year + 1900 } else { year },
+                f.get(w..w + 2)?.trim().parse().ok()?,
+                f.get(w + 2..w + 4)?.trim().parse().ok()?,
+            )
+        }
     };
     if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return None;
@@ -369,6 +454,9 @@ fn archive_group(group: &str, layout: Layout) -> Option<(u32, u32, i64, char)> {
             group.get(6..12)?,
             group.get(13..14)?,
         ),
+        // A Canadian group carries a value and a flag and no clock at
+        // all: its instant is its position on the line.
+        Layout::Canada { .. } => return None,
     };
     Some((
         hour.trim().parse().ok()?,
@@ -393,7 +481,7 @@ mod archive_tests {
     /// each fixture was run through the reference implementation with
     /// `SAVE RAINFALL`, and these are the readings its interface file
     /// held. See `tests/fixtures/uds/archive/README.txt`.
-    fn fixture(name: &str) -> String {
+    pub(super) fn fixture(name: &str) -> String {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/uds/archive")
             .join(name);
@@ -402,7 +490,7 @@ mod archive_tests {
 
     /// Readings as `(hour of 2020-01-01, inches)`, rounded past the noise
     /// the decimal-day encoding carries.
-    fn hours(rec: &crate::io::iface::RainGageRecord) -> Vec<(f64, f64)> {
+    pub(super) fn hours(rec: &crate::io::iface::RainGageRecord) -> Vec<(f64, f64)> {
         rec.readings
             .iter()
             .map(|(day, v)| {
@@ -529,5 +617,76 @@ pub fn parse_any_rain_file(text: &str) -> Result<(RainRecords, Vec<String>), Str
                     .unwrap_or(&archive_reason)
             )),
         },
+    }
+}
+
+#[cfg(test)]
+mod canada_archive_tests {
+    use super::archive_tests::{fixture, hours};
+    use super::*;
+
+    /// 25 tenths of a millimetre is 2.5 mm, which is 0.098425 inches. The
+    /// reference implementation writes exactly that.
+    const FIRST: f64 = 0.098425;
+    const SECOND: f64 = 0.03937;
+
+    #[test]
+    fn an_hourly_canadian_record_reads_as_the_predecessor_reads_it() {
+        let (rec, _) = parse_archive_file(&fixture("cmc_hly.dat")).expect("parse");
+        assert_eq!("1234567", rec.station);
+        assert_eq!(3600.0, rec.interval);
+        let got = hours(&rec);
+        assert_eq!(2, got.len(), "the missing reading must not appear: {got:?}");
+        assert_eq!(0.0, got[0].0);
+        assert_eq!(1.0, got[1].0);
+        assert!((got[0].1 - FIRST).abs() < 1e-5, "{got:?}");
+        assert!((got[1].1 - SECOND).abs() < 1e-5, "{got:?}");
+    }
+
+    #[test]
+    fn a_quarter_hourly_canadian_record_reads_at_its_own_interval() {
+        let (rec, _) = parse_archive_file(&fixture("cmc_fif.dat")).expect("parse");
+        assert_eq!(900.0, rec.interval);
+        let got = hours(&rec);
+        assert_eq!(0.0, got[0].0);
+        assert_eq!(0.25, got[1].0, "a quarter of an hour later");
+    }
+
+    /// The first group of a day is the interval that ended at its
+    /// midnight, so it belongs to the day before.
+    #[test]
+    fn the_first_group_of_a_day_belongs_to_the_day_before() {
+        let (rec, _) = parse_archive_file(&fixture("cmc_edge.dat")).expect("parse");
+        assert_eq!(1, rec.readings.len());
+        // 2020-01-02's first group lands at 2020-01-01 23:00, which is
+        // hour 23 of the day the other fixtures use.
+        assert_eq!(23.0, hours(&rec)[0].0, "{:?}", hours(&rec));
+    }
+
+    /// The three-digit year is the year less 1900, not the predecessor's
+    /// arithmetic, which puts a 2020 record in 1120 and reads nothing.
+    #[test]
+    fn a_three_digit_year_is_read_as_the_layout_defines_it() {
+        let (rec, _) = parse_archive_file(&fixture("aes_hly.dat")).expect("parse");
+        // 43831.0 is 2020-01-01; the fixture's year field is 120.
+        let day = rec.readings[0].0.floor();
+        assert_eq!(43_831.0, day, "a year field of 120 is 2020, not 1120");
+        assert!((rec.readings[0].1 - FIRST).abs() < 1e-5);
+    }
+
+    /// A line carrying some other quantity is skipped, not read as rain.
+    #[test]
+    fn a_line_that_is_not_rainfall_is_not_read() {
+        // The quantity code is the three characters after the date, not
+        // the first "123" on the line, which is the station.
+        let rain = fixture("cmc_hly.dat");
+        let temperature = format!("{}078{}", &rain[..15], &rain[18..]);
+        assert!(
+            temperature.starts_with("123456720200101078"),
+            "{}",
+            &temperature[..20]
+        );
+        let err = parse_archive_file(&temperature).unwrap_err();
+        assert!(err.contains("not an archival station record"), "{err}");
     }
 }

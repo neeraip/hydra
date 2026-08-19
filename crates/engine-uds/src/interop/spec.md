@@ -737,11 +737,11 @@ number, never skipped.
 #### 14.12.1 Archival station records
 
 The predecessor also reads the layouts national weather services publish.
-Three of them are served here — the US National Weather Service's fixed-
-field tape layout and its space- and comma-delimited DSI exports. The
-online retrieval layouts and the Environment-Canada ones remain deferred
-(§1): a file in one of those fails the parse and is refused with its own
-reason.
+Six of them are served here: the US National Weather Service's fixed-field
+tape layout and its space- and comma-delimited DSI exports, and the
+Environment-Canada hourly and quarter-hourly layouts. The NWS online
+retrieval layouts remain deferred (§1): a file in one of those fails the
+parse and is refused with its own reason.
 
 An archival record parses into exactly what a rainfall interface file
 holds (§14.8.3): depths in inches over a recording interval the file
@@ -790,6 +790,29 @@ nothing but is still counted as that many missing periods.
 >
 > *Source: `rain.c:saveAccumRainfall`, which spreads `v/n` and writes each
 > interval.*
+
+**The Environment-Canada layouts.** One line per station per day, its
+readings in fixed seven-character groups: twenty-four of them for an
+hourly record, ninety-six for a quarter-hourly one. Values are tenths of a
+millimetre, and −99999 is missing. The stamp is the end of its interval
+here too, so the first group of a day is the interval that ended at that
+day's midnight and belongs to the day before.
+
+A line declares which quantity it carries, and a line that is not rainfall
+is skipped rather than read as though it were: 123 is rainfall in the
+hourly layouts, 159 in the quarter-hourly one.
+
+> **DEVIATION from SWMM:** the hourly Environment-Canada layout writes its
+> year in three digits as the year less 1900, so 120 is 2020. The
+> predecessor adds 1000 to any such value and 2000 to a value below 100,
+> putting a 2020 record in the year 1120 and a 1995 one in 2095. Neither
+> is a year a weather record refers to, and the effect is silent: the
+> readings land nine centuries from the simulation and the gage receives
+> nothing at all, with no message. This engine reads the field as the
+> convention defines it.
+>
+> *Source: `rain.c:937–938`, and a record whose year field is 120 lands in
+> 1120 when the reference implementation reads it.*
 
 **Condition codes.** `{` and `}` bracket a deleted period, `[` and `]` a
 missing one, and both are missing for this purpose. The closing flags, and
