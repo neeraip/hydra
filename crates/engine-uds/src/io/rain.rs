@@ -490,3 +490,44 @@ mod archive_tests {
         assert_eq!(vec![(0.0, 0.25)], hours(&rec));
     }
 }
+
+/// A supplied rain file, in whichever form it turned out to be.
+///
+/// A caller does not declare which: the layouts are recognised from the
+/// file's own opening lines, as the predecessor recognises them, so a
+/// modeller who swaps a station export for an archive changes nothing but
+/// the file.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RainRecords {
+    /// The user-prepared station format (§14.12), read in the record's own
+    /// declared unit and meaning whatever the gage's form declares.
+    Station(Vec<RainReading>),
+    /// An archival station record (§14.12.1), already normalised to depths
+    /// in inches over the interval the file declares.
+    Archive(crate::io::iface::RainGageRecord),
+}
+
+/// Parse a supplied rain file in whichever layout it is written in.
+///
+/// The archival layouts are tried first because they are recognised from
+/// their own header, where the standard format is recognised only by a
+/// line parsing successfully: an archival line would otherwise have to be
+/// rejected by the standard parse, which reports its own reason and hides
+/// the real one.
+pub fn parse_any_rain_file(text: &str) -> Result<(RainRecords, Vec<String>), String> {
+    match parse_archive_file(text) {
+        Ok((record, notices)) => Ok((RainRecords::Archive(record), notices)),
+        Err(archive_reason) => match parse_rain_file(text) {
+            Ok(readings) => Ok((RainRecords::Station(readings), Vec::new())),
+            // Both refused: the standard format's reason names a line and
+            // is the more useful of the two, since a file meant to be an
+            // archive usually fails recognition on its first line.
+            Err(station_reason) => Err(format!(
+                "{station_reason} (and it is {})",
+                archive_reason
+                    .strip_prefix("not an archival station record this engine reads: ")
+                    .unwrap_or(&archive_reason)
+            )),
+        },
+    }
+}

@@ -4176,3 +4176,132 @@ STA01  2020  1  1  0   45  5.08
         "a metric model read {sb} m³ of the {sa} m³ it cached"
     );
 }
+
+// ── §14.12.1 archival station records ───────────────────────────────────
+
+/// A run whose gage reads an archival record matches the same run given
+/// the same rainfall as a station record.
+///
+/// This is the assertion the layout work is for: the archive is a
+/// different way of writing the same weather, and a model must not care
+/// which it was handed.
+#[test]
+fn an_archival_record_drives_a_run_as_its_station_record_does() {
+    use hydra_engine_uds::io::rain::{parse_any_rain_file, parse_rain_file, RainRecords};
+
+    // 0.25 in in the hour ending 01:00, 0.10 in in the hour ending 02:00.
+    let archive = "123456 21 HPCP  HI2020 01 01 0100     25     0200     10    \n";
+    // The same rain as a station record: each hour stamped where it began,
+    // as a depth over the hour, in inches.
+    let station = "\
+STA01  2020  1  1  0   0   0.25
+STA01  2020  1  1  1   0   0.10
+";
+    let model = "\
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             04:00:00
+WET_STEP             01:00:00
+DRY_STEP             01:00:00
+ROUTING_STEP         00:01:00
+REPORT_STEP          01:00:00
+
+[RAINGAGES]
+G1  VOLUME  1:00  1.0  FILE  \"rain.dat\"  STA01  IN
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  75  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[REPORT]
+";
+
+    let (records, notices) = parse_any_rain_file(archive).expect("the archive is recognised");
+    assert!(
+        matches!(records, RainRecords::Archive(_)),
+        "recognised as an archive"
+    );
+    assert!(notices.is_empty(), "{notices:?}");
+    let (mut from_archive, _, _) = Simulation::open_with_rain_records(
+        model,
+        Vec::new(),
+        vec![("rain.dat".to_string(), records)],
+    )
+    .expect("open with the archive");
+    from_archive.run();
+
+    let (mut from_station, _, _) = Simulation::open_with_files(
+        model,
+        Vec::new(),
+        vec![(
+            "rain.dat".to_string(),
+            parse_rain_file(station).expect("the station record parses"),
+        )],
+    )
+    .expect("open with the station record");
+    from_station.run();
+
+    let rain_of = |sim: &Simulation| -> Vec<f64> {
+        sim.snapshots
+            .iter()
+            .map(|s| (s.subcatch[0].rain * 1e12).round() / 1e12)
+            .collect()
+    };
+    assert!(
+        rain_of(&from_archive).iter().any(|r| *r > 0.0),
+        "the archival run received no rain at all"
+    );
+    assert_eq!(
+        rain_of(&from_station),
+        rain_of(&from_archive),
+        "the two records describe the same weather"
+    );
+    let (a, b) = (
+        from_archive.ledgers().surface.expect("surface").inflow,
+        from_station.ledgers().surface.expect("surface").inflow,
+    );
+    assert!((a - b).abs() <= a * 1e-9, "precipitation {a} against {b}");
+}
+
+/// A station record is still recognised as one, and a file that is
+/// neither says so once with both reasons.
+#[test]
+fn a_file_that_is_neither_layout_names_both_reasons() {
+    use hydra_engine_uds::io::rain::{parse_any_rain_file, RainRecords};
+
+    let (records, _) = parse_any_rain_file("STA01  2020  1  1  0  0  0.10\n")
+        .expect("the station format is still recognised");
+    assert!(matches!(records, RainRecords::Station(_)));
+
+    let err = parse_any_rain_file("this is not a rain record at all\n").unwrap_err();
+    assert!(
+        err.contains("line 1"),
+        "the station reason names its line: {err}"
+    );
+    assert!(
+        err.contains("HPCP"),
+        "and the archival reason is kept: {err}"
+    );
+}

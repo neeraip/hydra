@@ -437,6 +437,22 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        let records = rain_files
+            .into_iter()
+            .map(|(name, readings)| (name, crate::io::rain::RainRecords::Station(readings)))
+            .collect();
+        Simulation::open_inner(input, climate_records, records, None)
+    }
+
+    /// Load a model together with rain files in whichever layout each was
+    /// written in (§14.12, §14.12.1) — `io::rain::parse_any_rain_file`
+    /// recognises them, and a gage reads whichever its file turned out to
+    /// be without declaring anything.
+    pub fn open_with_rain_records(
+        input: &str,
+        climate_records: Vec<crate::model::DailyClimate>,
+        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         Simulation::open_inner(input, climate_records, rain_files, None)
     }
 
@@ -460,7 +476,7 @@ impl Simulation {
     fn open_inner(
         input: &str,
         climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
+        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
         rain_interface: Option<crate::io::iface::RainInterface>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let (mut net, diags) = parse_network(input);
@@ -3232,7 +3248,7 @@ impl Simulation {
 /// were authored on, and the caller supplies the file it actually found.
 fn realise_file_gages(
     net: &mut Network,
-    rain_files: &[(String, Vec<crate::io::rain::RainReading>)],
+    rain_files: &[(String, crate::io::rain::RainRecords)],
     rain_interface: Option<&crate::io::iface::RainInterface>,
 ) -> Result<Vec<crate::io::iface::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal> {
     use crate::hydrology::runoff::SurfaceRefusal;
@@ -3313,12 +3329,55 @@ fn realise_file_gages(
                     .iter()
                     .find(|(name, _)| basename(name) == basename(file))
             });
-        let Some((_, readings)) = supplied else {
+        let Some((_, supplied)) = supplied else {
             return Err(SurfaceRefusal::Incomplete(format!(
                 "gage {}: external rain record {file:?} was not supplied. \
                  Provide the file, or inline the record as a [TIMESERIES] section",
                 net.gages[gi].id
             )));
+        };
+        // §14.12.1: an archival record arrives already normalised to
+        // depths in inches over the interval its own header declares, so
+        // it is realised exactly as a cache of one is, and the gage's
+        // declared form describes its record rather than the file.
+        let readings = match supplied {
+            crate::io::rain::RainRecords::Station(readings) => readings,
+            crate::io::rain::RainRecords::Archive(rec) => {
+                let to_model = if net.options.flow_units.is_us() {
+                    1.0
+                } else {
+                    25.4
+                };
+                let points: Vec<crate::model::TimeSeriesPoint> = rec
+                    .readings
+                    .iter()
+                    .map(|(day, depth)| {
+                        let (date, seconds) = civil_from_decimal_day(*day);
+                        crate::model::TimeSeriesPoint {
+                            time: crate::model::SeriesTime::Absolute { date, seconds },
+                            value: depth * to_model,
+                        }
+                    })
+                    .collect();
+                if points.is_empty() {
+                    return Err(SurfaceRefusal::Incomplete(format!(
+                        "gage {}: the archival record {file:?} holds no rainfall",
+                        net.gages[gi].id
+                    )));
+                }
+                let series = net.timeseries.len();
+                net.timeseries.push(crate::model::TimeSeries {
+                    id: format!("[archival record {file}]"),
+                    source: crate::model::TimeSeriesSource::Points(points),
+                });
+                net.gages[gi].form = crate::model::RainForm::Volume;
+                if rec.interval > 0.0 {
+                    net.gages[gi].interval = rec.interval;
+                }
+                net.gages[gi].source = GageSource::Series { series };
+                cached.push(rec.clone());
+                continue;
+            }
         };
         // The record's declared depth unit, converted to the model's; an
         // undeclared unit already reads in the model's (§14.12).

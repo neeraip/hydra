@@ -107,7 +107,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
 
     // External rain records (§14.12): one read per distinct file a gage
     // names, resolved beside the model like every auxiliary file.
-    let mut rain_files: Vec<(String, Vec<hydra::uds::io::rain::RainReading>)> = Vec::new();
+    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
     for gage in &net.gages {
         if rain_iface.is_some() {
             break;
@@ -134,8 +134,20 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
                 return EXIT_IO;
             }
         };
-        match hydra::uds::io::rain::parse_rain_file(&rain_text) {
-            Ok(readings) => rain_files.push((file.clone(), readings)),
+        match hydra::uds::io::rain::parse_any_rain_file(&rain_text) {
+            Ok((records, notices)) => {
+                // §14.12.1: an accumulation this engine spread evenly is
+                // said out loud, because four identical hours read as a
+                // measurement to anyone not told otherwise.
+                for notice in notices {
+                    emit_warning(
+                        "input/rain",
+                        &format!("rain record {}: {notice}", path.display()),
+                        None,
+                    );
+                }
+                rain_files.push((file.clone(), records));
+            }
             Err(e) => {
                 emit_error(
                     "input/rain",
@@ -151,7 +163,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     // ── Open: parse, validate, build ──────────────────────────────────────────
     let opened = match &rain_iface {
         Some(bytes) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
-        None => Simulation::open_with_files(&text, climate_records, rain_files),
+        None => Simulation::open_with_rain_records(&text, climate_records, rain_files),
     };
     let (mut sim, diags, findings) = match opened {
         Ok(session) => session,

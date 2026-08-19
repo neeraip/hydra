@@ -749,6 +749,12 @@ itself declares. That is not a convenience — it is what the archives are,
 and it is why the interface file has that shape at all. A caller therefore
 reads an archive and a cache of one through the same path.
 
+**A gage declares nothing.** Which layout a file is written in is
+recognised from the file, not from the model: a modeller who swaps a
+station export for an archive of the same weather changes the file and
+nothing else. A file that is neither is refused naming both reasons, since
+either could be the one the reader meant.
+
 **Which layout, and at what interval.** The layout is recognised from the
 first five lines, and the recording interval from the element code the
 line carries: `HPCP` is hourly, `QPCP` and `QGAG` are quarter-hourly. A
