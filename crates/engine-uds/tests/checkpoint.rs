@@ -8,10 +8,13 @@
 //! context: each is plausibly recomputed before it is next read, which
 //! would make it derived rather than state, though none of that is
 //! established. Two more are uncovered because no fixture has the shape
-//! that would show them — the time each land use was last swept, which
-//! needs a model that sweeps, and a storage vertex's residence time,
-//! which needs one whose treatment depends on it. All are written. This
-//! list is what a reader should not mistake for coverage.
+//! that would show them. The time each land use was last swept has no
+//! observable influence at all: moving the first pass by 57 minutes
+//! leaves every output identical. A storage vertex's residence time is
+//! read only by a treatment expression, and no treatment placed on a
+//! storage vertex in these models changes anything, including `C = 0`,
+//! which is worth a separate look. All are written. This list is what a
+//! reader should not mistake for coverage.
 //!
 //! That property is the contract, and it is the only thing that can
 //! establish it: an omitted state does not fail, it continues from a
@@ -609,4 +612,56 @@ fn the_quality_instant_carries_mass() {
         snap.node_quality.iter().any(|c| c.iter().any(|v| *v > 0.0)),
         "no mass was in the network, so the checkpoint carried none"
     );
+}
+
+/// A swept surface through a checkpoint.
+///
+/// This exercises the sweeping path, which demonstrably changes results:
+/// with an efficiency set, wash-off over the run falls from 310 to 62. It
+/// does **not** pin the time each land use was last swept. Shifting the
+/// first pass by 57 minutes leaves every output identical, so that field
+/// has no observable influence in this engine's accumulation relation and
+/// no model of this shape can cover it.
+///
+/// The quality fixture never sweeps (`RES  0  0  0`), so zeroing that
+/// time on restore changed nothing and the field looked covered by the
+/// tests above. Sweeping every half hour of a two-hour run puts a
+/// cleaning pass on either side of the checkpoint.
+#[test]
+fn a_restored_swept_surface_continues_bit_identically() {
+    // Both halves are needed. The land use must ask to be swept, and the
+    // wash-off relation must give sweeping an efficiency: the fixture's is
+    // zero, and with it every removal fraction multiplies out to nothing.
+    // Setting only the interval left the swept and unswept runs identical.
+    //
+    // The interval is longer than the checkpoint instant on purpose. Swept
+    // every few minutes, the surface is clean in both runs and the time of
+    // the last pass stops mattering; swept once an hour, a lost timer
+    // sweeps immediately on restore instead of waiting.
+    //
+    // A second storm after the sweep is what makes the difference visible
+    // at all: sweeping only moves buildup, and buildup only reaches the
+    // results through wash-off. With the fixture's single opening storm,
+    // the surface is already clean by the time any sweep matters.
+    let swept = fixture("buildup_washoff_treatment.inp")
+        .replace("RES  0  0  0", "RES  0.05  0.8  0.005")
+        .replace(
+            "RES  TSS  EXP  0.2  1.2  0  0",
+            "RES  TSS  EXP  0.2  1.2  0  80",
+        )
+        .replace(
+            "RAIN1  1:00  0.0",
+            "RAIN1  1:00  0.0\nRAIN1  1:30  2.0\nRAIN1  1:45  0.0",
+        )
+        .replace("[REPORT]\n", "[OPTIONS]\nDRY_DAYS 5\n\n[REPORT]\n");
+    assert!(swept.contains("RES  0.05"), "the fixture must sweep");
+    assert!(
+        swept.contains("RAIN1  1:30"),
+        "a second storm must follow the sweep"
+    );
+    assert!(
+        swept.contains("1.2  0  80"),
+        "sweeping must have an efficiency"
+    );
+    restores_identically(&swept, 0.4);
 }
