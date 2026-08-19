@@ -229,8 +229,11 @@ The state is small relative to the model's scope:
 | Entity | State |
 |---|---|
 | Parcel | Ponded depth for each of the three sub-areas independently; the infiltration state of the chosen relation; groundwater moisture content and saturated-zone depth; snow-pack depth, free water, temperature, and cold content |
+| Control measure | Water held in each layer it has — surface, pavement, soil, storage — and the drain's discharge |
 | Network vertex | Water depth |
 | Channel | Discharge and flow area |
+| Regulator | Current setting, whether a control placed it there or it opened by its own rule |
+| Sewer inflow | The convolution's memory of the rainfall still draining through each unit hydrograph |
 | Constituent | Accumulated surface mass and ponded mass per parcel, with time since last removal; concentration per vertex and per edge |
 
 Everything else the engine reports — velocities, volumes, flooding, loads — is

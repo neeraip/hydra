@@ -407,12 +407,35 @@ to its binary file layout is a property of that file, handled at export
 
 ### 12.3 Checkpointing
 
-A checkpoint captures the **complete** state of §2.10 — surface, subsurface,
-snow, and control-measure layer state per parcel; vertex depths; channel
-flows and areas; constituent masses and concentrations with removal times;
-regulator settings and rule state — such that a run restored from it
-continues bit-identically to one never interrupted. It is the transaction
-snapshot of §10.2, persisted; one mechanism serves both.
+A checkpoint captures the **complete** state of §2.10 such that a run
+restored from it continues bit-identically to one never interrupted. It is
+the transaction snapshot of §10.2, persisted; one mechanism serves both.
+
+Continuing bit-identically takes more than the physical state, because the
+engine's own position in the run is not derivable from it. A checkpoint
+therefore also carries:
+
+| Kind | What |
+|---|---|
+| Clocks | The hydrology clock, and the instants the next report and the next rule evaluation fall due |
+| Interpolation | The bracketing pair of lateral inflows and constituent masses the routing interpolates between, since a step resumed without them would ramp from zero |
+| Accounting | The volume accumulators every §11 balance is built from |
+| Position in supplied records | How far each supplied interface file has been read, and the day of the climate record in force |
+| Latches | Every warning issued at most once per run, so a restored run neither repeats one nor swallows one |
+| Output so far | The reporting snapshots and runtime notices already produced, and the interface-file records already collected |
+
+The last of those is what makes a checkpoint large: a restored run must be
+able to write the whole run's results, not the part after the checkpoint.
+
+**Completeness is the contract, and is checked rather than asserted.** A
+state omitted from a checkpoint does not fail; it continues from a default
+and produces plausible results that differ from the uninterrupted run. The
+test is therefore the property itself: run to an instant, checkpoint,
+restore, continue, and compare against a run that was never interrupted.
+That test is only meaningful where the state it covers is non-trivial at the
+checkpoint instant, so a model exercising each kind above — mid-storm, with
+snow on the ground, a control measure part full, a rule latched, an aquifer
+charged — is part of the contract and not an implementation detail.
 
 Checkpoints may be written at end of run or on demand mid-run, and loaded in
 place of §6.7's initial-condition seeding. The persistence format is this
