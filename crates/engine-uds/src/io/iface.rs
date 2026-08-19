@@ -1465,6 +1465,38 @@ TS1  1:00  0.0
         assert!(f.steps.is_empty(), "a partial record must not be served");
     }
 
+    /// Every washoff column lands on its own constituent.
+    ///
+    /// Every other test in this module runs a model with none, so the
+    /// washoff offsets were never evaluated at all: the loop that reads
+    /// them ran zero times, and the record length that makes room for
+    /// them was `8 + 0`.
+    #[test]
+    fn every_washoff_column_lands_on_its_own_constituent() {
+        let dirty = MODEL.replace(
+            "[JUNCTIONS]",
+            "[POLLUTANTS]\nTSS   MG/L  0  0  0  0\nLEAD  MG/L  0  0  0  0\n\n[JUNCTIONS]",
+        );
+        let (net, diags) = parse_network(&dirty);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert_eq!(2, net.constituents.len());
+
+        // Ten values per parcel now: the eight quantities and two washoff
+        // columns, each distinct so a transposed one shows.
+        let mut row = vec![0.0f32; 20];
+        for (i, v) in row.iter_mut().enumerate() {
+            *v = (i + 1) as f32;
+        }
+        let f = parse_runoff_file(&file(2, 2, 3, &[(60.0, row)]), &net).expect("parse");
+        let first = &f.steps[0].1[0];
+        assert_eq!(vec![9.0, 10.0], first.washoff, "the first parcel's columns");
+        // And the second parcel starts where the first ends, which the
+        // record length decides.
+        let second = &f.steps[0].1[1];
+        assert_eq!(11.0, second.rainfall, "the second parcel's first value");
+        assert_eq!(vec![19.0, 20.0], second.washoff);
+    }
+
     #[test]
     fn every_field_lands_in_its_own_slot() {
         let net = model();
