@@ -21,6 +21,10 @@ export interface RunQueueItem {
   targetName: string | null;
   /** "queued" | "running" | "done" | "failed" | "cancelled" */
   status: string;
+  /** This item continues an interrupted run rather than starting one. */
+  resume: boolean;
+  /** This target has an interrupted run that can be continued. */
+  resumable: boolean;
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -57,6 +61,41 @@ export async function cancelRunQueue(projectId: string): Promise<number> {
  *  Returns `true` when the item was queued or running and accepted cancellation. */
 export async function cancelRunItem(runId: string): Promise<boolean> {
   return tryInvokeOr<boolean>("cancel_run_item", { runId }, false);
+}
+
+/** Queue a run that continues this target's interrupted run rather than
+ *  starting the model again. Rejects when there is nothing to continue, so
+ *  the caller can say so instead of silently starting an ordinary run. */
+export async function resumeRun(
+  projectId: string,
+  targetId: string | null,
+): Promise<RunQueueItem[]> {
+  return invoke<RunQueueItem[]>("resume_run", { projectId, targetId });
+}
+
+/** Which of a project's targets have an interrupted run to continue.
+ *
+ *  Derived from the queue rather than asked for separately, because a
+ *  checkpoint only exists where a run of this session was cancelled, and
+ *  the queue is where that is recorded. `null` in the returned set is the
+ *  base model, matching `targetId`.
+ *
+ *  A target that was cancelled and then run again to completion is not
+ *  resumable: the later item carries `resumable: false`, and the newest
+ *  item for a target is the one that decides. */
+export function resumableTargets(items: RunQueueItem[]): Set<string | null> {
+  const newest = new Map<string | null, RunQueueItem>();
+  for (const item of items) {
+    const seen = newest.get(item.targetId);
+    if (!seen || item.queuedAt >= seen.queuedAt) {
+      newest.set(item.targetId, item);
+    }
+  }
+  const out = new Set<string | null>();
+  for (const [targetId, item] of newest) {
+    if (item.resumable) out.add(targetId);
+  }
+  return out;
 }
 
 /** Subscribe to `run_queue_update` events from the backend.

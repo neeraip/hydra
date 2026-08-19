@@ -8,7 +8,8 @@ use crate::meta::{self, bundle};
 
 use super::network_dto::{format_inp_parse_error, format_read_error};
 use super::projects::{
-    app_data_dir, project_engine_key, read_model_bytes, results_path_for, validate_id,
+    app_data_dir, checkpoint_path_for, project_engine_key, read_model_bytes, results_path_for,
+    validate_id,
 };
 use super::simulation::{
     emit_or_warn, progress_percent, run_loop_outcome, run_sim_loops, try_acquire_run_target,
@@ -51,6 +52,8 @@ struct RunQueueItem {
     target_name: Option<String>,
     /// "queued" | "running" | "done" | "failed" | "cancelled"
     status: String,
+    /// Continue this target's interrupted run rather than start it again.
+    resume: bool,
     queued_at: i64,
     started_at: Option<i64>,
     finished_at: Option<i64>,
@@ -255,6 +258,12 @@ pub struct RunQueueItemDto {
     pub target_name: Option<String>,
     /// "queued" | "running" | "done" | "failed" | "cancelled"
     pub status: String,
+    /// This item continues an interrupted run rather than starting one.
+    pub resume: bool,
+    /// Whether this target has an interrupted run to continue. Read when
+    /// the queue is fetched, so an item whose checkpoint has since been
+    /// cleared stops offering to resume.
+    pub resumable: bool,
     pub queued_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -267,15 +276,32 @@ pub struct RunQueueItemDto {
 #[tauri::command]
 /// Return the current run queue items.
 pub fn get_run_queue(
+    app: tauri::AppHandle,
     run_queue: tauri::State<'_, RunQueue>,
     project_id: String,
 ) -> Result<Vec<RunQueueItemDto>, String> {
     validate_id(&project_id)?;
-    Ok(run_queue
-        .get_for_project(&project_id)
+    let app_data = app_data_dir(&app)?;
+    Ok(queue_dtos(&app_data, &run_queue, &project_id))
+}
+
+/// A project's queue as the frontend sees it, each item told whether it
+/// has an interrupted run to continue.
+fn queue_dtos(
+    app_data: &std::path::Path,
+    run_queue: &RunQueue,
+    project_id: &str,
+) -> Vec<RunQueueItemDto> {
+    run_queue
+        .get_for_project(project_id)
         .into_iter()
-        .map(run_queue_item_to_dto)
-        .collect())
+        .map(|item| {
+            let checkpoint =
+                checkpoint_path_for(app_data, &item.project_id, item.target_id.as_deref());
+            let resumable = item_is_resumable(&item.status, &checkpoint);
+            run_queue_item_to_dto(item, resumable)
+        })
+        .collect()
 }
 
 /// Enqueue one or more simulation runs for `project_id`.
@@ -365,6 +391,7 @@ pub async fn enqueue_runs(
             target_id: target_id.clone(),
             target_name,
             status: "queued".into(),
+            resume: false,
             queued_at: now,
             started_at: None,
             finished_at: None,
@@ -384,11 +411,57 @@ pub async fn enqueue_runs(
         });
     }
 
-    Ok(run_queue
-        .get_for_project(&project_id)
-        .into_iter()
-        .map(run_queue_item_to_dto)
-        .collect())
+    Ok(queue_dtos(&app_data, &run_queue, &project_id))
+}
+
+/// Queue a run that continues this target's interrupted run instead of
+/// starting the model again (§12.3).
+///
+/// Refused when there is nothing to continue, rather than quietly queuing
+/// an ordinary run: a resume that silently restarts is the one outcome a
+/// person asking to resume would not expect.
+#[tauri::command]
+/// Continue an interrupted run from where it was cancelled.
+pub async fn resume_run(
+    app: tauri::AppHandle,
+    run_queue: tauri::State<'_, RunQueue>,
+    project_id: String,
+    target_id: Option<String>,
+) -> Result<Vec<RunQueueItemDto>, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = target_id.as_deref() {
+        validate_id(sid)?;
+    }
+    let app_data = app_data_dir(&app)?;
+    let checkpoint = checkpoint_path_for(&app_data, &project_id, target_id.as_deref());
+    if !checkpoint.is_file() {
+        return Err("There is no interrupted run to continue for this target.".into());
+    }
+
+    let target_name = target_id.as_deref().and_then(|sid| {
+        let sc_dir = bundle::scenario_dir(&app_data, &project_id, sid);
+        meta::read_scenario_meta(&sc_dir).ok().map(|m| m.name)
+    });
+    run_queue.enqueue(RunQueueItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        project_id: project_id.clone(),
+        target_id,
+        target_name,
+        status: "queued".into(),
+        resume: true,
+        queued_at: meta::now_secs(),
+        started_at: None,
+        finished_at: None,
+        error: None,
+    });
+    emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &project_id);
+    if run_queue.try_claim_processor() {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            process_queue(app2).await;
+        });
+    }
+    Ok(queue_dtos(&app_data, &run_queue, &project_id))
 }
 
 /// Cancel all queued (not yet started) runs for `project_id`.
@@ -428,18 +501,29 @@ pub fn cancel_run_item(
     Ok(cancelled)
 }
 
-fn run_queue_item_to_dto(item: RunQueueItem) -> RunQueueItemDto {
+fn run_queue_item_to_dto(item: RunQueueItem, resumable: bool) -> RunQueueItemDto {
     RunQueueItemDto {
         id: item.id,
         project_id: item.project_id,
         target_id: item.target_id,
         target_name: item.target_name,
         status: item.status,
+        resume: item.resume,
+        resumable,
         queued_at: item.queued_at,
         started_at: item.started_at,
         finished_at: item.finished_at,
         error: item.error,
     }
+}
+
+/// Whether a queue item offers to continue rather than start again.
+///
+/// Only a cancelled item can: a queued one has not run, a running one is
+/// still going, and a finished one has nothing left to do. The checkpoint
+/// must also still be there, so an item stops offering once it is gone.
+pub(crate) fn item_is_resumable(status: &str, checkpoint: &std::path::Path) -> bool {
+    status == "cancelled" && checkpoint.is_file()
 }
 
 /// Background queue processor. Drains the in-memory run queue one item at a
@@ -459,8 +543,14 @@ async fn process_queue(app: tauri::AppHandle) {
         rq.mark_running(&item.id, now);
         emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &item.project_id);
 
-        let result =
-            run_sim_for_queue(&app, &item.id, &item.project_id, item.target_id.as_deref()).await;
+        let result = run_sim_for_queue(
+            &app,
+            &item.id,
+            &item.project_id,
+            item.target_id.as_deref(),
+            item.resume,
+        )
+        .await;
 
         let now = meta::now_secs();
         match result {
@@ -569,6 +659,7 @@ async fn run_sim_for_queue(
     run_id: &str,
     project_id: &str,
     scenario_id: Option<&str>,
+    resume: bool,
 ) -> Result<QueueRunResult, String> {
     use hydra::{QualityMode, Simulation};
 
@@ -625,6 +716,21 @@ async fn run_sim_for_queue(
         }
     };
 
+    // §12.3: an item queued as a resume continues the run a cancellation
+    // interrupted, rather than starting the model again. A checkpoint that
+    // no longer matches the model is refused by the engine, and the item
+    // fails saying so, which is the honest outcome: the model has been
+    // edited since, and continuing would report the edit's results under
+    // the old run's first half.
+    let mut es = es;
+    if resume {
+        let path = checkpoint_path_for(&app_data, project_id, scenario_id);
+        let bytes = std::fs::read(&path).map_err(|e| format!("This run cannot be resumed: {e}"))?;
+        es.load_checkpoint(&bytes)
+            .map_err(|e| format!("This run cannot be resumed: {e}"))?;
+    }
+    let es = es;
+
     let out_path = results_path_for(&app_data, project_id, scenario_id);
 
     // Exclusive write access to this target's results.out — fails the queue
@@ -634,7 +740,7 @@ async fn run_sim_for_queue(
     let run_id_owned = run_id.to_string();
     let app_emit = app.clone();
     let app_cancel = app.clone();
-    let (_, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
+    let (es, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
         run_sim_loops(
             es,
             Some(out_path),
@@ -688,11 +794,66 @@ async fn run_sim_for_queue(
             // No results cleanup needed: `run_sim_loops` streams to a temp
             // file and discards it on cancellation, so `results.out` still
             // holds the previous successful run (if any).
-            RunLoopError::Cancelled => Ok(QueueRunResult::Cancelled),
+            RunLoopError::Cancelled => {
+                write_interrupted_checkpoint(app, &es, project_id, scenario_id);
+                Ok(QueueRunResult::Cancelled)
+            }
         };
     }
 
+    // A finished run has nothing to resume, and a stale checkpoint offering
+    // to resume it would be worse than none.
+    clear_interrupted_checkpoint(app, project_id, scenario_id);
     Ok(QueueRunResult::Done)
+}
+
+/// Keep a cancelled run's state so it can be resumed (§12.3).
+///
+/// Best effort by design: a checkpoint that cannot be written costs the
+/// user the chance to resume, and failing the cancellation over it would
+/// cost them the cancellation as well. It is logged and the run is still
+/// cancelled.
+fn write_interrupted_checkpoint(
+    app: &tauri::AppHandle,
+    es: &hydra::engines::EngineSession,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) {
+    if !es.checkpoints() {
+        return;
+    }
+    let Ok(app_data) = app_data_dir(app) else {
+        return;
+    };
+    let path = checkpoint_path_for(&app_data, project_id, scenario_id);
+    let written = std::fs::File::create(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|f| {
+            let mut w = std::io::BufWriter::new(f);
+            es.save_checkpoint(&mut w).map_err(|e| e.to_string())?;
+            std::io::Write::flush(&mut w).map_err(|e| e.to_string())
+        });
+    if let Err(e) = written {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "could not keep the cancelled run's checkpoint; it cannot be resumed"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Drop a target's checkpoint, so nothing offers to resume a run that has
+/// since finished or been superseded.
+fn clear_interrupted_checkpoint(
+    app: &tauri::AppHandle,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) {
+    let Ok(app_data) = app_data_dir(app) else {
+        return;
+    };
+    let _ = std::fs::remove_file(checkpoint_path_for(&app_data, project_id, scenario_id));
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -794,11 +955,41 @@ C1  CIRCULAR  1.0  0  0  0
             target_id: None,
             target_name: None,
             status: "queued".into(),
+            resume: false,
             queued_at: meta::now_secs(),
             started_at: None,
             finished_at: None,
             error: None,
         }
+    }
+
+    /// Only a cancelled item with its checkpoint still on disk offers to
+    /// continue. Every other status has nothing to continue: a queued item
+    /// has not run, a running one has not stopped, and a finished one is
+    /// finished.
+    #[test]
+    fn only_a_cancelled_item_with_a_checkpoint_resumes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let present = dir.path().join("interrupted.hcp");
+        std::fs::write(&present, b"not read here").expect("write");
+        let absent = dir.path().join("missing.hcp");
+
+        for status in ["queued", "running", "done", "failed"] {
+            assert!(
+                !item_is_resumable(status, &present),
+                "{status} must not offer to continue"
+            );
+        }
+        assert!(
+            item_is_resumable("cancelled", &present),
+            "a cancelled run with its checkpoint must offer to continue"
+        );
+        // The checkpoint is cleared when a run finishes, and a stale offer
+        // to resume would restart a run that has already completed.
+        assert!(
+            !item_is_resumable("cancelled", &absent),
+            "a cancelled run without its checkpoint has nothing to continue"
+        );
     }
 
     #[test]

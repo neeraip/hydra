@@ -326,7 +326,67 @@ impl EngineSession {
             Self::Uds(r) => Some(&r.0.sim),
         }
     }
+
+    /// Whether this engine can checkpoint a run at all.
+    ///
+    /// Asked before offering the operation rather than discovering it from
+    /// a failure, so an application can leave it out of its interface
+    /// instead of showing something that always refuses.
+    pub fn checkpoints(&self) -> bool {
+        matches!(self, Self::Uds(_))
+    }
+
+    /// Write a checkpoint of this run, from which another run continues
+    /// exactly as if it had never stopped.
+    ///
+    /// `Err` when the engine does not checkpoint. Every engine that does
+    /// writes its own format; nothing here interprets the bytes.
+    pub fn save_checkpoint(&self, w: &mut dyn Write) -> Result<(), CheckpointError> {
+        match self {
+            Self::Uds(r) => {
+                r.0.sim
+                    .save_checkpoint(&mut { w })
+                    .map_err(CheckpointError::Refused)
+            }
+            Self::Wds(_) => Err(CheckpointError::Unsupported("wds")),
+        }
+    }
+
+    /// Restore a checkpoint over this run, which must have been opened
+    /// from the same model with the same auxiliary files.
+    pub fn load_checkpoint(&mut self, bytes: &[u8]) -> Result<(), CheckpointError> {
+        match self {
+            Self::Uds(r) => {
+                r.0.sim
+                    .load_checkpoint(bytes)
+                    .map_err(CheckpointError::Refused)
+            }
+            Self::Wds(_) => Err(CheckpointError::Unsupported("wds")),
+        }
+    }
 }
+
+/// Why a checkpoint could not be written or read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointError {
+    /// The engine keyed here does not checkpoint.
+    Unsupported(&'static str),
+    /// The engine refused, with its own reason.
+    Refused(String),
+}
+
+impl std::fmt::Display for CheckpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckpointError::Unsupported(key) => {
+                write!(f, "the {key} engine does not checkpoint a run")
+            }
+            CheckpointError::Refused(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+impl std::error::Error for CheckpointError {}
 
 impl WdsRun {
     fn advance(&mut self) -> Result<Progress, AdvanceError> {

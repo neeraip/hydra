@@ -992,6 +992,21 @@ pub(crate) fn results_path_for(
     }
 }
 
+/// Where a cancelled run's checkpoint lives for a target: beside its
+/// results, under a name no results reader looks at.
+///
+/// One per target, overwritten by each cancellation, because resuming is
+/// about continuing *this* target's interrupted run and a second
+/// checkpoint of the same target is only ever a fresher answer to the
+/// same question.
+pub(crate) fn checkpoint_path_for(
+    app_data: &std::path::Path,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> std::path::PathBuf {
+    results_path_for(app_data, project_id, scenario_id).with_file_name("interrupted.hcp")
+}
+
 /// Delete a target's simulation results, returning it to its unsimulated
 /// state. Returns `true` when a results file was removed, `false` when the
 /// target had none (already unsimulated — not an error, so repeating the
