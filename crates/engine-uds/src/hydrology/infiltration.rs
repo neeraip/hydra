@@ -6,6 +6,27 @@
 use crate::io::options::InfiltrationModel;
 use crate::model::Infiltration;
 
+// `just mutants crates/engine-uds/src/hydrology/infiltration.rs` reports a
+// few mutants in the Horton arm that no test catches, and they are
+// equivalent rather than uncovered. They are listed here so the next
+// reader does not chase them again:
+//
+//   both terms of the flat-curve arm's `(cp, cp + f_min * dt)`, where the
+//   cumulative value cancels in the difference the caller takes and any
+//   under-computation is clamped back by the `.max(f_min)` floor below —
+//   the arm can only produce the floor, which is what it is for;
+//
+//   `dt / 2.0` in the Newton starting guess, which changes where the
+//   solve begins and not where it lands;
+//
+//   `fa > 1e-12` read as `>=`, which decides the wet and dry arms for an
+//   availability of exactly 1e-12 m/s. That is 4e-9 mm/hr: both arms
+//   return the same nothing, and pinning the boundary would assert an
+//   epsilon rather than a decision.
+//
+// Everything else the tool suggests is caught. When this file changes,
+// run it again rather than trusting this note.
+
 /// Exact feet-to-metres.
 const FT: f64 = 0.3048;
 
@@ -283,12 +304,15 @@ impl InfilState {
                     };
                     fp = ((cum_1 - cum_p) / dt).max(f_min).min(fa);
                     if t1 > tlim || fp < fa {
-                        // On the flat portion, or rain-limited: advance
-                        // directly.
+                        // On the flat portion, or capacity-limited: the
+                        // soil took everything it could, so it wetted a
+                        // whole step's worth. Advance directly.
                         *tp = t1;
                     } else {
-                        // Capacity-limited: recover the equivalent time
-                        // from what actually infiltrated.
+                        // Rain-limited: less went in than the curve
+                        // allowed, so the soil is not a whole step
+                        // further along. Recover the equivalent time from
+                        // what actually infiltrated.
                         let target = cum_p + fp * dt;
                         let mut t = *tp + dt / 2.0;
                         for _ in 0..20 {
@@ -691,5 +715,762 @@ impl InfilState {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod horton_step_tests {
+    use super::*;
+
+    /// Millimetres an hour as m/s, which is how these parameters read in
+    /// a model file and how the specification states them.
+    fn mmhr(v: f64) -> f64 {
+        v * 1.0e-3 / 3600.0
+    }
+
+    fn horton(f0: f64, f_min: f64, kd_per_hour: f64, kr: f64, f_max: f64) -> InfilState {
+        InfilState::Horton {
+            f0: mmhr(f0),
+            f_min: mmhr(f_min),
+            kd: kd_per_hour / 3600.0,
+            kr,
+            f_max,
+            tp: 0.0,
+            fe: 0.0,
+        }
+    }
+
+    /// Where the parcel has reached on its capacity curve (s).
+    fn tp_of(s: &InfilState) -> f64 {
+        let InfilState::Horton { tp, .. } = s else {
+            panic!("model changed")
+        };
+        *tp
+    }
+
+    /// §3.3: capacity falls from $f_0$ toward $f_\infty$ as
+    /// $f = f_\infty + (f_0 - f_\infty)e^{-kt}$, and a step's rate is
+    /// that curve's mean across the step, which for a step beginning at
+    /// the start of the curve is
+    /// $f_\infty + (f_0 - f_\infty)(1 - e^{-k\Delta t})/(k\Delta t)$.
+    ///
+    /// Stated here as the specification states it, so the test does not
+    /// merely repeat the way the code happens to arrange the same terms.
+    #[test]
+    fn the_rate_is_the_step_average_of_the_capacity_curve() {
+        let dt = 900.0;
+        let mut s = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+
+        let (f0, f_min, k) = (mmhr(20.0), mmhr(5.0), 4.0 / 3600.0);
+        let expected = f_min + (f0 - f_min) * (1.0 - (-k * dt).exp()) / (k * dt);
+        assert!(
+            (fp - expected).abs() < 1e-12 * expected,
+            "{fp} is not the curve's mean {expected}"
+        );
+        // It is strictly between the two ends: a mean that came out at
+        // either would mean the exponential had gone missing.
+        assert!(
+            fp < f0 && fp > f_min,
+            "{fp} is not between the curve's ends"
+        );
+    }
+
+    /// Availability is what falls *plus what is already standing*: a step
+    /// with no rain over ponded water still infiltrates it.
+    #[test]
+    fn ponded_water_infiltrates_when_no_rain_falls() {
+        let dt = 900.0;
+        let ponded = 1.0e-3;
+        let mut s = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = s.step(dt, 0.0, ponded, InfilFactors::default());
+        // A millimetre standing over a quarter hour is well under the
+        // capacity, so all of it goes in.
+        assert!((fp - ponded / dt).abs() < 1e-18, "{fp} of {}", ponded / dt);
+    }
+
+    /// §3.1: the monthly conductivity pattern scales $f_0$ and $f_\infty$
+    /// together, so it scales the whole curve rather than tilting it.
+    #[test]
+    fn the_monthly_conductivity_pattern_scales_the_whole_curve() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let mut full = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        let mut half = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        let a = full.step(dt, rain, 0.0, InfilFactors::default());
+        let b = half.step(
+            dt,
+            rain,
+            0.0,
+            InfilFactors {
+                conductivity: 0.5,
+                recovery: 1.0,
+            },
+        );
+        assert!(
+            (b - a / 2.0).abs() < 1e-12 * a,
+            "a pattern of a half gave {b}, not half of {a}"
+        );
+    }
+
+    /// §3.3: parameters that describe no decay are a constant capacity,
+    /// and the rate is still bounded by what is there to infiltrate.
+    #[test]
+    fn degenerate_parameters_mean_a_constant_capacity() {
+        let dt = 900.0;
+        let default = InfilFactors::default();
+
+        // f0 equal to f∞: the curve is a horizontal line at that value.
+        let mut flat = horton(5.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = flat.step(dt, mmhr(25.0), 0.0, default);
+        assert!((fp - mmhr(5.0)).abs() < 1e-18, "{fp}");
+
+        // And bounded by availability when that is the smaller.
+        let mut flat = horton(5.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = flat.step(dt, mmhr(2.0), 0.0, default);
+        assert!((fp - mmhr(2.0)).abs() < 1e-18, "{fp}");
+
+        // A zero decay coefficient never leaves f0, and must not divide
+        // by itself on the way to saying so.
+        let mut undecayed = horton(20.0, 5.0, 0.0, 0.0, 0.0);
+        let fp = undecayed.step(dt, mmhr(25.0), 0.0, default);
+        assert!((fp - mmhr(20.0)).abs() < 1e-18, "{fp}");
+
+        // Standing water is available on this arm too: the constant
+        // capacity is still measured against rain *plus* what is ponded.
+        let ponded = 1.0e-3;
+        let mut flat = horton(5.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = flat.step(dt, 0.0, ponded, default);
+        assert!((fp - ponded / dt).abs() < 1e-18, "{fp} of {}", ponded / dt);
+
+        // Evaporation exceeding the rain is not negative infiltration,
+        // with or without water standing on the parcel.
+        let mut drying = horton(20.0, 5.0, 0.0, 0.0, 0.0);
+        assert_eq!(0.0, drying.step(dt, -mmhr(5.0), 0.0, default));
+        let mut drying = horton(20.0, 5.0, 0.0, 0.0, 0.0);
+        assert_eq!(0.0, drying.step(dt, -mmhr(50.0), ponded, default));
+    }
+
+    /// §3.3 file semantics: parameters that cannot describe a decaying
+    /// curve yield nothing for the run rather than an invented one. Each
+    /// is failed on its own, because any one of them is enough.
+    #[test]
+    fn parameters_that_cannot_describe_a_curve_infiltrate_nothing() {
+        let dt = 900.0;
+        let rain = mmhr(25.0);
+        let default = InfilFactors::default();
+
+        let mut inverted = horton(2.0, 5.0, 4.0, 0.0, 0.0);
+        assert_eq!(
+            0.0,
+            inverted.step(dt, rain, 0.0, default),
+            "an initial capacity below the floor"
+        );
+        let mut growing = horton(20.0, 5.0, -4.0, 0.0, 0.0);
+        assert_eq!(
+            0.0,
+            growing.step(dt, rain, 0.0, default),
+            "a decay that grows the capacity instead"
+        );
+        let mut backwards = horton(20.0, 5.0, 4.0, -1.0e-6, 0.0);
+        assert_eq!(
+            0.0,
+            backwards.step(dt, rain, 0.0, default),
+            "a regeneration that runs the wrong way"
+        );
+    }
+
+    /// Past $16/k$ the exponential is spent and the curve is its floor
+    /// the whole way across, which is a separate arm from the general
+    /// one and reachable only from an already-wet parcel.
+    #[test]
+    fn a_long_wet_curve_flattens_to_the_equilibrium_rate() {
+        let dt = 900.0;
+        let mut s = InfilState::Horton {
+            f0: mmhr(20.0),
+            f_min: mmhr(5.0),
+            kd: 4.0 / 3600.0,
+            kr: 0.0,
+            f_max: 0.0,
+            // 16/k is 14 400 s for this decay.
+            tp: 20_000.0,
+            fe: 0.0,
+        };
+        let fp = s.step(dt, mmhr(25.0), 0.0, InfilFactors::default());
+        assert!((fp - mmhr(5.0)).abs() < 1e-18, "{fp} is not the floor");
+    }
+
+    /// The curve advances by what actually went in, not by the clock.
+    ///
+    /// A step that infiltrated everything the soil could take has wetted
+    /// a whole step's worth; a step where the rain ran out first has not,
+    /// and the equivalent time is recovered from the volume instead. The
+    /// two arms were labelled the wrong way round in the source until
+    /// this test was written.
+    #[test]
+    fn the_curve_advances_by_what_actually_infiltrated() {
+        let dt = 900.0;
+        let default = InfilFactors::default();
+
+        let mut ample = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        ample.step(dt, mmhr(25.0), 0.0, default);
+        assert_eq!(dt, tp_of(&ample), "a full step's wetting is a full step");
+
+        let mut trickle = horton(20.0, 5.0, 4.0, 0.0, 0.0);
+        let fp = trickle.step(dt, mmhr(6.0), 0.0, default);
+        assert!(
+            (fp - mmhr(6.0)).abs() < 1e-18,
+            "the rain is the limit: {fp}"
+        );
+        let advanced = tp_of(&trickle);
+        assert!(
+            advanced > 0.0 && advanced < dt,
+            "six of a possible fourteen millimetres advanced the curve \
+             {advanced} s of {dt}"
+        );
+    }
+
+    /// §3.3: a dry step recovers the curve back toward its start, and the
+    /// monthly recovery pattern scales how fast.
+    #[test]
+    fn a_dry_step_walks_the_curve_back_toward_its_start() {
+        let dt = 3600.0;
+        let wet = |tp| InfilState::Horton {
+            f0: mmhr(20.0),
+            f_min: mmhr(5.0),
+            kd: 4.0 / 3600.0,
+            kr: 1.0 / 86_400.0,
+            f_max: 0.0,
+            tp,
+            fe: 0.0,
+        };
+
+        let mut s = wet(7_200.0);
+        assert_eq!(
+            0.0,
+            s.step(dt, 0.0, 0.0, InfilFactors::default()),
+            "nothing available is nothing infiltrated"
+        );
+        let recovered = tp_of(&s);
+        assert!(recovered < 7_200.0, "the curve recovered to {recovered}");
+        assert!(recovered > 0.0, "but a single dry hour is not a dry week");
+
+        let mut faster = wet(7_200.0);
+        faster.step(
+            dt,
+            0.0,
+            0.0,
+            InfilFactors {
+                conductivity: 1.0,
+                recovery: 2.0,
+            },
+        );
+        assert!(
+            tp_of(&faster) < recovered,
+            "a doubled recovery pattern recovers further: {} against {recovered}",
+            tp_of(&faster)
+        );
+    }
+
+    /// §3.3: the optional total-volume cap seals the surface once the
+    /// parcel has taken that much.
+    #[test]
+    fn the_volume_cap_seals_the_surface() {
+        let dt = 900.0;
+        let cap = 1.0e-3;
+        let rain = mmhr(25.0);
+        let mut s = InfilState::Horton {
+            f0: mmhr(20.0),
+            f_min: mmhr(5.0),
+            kd: 4.0 / 3600.0,
+            kr: 0.0,
+            f_max: cap,
+            tp: 0.0,
+            fe: 0.0,
+        };
+        // The curve alone would take about three and a half millimetres
+        // this step, so the cap is what stops it at one.
+        let first = s.step(dt, rain, 0.0, InfilFactors::default());
+        assert!(
+            (first * dt - cap).abs() < 1e-15,
+            "the first step took {} m, not the cap",
+            first * dt
+        );
+        assert_eq!(
+            0.0,
+            s.step(dt, rain, 0.0, InfilFactors::default()),
+            "and the surface is sealed thereafter"
+        );
+    }
+}
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+
+    /// §3.3: the regeneration coefficient is $k_r = 3.912/T_{dry}$, the
+    /// 3.912 being $-\ln(0.02)$ — the curve reaching 98% recovery in the
+    /// stated drying time. Asserted against the constant the specification
+    /// states, not against the expression the code writes it as.
+    #[test]
+    fn horton_regenerates_over_its_stated_drying_time() {
+        let seven_days = 7.0 * 86_400.0;
+        let InfilState::Horton { kr, .. } = InfilState::build(
+            &Infiltration::Horton {
+                f0: 1.0,
+                f_min: 2.0,
+                decay: 3.0,
+                dry_time: seven_days,
+                f_max: 4.0,
+            },
+            InfiltrationModel::Horton,
+        ) else {
+            panic!("model changed");
+        };
+        // The specification writes the constant to four figures; the code
+        // carries the exact $-\ln(0.02)$ it rounds, so the comparison is
+        // to the precision the specification states.
+        assert!(
+            (kr * seven_days - 3.912).abs() < 1e-3,
+            "kr·T_dry is {}, not 3.912",
+            kr * seven_days
+        );
+        // A doubled drying time recovers half as fast, which a coefficient
+        // multiplied by the time rather than divided by it would not.
+        let InfilState::Horton { kr: slower, .. } = InfilState::build(
+            &Infiltration::Horton {
+                f0: 1.0,
+                f_min: 2.0,
+                decay: 3.0,
+                dry_time: 2.0 * seven_days,
+                f_max: 4.0,
+            },
+            InfiltrationModel::Horton,
+        ) else {
+            panic!("model changed");
+        };
+        assert!(
+            (slower - kr / 2.0).abs() < 1e-15,
+            "{slower} is not half {kr}"
+        );
+    }
+
+    /// A drying time of zero is "never recovers", not a division by it.
+    #[test]
+    fn a_drying_time_of_zero_is_no_recovery_at_all() {
+        let InfilState::Horton { kr, .. } = InfilState::build(
+            &Infiltration::Horton {
+                f0: 1.0,
+                f_min: 2.0,
+                decay: 3.0,
+                dry_time: 0.0,
+                f_max: 4.0,
+            },
+            InfiltrationModel::Horton,
+        ) else {
+            panic!("model changed");
+        };
+        assert_eq!(0.0, kr);
+    }
+
+    /// The session's model selection picks the relation, and the two
+    /// Horton forms are different state machines rather than a flag.
+    #[test]
+    fn the_selection_chooses_between_the_two_horton_forms() {
+        let params = Infiltration::Horton {
+            f0: 1.0,
+            f_min: 2.0,
+            decay: 3.0,
+            dry_time: 4.0,
+            f_max: 5.0,
+        };
+        assert!(matches!(
+            InfilState::build(&params, InfiltrationModel::Horton),
+            InfilState::Horton { .. }
+        ));
+        assert!(matches!(
+            InfilState::build(&params, InfiltrationModel::ModifiedHorton),
+            InfilState::ModHorton { .. }
+        ));
+        // Any other selection reaching Horton parameters is still Horton,
+        // not the modified form by default.
+        assert!(matches!(
+            InfilState::build(&params, InfiltrationModel::GreenAmpt),
+            InfilState::Horton { .. }
+        ));
+    }
+
+    /// §3.3: $L_u = 4\sqrt{K_s}$, an empirical fit in inches with $K_s$
+    /// in in/hr. The conversion in and back out is the whole content of
+    /// the line, so it is checked at two conductivities: one where the
+    /// square root is invisible and one where it is not.
+    #[test]
+    fn the_green_ampt_upper_zone_is_four_root_ks_in_inches() {
+        let inch = 0.0254;
+        let lu_of = |ks_in_per_hour: f64| {
+            let InfilState::GreenAmpt { lu, .. } = InfilState::build(
+                &Infiltration::GreenAmpt {
+                    suction: 0.1,
+                    conductivity: ks_in_per_hour * inch / 3600.0,
+                    initial_deficit: 0.2,
+                },
+                InfiltrationModel::GreenAmpt,
+            ) else {
+                panic!("model changed");
+            };
+            lu
+        };
+        // One in/hr: four inches of upper zone.
+        assert!((lu_of(1.0) - 4.0 * inch).abs() < 1e-12, "{}", lu_of(1.0));
+        // Four in/hr: the root doubles it to eight inches, which a fit
+        // written without the root would make sixteen.
+        assert!((lu_of(4.0) - 8.0 * inch).abs() < 1e-12, "{}", lu_of(4.0));
+    }
+
+    /// The modified form is the one that skips the low-intensity event
+    /// reset, and nothing else selects it.
+    #[test]
+    fn the_selection_chooses_between_the_two_green_ampt_forms() {
+        let params = Infiltration::GreenAmpt {
+            suction: 0.1,
+            conductivity: 1.0e-5,
+            initial_deficit: 0.2,
+        };
+        let modified_of = |m| {
+            let InfilState::GreenAmpt { modified, .. } = InfilState::build(&params, m) else {
+                panic!("model changed");
+            };
+            modified
+        };
+        assert!(modified_of(InfiltrationModel::ModifiedGreenAmpt));
+        assert!(!modified_of(InfiltrationModel::GreenAmpt));
+        assert!(!modified_of(InfiltrationModel::Horton));
+    }
+
+    /// The deficit starts at the model's own maximum: a parcel begins as
+    /// dry as its parameters say, not empty.
+    #[test]
+    fn green_ampt_starts_at_its_declared_deficit() {
+        let InfilState::GreenAmpt {
+            imd,
+            imd_max,
+            f,
+            fu,
+            sat,
+            t,
+            ..
+        } = InfilState::build(
+            &Infiltration::GreenAmpt {
+                suction: 0.1,
+                conductivity: 1.0e-5,
+                initial_deficit: 0.27,
+            },
+            InfiltrationModel::GreenAmpt,
+        )
+        else {
+            panic!("model changed");
+        };
+        assert_eq!((0.27, 0.27), (imd, imd_max));
+        assert_eq!((0.0, 0.0, false, 0.0), (f, fu, sat, t));
+    }
+
+    /// §3.3: $S_{max} = 1000/CN - 10$ inches, the tabulated relation's own
+    /// units, identified and converted. Asserted in inches against the
+    /// relation the specification states rather than against the chain of
+    /// conversions the code writes it as.
+    #[test]
+    fn the_curve_number_capacity_is_the_scs_relation_in_inches() {
+        let inch = 0.0254;
+        let s_max_of = |cn: f64| {
+            let InfilState::CurveNumber { s_max, s, se, .. } = InfilState::build(
+                &Infiltration::CurveNumber {
+                    curve_number: cn,
+                    dry_time: 7.0 * 86_400.0,
+                },
+                InfiltrationModel::CurveNumber,
+            ) else {
+                panic!("model changed");
+            };
+            // A parcel begins at its full capacity, in both accounts.
+            assert_eq!((s_max, s_max), (s, se));
+            s_max
+        };
+        // CN 80: 1000/80 − 10 = 2.5 inches.
+        assert!(
+            (s_max_of(80.0) - 2.5 * inch).abs() < 1e-12,
+            "{}",
+            s_max_of(80.0)
+        );
+        // CN 50: 1000/50 − 10 = 10 inches, which a relation adding the ten
+        // instead of subtracting it would make thirty.
+        assert!(
+            (s_max_of(50.0) - 10.0 * inch).abs() < 1e-12,
+            "{}",
+            s_max_of(50.0)
+        );
+    }
+
+    /// §3.3: $CN$ clamps to $[10, 99]$. Outside that the relation runs
+    /// away — CN 0 is an infinite capacity and CN 100 is none at all.
+    #[test]
+    fn the_curve_number_clamps_to_its_tabulated_range() {
+        let s_max_of = |cn: f64| {
+            let InfilState::CurveNumber { s_max, .. } = InfilState::build(
+                &Infiltration::CurveNumber {
+                    curve_number: cn,
+                    dry_time: 86_400.0,
+                },
+                InfiltrationModel::CurveNumber,
+            ) else {
+                panic!("model changed");
+            };
+            s_max
+        };
+        assert!(
+            (s_max_of(1.0) - s_max_of(10.0)).abs() < 1e-15,
+            "below the range"
+        );
+        assert!((s_max_of(120.0) - s_max_of(99.0)).abs() < 1e-15, "above it");
+        assert!(
+            s_max_of(120.0) > 0.0,
+            "the upper clamp still leaves capacity"
+        );
+    }
+
+    /// §3.3: capacity recovers at $k_r$ with $k_r = 1/(24\,T_{dry})$ per
+    /// hour, and a new event begins after $0.06/k_r$. In SI both reduce
+    /// to the drying time in seconds.
+    #[test]
+    fn the_curve_number_recovers_over_its_drying_time() {
+        let week = 7.0 * 86_400.0;
+        let InfilState::CurveNumber { regen, t_max, .. } = InfilState::build(
+            &Infiltration::CurveNumber {
+                curve_number: 80.0,
+                dry_time: week,
+            },
+            InfiltrationModel::CurveNumber,
+        ) else {
+            panic!("model changed");
+        };
+        assert!((regen - 1.0 / week).abs() < 1e-18, "regen {regen}");
+        assert!((t_max - 0.06 / regen).abs() < 1e-6, "inter-event {t_max}");
+        assert!(
+            t_max < week,
+            "the inter-event gap is shorter than the drying"
+        );
+    }
+
+    /// A drying time of zero never recovers, and never starts a second
+    /// event either — not a division by zero in either place.
+    #[test]
+    fn a_curve_number_drying_time_of_zero_never_recovers() {
+        let InfilState::CurveNumber { regen, t_max, .. } = InfilState::build(
+            &Infiltration::CurveNumber {
+                curve_number: 80.0,
+                dry_time: 0.0,
+            },
+            InfiltrationModel::CurveNumber,
+        ) else {
+            panic!("model changed");
+        };
+        assert_eq!(0.0, regen);
+        assert_eq!(f64::MAX, t_max, "no second event ever begins");
+    }
+}
+
+#[cfg(test)]
+mod hotstart_slot_tests {
+    use super::*;
+
+    /// The six-slot vector is the predecessor's, and each model puts its
+    /// own state in its own slots.
+    ///
+    /// Asserted by index, in both directions separately, rather than by a
+    /// round trip: a round trip through this pair calls a shared mistake
+    /// about the order correct going out and coming back, and the slots
+    /// are the whole content of the format. Until these existed, both
+    /// halves could be replaced by nothing at all and every test in the
+    /// workspace stayed green.
+    #[test]
+    fn horton_writes_its_curve_time_and_volume_to_the_first_two_slots() {
+        let s = InfilState::Horton {
+            f0: 1.0,
+            f_min: 2.0,
+            kd: 3.0,
+            kr: 4.0,
+            f_max: 5.0,
+            tp: 60.0,
+            fe: 0.007,
+        };
+        assert_eq!([60.0, 0.007, 0.0, 0.0, 0.0, 0.0], s.hotstart_get());
+    }
+
+    #[test]
+    fn horton_reads_them_back_from_the_same_two_slots() {
+        let mut s = InfilState::Horton {
+            f0: 1.0,
+            f_min: 2.0,
+            kd: 3.0,
+            kr: 4.0,
+            f_max: 5.0,
+            tp: 0.0,
+            fe: 0.0,
+        };
+        s.hotstart_set([60.0, 0.007, 9.0, 9.0, 9.0, 9.0]);
+        let InfilState::Horton { tp, fe, f0, .. } = s else {
+            panic!("model changed");
+        };
+        assert_eq!(60.0, tp, "slot 0 is the equivalent time on the curve");
+        assert_eq!(0.007, fe, "slot 1 is the cumulative infiltration");
+        assert_eq!(1.0, f0, "the parameters are not state and do not move");
+    }
+
+    /// Modified Horton carries no curve time, so its slot 0 stays empty
+    /// and its volume sits in the same slot as plain Horton's.
+    #[test]
+    fn modified_horton_uses_the_volume_slot_alone() {
+        let s = InfilState::ModHorton {
+            f0: 1.0,
+            f_min: 2.0,
+            kd: 3.0,
+            kr: 4.0,
+            f_max: 5.0,
+            fe: 0.008,
+        };
+        assert_eq!([0.0, 0.008, 0.0, 0.0, 0.0, 0.0], s.hotstart_get());
+
+        let mut s = InfilState::ModHorton {
+            f0: 1.0,
+            f_min: 2.0,
+            kd: 3.0,
+            kr: 4.0,
+            f_max: 5.0,
+            fe: 0.0,
+        };
+        s.hotstart_set([9.0, 0.008, 9.0, 9.0, 9.0, 9.0]);
+        let InfilState::ModHorton { fe, .. } = s else {
+            panic!("model changed");
+        };
+        assert_eq!(0.008, fe);
+    }
+
+    #[test]
+    fn green_ampt_uses_five_slots_and_encodes_its_flag_as_a_number() {
+        let s = InfilState::GreenAmpt {
+            ks: 1.0,
+            suction: 2.0,
+            imd_max: 3.0,
+            modified: false,
+            lu: 4.0,
+            imd: 0.11,
+            f: 0.22,
+            fu: 0.33,
+            sat: true,
+            t: 44.0,
+        };
+        assert_eq!([0.11, 0.22, 0.33, 1.0, 44.0, 0.0], s.hotstart_get());
+
+        // And an unsaturated surface is a zero, not merely "not one".
+        let dry = InfilState::GreenAmpt {
+            ks: 1.0,
+            suction: 2.0,
+            imd_max: 3.0,
+            modified: false,
+            lu: 4.0,
+            imd: 0.11,
+            f: 0.22,
+            fu: 0.33,
+            sat: false,
+            t: 44.0,
+        };
+        assert_eq!(0.0, dry.hotstart_get()[3]);
+    }
+
+    #[test]
+    fn green_ampt_reads_its_five_slots_back() {
+        let mut s = InfilState::GreenAmpt {
+            ks: 1.0,
+            suction: 2.0,
+            imd_max: 3.0,
+            modified: false,
+            lu: 4.0,
+            imd: 0.0,
+            f: 0.0,
+            fu: 0.0,
+            sat: false,
+            t: 0.0,
+        };
+        s.hotstart_set([0.11, 0.22, 0.33, 1.0, 44.0, 9.0]);
+        let InfilState::GreenAmpt {
+            imd, f, fu, sat, t, ..
+        } = s
+        else {
+            panic!("model changed");
+        };
+        assert_eq!((0.11, 0.22, 0.33, true, 44.0), (imd, f, fu, sat, t));
+
+        // Any non-zero is saturated; only zero is not.
+        let mut s = InfilState::GreenAmpt {
+            ks: 1.0,
+            suction: 2.0,
+            imd_max: 3.0,
+            modified: false,
+            lu: 4.0,
+            imd: 0.0,
+            f: 0.0,
+            fu: 0.0,
+            sat: true,
+            t: 0.0,
+        };
+        s.hotstart_set([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let InfilState::GreenAmpt { sat, .. } = s else {
+            panic!("model changed");
+        };
+        assert!(!sat, "slot 3 of zero is an unsaturated surface");
+    }
+
+    #[test]
+    fn the_curve_number_model_uses_every_slot() {
+        let s = InfilState::CurveNumber {
+            s_max: 1.0,
+            regen: 2.0,
+            t_max: 3.0,
+            s: 0.11,
+            se: 0.55,
+            p: 0.22,
+            f: 0.33,
+            f_prev: 0.66,
+            t: 0.44,
+        };
+        assert_eq!([0.11, 0.22, 0.33, 0.44, 0.55, 0.66], s.hotstart_get());
+
+        let mut s = InfilState::CurveNumber {
+            s_max: 1.0,
+            regen: 2.0,
+            t_max: 3.0,
+            s: 0.0,
+            se: 0.0,
+            p: 0.0,
+            f: 0.0,
+            f_prev: 0.0,
+            t: 0.0,
+        };
+        s.hotstart_set([0.11, 0.22, 0.33, 0.44, 0.55, 0.66]);
+        let InfilState::CurveNumber {
+            s,
+            p,
+            f,
+            t,
+            se,
+            f_prev,
+            ..
+        } = s
+        else {
+            panic!("model changed");
+        };
+        assert_eq!(
+            (0.11, 0.22, 0.33, 0.44, 0.55, 0.66),
+            (s, p, f, t, se, f_prev)
+        );
     }
 }

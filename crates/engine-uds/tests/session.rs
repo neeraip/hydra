@@ -1648,6 +1648,52 @@ fn a_hotstart_file_round_trips_the_running_state() {
     assert!((q - qa).abs() < 0.05 * qa.max(0.01), "post-resume flow {q}");
 }
 
+/// A hotstart carries how wet the ground already is.
+///
+/// The round-trip test above watches the network — depth, flow,
+/// concentration — and the surface's infiltration state reaches none of
+/// those in the step it checks. So both halves of the infiltration
+/// hotstart could be replaced by nothing at all and the whole workspace
+/// stayed green, which would mean a resumed run infiltrating as if the
+/// storm had not happened.
+#[test]
+fn a_hotstart_carries_how_wet_the_ground_already_is() {
+    // Fully pervious, so infiltration is the whole story, and Horton,
+    // whose capacity decays with wetting: f0 20 mm/h down to 5 mm/h.
+    let inp = runoff_model(0.0, 25.0, "HORTON");
+    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    while a.time() < 3600.0 {
+        a.step();
+    }
+    let mut saved = Vec::new();
+    a.save_hotstart(&mut saved).expect("save");
+
+    // The same first quarter hour of the same storm, once on ground the
+    // hotstart says is already wet and once on dry ground.
+    let quarter = |sim: &mut Simulation| {
+        while sim.time() < 900.0 {
+            sim.step();
+        }
+        sim.snapshots.last().expect("a reporting boundary").subcatch[0].infil
+    };
+    let (mut wet, _, _) = Simulation::open(&inp).expect("open");
+    wet.load_hotstart(&saved).expect("load");
+    let wet_rate = quarter(&mut wet);
+    let (mut dry, _, _) = Simulation::open(&inp).expect("open");
+    let dry_rate = quarter(&mut dry);
+
+    // An hour of rain has taken the capacity most of the way from 20 mm/h
+    // to its 5 mm/h floor, while dry ground still averages well above it.
+    assert!(
+        wet_rate < 0.7 * dry_rate,
+        "restored ground infiltrates {} m/s, dry ground {} m/s: the \
+         hotstart did not carry the wetting",
+        wet_rate,
+        dry_rate
+    );
+    assert!(dry_rate > 0.0, "dry ground infiltrates something");
+}
+
 #[test]
 fn a_mismatched_hotstart_is_refused() {
     let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open");
