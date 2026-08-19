@@ -1413,6 +1413,38 @@ impl Router {
         }
     }
 
+    /// Set a channel's entry, exit and average loss coefficients (§12.4).
+    /// `None` for a model link this router does not carry as a channel.
+    pub fn set_losses(&mut self, li: usize, inlet: f64, outlet: f64, average: f64) -> Option<()> {
+        let ci = self.chans.iter().position(|c| c.link == li)?;
+        self.chans[ci].loss_inlet = inlet;
+        self.chans[ci].loss_outlet = outlet;
+        self.chans[ci].loss_avg = average;
+        Some(())
+    }
+
+    /// A channel's entry, exit and average loss coefficients.
+    pub fn losses(&self, li: usize) -> Option<(f64, f64, f64)> {
+        let ci = self.chans.iter().position(|c| c.link == li)?;
+        let c = &self.chans[ci];
+        Some((c.loss_inlet, c.loss_outlet, c.loss_avg))
+    }
+
+    /// Cap the flow a channel carries (m³/s); zero is no cap, as in a
+    /// model (§12.4). `None` for a link this router does not carry as a
+    /// channel.
+    pub fn set_flow_limit(&mut self, li: usize, q_limit: f64) -> Option<()> {
+        let ci = self.chans.iter().position(|c| c.link == li)?;
+        self.chans[ci].q_limit = q_limit;
+        Some(())
+    }
+
+    /// A channel's flow cap (m³/s); zero is no cap.
+    pub fn flow_limit(&self, li: usize) -> Option<f64> {
+        let ci = self.chans.iter().position(|c| c.link == li)?;
+        Some(self.chans[ci].q_limit)
+    }
+
     /// Hold a vertex's outfall boundary at an injected stage, or release
     /// it back to the one its model declares (§12.4).
     ///

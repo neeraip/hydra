@@ -331,6 +331,12 @@ pub struct Simulation {
     /// checkpoint takes it over again.
     stage_override: HashMap<usize, f64>,
     setting_override: HashMap<usize, f64>,
+    /// §12.4: injected channel loss coefficients and flow caps, held so a
+    /// restored checkpoint takes them over again.
+    loss_override: HashMap<usize, (f64, f64, f64)>,
+    limit_override: HashMap<usize, f64>,
+    /// §12.4: the concentrations an injected inflow carries, per vertex.
+    concentration_override: HashMap<usize, Vec<f64>>,
     /// The compiled §9 control system, when the model has rules.
     controls: Option<super::controls::Controls>,
     /// §8.4 network quality, when the model declares constituents.
@@ -691,6 +697,9 @@ impl Simulation {
                 lateral_override: HashMap::new(),
                 stage_override: HashMap::new(),
                 setting_override: HashMap::new(),
+                loss_override: HashMap::new(),
+                limit_override: HashMap::new(),
+                concentration_override: HashMap::new(),
                 controls,
                 quality,
                 surface_quality,
@@ -770,6 +779,99 @@ impl Simulation {
         self.link_by_id
             .get(id)
             .map(|&l| self.router.flow(l, &self.net))
+    }
+
+    /// Inject the constituent concentrations carried by the lateral
+    /// inflow injected at a vertex; `None` releases them (§12.4).
+    ///
+    /// One value per constituent in model order. They apply to the
+    /// injected inflow and to nothing else: the model's own inflows carry
+    /// what the model gives them.
+    pub fn set_inflow_concentrations(&mut self, id: &str, values: Option<Vec<f64>>) -> bool {
+        let Some(&v) = self.vertex_by_id.get(id) else {
+            return false;
+        };
+        match values {
+            Some(cs) => {
+                if cs.len() != self.net.constituents.len() {
+                    return false;
+                }
+                self.concentration_override.insert(v, cs);
+            }
+            None => {
+                self.concentration_override.remove(&v);
+            }
+        }
+        true
+    }
+
+    /// Inject a channel's entry, exit and average loss coefficients;
+    /// `None` releases them back to the model's own (§12.4).
+    ///
+    /// `false` for a link this model does not carry as a channel: a loss
+    /// coefficient on a pump is not a thing to set.
+    pub fn set_losses(&mut self, id: &str, losses: Option<(f64, f64, f64)>) -> bool {
+        let Some(&li) = self.link_by_id.get(id) else {
+            return false;
+        };
+        let Some(from_model) = self.model_losses(li) else {
+            return false;
+        };
+        let (inlet, outlet, average) = losses.unwrap_or(from_model);
+        match losses {
+            Some(_) => {
+                self.loss_override.insert(li, (inlet, outlet, average));
+            }
+            None => {
+                self.loss_override.remove(&li);
+            }
+        }
+        self.router.set_losses(li, inlet, outlet, average).is_some()
+    }
+
+    /// Cap the flow a channel carries (m³/s); `None` releases the cap
+    /// back to the model's own, and zero is no cap (§12.4).
+    pub fn set_flow_limit(&mut self, id: &str, q_limit: Option<f64>) -> bool {
+        let Some(&li) = self.link_by_id.get(id) else {
+            return false;
+        };
+        let Some(from_model) = self.model_flow_limit(li) else {
+            return false;
+        };
+        let value = q_limit.unwrap_or(from_model);
+        match q_limit {
+            Some(_) => {
+                self.limit_override.insert(li, value);
+            }
+            None => {
+                self.limit_override.remove(&li);
+            }
+        }
+        self.router.set_flow_limit(li, value).is_some()
+    }
+
+    /// The loss coefficients the model gives a link, for releasing an
+    /// injection back to them.
+    fn model_losses(&self, li: usize) -> Option<(f64, f64, f64)> {
+        let l = self.net.links.get(li)?;
+        match &l.kind {
+            crate::model::LinkKind::Channel {
+                loss_inlet,
+                loss_outlet,
+                loss_avg,
+                ..
+            } => Some((*loss_inlet, *loss_outlet, *loss_avg)),
+            _ => None,
+        }
+    }
+
+    /// The flow cap the model gives a link, likewise.
+    fn model_flow_limit(&self, li: usize) -> Option<f64> {
+        let l = self.net.links.get(li)?;
+        match &l.kind {
+            crate::model::LinkKind::Channel { max_flow, .. } => Some(*max_flow),
+            _ => None,
+        }
     }
 
     /// Inject an intensity at a gage (m/s), superseding its record for
@@ -2458,6 +2560,9 @@ impl Simulation {
             lateral_override,
             stage_override,
             setting_override,
+            loss_override,
+            limit_override,
+            concentration_override,
             controls,
             quality,
             surface_quality,
@@ -2529,12 +2634,28 @@ impl Simulation {
         // §12.4: an injection standing when a checkpoint is taken stands
         // when it is restored, or the restored run quietly returns the
         // element to the model and diverges from the run it continues.
-        for held in [stage_override, setting_override] {
+        for held in [stage_override, setting_override, limit_override] {
             cp::put_u(w, held.len() as u64).map_err(io)?;
             let mut rows: Vec<_> = held.iter().collect();
             rows.sort_by_key(|(k, _)| **k);
             for (at, v) in rows {
                 cp::put_u(w, *at as u64).map_err(io)?;
+                cp::put_f(w, *v).map_err(io)?;
+            }
+        }
+        cp::put_u(w, concentration_override.len() as u64).map_err(io)?;
+        let mut concs: Vec<_> = concentration_override.iter().collect();
+        concs.sort_by_key(|(k, _)| **k);
+        for (v, cs) in concs {
+            cp::put_u(w, *v as u64).map_err(io)?;
+            cp::put_fs(w, cs).map_err(io)?;
+        }
+        cp::put_u(w, loss_override.len() as u64).map_err(io)?;
+        let mut losses: Vec<_> = loss_override.iter().collect();
+        losses.sort_by_key(|(k, _)| **k);
+        for (li, (inlet, outlet, average)) in losses {
+            cp::put_u(w, *li as u64).map_err(io)?;
+            for v in [inlet, outlet, average] {
                 cp::put_f(w, *v).map_err(io)?;
             }
         }
@@ -2712,7 +2833,11 @@ impl Simulation {
         for flag in self.series_warned.iter_mut() {
             *flag = r.b()?;
         }
-        for held in [&mut self.stage_override, &mut self.setting_override] {
+        for held in [
+            &mut self.stage_override,
+            &mut self.setting_override,
+            &mut self.limit_override,
+        ] {
             let n = r.u()? as usize;
             held.clear();
             for _ in 0..n {
@@ -2720,8 +2845,27 @@ impl Simulation {
                 held.insert(at, r.f()?);
             }
         }
-        // A restored stage has to reach the router as well as the map, or
-        // the run continues with the injection recorded and not applied.
+        let n = r.u()? as usize;
+        self.concentration_override.clear();
+        for _ in 0..n {
+            let v = r.u()? as usize;
+            self.concentration_override.insert(v, r.fs()?);
+        }
+        let n = r.u()? as usize;
+        self.loss_override.clear();
+        for _ in 0..n {
+            let li = r.u()? as usize;
+            let (a, b, c) = (r.f()?, r.f()?, r.f()?);
+            self.loss_override.insert(li, (a, b, c));
+        }
+        // A restored injection has to reach the router as well as the
+        // map, or the run continues with it recorded and not applied.
+        for (li, (a, b, c)) in self.loss_override.clone() {
+            self.router.set_losses(li, a, b, c);
+        }
+        for (li, q) in self.limit_override.clone() {
+            self.router.set_flow_limit(li, q);
+        }
         for (v, e) in self.stage_override.clone() {
             self.router.force_outfall_stage(v, Some(e), &self.net);
         }
@@ -3397,6 +3541,21 @@ impl Simulation {
         }
         for (&v, &q) in &self.lateral_override {
             lat[v] = q;
+            // §12.4: an override replaces the vertex's whole lateral, so
+            // it replaces the mass arriving with it too. An injection
+            // given no concentration carries none, which is what an
+            // inflow of clean water is.
+            for (ci, row) in ext_mass.iter_mut().enumerate() {
+                let c = self
+                    .concentration_override
+                    .get(&v)
+                    .and_then(|cs| cs.get(ci).copied())
+                    .unwrap_or(0.0);
+                row[v] = q.max(0.0) * c;
+            }
+            for row in dwf_mass.iter_mut() {
+                row[v] = 0.0;
+            }
         }
         for l in &mut lat {
             if l.abs() < FLOW_TOL {

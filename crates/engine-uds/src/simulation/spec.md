@@ -525,11 +525,24 @@ record beside the rules', named as an injection, so a run driven partly
 from outside can still be read afterwards.
 
 Of that vocabulary, **lateral inflow per vertex, gage precipitation,
-outfall stage, and link target settings are served**. Writes to loss
-coefficients, flow limits, control-measure drain parameters, and
-concentrations remain deferred, and are listed in the charter's deferred
-set (§1.8): a capability this section describes and the engine does not
-serve is exactly what that set exists to record.
+outfall stage, link target settings, channel loss coefficients, channel
+flow limits, and the concentration of an injected inflow are served**.
+Writes to control-measure drain parameters remain deferred, and are listed
+in the charter's deferred set (§1.8): a capability this section describes
+and the engine does not serve is exactly what that set exists to record.
+
+**A channel's loss coefficients and its flow limit are hydraulic
+parameters, not geometry**, so injecting them is within the rule above: a
+caller may raise a channel's entry, exit or average loss, or cap the flow
+it carries, and release each back to the model's own. A flow limit of zero
+is no limit, as it is in a model.
+
+**A concentration is injected with the inflow it belongs to.** It applies
+to the lateral inflow injected at that vertex and to nothing else: the
+model's own inflows carry the concentrations the model gives them, and a
+caller who wants to change those changes the inflow. An injected inflow
+whose concentration is not given carries none, which is what an inflow of
+clean water is.
 
 **Precipitation is injected as an intensity** and supersedes the gage's
 own record entirely, for every parcel the gage drives, until released. It

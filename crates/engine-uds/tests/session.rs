@@ -4489,3 +4489,99 @@ fn an_injected_setting_closes_a_regulator_and_says_so() {
     assert!(sim.set_link_setting("R1", Some(0.0)));
     assert!(!sim.set_link_setting("nowhere", Some(0.0)), "no such link");
 }
+
+/// A capped channel carries no more than its cap.
+#[test]
+fn an_injected_flow_limit_caps_a_channel() {
+    let peak = |cap: Option<f64>| {
+        let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+        assert!(sim.set_precipitation("G1", Some(60.0e-3 / 3600.0)));
+        if let Some(q) = cap {
+            assert!(sim.set_flow_limit("C1", Some(q)));
+        }
+        sim.run();
+        sim.snapshots
+            .iter()
+            .map(|s| s.flows[0].abs())
+            .fold(0.0_f64, f64::max)
+    };
+    let free = peak(None);
+    assert!(free > 0.05, "the uncapped channel carried {free}");
+    let capped = peak(Some(0.02));
+    assert!(
+        capped <= 0.02 + 1e-6,
+        "the cap was ignored: {capped} against a cap of 0.02"
+    );
+    // Zero is no cap, as it is in a model, and must not stop the flow.
+    assert!(
+        (peak(Some(0.0)) - free).abs() < 1e-9,
+        "a zero cap must mean no cap"
+    );
+}
+
+/// Losses are refused where they are not a thing to set, and accepted
+/// where they are.
+#[test]
+fn losses_are_set_on_channels_and_refused_elsewhere() {
+    // The refusal is enforced twice, in the session and again in the
+    // router, and this test cannot tell which one acted: deleting the
+    // session's guard leaves it green because the router still refuses.
+    // The session's guard earns its place on the release path, where it
+    // is what supplies the model's own values to return to.
+    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    assert!(
+        sim.set_losses("C1", Some((1.5, 1.0, 0.2))),
+        "C1 is a channel"
+    );
+    assert!(
+        !sim.set_losses("R1", Some((1.5, 1.0, 0.2))),
+        "R1 is an orifice"
+    );
+    assert!(!sim.set_losses("nowhere", Some((1.5, 1.0, 0.2))));
+    // Releasing returns the model's own, which this model leaves at zero.
+    assert!(sim.set_losses("C1", None));
+    assert!(
+        !sim.set_flow_limit("R1", Some(1.0)),
+        "an orifice has no cap"
+    );
+}
+
+/// An injected inflow carries the concentrations it is given, and none
+/// when it is given none.
+#[test]
+fn an_injected_inflow_carries_its_concentrations() {
+    let with_quality = FORCING_MODEL.replace(
+        "[JUNCTIONS]",
+        "[POLLUTANTS]\nTSS  MG/L  0  0  0  0\n\n[JUNCTIONS]",
+    );
+    let load = |conc: Option<f64>| {
+        let (mut sim, diags, _) = Simulation::open(&with_quality).expect("open");
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        assert!(sim.set_lateral_inflow("J1", Some(0.5)));
+        if let Some(c) = conc {
+            assert!(sim.set_inflow_concentrations("J1", Some(vec![c])));
+        }
+        sim.run();
+        sim.snapshots
+            .iter()
+            .map(|s| s.node_quality[0][1])
+            .fold(0.0_f64, f64::max)
+    };
+    assert_eq!(
+        0.0,
+        load(None),
+        "an inflow given no concentration carries none"
+    );
+    let dirty = load(Some(50.0));
+    assert!(
+        dirty > 1.0,
+        "the injected concentration did not arrive: {dirty}"
+    );
+
+    // One value per constituent, or the call is refused rather than
+    // padded to a shape the caller did not mean.
+    let (mut sim, _, _) = Simulation::open(&with_quality).expect("open");
+    assert!(!sim.set_inflow_concentrations("J1", Some(vec![1.0, 2.0])));
+    assert!(sim.set_inflow_concentrations("J1", Some(vec![1.0])));
+    assert!(sim.set_inflow_concentrations("J1", None));
+}
