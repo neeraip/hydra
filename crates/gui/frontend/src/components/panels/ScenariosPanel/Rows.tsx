@@ -203,6 +203,8 @@ export function ScenarioRow({
   onRenameCancel,
   onBranch,
   onRun,
+  onResume,
+  isResumable,
   onClearResults,
   clearDetail,
   onDelete,
@@ -223,6 +225,10 @@ export function ScenarioRow({
   onRenameCancel: () => void;
   onBranch: () => void;
   onRun: () => void;
+  /** Continue this scenario's interrupted run from where it stopped. */
+  onResume: () => void;
+  /** Whether this scenario has an interrupted run to continue. */
+  isResumable: boolean;
   onClearResults: () => void;
   /** e.g. "Frees 12.4 MB" — what clearing this scenario reclaims. */
   clearDetail?: string;
@@ -426,6 +432,12 @@ export function ScenarioRow({
             label={`Actions for ${scenario.name}`}
             items={[
               { label: "Branch from this scenario", onSelect: onBranch },
+              {
+                label: "Continue interrupted run",
+                onSelect: onResume,
+                disabled: !isResumable,
+                disabledReason: "This scenario has no interrupted run",
+              },
               { label: "Rename…", onSelect: onRenameStart },
               { label: "Open in Finder", onSelect: onOpenFolder },
               {

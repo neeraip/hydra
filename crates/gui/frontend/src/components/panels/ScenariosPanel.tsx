@@ -17,6 +17,8 @@ import {
   projectHasNetwork,
   projectResultsSizes,
   renameScenario,
+  resumableTargets,
+  resumeRun,
   useScenarios,
 } from "../../hooks";
 import { fetchInto } from "../../hooks/fetchInto";
@@ -217,6 +219,42 @@ export function ScenariosPanel({
       setActiveScenarioId,
       showToast,
     ],
+  );
+
+  // Which targets have an interrupted run, read from the checkpoints on
+  // disk rather than from the queue, so a run interrupted by closing the
+  // application is still offered after a restart.
+  const [resumable, setResumable] = useState<Set<string | null>>(new Set());
+  useEffect(() => {
+    if (!project) {
+      setResumable(new Set());
+      return;
+    }
+    let cancelled = false;
+    resumableTargets(project.id).then((ids) => {
+      if (!cancelled) setResumable(new Set(ids));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
+
+  const handleResume = useCallback(
+    async (s: FlatScenario) => {
+      if (!project) return;
+      try {
+        await resumeRun(project.id, s.id);
+        openTaskTray();
+        setResumable((prev) => {
+          const next = new Set(prev);
+          next.delete(s.id);
+          return next;
+        });
+      } catch (err) {
+        showToast(`Failed to continue run: ${formatIpcError(err)}`, "error");
+      }
+    },
+    [project, openTaskTray, showToast],
   );
 
   const handleRun = useCallback(
@@ -476,6 +514,8 @@ export function ScenariosPanel({
                   })
                 }
                 onRun={() => handleRun(s)}
+                onResume={() => handleResume(s)}
+                isResumable={resumable.has(s.id)}
                 onDelete={() => {
                   setDeleteCascade(false);
                   setPendingDelete(s);
