@@ -14,6 +14,13 @@
 //! **What is still not covered:** a parcel's return-to-pervious volume in
 //! flight. It is zero at every instant these models reach, so dropping it
 //! on restore changes neither the results nor the bytes. It is written.
+//!
+//! Two models here are built rather than borrowed, for the same reason in
+//! both cases: `control_rules.inp` has no inflow under a substituted
+//! clock, so its node is dry, its rules fire against nothing and a
+//! controller on it never leaves its cap. A fixture pins the behaviour it
+//! was written for, which is not always the behaviour a checkpoint needs
+//! to have moving.
 
 //!
 //! That property is the contract, and it is the only thing that can
@@ -203,14 +210,23 @@ fn a_reordered_model_is_refused() {
 /// A model whose state is not yet carried is refused by name.
 #[test]
 fn a_model_whose_state_is_not_carried_is_refused() {
-    let with_rules = MODEL.replace(
-        "[JUNCTIONS]",
-        "[CONTROLS]\nRULE R1\nIF NODE J1 DEPTH > 1.0\nTHEN CONDUIT C1 STATUS = CLOSED\n\n[JUNCTIONS]",
-    );
-    let (sim, _, _) = Simulation::open(&with_rules).expect("open");
+    let replaying = parcel_model("", "[FILES]\nUSE RUNOFF runoff.bin");
+    let (mut sim, _, _) = Simulation::open(&replaying).expect("open");
+    // One record is enough: what matters is that the session is reading a
+    // file, and a checkpoint does not yet carry how far it has read.
+    let mut file = b"SWMM5-RUNOFF".to_vec();
+    for v in [2i32, 0, 3, 1] {
+        file.extend_from_slice(&v.to_le_bytes());
+    }
+    file.extend_from_slice(&300.0f32.to_le_bytes());
+    file.extend_from_slice(&[0u8; 2 * 8 * 4]);
+    sim.supply_runoff(&file).expect("supply");
+
     let mut cp = Vec::new();
-    let err = sim.save_checkpoint(&mut cp).expect_err("control state");
-    assert!(err.contains("control state"), "{err}");
+    let err = sim
+        .save_checkpoint(&mut cp)
+        .expect_err("interface position");
+    assert!(err.contains("interface files it reads"), "{err}");
     assert!(cp.is_empty(), "nothing may be written when it is refused");
 }
 
@@ -223,9 +239,20 @@ fn a_truncated_checkpoint_is_refused() {
     a.save_checkpoint(&mut cp).expect("checkpoint");
     cp.truncate(cp.len() / 2);
 
-    let (mut b, _, _) = Simulation::open(MODEL).expect("open");
-    let err = b.load_checkpoint(&cp).expect_err("a short file");
-    assert!(err.contains("ends after"), "{err}");
+    // Every truncation, not one: a checkpoint cut short anywhere must be
+    // refused, and where the read gives up depends on where the cut fell.
+    for cut in [4, 40, cp.len() / 3, cp.len() / 2, cp.len() - 1] {
+        let mut short = cp.clone();
+        short.truncate(cut);
+        let (mut b, _, _) = Simulation::open(MODEL).expect("open");
+        let err = b
+            .load_checkpoint(&short)
+            .expect_err("a checkpoint cut at {cut} must be refused");
+        assert!(
+            err.contains("ends after") || err.contains("declares") || err.contains("not a Hydra"),
+            "cut at {cut}: {err}"
+        );
+    }
 }
 
 /// The same property with reporting starting late, which is a different
@@ -860,5 +887,124 @@ fn treated_storage() -> String {
         .replace(
             "TS1  1:00  0.0",
             "TS1  1:00  0.0\nTS2  0:00  50.0\nTS2  1:00  50.0",
+        )
+}
+
+// ── Controls, sewer inflow and street inlets ────────────────────────────
+
+/// Rules acting on the network, checkpointed while a rule has already
+/// fired: the log of what has been done and each modulated action's error
+/// history are state a restored run must carry.
+#[test]
+fn a_restored_control_system_continues_bit_identically() {
+    restores_identically(&fixture("control_rules.inp"), 0.4);
+}
+
+/// Sewer inflow, whose unit hydrographs hold rainfall still draining
+/// through them. A run resumed without that memory starts dry after a
+/// storm it has already had.
+#[test]
+fn a_restored_sewer_inflow_continues_bit_identically() {
+    restores_identically(&fixture("rdii_sanitary_inflow.inp"), 0.4);
+}
+
+/// Street inlets, whose backflow ratio is set each step.
+#[test]
+fn a_restored_street_inlet_continues_bit_identically() {
+    restores_identically(&fixture("street_inlet_capture.inp"), 0.4);
+}
+
+#[test]
+fn a_control_checkpoint_survives_a_round_trip() {
+    resaves_identically(&fixture("control_rules.inp"), 0.4);
+}
+
+#[test]
+fn a_sewer_inflow_checkpoint_survives_a_round_trip() {
+    resaves_identically(&fixture("rdii_sanitary_inflow.inp"), 0.4);
+}
+
+#[test]
+fn a_street_inlet_checkpoint_survives_a_round_trip() {
+    resaves_identically(&fixture("street_inlet_capture.inp"), 0.4);
+}
+
+/// The three instants must have something to carry.
+#[test]
+fn the_control_and_inflow_instants_are_active() {
+    // A rule must have fired, or the log and the error history are empty
+    // and their loss cannot be seen.
+    let (mut sim, _, _) = Simulation::open(&fixture("control_rules.inp")).expect("open");
+    sim.run();
+    let whole = sim.snapshots.len();
+    let (mut part, _, _) = Simulation::open(&fixture("control_rules.inp")).expect("open");
+    while part.snapshots.len() < ((whole as f64 * 0.4) as usize).max(1) {
+        assert!(part.step(), "the run ended early");
+    }
+    assert!(
+        part.snapshots
+            .iter()
+            .any(|s| s.link_capacity.iter().any(|c| *c < 1.0)),
+        "no rule had acted, so the checkpoint carried no control state"
+    );
+
+    // And sewer inflow must be arriving.
+    let (mut sim, _, _) = Simulation::open(&fixture("rdii_sanitary_inflow.inp")).expect("open");
+    sim.run();
+    assert!(
+        sim.ledgers().network.inflow > 0.0,
+        "no sewer inflow reached the network"
+    );
+}
+
+/// A PID action, whose error history is two steps deep.
+///
+/// The rule fixture modulates nothing, so its actions' error histories
+/// stay zero and losing them cannot be seen. A velocity-form controller
+/// reads the two previous errors, so a restored run that has forgotten
+/// them applies a different increment on its very next step.
+#[test]
+fn a_restored_pid_controller_continues_bit_identically() {
+    restores_identically(&pid_model(), 0.4);
+}
+
+#[test]
+fn a_pid_checkpoint_survives_a_round_trip() {
+    resaves_identically(&pid_model(), 0.4);
+}
+
+/// The controller must be modulating when the checkpoint is taken, or
+/// its error history is zero and the two tests above prove nothing.
+#[test]
+fn the_pid_controller_is_modulating() {
+    let (mut sim, diags, _) = Simulation::open(&pid_model()).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let settings: Vec<f64> = sim.snapshots.iter().map(|s| s.link_capacity[0]).collect();
+    let first = settings.first().copied().unwrap_or(0.0);
+    assert!(
+        settings.iter().any(|s| (s - first).abs() > 1e-6),
+        "the setting never moved: {settings:?}"
+    );
+}
+
+/// The routed model with its last conduit replaced by an orifice a
+/// controller holds toward a depth set-point inside the range the storage
+/// actually reaches.
+///
+/// Built rather than borrowed: `control_rules.inp` has no inflow under a
+/// substituted clock, so its node is dry, its rules fire against nothing
+/// and a controller on it never leaves its cap.
+fn pid_model() -> String {
+    MODEL
+        .replace("C3  S1  O1  200  0.013  0  0  0  0", "")
+        .replace("C3  CIRCULAR  1.0  0  0  0  1", "R1  CIRCULAR  1.0  0  0  0")
+        .replace(
+            "[XSECTIONS]",
+            "[ORIFICES]\nR1  S1  O1  SIDE  0  0.65  NO  0\n\n[XSECTIONS]",
+        )
+        .replace(
+            "[INFLOWS]",
+            "[CONTROLS]\nRULE HOLD\nIF NODE S1 DEPTH > 0.3\nTHEN ORIFICE R1 SETTING = PID 0.5 2.0 0.5\n\n[INFLOWS]",
         )
 }

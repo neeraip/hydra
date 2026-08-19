@@ -2359,6 +2359,19 @@ impl Simulation {
             cp::put_u(w, notice.message.len() as u64).map_err(io)?;
             w.write_all(notice.message.as_bytes()).map_err(io)?;
         }
+        // Controls, sewer inflow and street inlets (§12.3).
+        cp::put_b(w, self.controls.is_some()).map_err(io)?;
+        if let Some(controls) = &self.controls {
+            controls.checkpoint_put(w).map_err(io)?;
+        }
+        cp::put_u(w, self.rdii.len() as u64).map_err(io)?;
+        for state in &self.rdii {
+            state.checkpoint_put(w).map_err(io)?;
+        }
+        cp::put_b(w, self.inlets.is_some()).map_err(io)?;
+        if let Some(inlets) = &self.inlets {
+            inlets.checkpoint_put(w).map_err(io)?;
+        }
         // Constituent state, on the surface and in the network (§12.3).
         cp::put_b(w, self.surface_quality.is_some()).map_err(io)?;
         if let Some(sq) = &self.surface_quality {
@@ -2468,6 +2481,33 @@ impl Simulation {
             });
         }
         if r.b()? {
+            match &mut self.controls {
+                Some(controls) => controls.checkpoint_get(&mut r)?,
+                None => return Err("checkpoint holds control state this model has not".into()),
+            }
+        } else if self.controls.is_some() {
+            return Err("this model has controls the checkpoint has not".into());
+        }
+        let n = r.u()? as usize;
+        if n != self.rdii.len() {
+            return Err(format!(
+                "checkpoint holds {n} sewer inflow assignments where this model \
+                 has {}",
+                self.rdii.len()
+            ));
+        }
+        for state in &mut self.rdii {
+            state.checkpoint_get(&mut r)?;
+        }
+        if r.b()? {
+            match &mut self.inlets {
+                Some(inlets) => inlets.checkpoint_get(&mut r)?,
+                None => return Err("checkpoint holds street inlets this model has not".into()),
+            }
+        } else if self.inlets.is_some() {
+            return Err("this model has street inlets the checkpoint has not".into());
+        }
+        if r.b()? {
             match &mut self.surface_quality {
                 Some(sq) => sq.checkpoint_get(&mut r)?,
                 None => return Err("checkpoint holds surface loading this model has not".into()),
@@ -2554,15 +2594,6 @@ impl Simulation {
                  refused rather than restored from a default (§12.3)"
             ))
         };
-        if self.controls.is_some() {
-            return unmet("control state");
-        }
-        if !self.rdii.is_empty() {
-            return unmet("sewer inflow state");
-        }
-        if self.inlets.is_some() {
-            return unmet("street inlet state");
-        }
         if self.iface_in.is_some() || self.rdii_in.is_some() || self.runoff_in.is_some() {
             return unmet("position in the interface files it reads");
         }

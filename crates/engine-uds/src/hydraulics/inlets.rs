@@ -701,3 +701,51 @@ fn lookup_ex(points: &[(f64, f64)], x: f64) -> f64 {
         }
     }
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl Inlets {
+    /// Write the inlets' state (§12.3).
+    ///
+    /// Only the backflow ratio moves during a run; the rest is the
+    /// placement and geometry the model builds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_u};
+        let Inlets { list } = self;
+        put_u(w, list.len() as u64)?;
+        for inlet in list {
+            let InletState {
+                design: _,
+                link: _,
+                bypass: _,
+                capture: _,
+                on_grade: _,
+                count: _,
+                clog: _,
+                q_limit: _,
+                geo: _,
+                backflow_ratio,
+            } = inlet;
+            put_f(w, *backflow_ratio)?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.list.len() {
+            return Err(format!(
+                "checkpoint holds {n} inlets where this model has {}",
+                self.list.len()
+            ));
+        }
+        for inlet in &mut self.list {
+            inlet.backflow_ratio = r.f()?;
+        }
+        Ok(())
+    }
+}

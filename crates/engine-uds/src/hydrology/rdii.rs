@@ -171,6 +171,68 @@ fn triangle_ordinate(t: f64, t_peak: f64, t_base: f64) -> f64 {
     }
 }
 
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl RdiiState {
+    /// Write one assignment's convolution memory (§12.3).
+    ///
+    /// The pulses are the state: each is rainfall still draining through
+    /// a unit hydrograph, and a run resumed without them starts dry after
+    /// a storm it has already had.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_u};
+        let RdiiState {
+            // Parameters: which vertex, which unit-hydrograph group, and
+            // the contributing area.
+            vertex: _,
+            group: _,
+            area: _,
+            triangles,
+            flow,
+        } = self;
+        for tri in triangles {
+            put_f(w, tri.ia_used)?;
+            put_u(w, tri.pulses.len() as u64)?;
+            for p in &tri.pulses {
+                for v in [p.age, p.depth, p.t_peak, p.t_base] {
+                    put_f(w, v)?;
+                }
+            }
+        }
+        put_f(w, *flow)
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        for tri in &mut self.triangles {
+            tri.ia_used = r.f()?;
+            let n = r.u()? as usize;
+            // A pulse is four values, so a declared count is a length
+            // claim about the file and is checked before it sizes a
+            // buffer.
+            tri.pulses = Vec::new();
+            tri.pulses.reserve(n.min(1024));
+            for _ in 0..n {
+                let age = r.f()?;
+                let depth = r.f()?;
+                let t_peak = r.f()?;
+                let t_base = r.f()?;
+                tri.pulses.push(Pulse {
+                    age,
+                    depth,
+                    t_peak,
+                    t_base,
+                });
+            }
+        }
+        self.flow = r.f()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::triangle_ordinate;

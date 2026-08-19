@@ -968,3 +968,102 @@ fn parse_action(
     });
     Ok(c.actions.len() - 1)
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl Controls {
+    /// Write the control system's state (§12.3).
+    ///
+    /// The rules and expressions are compiled from the model and rebuilt
+    /// with it. What a run changes is each modulated action's error
+    /// history, the log of what has been done, and the warn-once latches.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_u};
+        let Controls {
+            // Parameters: the compiled model.
+            rules: _,
+            variables: _,
+            expressions: _,
+            cv_len: _,
+            cv_flow: _,
+            cv_rain: _,
+            cv_rain_depth: _,
+            cv_vol: _,
+            expr_names: _,
+            // State.
+            actions,
+            log,
+            expr_warned,
+            guard_events,
+        } = self;
+        put_u(w, actions.len() as u64)?;
+        for a in actions {
+            for v in [a.e1, a.e2, a.value_now] {
+                put_f(w, v)?;
+            }
+        }
+        put_u(w, log.len() as u64)?;
+        for (at, link, setting, rule) in log {
+            put_f(w, *at)?;
+            for text in [link, rule] {
+                put_u(w, text.len() as u64)?;
+                w.write_all(text.as_bytes())?;
+            }
+            put_f(w, *setting)?;
+        }
+        put_u(w, expr_warned.len() as u64)?;
+        for flag in expr_warned {
+            put_b(w, *flag)?;
+        }
+        put_u(w, guard_events.len() as u64)?;
+        for name in guard_events {
+            put_u(w, name.len() as u64)?;
+            w.write_all(name.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.actions.len() {
+            return Err(format!(
+                "checkpoint holds {n} control actions where this model has {}",
+                self.actions.len()
+            ));
+        }
+        for a in &mut self.actions {
+            a.e1 = r.f()?;
+            a.e2 = r.f()?;
+            a.value_now = r.f()?;
+        }
+        let n = r.u()? as usize;
+        self.log = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            let at = r.f()?;
+            let link = r.text()?;
+            let rule = r.text()?;
+            let setting = r.f()?;
+            self.log.push((at, link, setting, rule));
+        }
+        let n = r.u()? as usize;
+        if n != self.expr_warned.len() {
+            return Err(format!(
+                "checkpoint holds {n} expression latches where this model has {}",
+                self.expr_warned.len()
+            ));
+        }
+        for flag in self.expr_warned.iter_mut() {
+            *flag = r.b()?;
+        }
+        let n = r.u()? as usize;
+        self.guard_events = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            self.guard_events.push(r.text()?);
+        }
+        Ok(())
+    }
+}
