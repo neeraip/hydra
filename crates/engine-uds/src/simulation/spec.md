@@ -524,12 +524,11 @@ Every injection that changes a link's setting is logged in the action
 record beside the rules', named as an injection, so a run driven partly
 from outside can still be read afterwards.
 
-Of that vocabulary, **lateral inflow per vertex, gage precipitation,
-outfall stage, link target settings, channel loss coefficients, channel
-flow limits, and the concentration of an injected inflow are served**.
-Writes to control-measure drain parameters remain deferred, and are listed
-in the charter's deferred set (§1.8): a capability this section describes
-and the engine does not serve is exactly what that set exists to record.
+**Every injection this section describes is served.** A control measure's
+underdrain is addressed the way the model addresses its placement, by the
+parcel hosting it and the design deployed there, and is set as a whole:
+its six values describe one drain, and an opening head changed without a
+closing head describes a drain that may never shut.
 
 **A channel's loss coefficients and its flow limit are hydraulic
 parameters, not geometry**, so injecting them is within the rule above: a

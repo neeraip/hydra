@@ -4585,3 +4585,117 @@ fn an_injected_inflow_carries_its_concentrations() {
     assert!(sim.set_inflow_concentrations("J1", Some(vec![1.0])));
     assert!(sim.set_inflow_concentrations("J1", None));
 }
+
+/// A control measure's underdrain can be opened mid-run, and released
+/// back to the design the model gives it.
+#[test]
+fn an_injected_drain_empties_a_control_measure() {
+    use hydra_engine_uds::hydrology::lid::DrainSetting;
+
+    // A rain barrel whose drain is shut by a long delay: nothing leaves
+    // it during a two-hour run unless a caller opens it.
+    let base = {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/rain_barrel_delayed_drain.inp");
+        let text = std::fs::read_to_string(path).expect("fixture readable");
+        // The fixture declares no clock of its own.
+        format!(
+            "{text}\n[OPTIONS]\nSTART_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+             END_DATE 01/01/2024\nEND_TIME 02:00:00\nREPORT_STEP 00:05:00\n\
+             [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n"
+        )
+    };
+    let held = |open: bool| {
+        let (mut sim, diags, _) = Simulation::open(&base).expect("open");
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        if open {
+            assert!(
+                sim.set_drain(
+                    "S1",
+                    "RB1",
+                    Some(DrainSetting {
+                        coeff: 5.0,
+                        exponent: 0.5,
+                        offset: 0.0,
+                        delay: 0.0,
+                        h_open: 0.0,
+                        h_close: 0.0,
+                    }),
+                ),
+                "the barrel has a drain to set"
+            );
+        }
+        sim.run();
+        sim.ledgers().network.inflow
+    };
+    let shut = held(false);
+    let opened = held(true);
+    assert!(
+        opened > shut + 1e-9,
+        "an opened drain must deliver more to the network: {opened} against {shut}"
+    );
+
+    // The coefficient has to be applied too, and opening the drain is not
+    // evidence of that: with only the delay applied the barrel still
+    // drains, at the design's own coefficient. Two coefficients, two
+    // answers, or the value was ignored.
+    // Zero against a small non-zero, not two large values: above about
+    // 0.01 this barrel drains as fast as its storage allows, so 0.5 and
+    // 20 deliver identically and comparing them compared nothing.
+    let with_coeff = |coeff: f64| {
+        let (mut sim, _, _) = Simulation::open(&base).expect("open");
+        assert!(sim.set_drain(
+            "S1",
+            "RB1",
+            Some(DrainSetting {
+                coeff,
+                exponent: 0.5,
+                offset: 0.0,
+                delay: 0.0,
+                h_open: 0.0,
+                h_close: 0.0,
+            }),
+        ));
+        sim.run();
+        sim.ledgers().network.inflow
+    };
+    let none = with_coeff(0.0);
+    let some = with_coeff(0.01);
+    assert!(
+        some > none + 1e-9,
+        "the coefficient was ignored: {some} against {none}"
+    );
+
+    // Addressed as the model addresses a placement, and refused for a
+    // pair it does not place.
+    let (mut sim, _, _) = Simulation::open(&base).expect("open");
+    let from_model = sim.drain("S1", "RB1").expect("the barrel has a drain");
+    assert!(
+        !sim.set_drain("S1", "nothing", Some(from_model)),
+        "no such control"
+    );
+    assert!(
+        !sim.set_drain("nowhere", "RB1", Some(from_model)),
+        "no such parcel"
+    );
+
+    // Inject something different first, and check it took: releasing a
+    // drain that was never changed proves nothing, which is what the
+    // first version of this asserted.
+    let injected = DrainSetting {
+        coeff: from_model.coeff + 7.0,
+        exponent: 0.5,
+        offset: 0.0,
+        delay: 0.0,
+        h_open: 0.0,
+        h_close: 0.0,
+    };
+    assert!(sim.set_drain("S1", "RB1", Some(injected)));
+    assert_eq!(Some(injected), sim.drain("S1", "RB1"), "the injection took");
+    assert!(sim.set_drain("S1", "RB1", None), "releasing is accepted");
+    assert_eq!(
+        Some(from_model),
+        sim.drain("S1", "RB1"),
+        "release must restore the model's own drain"
+    );
+}

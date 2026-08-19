@@ -126,6 +126,59 @@ struct DrainParams {
     h_close: f64,
 }
 
+/// A control measure's underdrain, as a caller sets it mid-run (§12.4).
+///
+/// All six together, because they describe one drain: a caller changing
+/// its opening head without its closing head has described a drain that
+/// may never shut, and the six read as a set in the model too.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrainSetting {
+    /// Discharge coefficient.
+    pub coeff: f64,
+    /// Discharge exponent.
+    pub exponent: f64,
+    /// Offset above the storage floor (m).
+    pub offset: f64,
+    /// Delay after rainfall ends before it may open (s).
+    pub delay: f64,
+    /// Head at which it opens (m); 0 = no head control.
+    pub h_open: f64,
+    /// Head at which it closes (m).
+    pub h_close: f64,
+}
+
+impl LidUnit {
+    /// This unit's underdrain as a caller sees it, or `None` for a unit
+    /// that has no drain to set.
+    pub fn drain_setting(&self) -> Option<DrainSetting> {
+        self.drain.as_ref().map(|d| DrainSetting {
+            coeff: d.coeff,
+            exponent: d.exponent,
+            offset: d.offset,
+            delay: d.delay,
+            h_open: d.h_open,
+            h_close: d.h_close,
+        })
+    }
+
+    /// Set this unit's underdrain (§12.4). `false` for a unit with no
+    /// drain: a drain setting on a control measure that has none is not a
+    /// thing to set, and accepting it would leave a caller believing a
+    /// barrel could empty.
+    pub fn set_drain_setting(&mut self, s: DrainSetting) -> bool {
+        let Some(d) = &mut self.drain else {
+            return false;
+        };
+        d.coeff = s.coeff;
+        d.exponent = s.exponent;
+        d.offset = s.offset;
+        d.delay = s.delay;
+        d.h_open = s.h_open;
+        d.h_close = s.h_close;
+        true
+    }
+}
+
 /// Why a unit cannot be evaluated by this build stage.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LidRefusal {

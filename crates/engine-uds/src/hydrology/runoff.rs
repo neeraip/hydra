@@ -1077,6 +1077,29 @@ impl Surface {
         self.gages.get(gi).map_or(0.0, |g| g.rate(epoch))
     }
 
+    /// A control measure's underdrain, addressed by the parcel hosting
+    /// it and its position among that parcel's units (§12.4).
+    pub fn drain_setting(
+        &self,
+        pi: usize,
+        unit: usize,
+    ) -> Option<crate::hydrology::lid::DrainSetting> {
+        self.parcels.get(pi)?.lids.get(unit)?.drain_setting()
+    }
+
+    /// Set a control measure's underdrain (§12.4).
+    pub fn set_drain_setting(
+        &mut self,
+        pi: usize,
+        unit: usize,
+        s: crate::hydrology::lid::DrainSetting,
+    ) -> bool {
+        self.parcels
+            .get_mut(pi)
+            .and_then(|p| p.lids.get_mut(unit))
+            .is_some_and(|u| u.set_drain_setting(s))
+    }
+
     /// Inject an intensity at a gage (m/s), or release it with `None`
     /// (§12.4). `false` for a gage this compartment does not carry.
     pub fn set_precipitation(&mut self, gi: usize, rate: Option<f64>) -> bool {

@@ -337,6 +337,8 @@ pub struct Simulation {
     limit_override: HashMap<usize, f64>,
     /// §12.4: the concentrations an injected inflow carries, per vertex.
     concentration_override: HashMap<usize, Vec<f64>>,
+    /// §12.4: injected underdrains, by `(parcel, unit)`.
+    drain_override: HashMap<(usize, usize), crate::hydrology::lid::DrainSetting>,
     /// The compiled §9 control system, when the model has rules.
     controls: Option<super::controls::Controls>,
     /// §8.4 network quality, when the model declares constituents.
@@ -700,6 +702,7 @@ impl Simulation {
                 loss_override: HashMap::new(),
                 limit_override: HashMap::new(),
                 concentration_override: HashMap::new(),
+                drain_override: HashMap::new(),
                 controls,
                 quality,
                 surface_quality,
@@ -779,6 +782,101 @@ impl Simulation {
         self.link_by_id
             .get(id)
             .map(|&l| self.router.flow(l, &self.net))
+    }
+
+    /// Set a control measure's underdrain mid-run; `None` releases it
+    /// back to the design the model gives it (§12.4).
+    ///
+    /// Addressed as the model addresses a placement: the parcel hosting
+    /// it and the control design deployed there. `false` for a pair this
+    /// model does not place, or a design with no drain.
+    pub fn set_drain(
+        &mut self,
+        parcel_id: &str,
+        control_id: &str,
+        setting: Option<crate::hydrology::lid::DrainSetting>,
+    ) -> bool {
+        let Some((pi, unit)) = self.placement_of(parcel_id, control_id) else {
+            return false;
+        };
+        let value = match setting {
+            Some(s) => s,
+            // Releasing restores the design's own drain, which the model
+            // still holds: the unit's copy is what was changed.
+            None => match self.model_drain(parcel_id, control_id) {
+                Some(s) => s,
+                None => return false,
+            },
+        };
+        match setting {
+            Some(_) => {
+                self.drain_override.insert((pi, unit), value);
+            }
+            None => {
+                self.drain_override.remove(&(pi, unit));
+            }
+        }
+        self.surface
+            .as_mut()
+            .is_some_and(|s| s.set_drain_setting(pi, unit, value))
+    }
+
+    /// A control measure's underdrain as it stands now.
+    pub fn drain(
+        &self,
+        parcel_id: &str,
+        control_id: &str,
+    ) -> Option<crate::hydrology::lid::DrainSetting> {
+        let (pi, unit) = self.placement_of(parcel_id, control_id)?;
+        self.surface.as_ref()?.drain_setting(pi, unit)
+    }
+
+    /// Which parcel, and which of its units, a `(parcel, control)` pair
+    /// names — the address `[LID_USAGE]` itself uses.
+    fn placement_of(&self, parcel_id: &str, control_id: &str) -> Option<(usize, usize)> {
+        let pi = self
+            .net
+            .parcels
+            .iter()
+            .position(|p| p.id.eq_ignore_ascii_case(parcel_id))?;
+        let ci = self
+            .net
+            .lid_controls
+            .iter()
+            .position(|c| c.id.eq_ignore_ascii_case(control_id))?;
+        // A parcel's units are built in the order its usages are listed,
+        // so the unit's index is its position among that parcel's own.
+        let unit = self
+            .net
+            .lid_usage
+            .iter()
+            .filter(|u| u.parcel == pi)
+            .position(|u| u.control == ci)?;
+        Some((pi, unit))
+    }
+
+    /// The drain the model's design gives a placement, for releasing an
+    /// injection back to it.
+    fn model_drain(
+        &self,
+        parcel_id: &str,
+        control_id: &str,
+    ) -> Option<crate::hydrology::lid::DrainSetting> {
+        let (_, _) = self.placement_of(parcel_id, control_id)?;
+        let ci = self
+            .net
+            .lid_controls
+            .iter()
+            .position(|c| c.id.eq_ignore_ascii_case(control_id))?;
+        let d = self.net.lid_controls[ci].drain.as_ref()?;
+        Some(crate::hydrology::lid::DrainSetting {
+            coeff: d.coeff,
+            exponent: d.exponent,
+            offset: d.offset,
+            delay: d.delay,
+            h_open: d.h_open,
+            h_close: d.h_close,
+        })
     }
 
     /// Inject the constituent concentrations carried by the lateral
@@ -2563,6 +2661,7 @@ impl Simulation {
             loss_override,
             limit_override,
             concentration_override,
+            drain_override,
             controls,
             quality,
             surface_quality,
@@ -2641,6 +2740,16 @@ impl Simulation {
             for (at, v) in rows {
                 cp::put_u(w, *at as u64).map_err(io)?;
                 cp::put_f(w, *v).map_err(io)?;
+            }
+        }
+        cp::put_u(w, drain_override.len() as u64).map_err(io)?;
+        let mut drains: Vec<_> = drain_override.iter().collect();
+        drains.sort_by_key(|((p, u), _)| (*p, *u));
+        for ((pi, unit), d) in drains {
+            cp::put_u(w, *pi as u64).map_err(io)?;
+            cp::put_u(w, *unit as u64).map_err(io)?;
+            for v in [d.coeff, d.exponent, d.offset, d.delay, d.h_open, d.h_close] {
+                cp::put_f(w, v).map_err(io)?;
             }
         }
         cp::put_u(w, concentration_override.len() as u64).map_err(io)?;
@@ -2843,6 +2952,27 @@ impl Simulation {
             for _ in 0..n {
                 let at = r.u()? as usize;
                 held.insert(at, r.f()?);
+            }
+        }
+        let n = r.u()? as usize;
+        self.drain_override.clear();
+        for _ in 0..n {
+            let pi = r.u()? as usize;
+            let unit = r.u()? as usize;
+            let d = crate::hydrology::lid::DrainSetting {
+                coeff: r.f()?,
+                exponent: r.f()?,
+                offset: r.f()?,
+                delay: r.f()?,
+                h_open: r.f()?,
+                h_close: r.f()?,
+            };
+            self.drain_override.insert((pi, unit), d);
+        }
+        // A restored drain reaches the unit as well as the map.
+        for ((pi, unit), d) in self.drain_override.clone() {
+            if let Some(s) = self.surface.as_mut() {
+                s.set_drain_setting(pi, unit, d);
             }
         }
         let n = r.u()? as usize;

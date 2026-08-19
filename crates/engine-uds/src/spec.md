@@ -288,12 +288,7 @@ orchestration (§10), accounting and statistics (§11), the session (§12), and
 interoperability (§14).
 
 Deferred capabilities are typed refusals, never approximations: a model
-needing one is refused with a named reason. Currently deferred: archival
-climate-record formats (user-format climate files are served) and one of §12.4's
-injections (control-measure drain parameters; every other injection that
-section describes is served). The forcing entries differ in kind
-from the rest of that list: no model can need them, so their absence is an
-unpublished operation rather than a refusal at open time — a caller cannot
-reach for one and be told no, because there is nothing to reach for. A
+needing one is refused with a named reason. One capability is deferred: archival
+climate-record formats, the user-prepared climate file being served. A
 section absent from the specification remains unspecified behaviour rather
 than deferred behaviour — it is not implemented until it is specified.
