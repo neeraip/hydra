@@ -625,6 +625,153 @@ pub fn write_rdii_file(
     Ok(())
 }
 
+// ── Runoff interface files (§14.8.2) ─────────────────────────────────────────
+
+/// The predecessor's flow-unit enumeration, as a runoff file records it.
+/// Its order is the file format, not an implementation detail.
+const FILE_FLOW_UNITS: [&str; 6] = ["CFS", "GPM", "MGD", "CMS", "LPS", "MLD"];
+
+/// One parcel's replayed results for one step, in the file's own order.
+///
+/// Values are as the file holds them, in the writing model's user units,
+/// and are not converted here: the flow unit is checked on parse, so the
+/// units are this model's, but which physical unit each field carries
+/// depends on the quantity and is the caller's to apply (§14.8.2).
+#[derive(Debug, Clone)]
+pub struct ParcelReplay {
+    /// Rainfall intensity.
+    pub rainfall: f64,
+    /// Snow depth.
+    pub snow_depth: f64,
+    /// Evaporation loss.
+    pub evap: f64,
+    /// Infiltration loss.
+    pub infil: f64,
+    /// Runoff flow, in the file's flow unit.
+    pub runoff: f64,
+    /// Groundwater flow to the vertex, in the file's flow unit.
+    pub gw_flow: f64,
+    /// Saturated groundwater elevation.
+    pub gw_elev: f64,
+    /// Soil moisture (dimensionless).
+    pub soil_moisture: f64,
+    /// Washoff concentration per constituent.
+    pub washoff: Vec<f64>,
+}
+
+/// A parsed runoff interface file, checked against a model.
+#[derive(Debug)]
+pub struct RunoffInterface {
+    /// Steps: `(step length s, per-parcel results in model order)`.
+    pub steps: Vec<(f64, Vec<ParcelReplay>)>,
+}
+
+/// Parse a runoff interface file against the model (§14.8.2).
+///
+/// The format holds no names: parcels are positional, and the parcel
+/// count, constituent count and flow unit agreeing is the whole of the
+/// check available. The caller reports that the match was positional.
+pub fn parse_runoff_file(bytes: &[u8], net: &Network) -> Result<RunoffInterface, String> {
+    const STAMP: &[u8] = b"SWMM5-RUNOFF";
+    if !bytes.starts_with(STAMP) {
+        return Err("not a SWMM5 runoff interface file".into());
+    }
+    let body = &bytes[STAMP.len()..];
+    let i32_at = |o: usize| -> Result<i32, String> {
+        body.get(o..o + 4)
+            .and_then(|s| s.try_into().ok())
+            .map(i32::from_le_bytes)
+            .ok_or_else(|| "truncated runoff interface file".to_string())
+    };
+    let parcels = i32_at(0)?;
+    let constituents = i32_at(4)?;
+    let units = i32_at(8)?;
+    let steps_declared = i32_at(12)?;
+    if parcels as usize != net.parcels.len() {
+        return Err(format!(
+            "runoff interface file carries {parcels} parcels and this model has {}",
+            net.parcels.len()
+        ));
+    }
+    if constituents as usize != net.constituents.len() {
+        return Err(format!(
+            "runoff interface file carries {constituents} constituents and this \
+             model has {}",
+            net.constituents.len()
+        ));
+    }
+    let want = FILE_FLOW_UNITS
+        .iter()
+        .position(|w| *w == flow_unit_word(net.options.flow_units))
+        .unwrap_or(usize::MAX) as i32;
+    if units != want {
+        let named = |i: i32| {
+            usize::try_from(i)
+                .ok()
+                .and_then(|i| FILE_FLOW_UNITS.get(i))
+                .copied()
+                .unwrap_or("an unknown unit")
+        };
+        // The unit word also fixes the unit system, so this is the check
+        // that stops a US file being read into an SI model.
+        return Err(format!(
+            "runoff interface file is in {} and this model is in {}",
+            named(units),
+            named(want)
+        ));
+    }
+    if steps_declared <= 0 {
+        return Err(format!(
+            "runoff interface file declares {steps_declared} steps"
+        ));
+    }
+    let np = net.parcels.len();
+    let nc = net.constituents.len();
+    let per_parcel = 8 + nc;
+    let record = 4 + np * per_parcel * 4;
+    let mut steps = Vec::new();
+    let mut o = 16;
+    while o + record <= body.len() {
+        let f32_at = |b: usize| -> f64 {
+            f64::from(f32::from_le_bytes(
+                body[b..b + 4].try_into().unwrap_or([0; 4]),
+            ))
+        };
+        let dt = f32_at(o);
+        let mut row = Vec::with_capacity(np);
+        for pi in 0..np {
+            let base = o + 4 + pi * per_parcel * 4;
+            row.push(ParcelReplay {
+                rainfall: f32_at(base),
+                snow_depth: f32_at(base + 4),
+                evap: f32_at(base + 8),
+                infil: f32_at(base + 12),
+                runoff: f32_at(base + 16),
+                gw_flow: f32_at(base + 20),
+                gw_elev: f32_at(base + 24),
+                soil_moisture: f32_at(base + 28),
+                washoff: (0..nc).map(|c| f32_at(base + 32 + c * 4)).collect(),
+            });
+        }
+        steps.push((dt, row));
+        o += record;
+    }
+    Ok(RunoffInterface { steps })
+}
+
+/// The predecessor's word for a model's flow unit.
+fn flow_unit_word(units: crate::io::options::FlowUnits) -> &'static str {
+    use crate::io::options::FlowUnits::*;
+    match units {
+        Cfs => "CFS",
+        Gpm => "GPM",
+        Mgd => "MGD",
+        Cms => "CMS",
+        Lps => "LPS",
+        Mld => "MLD",
+    }
+}
+
 #[cfg(test)]
 mod rdii_tests {
     use super::*;
@@ -884,5 +1031,165 @@ TS1  1:00  0.0
         assert_eq!(vec![(0, 1.0)], f.inflows_at(start));
         assert!(f.inflows_at(start + 600.0).is_empty(), "inside the gap");
         assert_eq!(vec![(0, 2.0)], f.inflows_at(start + 3600.0));
+    }
+}
+
+#[cfg(test)]
+mod runoff_iface_tests {
+    use super::*;
+    use crate::io::objects::parse_network;
+
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  50  500  0.01  0
+S2  G1  J1  5   50  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+S2  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+S2  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  1.0
+TS1  1:00  0.0
+";
+
+    fn model() -> Network {
+        let (net, diags) = parse_network(MODEL);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    /// `parcels`, `constituents`, `units` and `steps` as the header holds
+    /// them, then `steps` records of `dt` and 8+c floats per parcel.
+    fn file(parcels: i32, constituents: i32, units: i32, steps: &[(f32, Vec<f32>)]) -> Vec<u8> {
+        let mut b = b"SWMM5-RUNOFF".to_vec();
+        for v in [parcels, constituents, units, steps.len().max(1) as i32] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for (dt, row) in steps {
+            b.extend_from_slice(&dt.to_le_bytes());
+            for x in row {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        b
+    }
+
+    /// Eight results per parcel plus one per constituent; this model has
+    /// two parcels and no constituents.
+    fn row(runoff_a: f32, runoff_b: f32) -> Vec<f32> {
+        let mut v = vec![0.0; 16];
+        v[4] = runoff_a;
+        v[12] = runoff_b;
+        v
+    }
+
+    #[test]
+    fn a_runoff_file_reads_its_steps_and_parcels() {
+        let net = model();
+        let bytes = file(2, 0, 3, &[(300.0, row(1.5, 2.5)), (300.0, row(1.0, 2.0))]);
+        let f = parse_runoff_file(&bytes, &net).expect("parse");
+        assert_eq!(2, f.steps.len());
+        assert_eq!(300.0, f.steps[0].0);
+        assert_eq!(1.5, f.steps[0].1[0].runoff);
+        assert_eq!(2.5, f.steps[0].1[1].runoff);
+        assert_eq!(1.0, f.steps[1].1[0].runoff);
+    }
+
+    #[test]
+    fn the_stamp_is_required() {
+        let net = model();
+        let err = parse_runoff_file(b"SWMM5-RDII\0\0\0\0", &net).unwrap_err();
+        assert!(err.contains("not a SWMM5 runoff"), "{err}");
+    }
+
+    /// The counts agreeing is the whole of the identity check the format
+    /// allows, so each half of it has to actually be made.
+    #[test]
+    fn a_parcel_count_that_differs_is_refused() {
+        let net = model();
+        let err = parse_runoff_file(&file(3, 0, 3, &[]), &net).unwrap_err();
+        assert!(err.contains("3 parcels"), "{err}");
+        assert!(err.contains("this model has 2"), "{err}");
+    }
+
+    #[test]
+    fn a_constituent_count_that_differs_is_refused() {
+        let net = model();
+        let err = parse_runoff_file(&file(2, 1, 3, &[]), &net).unwrap_err();
+        assert!(err.contains("1 constituents"), "{err}");
+    }
+
+    /// The unit word fixes the unit *system* too, so this is what stops a
+    /// US file being read into an SI model.
+    #[test]
+    fn a_file_in_another_unit_system_is_refused_by_name() {
+        let net = model();
+        // 0 is CFS; the model is CMS.
+        let err = parse_runoff_file(&file(2, 0, 0, &[]), &net).unwrap_err();
+        assert!(err.contains("CFS"), "{err}");
+        assert!(err.contains("CMS"), "{err}");
+    }
+
+    #[test]
+    fn a_non_positive_step_count_is_refused() {
+        let net = model();
+        let mut b = b"SWMM5-RUNOFF".to_vec();
+        for v in [2i32, 0, 3, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        let err = parse_runoff_file(&b, &net).unwrap_err();
+        assert!(err.contains("0 steps"), "{err}");
+    }
+
+    #[test]
+    fn a_truncated_record_is_dropped_rather_than_read_short() {
+        let net = model();
+        let mut bytes = file(2, 0, 3, &[(300.0, row(1.5, 2.5))]);
+        bytes.truncate(bytes.len() - 8);
+        let f = parse_runoff_file(&bytes, &net).expect("the header still parses");
+        assert!(f.steps.is_empty(), "a partial record must not be served");
+    }
+
+    #[test]
+    fn every_field_lands_in_its_own_slot() {
+        let net = model();
+        // Distinct values so a transposed field shows up.
+        let mut r = vec![0.0f32; 16];
+        for (i, v) in r.iter_mut().enumerate().take(8) {
+            *v = (i + 1) as f32;
+        }
+        let f = parse_runoff_file(&file(2, 0, 3, &[(60.0, r)]), &net).expect("parse");
+        let p = &f.steps[0].1[0];
+        assert_eq!(1.0, p.rainfall);
+        assert_eq!(2.0, p.snow_depth);
+        assert_eq!(3.0, p.evap);
+        assert_eq!(4.0, p.infil);
+        assert_eq!(5.0, p.runoff);
+        assert_eq!(6.0, p.gw_flow);
+        assert_eq!(7.0, p.gw_elev);
+        assert_eq!(8.0, p.soil_moisture);
     }
 }
