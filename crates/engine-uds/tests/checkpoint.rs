@@ -1,20 +1,22 @@
 //! §12.3: a run restored from a checkpoint continues bit-identically to
 //! one that was never interrupted.
 //!
-//! **What is written but not covered here**, established by deleting each
-//! on restore and finding every test still green. The router's mid-step
-//! flow areas and quiet-period streak, and a parcel's run-on rate, its
-//! return-to-pervious volume in flight, its current runoff and its quality
-//! context: each is plausibly recomputed before it is next read, which
-//! would make it derived rather than state, though none of that is
-//! established. Two more are uncovered because no fixture has the shape
-//! that would show them. The time each land use was last swept has no
-//! observable influence at all: moving the first pass by 57 minutes
-//! leaves every output identical. A storage vertex's residence time is
-//! read only by a treatment expression, and no treatment placed on a
-//! storage vertex in these models changes anything, including `C = 0`,
-//! which is worth a separate look. All are written. This list is what a
-//! reader should not mistake for coverage.
+//! Two kinds of test run here, and the second is what makes the first
+//! honest. A **property** test runs a model whole and again across a
+//! checkpoint, and every output surface must agree; it can only see state
+//! the model exercises. A **round-trip** test restores a checkpoint and
+//! writes it again, and the bytes must match; it sees any field written
+//! but not read back, however little that field influences results. Six
+//! fields that no property test could reach are covered by the second
+//! kind alone, the mid-step flow areas and the storage residence time
+//! among them.
+//!
+//! **What is still not covered:** a parcel's return-to-pervious volume in
+//! flight. It is zero at every instant these models reach, so dropping it
+//! on restore changes neither the results nor the bytes. It is written.
+//!
+//! One thing found along the way and not chased: no treatment placed on a
+//! storage vertex in these models changes anything, `C = 0` included.
 //!
 //! That property is the contract, and it is the only thing that can
 //! establish it: an omitted state does not fail, it continues from a
@@ -664,4 +666,138 @@ fn a_restored_swept_surface_continues_bit_identically() {
         "sweeping must have an efficiency"
     );
     restores_identically(&swept, 0.4);
+}
+
+// ── The format's own symmetry ───────────────────────────────────────────
+
+/// A checkpoint restored and written again is the same bytes.
+///
+/// This is the one check here that does not depend on a model exercising
+/// the state it covers. A field written but never read back, or read in
+/// the wrong order, leaves the second checkpoint different from the first
+/// however little the field influences results — which is exactly the
+/// case for everything the property tests above cannot reach.
+fn resaves_identically(model: &str, fraction: f64) {
+    let (mut whole, diags, _) = Simulation::open(model).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    whole.run();
+    let target = ((whole.snapshots.len() as f64 * fraction) as usize).max(1);
+
+    let (mut first, _, _) = Simulation::open(model).expect("open");
+    while first.snapshots.len() < target {
+        assert!(first.step(), "the run ended before the checkpoint instant");
+    }
+    let mut once = Vec::new();
+    first.save_checkpoint(&mut once).expect("checkpoint");
+    assert!(once.len() > 200, "a checkpoint of {} bytes", once.len());
+
+    let (mut second, _, _) = Simulation::open(model).expect("open");
+    second.load_checkpoint(&once).expect("restore");
+    let mut twice = Vec::new();
+    second
+        .save_checkpoint(&mut twice)
+        .expect("checkpoint again");
+
+    assert_eq!(
+        once.len(),
+        twice.len(),
+        "the two checkpoints differ in length"
+    );
+    if once != twice {
+        let at = once
+            .iter()
+            .zip(&twice)
+            .position(|(a, b)| a != b)
+            .expect("a differing byte");
+        panic!(
+            "the two checkpoints first differ at byte {at} of {}",
+            once.len()
+        );
+    }
+}
+
+#[test]
+fn a_routed_checkpoint_survives_a_round_trip() {
+    resaves_identically(MODEL, 0.4);
+}
+
+#[test]
+fn a_surface_checkpoint_survives_a_round_trip() {
+    resaves_identically(&parcel_model("", ""), 0.3);
+}
+
+#[test]
+fn a_cascade_checkpoint_survives_a_round_trip() {
+    let cascade = parcel_model("", "").replace(
+        "P1  G1  J1  10  40  500  0.01  0",
+        "P1  G1  P2  10  40  500  0.01  0",
+    );
+    resaves_identically(&cascade, 0.3);
+}
+
+#[test]
+fn an_aquifer_checkpoint_survives_a_round_trip() {
+    resaves_identically(&fixture("groundwater_lateral_flow.inp"), 0.4);
+}
+
+#[test]
+fn a_snow_checkpoint_survives_a_round_trip() {
+    // Snow has no property test, for want of a model that lies any under
+    // a substituted clock. Its state still has to survive the format, and
+    // this is the check that says so.
+    resaves_identically(&fixture("snowmelt_pack.inp"), 0.4);
+}
+
+#[test]
+fn a_control_measure_checkpoint_survives_a_round_trip() {
+    resaves_identically(&fixture("lid_bioretention_underdrain.inp"), 0.4);
+}
+
+#[test]
+fn a_quality_checkpoint_survives_a_round_trip() {
+    let dirty = fixture("buildup_washoff_treatment.inp")
+        .replace("[REPORT]\n", "[OPTIONS]\nDRY_DAYS 5\n\n[REPORT]\n");
+    resaves_identically(&dirty, 0.3);
+}
+
+#[test]
+fn a_swept_checkpoint_survives_a_round_trip() {
+    let swept = fixture("buildup_washoff_treatment.inp")
+        .replace("RES  0  0  0", "RES  0.05  0.8  0.005")
+        .replace(
+            "RES  TSS  EXP  0.2  1.2  0  0",
+            "RES  TSS  EXP  0.2  1.2  0  80",
+        )
+        .replace("[REPORT]\n", "[OPTIONS]\nDRY_DAYS 5\n\n[REPORT]\n");
+    resaves_identically(&swept, 0.4);
+}
+
+#[test]
+fn a_storage_checkpoint_survives_a_round_trip() {
+    // The residence time no property test can reach travels in here.
+    let treated = MODEL.replace(
+        "[JUNCTIONS]",
+        "[POLLUTANTS]\nTSS  MG/L  10  0  0  0.1\n\n[JUNCTIONS]",
+    );
+    resaves_identically(&treated, 0.4);
+}
+
+#[test]
+fn a_returned_drain_checkpoint_survives_a_round_trip() {
+    // A control measure returning its drain to the pervious area, which
+    // is the only shape that puts a return volume in flight between
+    // steps. Every fixture sets that column to zero.
+    //
+    // This still does not reach the return volume itself: dropping it on
+    // restore leaves the checkpoint identical at every instant tried
+    // (0.1, 0.2, 0.4, 0.6 and 0.8 of the run), so it is zero whenever a
+    // checkpoint is taken here. It is the one written field with no test
+    // that would notice its loss.
+    let returned = fixture("rain_barrel_delayed_drain.inp")
+        .replace("S1  RB1  4  10  1  0  25  0", "S1  RB1  4  10  1  0  25  1");
+    assert!(
+        returned.contains("0  25  1"),
+        "the drain must return to the pervious area"
+    );
+    resaves_identically(&returned, 0.4);
 }
