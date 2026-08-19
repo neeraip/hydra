@@ -1136,9 +1136,10 @@ fn a_collecting_run_keeps_what_it_has_collected() {
 /// restored (§12.4).
 ///
 /// Nothing else here would notice: the models above inject nothing, so
-/// the fields sat unwritten and every test stayed green. `Simulation` is
-/// the one type the checkpoint does not read through an exhaustive
-/// destructure, so a field added to it is caught by a test or not at all.
+/// the fields sat unwritten and every test stayed green. That was the
+/// last gap in the checkpoint's compile-time completeness, and it is
+/// closed: the session is read through an exhaustive destructure too, so
+/// a field added to it now fails the build rather than this test.
 #[test]
 fn a_standing_injection_survives_a_checkpoint() {
     let model = parcel_model("", "");

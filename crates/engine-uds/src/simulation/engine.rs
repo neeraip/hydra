@@ -2413,53 +2413,123 @@ impl Simulation {
     /// checkpoint must not have.
     pub fn save_checkpoint(&self, w: &mut impl std::io::Write) -> Result<(), String> {
         use crate::simulation::checkpoint as cp;
+        // Exhaustive on purpose, and the last type here to become so.
+        // Every other state type the checkpoint touches is read through a
+        // destructure like this, so a field added to one fails the build
+        // until it is written or declared a parameter; the session was
+        // the exception, and a field added to it escaped silently. Two
+        // did, in the change that published mid-run forcing.
+        //
+        // The bindings are used below rather than `self.field`, which is
+        // what makes this a check and not a comment: a state field bound
+        // and then not written is an unused variable, and unused
+        // variables fail this build.
+        let Simulation {
+            // Parameters: the model builds these, and opening it again
+            // builds them the same.
+            net: _,
+            start_epoch: _,
+            duration: _,
+            report_step: _,
+            routing_period: _,
+            events: _,
+            vertex_by_id: _,
+            link_by_id: _,
+            climate_records: _,
+            // Supplied by the caller, who must supply them again: their
+            // contents are not copied here, only fingerprinted.
+            iface_in: _,
+            rdii_in: _,
+            // The rainfall cache is fixed at load from those records, so
+            // a restored session already holds it.
+            rain_out: _,
+            // State.
+            router,
+            surface,
+            aquifers,
+            rdii,
+            hydro_t,
+            hydro_prev,
+            hydro_now,
+            hydro_degraded_warned,
+            next_report,
+            next_rule_t,
+            series_warned,
+            lateral_override,
+            stage_override,
+            setting_override,
+            controls,
+            quality,
+            surface_quality,
+            inlets,
+            climate_state,
+            rdii_out,
+            runoff_out,
+            supplied,
+            runoff_in,
+            runoff_exhausted,
+            runoff_now,
+            hydro_mass_prev,
+            hydro_mass_now,
+            last_lat,
+            last_inlet_lat,
+            last_ext_total,
+            last_dwf_total,
+            vol_dwf,
+            vol_ext,
+            vol_wet,
+            vol_gw,
+            vol_rdii,
+            snapshots,
+            notices,
+        } = self;
         let io = |e: std::io::Error| e.to_string();
         w.write_all(cp::STAMP).map_err(io)?;
         w.write_all(&cp::VERSION.to_le_bytes()).map_err(io)?;
         cp::put_u(w, self.model_fingerprint()).map_err(io)?;
         // Clocks and the accounting the ledgers are built from.
         for v in [
-            self.hydro_t,
-            self.next_report,
-            self.next_rule_t,
-            self.vol_dwf,
-            self.vol_ext,
-            self.vol_wet,
-            self.vol_gw,
-            self.vol_rdii,
-            self.last_ext_total,
-            self.last_dwf_total,
+            *hydro_t,
+            *next_report,
+            *next_rule_t,
+            *vol_dwf,
+            *vol_ext,
+            *vol_wet,
+            *vol_gw,
+            *vol_rdii,
+            *last_ext_total,
+            *last_dwf_total,
         ] {
             cp::put_f(w, v).map_err(io)?;
         }
-        for vs in [&self.last_lat, &self.last_inlet_lat] {
+        for vs in [last_lat, last_inlet_lat] {
             cp::put_fs(w, vs).map_err(io)?;
         }
-        for (at, lats) in [&self.hydro_prev, &self.hydro_now] {
+        for (at, lats) in [hydro_prev, hydro_now] {
             cp::put_f(w, *at).map_err(io)?;
             cp::put_fs(w, lats).map_err(io)?;
         }
         // Written with its own shape rather than flattened: the nesting is
         // source by constituent by vertex, and a flat run of values cannot
         // say which of the three is empty when a model has no constituents.
-        for field in [&self.hydro_mass_prev, &self.hydro_mass_now] {
+        for field in [hydro_mass_prev, hydro_mass_now] {
             cp::put_u(w, field.len() as u64).map_err(io)?;
-            for rows in field {
+            for rows in field.iter() {
                 cp::put_rows(w, rows).map_err(io)?;
             }
         }
         // Latches: a restored run must neither repeat a warning nor
         // swallow one it has not issued (§12.3).
-        cp::put_b(w, self.hydro_degraded_warned).map_err(io)?;
-        cp::put_b(w, self.runoff_exhausted).map_err(io)?;
-        cp::put_u(w, self.series_warned.len() as u64).map_err(io)?;
-        for flag in &self.series_warned {
+        cp::put_b(w, *hydro_degraded_warned).map_err(io)?;
+        cp::put_b(w, *runoff_exhausted).map_err(io)?;
+        cp::put_u(w, series_warned.len() as u64).map_err(io)?;
+        for flag in series_warned {
             cp::put_b(w, *flag).map_err(io)?;
         }
         // §12.4: an injection standing when a checkpoint is taken stands
         // when it is restored, or the restored run quietly returns the
         // element to the model and diverges from the run it continues.
-        for held in [&self.stage_override, &self.setting_override] {
+        for held in [stage_override, setting_override] {
             cp::put_u(w, held.len() as u64).map_err(io)?;
             let mut rows: Vec<_> = held.iter().collect();
             rows.sort_by_key(|(k, _)| **k);
@@ -2468,24 +2538,24 @@ impl Simulation {
                 cp::put_f(w, *v).map_err(io)?;
             }
         }
-        cp::put_u(w, self.lateral_override.len() as u64).map_err(io)?;
+        cp::put_u(w, lateral_override.len() as u64).map_err(io)?;
         // Sorted so a checkpoint of one state is one file: a map's own
         // order is not part of the state and must not reach the bytes.
-        let mut overrides: Vec<_> = self.lateral_override.iter().collect();
+        let mut overrides: Vec<_> = lateral_override.iter().collect();
         overrides.sort_by_key(|(k, _)| **k);
         for (vertex, q) in overrides {
             cp::put_u(w, *vertex as u64).map_err(io)?;
             cp::put_f(w, *q).map_err(io)?;
         }
-        self.climate_state.checkpoint_put(w).map_err(io)?;
+        climate_state.checkpoint_put(w).map_err(io)?;
         // The output so far, so a restored run writes the whole run's
         // results rather than the part after the checkpoint (§12.3).
-        cp::put_u(w, self.snapshots.len() as u64).map_err(io)?;
-        for snap in &self.snapshots {
+        cp::put_u(w, snapshots.len() as u64).map_err(io)?;
+        for snap in snapshots {
             snap.checkpoint_put(w).map_err(io)?;
         }
-        cp::put_u(w, self.notices.len() as u64).map_err(io)?;
-        for notice in &self.notices {
+        cp::put_u(w, notices.len() as u64).map_err(io)?;
+        for notice in notices {
             cp::put_f(w, notice.t).map_err(io)?;
             cp::put_u(w, notice.message.len() as u64).map_err(io)?;
             w.write_all(notice.message.as_bytes()).map_err(io)?;
@@ -2493,13 +2563,13 @@ impl Simulation {
         // §12.3: the interface-file records collected so far. The rainfall
         // cache is not among them: it is fixed at load from the records the
         // caller supplied, so a restored session already has it.
-        cp::put_u(w, self.rdii_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
-        for (at, flows) in self.rdii_out.iter().flatten() {
+        cp::put_u(w, rdii_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
+        for (at, flows) in rdii_out.iter().flatten() {
             cp::put_f(w, *at).map_err(io)?;
             cp::put_fs(w, flows).map_err(io)?;
         }
-        cp::put_u(w, self.runoff_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
-        for (dt, rows) in self.runoff_out.iter().flatten() {
+        cp::put_u(w, runoff_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
+        for (dt, rows) in runoff_out.iter().flatten() {
             cp::put_f(w, *dt).map_err(io)?;
             cp::put_u(w, rows.len() as u64).map_err(io)?;
             for rec in rows {
@@ -2521,15 +2591,15 @@ impl Simulation {
         // §12.3: which interface files this run was given, and how far it
         // has read the one that is read sequentially. The files themselves
         // are the caller's and are not copied here.
-        cp::put_u(w, self.supplied.len() as u64).map_err(io)?;
-        for (role, hash) in &self.supplied {
+        cp::put_u(w, supplied.len() as u64).map_err(io)?;
+        for (role, hash) in supplied {
             cp::put_u(w, role.len() as u64).map_err(io)?;
             w.write_all(role.as_bytes()).map_err(io)?;
             cp::put_u(w, *hash).map_err(io)?;
         }
-        cp::put_u(w, self.runoff_in.as_ref().map_or(0, |(_, at)| *at as u64)).map_err(io)?;
-        cp::put_u(w, self.runoff_now.len() as u64).map_err(io)?;
-        for rec in &self.runoff_now {
+        cp::put_u(w, runoff_in.as_ref().map_or(0, |(_, at)| *at as u64)).map_err(io)?;
+        cp::put_u(w, runoff_now.len() as u64).map_err(io)?;
+        for rec in runoff_now {
             for v in [
                 rec.rainfall,
                 rec.snow_depth,
@@ -2545,38 +2615,38 @@ impl Simulation {
             cp::put_fs(w, &rec.washoff).map_err(io)?;
         }
         // Controls, sewer inflow and street inlets (§12.3).
-        cp::put_b(w, self.controls.is_some()).map_err(io)?;
-        if let Some(controls) = &self.controls {
+        cp::put_b(w, controls.is_some()).map_err(io)?;
+        if let Some(controls) = &controls {
             controls.checkpoint_put(w).map_err(io)?;
         }
-        cp::put_u(w, self.rdii.len() as u64).map_err(io)?;
-        for state in &self.rdii {
+        cp::put_u(w, rdii.len() as u64).map_err(io)?;
+        for state in rdii {
             state.checkpoint_put(w).map_err(io)?;
         }
-        cp::put_b(w, self.inlets.is_some()).map_err(io)?;
-        if let Some(inlets) = &self.inlets {
+        cp::put_b(w, inlets.is_some()).map_err(io)?;
+        if let Some(inlets) = &inlets {
             inlets.checkpoint_put(w).map_err(io)?;
         }
         // Constituent state, on the surface and in the network (§12.3).
-        cp::put_b(w, self.surface_quality.is_some()).map_err(io)?;
-        if let Some(sq) = &self.surface_quality {
+        cp::put_b(w, surface_quality.is_some()).map_err(io)?;
+        if let Some(sq) = &surface_quality {
             sq.checkpoint_put(w).map_err(io)?;
         }
-        cp::put_b(w, self.quality.is_some()).map_err(io)?;
-        if let Some(q) = &self.quality {
+        cp::put_b(w, quality.is_some()).map_err(io)?;
+        if let Some(q) = &quality {
             q.checkpoint_put(w).map_err(io)?;
         }
         // The surface compartment and the aquifers beneath it (§12.3).
-        cp::put_b(w, self.surface.is_some()).map_err(io)?;
-        if let Some(surface) = &self.surface {
+        cp::put_b(w, surface.is_some()).map_err(io)?;
+        if let Some(surface) = &surface {
             surface.checkpoint_put(w).map_err(io)?;
         }
-        cp::put_u(w, self.aquifers.len() as u64).map_err(io)?;
-        for (parcel, gw) in &self.aquifers {
+        cp::put_u(w, aquifers.len() as u64).map_err(io)?;
+        for (parcel, gw) in aquifers {
             cp::put_u(w, *parcel as u64).map_err(io)?;
             gw.checkpoint_put(w).map_err(io)?;
         }
-        self.router.checkpoint_put(w).map_err(io)?;
+        router.checkpoint_put(w).map_err(io)?;
         Ok(())
     }
 

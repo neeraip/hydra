@@ -477,7 +477,16 @@ from a default and continue plausibly and wrongly, so the rule that applies
 is the ordinary one (§1.8): refuse with the capability named until its state
 travels.
 
-**Completeness is the contract, and is checked rather than asserted.** A
+**Completeness is enforced where it can be, and checked where it cannot.**
+Every type whose state a checkpoint carries is read field by field, with
+the ones it does not carry named as such, so a field added to any of them
+stops the engine building until it has been put in one group or the other.
+That is a stronger guarantee than a test, because it does not depend on a
+model exercising the field. What it cannot establish is that a field
+written is the right value, or that the set of types is itself complete,
+which is what the property below is for.
+
+**The property is the contract, and is checked rather than asserted.** A
 state omitted from a checkpoint does not fail; it continues from a default
 and produces plausible results that differ from the uninterrupted run. The
 test is therefore the property itself: run to an instant, checkpoint,
