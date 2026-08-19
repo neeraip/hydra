@@ -3396,3 +3396,191 @@ TS1  8:00  0.0
         parsed.step
     );
 }
+
+/// A runoff interface file replaces the surface entirely (§14.8.2).
+///
+/// The whole point is to route again without recomputing hydrology, so a
+/// replayed run must take its laterals from the file and not from a
+/// surface it also ran. The clock comes from the file too: each record
+/// carries the length of the step that produced it.
+#[test]
+fn a_runoff_interface_file_replaces_the_surface() {
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             01:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+USE RUNOFF runoff.bin
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  50  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  30.0
+TS1  1:00  0.0
+
+[REPORT]
+";
+
+    /// One parcel, no constituents, CMS: eight floats per parcel per step.
+    fn runoff_file(steps: usize, dt: f32, runoff: f32) -> Vec<u8> {
+        let mut b = b"SWMM5-RUNOFF".to_vec();
+        for v in [1i32, 0, 3, steps as i32] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for _ in 0..steps {
+            b.extend_from_slice(&dt.to_le_bytes());
+            let mut row = [0.0f32; 8];
+            row[4] = runoff;
+            for x in row {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        b
+    }
+
+    fn run(file: Option<Vec<u8>>) -> (f64, bool) {
+        let (mut sim, diags, _) = Simulation::open(MODEL).expect("open");
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        if let Some(bytes) = file {
+            sim.supply_runoff(&bytes).expect("supply");
+        }
+        sim.run();
+        let led = sim.ledgers();
+        (led.network.inflow, led.surface.is_some())
+    }
+
+    // 12 steps of 300 s covers the hour; 0.5 m³/s throughout.
+    let (replayed, surface_ledger) = run(Some(runoff_file(12, 300.0, 0.5)));
+    let (computed, _) = run(None);
+
+    assert!(computed > 0.0, "the computed run produced no runoff");
+    // The file's own volume, and nothing of the surface's. Hydrology
+    // laterals reach the routing interpolated between their steps, as they
+    // do for a computed run, so the first interval rises from zero rather
+    // than starting at the file's value: half a step's worth less.
+    let expected = 0.5 * 3600.0 - 0.5 * 300.0 / 2.0;
+    assert!(
+        (replayed - expected).abs() < expected * 0.01,
+        "the file declares {expected} m³ after the opening ramp and the run \
+         received {replayed} (the computed run makes {computed})"
+    );
+    // §14.8.2: a replayed run states no surface balance, because the file
+    // carries flows and a balance is made of volumes and storages.
+    assert!(
+        !surface_ledger,
+        "a replayed run reported a surface balance built from accumulators \
+         that never ran"
+    );
+}
+
+/// A file shorter than the run says so once and stops contributing.
+#[test]
+fn a_runoff_file_that_ends_early_is_reported() {
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             01:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+USE RUNOFF runoff.bin
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  50  500  0.01  0
+
+[SUBAREAS]
+S1  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  30.0
+TS1  1:00  0.0
+
+[REPORT]
+";
+    let mut b = b"SWMM5-RUNOFF".to_vec();
+    for v in [1i32, 0, 3, 2] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    // Two records of 300 s against an hour-long run.
+    for _ in 0..2 {
+        b.extend_from_slice(&300.0f32.to_le_bytes());
+        let mut row = [0.0f32; 8];
+        row[4] = 1.0;
+        for x in row {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+
+    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    sim.supply_runoff(&b).expect("supply");
+    sim.run();
+
+    let notices = &sim.notices;
+    let ended = notices
+        .iter()
+        .filter(|n| n.message.contains("runoff interface file ended"))
+        .count();
+    assert_eq!(1, ended, "said {ended} times: {notices:?}");
+    // Only the file's two records contribute: 1 m³/s for 600 s.
+    let inflow = sim.ledgers().network.inflow;
+    assert!(
+        (inflow - 600.0).abs() < 60.0,
+        "received {inflow} m³ where the file carries 600"
+    );
+}

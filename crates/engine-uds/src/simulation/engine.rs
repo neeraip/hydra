@@ -329,6 +329,12 @@ pub struct Simulation {
     /// at each hydrology step. Collected only when the model asks for a
     /// file, since a long run holds one row per step per assignment.
     rdii_out: Option<Vec<(f64, Vec<f64>)>>,
+    /// A supplied runoff interface file (§14.8.2) and the cursor into it.
+    /// When present the surface is not stepped at all and the hydrology
+    /// clock follows the file's own steps.
+    runoff_in: Option<(crate::io::iface::RunoffInterface, usize)>,
+    /// Said once when a replayed file runs out before the run does.
+    runoff_exhausted: bool,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -516,10 +522,7 @@ impl Simulation {
         // is otherwise perfectly runnable, and saying nothing — which is what
         // happened before — leaves a modeller waiting for a file that will
         // never appear. Loud and non-destructive, per §1.8.
-        for (role, slot) in [
-            ("rainfall", &net.interface_files.rainfall),
-            ("runoff", &net.interface_files.runoff),
-        ] {
+        for (role, slot) in [("rainfall", &net.interface_files.rainfall)] {
             match slot {
                 Some((crate::model::FileMode::Use, _)) => {
                     return Err(OpenError::Transport(format!(
@@ -533,9 +536,19 @@ impl Simulation {
                 None => {}
             }
         }
-        // §14.8.1: RDII files are read and written. `USE` opens and waits
-        // for the caller to supply the bytes, as routing inflows do; `SAVE`
-        // collects the convolved hydrograph for `write_rdii`.
+        // §14.8.1 and §14.8.2: RDII and runoff files are read. `USE` opens
+        // and waits for the caller to supply the bytes, as routing inflows
+        // do; RDII `SAVE` collects the convolved hydrograph for
+        // `write_rdii`. Writing a runoff file is not served yet, so a
+        // model asking for one is told it will not appear.
+        if let Some((crate::model::FileMode::Save, _)) = &net.interface_files.runoff {
+            findings.push(ValidationDiagnostic {
+                element: String::new(),
+                kind: crate::io::validate::ValidationKind::InterfaceFileNotWritten {
+                    role: "runoff",
+                },
+            });
+        }
         // One routing file never serves both roles in a run (§14.8).
         if let (Some(a), Some(b)) = (&net.interface_files.inflows, &net.interface_files.outflows) {
             if a == b {
@@ -603,6 +616,8 @@ impl Simulation {
                 climate_records,
                 iface_in: None,
                 rdii_in: None,
+                runoff_in: None,
+                runoff_exhausted: false,
                 rdii_out: matches!(
                     net.interface_files.rdii,
                     Some((
@@ -680,11 +695,141 @@ impl Simulation {
         true
     }
 
+    /// Replay a runoff interface file in place of the surface (§14.8.2).
+    ///
+    /// The clock is the file's. Each of its records carries the length of
+    /// the step that produced it, so following them is what makes the
+    /// replay reproduce the run that was written rather than resample it;
+    /// the model's own wet and dry steps decide nothing here.
+    ///
+    /// RDII still runs. It is a separate file and a separate computation
+    /// in the predecessor too, so a model may replay its surface and
+    /// convolve its sewer inflow in the same run.
+    fn replay_hydrology(&mut self, period_end: f64, routing_active: bool) {
+        let nv = self.net.vertices.len();
+        let np = self.net.constituents.len();
+        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
+        let Some(surface) = self.surface.take() else {
+            return;
+        };
+        while self.hydro_t < period_end - 1e-9 {
+            let step = self.runoff_in.as_mut().and_then(|(ifc, cursor)| {
+                let s = ifc.steps.get(*cursor).cloned();
+                if s.is_some() {
+                    *cursor += 1;
+                }
+                s
+            });
+            // A file covering less of the clock than the run asks for is
+            // not the end of the run: the surface stops contributing and
+            // the clock falls back to the model's own step, because RDII
+            // is a separate computation and goes on either way.
+            let (dt, parcels) = match step {
+                Some((dt, parcels)) => (dt.max(1e-9), Some(parcels)),
+                None => {
+                    if !self.runoff_exhausted {
+                        self.runoff_exhausted = true;
+                        self.notices.push(RuntimeNotice {
+                            t: self.hydro_t,
+                            message: concat!(
+                                "the runoff interface file ended before the run did; ",
+                                "the surface contributes nothing from here on (§14.8.2)"
+                            )
+                            .to_string(),
+                        });
+                    }
+                    (self.net.options.wet_step.max(1e-9), None)
+                }
+            };
+            let mut lats = vec![0.0; nv];
+            let mut mass = vec![vec![vec![0.0; nv]; np]; 3];
+            // Parcels draining to another parcel report nothing at the
+            // vertex boundary: the receiving parcel's own runoff already
+            // carries what they sent it, exactly as it does when the
+            // surface computes the cascade itself.
+            for (pi, parcel) in self.net.parcels.iter().enumerate() {
+                let Some(r) = parcels.as_ref().and_then(|p| p.get(pi)) else {
+                    continue;
+                };
+                let q = r.runoff * cv;
+                if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
+                    lats[v] += q;
+                    // §8.2–§8.3: the runoff stream joins at the washoff
+                    // concentrations the file recorded for it.
+                    for (ci, row) in mass[0].iter_mut().enumerate() {
+                        row[v] += r.washoff.get(ci).copied().unwrap_or(0.0) * q;
+                    }
+                }
+            }
+            if routing_active {
+                self.vol_wet += lats.iter().sum::<f64>() * dt;
+            }
+            // §4.1: groundwater comes from the file as a flow, where the
+            // computed path produces a rate the parcel's area scales.
+            let gw_flows: Vec<(usize, f64)> = self
+                .aquifers
+                .iter()
+                .filter_map(|(pi, gw)| {
+                    parcels
+                        .as_ref()
+                        .and_then(|p| p.get(*pi))
+                        .map(|r| (gw.vertex, r.gw_flow * cv))
+                })
+                .collect();
+            for (vertex, q) in gw_flows {
+                lats[vertex] += q;
+                if routing_active {
+                    self.vol_gw += q * dt;
+                }
+                for (ci, c) in self.net.constituents.iter().enumerate() {
+                    mass[1][ci][vertex] += q.max(0.0) * c.c_groundwater;
+                }
+            }
+            let epoch = self.start_epoch + self.hydro_t;
+            let month = civil_from_days((epoch / 86_400.0).floor() as i64).month;
+            let rain_factor = self.net.climate.adjust_rainfall[(month - 1) as usize];
+            let rdii_flows: Vec<(usize, f64)> = match &self.rdii_in {
+                Some(ifc) => ifc.inflows_at(epoch),
+                None => self
+                    .rdii
+                    .iter_mut()
+                    .map(|r| {
+                        let rain = r
+                            .gage(&self.net)
+                            .map_or(0.0, |g| surface.gage_rate(g, epoch))
+                            * rain_factor;
+                        let q = r.step(&self.net, rain, month, dt);
+                        (r.vertex, q)
+                    })
+                    .collect(),
+            };
+            if let Some(rows) = &mut self.rdii_out {
+                rows.push((epoch, rdii_flows.iter().map(|(_, q)| *q).collect()));
+            }
+            for (vertex, q) in rdii_flows {
+                lats[vertex] += q;
+                if routing_active {
+                    self.vol_rdii += q * dt;
+                }
+                for (ci, c) in self.net.constituents.iter().enumerate() {
+                    mass[2][ci][vertex] += q * c.c_rdii;
+                }
+            }
+            self.hydro_t += dt;
+            self.hydro_prev = std::mem::replace(&mut self.hydro_now, (self.hydro_t, lats));
+            self.hydro_mass_prev = std::mem::replace(&mut self.hydro_mass_now, mass);
+        }
+        self.surface = Some(surface);
+    }
+
     /// Advance the §3 surface compartment in whole hydrology steps until
     /// it covers `period_end` (§10.1): the wet step while precipitation
     /// or ponded water exists, the dry step otherwise, truncated at gage
     /// recording boundaries.
     fn advance_hydrology(&mut self, period_end: f64, routing_active: bool) {
+        if self.runoff_in.is_some() {
+            return self.replay_hydrology(period_end, routing_active);
+        }
         let Some(mut surface) = self.surface.take() else {
             return;
         };
@@ -1544,14 +1689,20 @@ impl Simulation {
     pub fn ledgers(&self) -> Ledgers {
         const VOL_TOL: f64 = 0.0283;
         const MASS_TOL: f64 = 0.001;
-        let surface = self.surface.as_ref().map(|s| {
+        // §14.8.2: a replayed run has no surface or subsurface balance to
+        // report. The file carries the flows those compartments produced,
+        // not the rainfall, storage and losses a balance is made of, so
+        // their accumulators are untouched and a balance built from them
+        // would read as a perfectly conserving compartment that never ran.
+        let replaying = self.runoff_in.is_some();
+        let surface = self.surface.as_ref().filter(|_| !replaying).map(|s| {
             balance(
                 s.rainfall + s.runon_in + s.initial_storage,
                 s.evap_vol + s.infil_vol + s.runoff_out + s.snow_plowed + s.stored_volume(),
                 VOL_TOL,
             )
         });
-        let subsurface = if self.aquifers.is_empty() {
+        let subsurface = if self.aquifers.is_empty() || replaying {
             None
         } else {
             let (mut i, mut o) = (0.0, 0.0);
@@ -1989,6 +2140,16 @@ impl Simulation {
     /// periods and add as boundary inflows at their vertices.
     pub fn supply_routing_inflows(&mut self, text: &str) -> Result<(), String> {
         self.iface_in = Some(crate::io::iface::parse_routing_file(text, &self.net)?);
+        Ok(())
+    }
+
+    /// Supply the runoff interface file's bytes (§14.8.2); the caller owns
+    /// reading it. The surface is then not run at all: the file replays
+    /// what it produced, and the hydrology clock follows the file's steps
+    /// rather than the model's wet and dry ones.
+    pub fn supply_runoff(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let ifc = crate::io::iface::parse_runoff_file(bytes, &self.net)?;
+        self.runoff_in = Some((ifc, 0));
         Ok(())
     }
 

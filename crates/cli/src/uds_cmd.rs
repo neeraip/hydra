@@ -221,6 +221,37 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         }
     }
 
+    // §14.8.2: a runoff interface file replaces the surface entirely, so a
+    // model declaring one and not receiving it would recompute the very
+    // hydrology the file exists to skip.
+    if let Some((hydra::uds::model::FileMode::Use, name)) = &iface.runoff {
+        let path = match resolve_aux_path(&args.model, name) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                emit_error(
+                    "io/interface",
+                    &format!("runoff interface file {}: {e}", path.display()),
+                    None,
+                    None,
+                );
+                return EXIT_IO;
+            }
+        };
+        if let Err(e) = sim.supply_runoff(&bytes) {
+            emit_error(
+                "input/interface",
+                &format!("runoff interface file {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_INPUT;
+        }
+    }
+
     // §14.8.1: an RDII interface file replaces the convolution, so a model
     // declaring one and not receiving it would compute a hydrograph the
     // modeller asked to reuse instead. Either encoding, so bytes.

@@ -371,12 +371,9 @@ A runoff interface file replays a hydrology run so its routing can be redone
 without recomputing the surface. It is the heavier of the two savings an
 interface file offers, and the narrower: it replays *results*, not state.
 
-**Deferred** (charter §1.8): this section defines the format and the run's
-behaviour, and neither is implemented yet. `USE` refuses the model with the
-file named and `SAVE` opens and reports the file as not written, as §14.8
-says for a deferred format. Specifying it first is the order the workflow
-requires; a section absent from the specification would be unspecified
-behaviour rather than deferred behaviour.
+Reading (`USE`) is served. Writing (`SAVE`) is deferred: a model asking for
+one opens and is told the file will not appear, as §14.8 says for a deferred
+format.
 
 **Layout.** The stamp `SWMM5-RUNOFF`, then four signed 32-bit values: the
 parcel count, the constituent count, the writing model's flow unit as the
@@ -415,6 +412,19 @@ agreeing is the whole of the check available.
 >
 > *Source: `runoff.c:379–383` — `nSubcatch`, `nPollut` and `flowUnits`
 > compared, and nothing else.*
+
+**Balances.** A replayed run reports no surface or subsurface balance
+(§11.1). The file carries the flows those compartments produced, not the
+rainfall, storage and losses a balance is made of, and a balance built from
+untouched accumulators would read as a compartment conserving perfectly
+while never having run. The network balance is unaffected, since the
+replayed flows reach it as any other lateral would.
+
+**Running past the file.** A file covering less of the clock than the run
+asks for is not an error: it is said once, and the surface contributes
+nothing from there on. Refusing at that point would discard a run already
+mostly done, and continuing in silence would lose the surface part way
+through without saying so.
 
 **Antecedent state.** A run reading one begins with cold antecedent state:
 the file carries what the surface produced, not the moisture, depression
