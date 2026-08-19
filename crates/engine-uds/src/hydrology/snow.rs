@@ -460,3 +460,151 @@ fn route_melt(s: &mut SurfaceState, smelt: f64, asc: f64, rainfall: f64, dt: f64
     s.fw -= excess;
     excess / dt
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl SurfaceState {
+    /// Write this state (§12.3).
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let SurfaceState {
+            dh_min,
+            dh_max,
+            t_base,
+            fw_frac,
+            si,
+            wsnow,
+            fw,
+            coldc,
+            ati,
+            awe,
+            sba,
+            sbws,
+            imelt,
+        } = self;
+        put_f(w, *dh_min)?;
+        put_f(w, *dh_max)?;
+        put_f(w, *t_base)?;
+        put_f(w, *fw_frac)?;
+        put_b(w, si.is_some())?;
+        put_f(w, si.unwrap_or(0.0))?;
+        put_f(w, *wsnow)?;
+        put_f(w, *fw)?;
+        put_f(w, *coldc)?;
+        put_f(w, *ati)?;
+        put_f(w, *awe)?;
+        put_f(w, *sba)?;
+        put_f(w, *sbws)?;
+        put_f(w, *imelt)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.dh_min = r.f()?;
+        self.dh_max = r.f()?;
+        self.t_base = r.f()?;
+        self.fw_frac = r.f()?;
+        let has = r.b()?;
+        let v = r.f()?;
+        self.si = has.then_some(v);
+        self.wsnow = r.f()?;
+        self.fw = r.f()?;
+        self.coldc = r.f()?;
+        self.ati = r.f()?;
+        self.awe = r.f()?;
+        self.sba = r.f()?;
+        self.sbws = r.f()?;
+        self.imelt = r.f()?;
+        Ok(())
+    }
+}
+
+impl SnowPack {
+    /// Write a pack's state (§12.3).
+    ///
+    /// The three surfaces are written by presence: which of them a parcel
+    /// has is the model's, so a checkpoint carrying a surface this model
+    /// has no slot for is a checkpoint of another model.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_u};
+        let SnowPack {
+            surfaces,
+            f_area,
+            removal,
+            transfer_out,
+            exported,
+        } = self;
+        for slot in surfaces {
+            put_b(w, slot.is_some())?;
+            if let Some(s) = slot {
+                s.checkpoint_put(w)?;
+            }
+        }
+        for v in f_area {
+            put_f(w, *v)?;
+        }
+        put_b(w, removal.is_some())?;
+        if let Some((frac, shares, target)) = removal {
+            put_f(w, *frac)?;
+            for v in shares {
+                put_f(w, *v)?;
+            }
+            put_b(w, target.is_some())?;
+            put_u(w, target.unwrap_or(0) as u64)?;
+        }
+        put_u(w, transfer_out.len() as u64)?;
+        for (pi, v) in transfer_out {
+            put_u(w, *pi as u64)?;
+            put_f(w, *v)?;
+        }
+        put_f(w, *exported)
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        for slot in &mut self.surfaces {
+            if r.b()? {
+                match slot {
+                    Some(s) => s.checkpoint_get(r)?,
+                    None => return Err("checkpoint holds a snow surface this model has not".into()),
+                }
+            } else if slot.is_some() {
+                return Err("this model has a snow surface the checkpoint has not".into());
+            }
+        }
+        for i in 0..3 {
+            self.f_area[i] = r.f()?;
+        }
+        self.removal = if r.b()? {
+            let frac = r.f()?;
+            let mut shares = [0.0; 5];
+            for v in &mut shares {
+                *v = r.f()?;
+            }
+            let has = r.b()?;
+            let target = r.u()? as usize;
+            Some((frac, shares, has.then_some(target)))
+        } else {
+            None
+        };
+        let n = r.u()? as usize;
+        self.transfer_out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let pi = r.u()? as usize;
+            self.transfer_out.push((pi, r.f()?));
+        }
+        self.exported = r.f()?;
+        Ok(())
+    }
+}

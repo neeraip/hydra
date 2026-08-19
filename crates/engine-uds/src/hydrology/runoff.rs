@@ -1070,3 +1070,352 @@ impl Surface {
             .map_or((0.0, 0.0), |p| (p.infil_rate, p.evap_rate))
     }
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl Subarea {
+    /// Write this state (§12.3). Every field is written, roughness and depression storage among them: a monthly pattern moves them during a run (§3.1), so the model no longer knows what they were.
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let Subarea {
+            area,
+            alpha,
+            dstore,
+            depth,
+        } = self;
+        put_f(w, *area)?;
+        put_f(w, *alpha)?;
+        put_f(w, *dstore)?;
+        put_f(w, *depth)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.area = r.f()?;
+        self.alpha = r.f()?;
+        self.dstore = r.f()?;
+        self.depth = r.f()?;
+        Ok(())
+    }
+}
+
+impl QStep {
+    /// Write this state (§12.3).
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let QStep {
+            rain_rate,
+            rain_vol,
+            lid_rain_vol,
+            v_inflow,
+            runon_vol,
+            v_infil,
+            v_outflow,
+            v_out2,
+            v_vertex_drains,
+            ponded_end,
+            runoff_rate,
+            snow_cover,
+            snow_depth,
+            dt,
+        } = self;
+        put_f(w, *rain_rate)?;
+        put_f(w, *rain_vol)?;
+        put_f(w, *lid_rain_vol)?;
+        put_f(w, *v_inflow)?;
+        put_f(w, *runon_vol)?;
+        put_f(w, *v_infil)?;
+        put_f(w, *v_outflow)?;
+        put_f(w, *v_out2)?;
+        put_f(w, *v_vertex_drains)?;
+        put_f(w, *ponded_end)?;
+        put_f(w, *runoff_rate)?;
+        put_b(w, *snow_cover)?;
+        put_f(w, *snow_depth)?;
+        put_f(w, *dt)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.rain_rate = r.f()?;
+        self.rain_vol = r.f()?;
+        self.lid_rain_vol = r.f()?;
+        self.v_inflow = r.f()?;
+        self.runon_vol = r.f()?;
+        self.v_infil = r.f()?;
+        self.v_outflow = r.f()?;
+        self.v_out2 = r.f()?;
+        self.v_vertex_drains = r.f()?;
+        self.ponded_end = r.f()?;
+        self.runoff_rate = r.f()?;
+        self.snow_cover = r.b()?;
+        self.snow_depth = r.f()?;
+        self.dt = r.f()?;
+        Ok(())
+    }
+}
+
+impl ParcelTotals {
+    /// Write this state (§12.3).
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let ParcelTotals {
+            precip,
+            runon,
+            evap,
+            infil,
+            runoff,
+            peak_runoff,
+            imperv_runoff,
+            perv_runoff,
+        } = self;
+        put_f(w, *precip)?;
+        put_f(w, *runon)?;
+        put_f(w, *evap)?;
+        put_f(w, *infil)?;
+        put_f(w, *runoff)?;
+        put_f(w, *peak_runoff)?;
+        put_f(w, *imperv_runoff)?;
+        put_f(w, *perv_runoff)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.precip = r.f()?;
+        self.runon = r.f()?;
+        self.evap = r.f()?;
+        self.infil = r.f()?;
+        self.runoff = r.f()?;
+        self.peak_runoff = r.f()?;
+        self.imperv_runoff = r.f()?;
+        self.perv_runoff = r.f()?;
+        Ok(())
+    }
+}
+
+impl ParcelState {
+    /// Write one parcel's state (§12.3).
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let ParcelState {
+            // Parameters: the model builds these and they do not move.
+            gage: _,
+            outlet: _,
+            n_perv_pattern: _,
+            dstore_pattern: _,
+            infil_pattern: _,
+            routing: _,
+            frac_routed: _,
+            // State.
+            sub,
+            infil,
+            snow,
+            lids,
+            lid_vertex_drain,
+            lid_drain_removal,
+            runon,
+            runon_next_vol,
+            to_perv_next_vol,
+            to_perv_vol,
+            runon_vol,
+            runoff,
+            infil_rate,
+            evap_rate,
+            qstep,
+            totals,
+        } = self;
+        for s in sub {
+            s.checkpoint_put(w)?;
+        }
+        put_b(w, infil.is_some())?;
+        if let Some(s) = infil {
+            s.checkpoint_put(w)?;
+        }
+        put_b(w, snow.is_some())?;
+        if let Some(s) = snow {
+            s.checkpoint_put(w)?;
+        }
+        put_u(w, lids.len() as u64)?;
+        for lid in lids {
+            lid.checkpoint_put(w)?;
+        }
+        put_u(w, lid_vertex_drain.len() as u64)?;
+        for (v, q) in lid_vertex_drain {
+            put_u(w, *v as u64)?;
+            put_f(w, *q)?;
+        }
+        put_fs(w, lid_drain_removal)?;
+        for v in [
+            runon,
+            runon_next_vol,
+            to_perv_next_vol,
+            to_perv_vol,
+            runon_vol,
+            runoff,
+            infil_rate,
+            evap_rate,
+        ] {
+            put_f(w, *v)?;
+        }
+        qstep.checkpoint_put(w)?;
+        totals.checkpoint_put(w)
+    }
+
+    /// Read back what `checkpoint_put` wrote, over the parcel the model
+    /// built. A checkpoint whose parcel is shaped differently — a snow
+    /// pack, an infiltration relation or a control measure this one has
+    /// not — is refused rather than partly applied.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        for s in &mut self.sub {
+            s.checkpoint_get(r)?;
+        }
+        if r.b()? {
+            match &mut self.infil {
+                Some(s) => s.checkpoint_get(r)?,
+                None => return Err("checkpoint infiltrates a parcel this model does not".into()),
+            }
+        } else if self.infil.is_some() {
+            return Err("this model infiltrates a parcel the checkpoint does not".into());
+        }
+        if r.b()? {
+            match &mut self.snow {
+                Some(s) => s.checkpoint_get(r)?,
+                None => {
+                    return Err("checkpoint holds snow on a parcel this model has none on".into())
+                }
+            }
+        } else if self.snow.is_some() {
+            return Err("this model has snow on a parcel the checkpoint has none on".into());
+        }
+        let n = r.u()? as usize;
+        if n != self.lids.len() {
+            return Err(format!(
+                "checkpoint holds {n} control measures on a parcel this model gives {}",
+                self.lids.len()
+            ));
+        }
+        for lid in &mut self.lids {
+            lid.checkpoint_get(r)?;
+        }
+        let n = r.u()? as usize;
+        self.lid_vertex_drain = Vec::with_capacity(n);
+        for _ in 0..n {
+            let v = r.u()? as usize;
+            self.lid_vertex_drain.push((v, r.f()?));
+        }
+        self.lid_drain_removal = r.fs()?;
+        for slot in [
+            &mut self.runon,
+            &mut self.runon_next_vol,
+            &mut self.to_perv_next_vol,
+            &mut self.to_perv_vol,
+            &mut self.runon_vol,
+            &mut self.runoff,
+            &mut self.infil_rate,
+            &mut self.evap_rate,
+        ] {
+            *slot = r.f()?;
+        }
+        self.qstep.checkpoint_get(r)?;
+        self.totals.checkpoint_get(r)
+    }
+}
+
+impl Surface {
+    /// Write the whole compartment's state (§12.3).
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_u};
+        let Surface {
+            // Parameters: the gages' records and the run's start instant.
+            gages: _,
+            start_epoch: _,
+            // State.
+            parcels,
+            degraded,
+            losses,
+            rainfall,
+            evap_vol,
+            infil_vol,
+            runon_in,
+            runoff_out,
+            snow_plowed,
+            initial_storage,
+        } = self;
+        put_u(w, parcels.len() as u64)?;
+        for p in parcels {
+            p.checkpoint_put(w)?;
+        }
+        put_b(w, *degraded)?;
+        for v in [
+            losses,
+            rainfall,
+            evap_vol,
+            infil_vol,
+            runon_in,
+            runoff_out,
+            snow_plowed,
+            initial_storage,
+        ] {
+            put_f(w, *v)?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.parcels.len() {
+            return Err(format!(
+                "checkpoint holds {n} parcels where this model has {}",
+                self.parcels.len()
+            ));
+        }
+        for p in &mut self.parcels {
+            p.checkpoint_get(r)?;
+        }
+        self.degraded = r.b()?;
+        for slot in [
+            &mut self.losses,
+            &mut self.rainfall,
+            &mut self.evap_vol,
+            &mut self.infil_vol,
+            &mut self.runon_in,
+            &mut self.runoff_out,
+            &mut self.snow_plowed,
+            &mut self.initial_storage,
+        ] {
+            *slot = r.f()?;
+        }
+        Ok(())
+    }
+}

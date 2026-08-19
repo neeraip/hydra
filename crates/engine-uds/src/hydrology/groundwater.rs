@@ -491,3 +491,136 @@ fn cash_karp2(x: f64, y: f64, h: f64, f: &dyn Fn(f64, f64) -> (f64, f64)) -> (f6
     let y4 = fourth(y, k1.1, k3.1, k4.1, k5.1, k6.1);
     (x5, y5, (x5 - x4).abs().max((y5 - y4).abs()))
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl GwState {
+    /// Write this state (§12.3). Everything but the compiled expressions and the vertex it drains to, which the model rebuilds identically.
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let GwState {
+            porosity,
+            wilting,
+            field_capacity,
+            conductivity,
+            conduct_slope,
+            tension_slope,
+            upper_evap_frac,
+            lower_evap_depth,
+            lower_loss_coeff,
+            total_depth,
+            h_star,
+            h_sw_fixed,
+            a1,
+            b1,
+            a2,
+            b2,
+            a3,
+            vertex: _,
+            bottom_elev,
+            lateral_expr: _,
+            deep_expr: _,
+            area,
+            cv_len,
+            cv_rain,
+            cv_area,
+            cv_gwq,
+            lateral_warned,
+            deep_warned,
+            guard_events: _,
+            theta,
+            lower_depth,
+            flow,
+            degraded,
+            infil_in,
+            evap_out,
+            perc_out,
+            lateral_out,
+            initial_storage,
+        } = self;
+        put_f(w, *porosity)?;
+        put_f(w, *wilting)?;
+        put_f(w, *field_capacity)?;
+        put_f(w, *conductivity)?;
+        put_f(w, *conduct_slope)?;
+        put_f(w, *tension_slope)?;
+        put_f(w, *upper_evap_frac)?;
+        put_f(w, *lower_evap_depth)?;
+        put_f(w, *lower_loss_coeff)?;
+        put_f(w, *total_depth)?;
+        put_f(w, *h_star)?;
+        put_b(w, h_sw_fixed.is_some())?;
+        put_f(w, h_sw_fixed.unwrap_or(0.0))?;
+        put_f(w, *a1)?;
+        put_f(w, *b1)?;
+        put_f(w, *a2)?;
+        put_f(w, *b2)?;
+        put_f(w, *a3)?;
+        put_f(w, *bottom_elev)?;
+        put_f(w, *area)?;
+        put_f(w, *cv_len)?;
+        put_f(w, *cv_rain)?;
+        put_f(w, *cv_area)?;
+        put_f(w, *cv_gwq)?;
+        put_b(w, *lateral_warned)?;
+        put_b(w, *deep_warned)?;
+        put_f(w, *theta)?;
+        put_f(w, *lower_depth)?;
+        put_f(w, *flow)?;
+        put_b(w, *degraded)?;
+        put_f(w, *infil_in)?;
+        put_f(w, *evap_out)?;
+        put_f(w, *perc_out)?;
+        put_f(w, *lateral_out)?;
+        put_f(w, *initial_storage)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.porosity = r.f()?;
+        self.wilting = r.f()?;
+        self.field_capacity = r.f()?;
+        self.conductivity = r.f()?;
+        self.conduct_slope = r.f()?;
+        self.tension_slope = r.f()?;
+        self.upper_evap_frac = r.f()?;
+        self.lower_evap_depth = r.f()?;
+        self.lower_loss_coeff = r.f()?;
+        self.total_depth = r.f()?;
+        self.h_star = r.f()?;
+        let has = r.b()?;
+        let v = r.f()?;
+        self.h_sw_fixed = has.then_some(v);
+        self.a1 = r.f()?;
+        self.b1 = r.f()?;
+        self.a2 = r.f()?;
+        self.b2 = r.f()?;
+        self.a3 = r.f()?;
+        self.bottom_elev = r.f()?;
+        self.area = r.f()?;
+        self.cv_len = r.f()?;
+        self.cv_rain = r.f()?;
+        self.cv_area = r.f()?;
+        self.cv_gwq = r.f()?;
+        self.lateral_warned = r.b()?;
+        self.deep_warned = r.b()?;
+        self.theta = r.f()?;
+        self.lower_depth = r.f()?;
+        self.flow = r.f()?;
+        self.degraded = r.b()?;
+        self.infil_in = r.f()?;
+        self.evap_out = r.f()?;
+        self.perc_out = r.f()?;
+        self.lateral_out = r.f()?;
+        self.initial_storage = r.f()?;
+        Ok(())
+    }
+}

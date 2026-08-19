@@ -749,6 +749,146 @@ fn curve_multiplier(points: &[(f64, f64)], x: f64) -> f64 {
     y1
 }
 
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl LidUnit {
+    /// Write this state (§12.3). Its geometry, its layers' properties and its drain's are the model's and are rebuilt; the water it holds, its clogging, and its drain's open state are not.
+    ///
+    /// Exhaustive by design: a field added here fails to compile until it
+    /// is written or declared a parameter the model rebuilds.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(unused_imports)]
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let LidUnit {
+            kind: _,
+            area: _,
+            from_imperv: _,
+            from_perv: _,
+            to_pervious: _,
+            drain_to: _,
+            surf_berm: _,
+            surf_void: _,
+            surf_alpha: _,
+            pave_thick: _,
+            pave_ksat: _,
+            soil_thick: _,
+            soil_por: _,
+            soil_fc: _,
+            soil_wp: _,
+            soil_ksat: _,
+            soil_kslope: _,
+            stor_thick: _,
+            stor_void: _,
+            stor_ksat: _,
+            sealed: _,
+            covered: _,
+            pave_perv_frac: _,
+            drain: _,
+            mat_thick: _,
+            mat_void: _,
+            pave_clog,
+            regen_days: _,
+            regen_degree: _,
+            stor_clog,
+            drain_curve: _,
+            head_unit: _,
+            swale: _,
+            swale_infil,
+            swale_f_old,
+            d1,
+            theta2,
+            d3,
+            drain_open,
+            drain_delay_left,
+            vol_treated,
+            total_inflow,
+            next_regen,
+            soil_ga,
+            overflow,
+            drain_flow,
+            exfiltration,
+            evap_used,
+            removals,
+            mat_alpha: _,
+            width_per_area: _,
+        } = self;
+        put_f(w, *pave_clog)?;
+        put_f(w, *stor_clog)?;
+        put_b(w, swale_infil.is_some())?;
+        if let Some(s) = swale_infil {
+            s.checkpoint_put(w)?;
+        }
+        put_f(w, *swale_f_old)?;
+        put_f(w, *d1)?;
+        put_f(w, *theta2)?;
+        put_f(w, *d3)?;
+        put_b(w, *drain_open)?;
+        put_f(w, *drain_delay_left)?;
+        put_f(w, *vol_treated)?;
+        put_f(w, *total_inflow)?;
+        put_f(w, *next_regen)?;
+        put_b(w, soil_ga.is_some())?;
+        if let Some(s) = soil_ga {
+            s.checkpoint_put(w)?;
+        }
+        put_f(w, *overflow)?;
+        put_f(w, *drain_flow)?;
+        put_f(w, *exfiltration)?;
+        put_f(w, *evap_used)?;
+        put_u(w, removals.len() as u64)?;
+        for (i, v) in removals {
+            put_u(w, *i as u64)?;
+            put_f(w, *v)?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.pave_clog = r.f()?;
+        self.stor_clog = r.f()?;
+        if r.b()? {
+            match &mut self.swale_infil {
+                Some(s) => s.checkpoint_get(r)?,
+                None => return Err("checkpoint infiltrates where this model does not".into()),
+            }
+        } else if self.swale_infil.is_some() {
+            return Err("this model infiltrates where the checkpoint does not".into());
+        }
+        self.swale_f_old = r.f()?;
+        self.d1 = r.f()?;
+        self.theta2 = r.f()?;
+        self.d3 = r.f()?;
+        self.drain_open = r.b()?;
+        self.drain_delay_left = r.f()?;
+        self.vol_treated = r.f()?;
+        self.total_inflow = r.f()?;
+        self.next_regen = r.f()?;
+        if r.b()? {
+            match &mut self.soil_ga {
+                Some(s) => s.checkpoint_get(r)?,
+                None => return Err("checkpoint infiltrates where this model does not".into()),
+            }
+        } else if self.soil_ga.is_some() {
+            return Err("this model infiltrates where the checkpoint does not".into());
+        }
+        self.overflow = r.f()?;
+        self.drain_flow = r.f()?;
+        self.exfiltration = r.f()?;
+        self.evap_used = r.f()?;
+        let n = r.u()? as usize;
+        self.removals = Vec::with_capacity(n);
+        for _ in 0..n {
+            let i = r.u()? as usize;
+            self.removals.push((i, r.f()?));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2352,6 +2352,16 @@ impl Simulation {
             cp::put_u(w, notice.message.len() as u64).map_err(io)?;
             w.write_all(notice.message.as_bytes()).map_err(io)?;
         }
+        // The surface compartment and the aquifers beneath it (§12.3).
+        cp::put_b(w, self.surface.is_some()).map_err(io)?;
+        if let Some(surface) = &self.surface {
+            surface.checkpoint_put(w).map_err(io)?;
+        }
+        cp::put_u(w, self.aquifers.len() as u64).map_err(io)?;
+        for (parcel, gw) in &self.aquifers {
+            cp::put_u(w, *parcel as u64).map_err(io)?;
+            gw.checkpoint_put(w).map_err(io)?;
+        }
         self.router.checkpoint_put(w).map_err(io)?;
         Ok(())
     }
@@ -2454,6 +2464,28 @@ impl Simulation {
                 message: r.text()?,
             });
         }
+        if r.b()? {
+            match &mut self.surface {
+                Some(surface) => surface.checkpoint_get(&mut r)?,
+                None => return Err("checkpoint holds a surface this model has not".into()),
+            }
+        } else if self.surface.is_some() {
+            return Err("this model has a surface the checkpoint has not".into());
+        }
+        let n = r.u()? as usize;
+        if n != self.aquifers.len() {
+            return Err(format!(
+                "checkpoint holds {n} aquifers where this model has {}",
+                self.aquifers.len()
+            ));
+        }
+        for (parcel, gw) in &mut self.aquifers {
+            let at = r.u()? as usize;
+            if at != *parcel {
+                return Err("checkpoint puts an aquifer under a different parcel".into());
+            }
+            gw.checkpoint_get(&mut r)?;
+        }
         self.router.checkpoint_get(&mut r)?;
         // Bytes left over mean a layout this build does not share, which
         // the version alone did not catch.
@@ -2503,9 +2535,6 @@ impl Simulation {
                  refused rather than restored from a default (§12.3)"
             ))
         };
-        if self.surface.is_some() {
-            return unmet("surface state");
-        }
         if !self.net.constituents.is_empty() {
             return unmet("constituent state");
         }

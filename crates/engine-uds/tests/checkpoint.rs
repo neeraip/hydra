@@ -1,6 +1,15 @@
 //! §12.3: a run restored from a checkpoint continues bit-identically to
 //! one that was never interrupted.
 //!
+//! **What is written but not covered here**, established by deleting each
+//! on restore and finding every test still green. The router's mid-step
+//! flow areas and quiet-period streak, and a parcel's run-on rate, its
+//! return-to-pervious volume in flight, its current runoff and its quality
+//! context. Each is plausibly recomputed before it is next read, which
+//! would make it derived rather than state; none of that is established,
+//! so all are written, and this list is what a reader should not mistake
+//! for coverage.
+//!
 //! That property is the contract, and it is the only thing that can
 //! establish it: an omitted state does not fail, it continues from a
 //! default and produces plausible results. Each test here therefore also
@@ -188,26 +197,14 @@ fn a_reordered_model_is_refused() {
 /// A model whose state is not yet carried is refused by name.
 #[test]
 fn a_model_whose_state_is_not_carried_is_refused() {
-    let with_parcel = MODEL.replace(
+    let with_quality = MODEL.replace(
         "[JUNCTIONS]",
-        "[RAINGAGES]
-G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
-
-[SUBCATCHMENTS]
-S9  G1  J1  10  50  500  0.01  0
-
-[SUBAREAS]
-S9  0.01  0.10  0.05  0.05  25  OUTLET
-
-[INFILTRATION]
-S9  3.0  0.5  4  7  0
-
-[JUNCTIONS]",
+        "[POLLUTANTS]\nTSS  MG/L  10  0  0  0.1\n\n[JUNCTIONS]",
     );
-    let (sim, _, _) = Simulation::open(&with_parcel).expect("open");
+    let (sim, _, _) = Simulation::open(&with_quality).expect("open");
     let mut cp = Vec::new();
-    let err = sim.save_checkpoint(&mut cp).expect_err("surface state");
-    assert!(err.contains("surface state"), "{err}");
+    let err = sim.save_checkpoint(&mut cp).expect_err("constituent state");
+    assert!(err.contains("constituent state"), "{err}");
     assert!(cp.is_empty(), "nothing may be written when it is refused");
 }
 
@@ -313,5 +310,250 @@ fn a_run_restored_before_reporting_opens_still_opens_it_on_time() {
         String::from_utf8_lossy(&want.report),
         String::from_utf8_lossy(&got.report),
         "the report diverged"
+    );
+}
+
+// ── Surface state ───────────────────────────────────────────────────────
+
+/// A parcel model: rain for the first half hour, then a dry recession, so
+/// a checkpoint mid-storm carries ponded depth, infiltration state and a
+/// hydrograph still on its way down the network.
+fn parcel_model(extra: &str, options: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS           CMS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         00:00:15
+REPORT_STEP          00:05:00
+{options}
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+P1  G1  J1  10  40  500  0.01  0
+P2  G1  J1  6   70  400  0.02  0
+
+[SUBAREAS]
+P1  0.01  0.10  0.05  0.05  25  OUTLET
+P2  0.01  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+P1  3.0  0.5  4  7  0
+P2  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  0:30  0.0
+{extra}
+
+[REPORT]
+"
+    )
+}
+
+/// Run the model whole, and again across a checkpoint partway through.
+/// Every output surface must agree.
+///
+/// The instant is a fraction of the run the model actually performs, not
+/// a number of seconds: a fixture's own clock is its business, and an
+/// absolute instant past its end silently becomes a checkpoint at the end,
+/// which proves nothing.
+fn restores_identically(model: &str, fraction: f64) {
+    let (mut whole, diags, _) = Simulation::open(model).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    whole.run();
+    let want = every_output(&whole);
+    // Measured in reporting instants passed, not seconds: a fixture's own
+    // clock is its business, and the routing report's elapsed time is zero
+    // for a model that does not route at all.
+    let target = ((whole.snapshots.len() as f64 * fraction) as usize).max(1);
+    assert!(
+        whole.snapshots.len() > target,
+        "the run has {} reporting instants, too few to checkpoint inside",
+        whole.snapshots.len()
+    );
+
+    let (mut first, _, _) = Simulation::open(model).expect("open");
+    while first.snapshots.len() < target {
+        assert!(first.step(), "the run ended before the checkpoint instant");
+    }
+    let mut cp = Vec::new();
+    first.save_checkpoint(&mut cp).expect("checkpoint");
+
+    let (mut second, _, _) = Simulation::open(model).expect("open");
+    second.load_checkpoint(&cp).expect("restore");
+    second.run();
+    let got = every_output(&second);
+
+    assert!(want.results == got.results, "the results file diverged");
+    assert_eq!(
+        String::from_utf8_lossy(&want.report),
+        String::from_utf8_lossy(&got.report),
+        "the report diverged"
+    );
+    assert_eq!(want.ledgers, got.ledgers, "the ledgers diverged");
+    assert_eq!(want.notices, got.notices, "the notices diverged");
+}
+
+/// The surface, checkpointed mid-storm: ponded depths and the Horton
+/// curve's position are both moving.
+#[test]
+fn a_restored_surface_continues_bit_identically() {
+    restores_identically(&parcel_model("", ""), 0.125);
+}
+
+/// And in the recession, where the infiltration relation is regenerating
+/// rather than depleting, which is the other half of its state.
+#[test]
+fn a_restored_surface_continues_through_the_recession() {
+    restores_identically(&parcel_model("", ""), 0.42);
+}
+
+/// The checkpoint instants above must be ones where the surface holds
+/// something, or the two tests prove nothing.
+#[test]
+fn the_surface_checkpoint_instants_are_not_dry() {
+    for at in [900.0, 3_000.0] {
+        let (mut sim, _, _) = Simulation::open(&parcel_model("", "")).expect("open");
+        while sim.report().elapsed < at {
+            assert!(sim.step(), "the run ended early");
+        }
+        let led = sim.ledgers();
+        let surface = led.surface.expect("a surface ledger");
+        assert!(surface.inflow > 0.0, "at {at}s no rain had fallen");
+        assert!(
+            led.network.inflow > 0.0,
+            "at {at}s nothing had reached the network"
+        );
+    }
+}
+
+/// The fixtures that pin snow and groundwater behaviour, checkpointed
+/// mid-run. Reusing them rather than hand-building a model is the point:
+/// the first hand-built snow model here had no snow lying at the
+/// checkpoint instant, so it was a property test over an empty pack and
+/// said so only once something asserted otherwise.
+fn fixture(name: &str) -> String {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/uds")
+        .join(name);
+    let text = std::fs::read_to_string(path).expect("fixture readable");
+    // The fixtures pin parse and build behaviour and mostly declare no
+    // clock, so one is appended here exactly as the results-file tests do.
+    format!(
+        "{text}\n[OPTIONS]\nSTART_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+         END_DATE 01/01/2024\nEND_TIME 02:00:00\nREPORT_STEP 00:05:00\n\
+         [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n"
+    )
+}
+
+/// Groundwater: the aquifer's moisture and water table are state the
+/// surface does not hold.
+#[test]
+fn a_restored_aquifer_continues_bit_identically() {
+    restores_identically(&fixture("groundwater_lateral_flow.inp"), 0.4);
+}
+
+// Snow state is written by `SnowPack::checkpoint_put` and has no
+// property test, which is a gap rather than an oversight. The test that
+// was here ran `snowmelt_pack.inp` under a clock this harness appends,
+// and under that clock the fixture lies no snow at all: it was a property
+// test over an empty pack, and it passed. The guard below is what said
+// so. Covering it needs a model that holds snow while a checkpoint is
+// taken, and none of the fixtures does under a substituted clock.
+
+/// Control measures: each layer's water and the drain's open state.
+#[test]
+fn a_restored_control_measure_continues_bit_identically() {
+    restores_identically(&fixture("lid_bioretention_underdrain.inp"), 0.4);
+}
+
+/// Both fixtures must hold their own state at the checkpoint instant, or
+/// the three tests above are property tests over nothing.
+#[test]
+fn the_fixture_instants_hold_their_state() {
+    let holds =
+        |name: &str,
+         fraction: f64,
+         what: &str,
+         f: fn(&hydra_engine_uds::simulation::engine::SubcatchRecord) -> f64| {
+            let (mut whole, _, _) = Simulation::open(&fixture(name)).expect("open");
+            whole.run();
+            let target = ((whole.snapshots.len() as f64 * fraction) as usize).max(1);
+            let (mut sim, _, _) = Simulation::open(&fixture(name)).expect("open");
+            while sim.snapshots.len() < target {
+                assert!(sim.step(), "{name}: the run ended early");
+            }
+            let snap = sim.snapshots.last().expect("a reporting instant");
+            assert!(
+                snap.subcatch.iter().map(f).any(|v| v > 0.0),
+                "{name} held no {what} at instant {target}, so its checkpoint \
+             carried none"
+            );
+        };
+    holds("groundwater_lateral_flow.inp", 0.4, "soil moisture", |s| {
+        s.soil_moisture
+    });
+    holds("lid_bioretention_underdrain.inp", 0.4, "runoff", |s| {
+        s.runoff
+    });
+}
+
+/// A parcel draining onto another parcel, which is the only shape that
+/// puts the run-on carried between steps into play.
+///
+/// Without it, zeroing `runon_next_vol` on restore passed every test
+/// here: the two parcels above both drain to the network, so nothing was
+/// ever in flight between them at the checkpoint instant.
+#[test]
+fn a_restored_cascade_continues_bit_identically() {
+    let cascade = parcel_model("", "").replace(
+        "P1  G1  J1  10  40  500  0.01  0",
+        "P1  G1  P2  10  40  500  0.01  0",
+    );
+    assert!(cascade.contains("P1  G1  P2"), "the fixture must cascade");
+    restores_identically(&cascade, 0.25);
+}
+
+/// And the cascade must actually be carrying water when the checkpoint
+/// is taken.
+#[test]
+fn the_cascade_instant_has_run_on_in_flight() {
+    let cascade = parcel_model("", "").replace(
+        "P1  G1  J1  10  40  500  0.01  0",
+        "P1  G1  P2  10  40  500  0.01  0",
+    );
+    let (mut whole, _, _) = Simulation::open(&cascade).expect("open");
+    whole.run();
+    let target = ((whole.snapshots.len() as f64 * 0.25) as usize).max(1);
+    let (mut sim, _, _) = Simulation::open(&cascade).expect("open");
+    while sim.snapshots.len() < target {
+        assert!(sim.step(), "the run ended early");
+    }
+    let snap = sim.snapshots.last().expect("a reporting instant");
+    assert!(
+        snap.subcatch[0].runoff > 0.0,
+        "the upper parcel was not shedding, so nothing was in flight"
     );
 }
