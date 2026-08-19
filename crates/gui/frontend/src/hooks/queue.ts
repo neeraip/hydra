@@ -23,8 +23,6 @@ export interface RunQueueItem {
   status: string;
   /** This item continues an interrupted run rather than starting one. */
   resume: boolean;
-  /** This target has an interrupted run that can be continued. */
-  resumable: boolean;
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -75,27 +73,16 @@ export async function resumeRun(
 
 /** Which of a project's targets have an interrupted run to continue.
  *
- *  Derived from the queue rather than asked for separately, because a
- *  checkpoint only exists where a run of this session was cancelled, and
- *  the queue is where that is recorded. `null` in the returned set is the
- *  base model, matching `targetId`.
+ *  Asked of the backend rather than derived from the queue: a checkpoint
+ *  is on disk and outlives the application, while the queue is this
+ *  session's history and is empty after a restart. `null` is the base
+ *  model, matching `targetId` everywhere else.
  *
- *  A target that was cancelled and then run again to completion is not
- *  resumable: the later item carries `resumable: false`, and the newest
- *  item for a target is the one that decides. */
-export function resumableTargets(items: RunQueueItem[]): Set<string | null> {
-  const newest = new Map<string | null, RunQueueItem>();
-  for (const item of items) {
-    const seen = newest.get(item.targetId);
-    if (!seen || item.queuedAt >= seen.queuedAt) {
-      newest.set(item.targetId, item);
-    }
-  }
-  const out = new Set<string | null>();
-  for (const [targetId, item] of newest) {
-    if (item.resumable) out.add(targetId);
-  }
-  return out;
+ *  Returns nothing outside a Tauri shell, where there is no disk to ask. */
+export async function resumableTargets(
+  projectId: string,
+): Promise<(string | null)[]> {
+  return tryInvokeOr<(string | null)[]>("resumable_targets", { projectId }, []);
 }
 
 /** Subscribe to `run_queue_update` events from the backend.

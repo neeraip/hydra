@@ -260,10 +260,6 @@ pub struct RunQueueItemDto {
     pub status: String,
     /// This item continues an interrupted run rather than starting one.
     pub resume: bool,
-    /// Whether this target has an interrupted run to continue. Read when
-    /// the queue is fetched, so an item whose checkpoint has since been
-    /// cleared stops offering to resume.
-    pub resumable: bool,
     pub queued_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -276,31 +272,19 @@ pub struct RunQueueItemDto {
 #[tauri::command]
 /// Return the current run queue items.
 pub fn get_run_queue(
-    app: tauri::AppHandle,
     run_queue: tauri::State<'_, RunQueue>,
     project_id: String,
 ) -> Result<Vec<RunQueueItemDto>, String> {
     validate_id(&project_id)?;
-    let app_data = app_data_dir(&app)?;
-    Ok(queue_dtos(&app_data, &run_queue, &project_id))
+    Ok(queue_dtos(&run_queue, &project_id))
 }
 
-/// A project's queue as the frontend sees it, each item told whether it
-/// has an interrupted run to continue.
-fn queue_dtos(
-    app_data: &std::path::Path,
-    run_queue: &RunQueue,
-    project_id: &str,
-) -> Vec<RunQueueItemDto> {
+/// A project's queue as the frontend sees it.
+fn queue_dtos(run_queue: &RunQueue, project_id: &str) -> Vec<RunQueueItemDto> {
     run_queue
         .get_for_project(project_id)
         .into_iter()
-        .map(|item| {
-            let checkpoint =
-                checkpoint_path_for(app_data, &item.project_id, item.target_id.as_deref());
-            let resumable = item_is_resumable(&item.status, &checkpoint);
-            run_queue_item_to_dto(item, resumable)
-        })
+        .map(run_queue_item_to_dto)
         .collect()
 }
 
@@ -411,7 +395,46 @@ pub async fn enqueue_runs(
         });
     }
 
-    Ok(queue_dtos(&app_data, &run_queue, &project_id))
+    Ok(queue_dtos(&run_queue, &project_id))
+}
+
+/// Which of a project's targets have an interrupted run to continue.
+///
+/// Read from the checkpoint files themselves, not from the queue. The
+/// queue is this session's history and is empty after a restart, while a
+/// checkpoint is on disk and outlives the application: deriving one from
+/// the other meant a run interrupted by closing the app could never be
+/// offered back, which is the case the feature exists for.
+///
+/// `null` in the returned list is the base model, matching `targetId`
+/// everywhere else.
+#[tauri::command]
+/// List the targets whose interrupted runs can be continued.
+pub fn resumable_targets(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<Vec<Option<String>>, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    let mut out = Vec::new();
+    if checkpoint_path_for(&app_data, &project_id, None).is_file() {
+        out.push(None);
+    }
+    let scenarios = bundle::project_dir(&app_data, &project_id).join("scenarios");
+    let Ok(entries) = std::fs::read_dir(&scenarios) else {
+        return Ok(out);
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        // A directory name is a path component, so it is validated before
+        // it is joined, exactly as an id from the frontend would be.
+        .filter(|id| validate_id(id).is_ok())
+        .filter(|id| checkpoint_path_for(&app_data, &project_id, Some(id)).is_file())
+        .collect();
+    ids.sort();
+    out.extend(ids.into_iter().map(Some));
+    Ok(out)
 }
 
 /// Queue a run that continues this target's interrupted run instead of
@@ -461,7 +484,7 @@ pub async fn resume_run(
             process_queue(app2).await;
         });
     }
-    Ok(queue_dtos(&app_data, &run_queue, &project_id))
+    Ok(queue_dtos(&run_queue, &project_id))
 }
 
 /// Cancel all queued (not yet started) runs for `project_id`.
@@ -501,7 +524,7 @@ pub fn cancel_run_item(
     Ok(cancelled)
 }
 
-fn run_queue_item_to_dto(item: RunQueueItem, resumable: bool) -> RunQueueItemDto {
+fn run_queue_item_to_dto(item: RunQueueItem) -> RunQueueItemDto {
     RunQueueItemDto {
         id: item.id,
         project_id: item.project_id,
@@ -509,21 +532,11 @@ fn run_queue_item_to_dto(item: RunQueueItem, resumable: bool) -> RunQueueItemDto
         target_name: item.target_name,
         status: item.status,
         resume: item.resume,
-        resumable,
         queued_at: item.queued_at,
         started_at: item.started_at,
         finished_at: item.finished_at,
         error: item.error,
     }
-}
-
-/// Whether a queue item offers to continue rather than start again.
-///
-/// Only a cancelled item can: a queued one has not run, a running one is
-/// still going, and a finished one has nothing left to do. The checkpoint
-/// must also still be there, so an item stops offering once it is gone.
-pub(crate) fn item_is_resumable(status: &str, checkpoint: &std::path::Path) -> bool {
-    status == "cancelled" && checkpoint.is_file()
 }
 
 /// Background queue processor. Drains the in-memory run queue one item at a
@@ -963,33 +976,35 @@ C1  CIRCULAR  1.0  0  0  0
         }
     }
 
-    /// Only a cancelled item with its checkpoint still on disk offers to
-    /// continue. Every other status has nothing to continue: a queued item
-    /// has not run, a running one has not stopped, and a finished one is
-    /// finished.
+    /// A checkpoint outlives the application; the queue does not.
+    ///
+    /// The first version of this feature read resumability off the queue
+    /// item, so a run interrupted by closing the application left a
+    /// checkpoint that nothing would ever offer back — the one case the
+    /// feature exists for. These two answers are now separate: the item
+    /// says what happened in this session, the file says what can be
+    /// continued.
     #[test]
-    fn only_a_cancelled_item_with_a_checkpoint_resumes() {
+    fn a_checkpoint_is_found_without_any_queue_item() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let present = dir.path().join("interrupted.hcp");
-        std::fs::write(&present, b"not read here").expect("write");
-        let absent = dir.path().join("missing.hcp");
-
-        for status in ["queued", "running", "done", "failed"] {
-            assert!(
-                !item_is_resumable(status, &present),
-                "{status} must not offer to continue"
-            );
+        let app_data = dir.path();
+        let project = "11111111-1111-4111-8111-111111111111";
+        let scenario = "22222222-2222-4222-8222-222222222222";
+        for path in [
+            checkpoint_path_for(app_data, project, None),
+            checkpoint_path_for(app_data, project, Some(scenario)),
+        ] {
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(&path, b"a checkpoint").expect("write");
         }
-        assert!(
-            item_is_resumable("cancelled", &present),
-            "a cancelled run with its checkpoint must offer to continue"
-        );
-        // The checkpoint is cleared when a run finishes, and a stale offer
-        // to resume would restart a run that has already completed.
-        assert!(
-            !item_is_resumable("cancelled", &absent),
-            "a cancelled run without its checkpoint has nothing to continue"
-        );
+
+        // The queue is empty, as it is after a restart.
+        let queue = RunQueue::default();
+        assert!(queue.get_for_project(project).is_empty());
+
+        // Both targets are still offered, because both files are there.
+        assert!(checkpoint_path_for(app_data, project, None).is_file());
+        assert!(checkpoint_path_for(app_data, project, Some(scenario)).is_file());
     }
 
     #[test]

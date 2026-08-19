@@ -150,6 +150,7 @@ fn main() {
             commands::cancel_run_queue,
             commands::cancel_run_item,
             commands::resume_run,
+            commands::resumable_targets,
             commands::get_sim_params,
             commands::get_sim_summary_pairs,
             commands::get_uds_sim_params,
