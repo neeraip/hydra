@@ -9,7 +9,7 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use hydra::uds::io::climate::parse_climate_file;
+use hydra::uds::io::climate::parse_any_climate_file;
 use hydra::uds::io::objects::parse_network;
 use hydra::uds::model::TemperatureSource;
 use hydra::uds::simulation::engine::{OpenError, Simulation};
@@ -48,7 +48,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     let (net, _) = parse_network(&text);
 
     let climate_records = match &net.climate.temperature {
-        Some(TemperatureSource::File { name, .. }) => {
+        Some(TemperatureSource::File { name, units, .. }) => {
             let path = match resolve_aux_path(&args.model, name) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -65,8 +65,19 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
                     return EXIT_IO;
                 }
             };
-            match parse_climate_file(&climate_text) {
-                Ok(records) => records,
+            match parse_any_climate_file(&climate_text, net.options.flow_units.is_us(), *units) {
+                Ok((records, notices)) => {
+                    // §14.14: a units word that governs nothing is said
+                    // out loud rather than silently dropped.
+                    for notice in notices {
+                        emit_warning(
+                            "input/climate",
+                            &format!("climate file {}: {notice}", path.display()),
+                            None,
+                        );
+                    }
+                    records
+                }
                 Err(e) => {
                     emit_error(
                         "input/climate",

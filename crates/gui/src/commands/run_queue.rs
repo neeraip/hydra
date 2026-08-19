@@ -602,9 +602,16 @@ pub(crate) fn open_uds_with_aux(
     };
 
     let climate_records = match &net.climate.temperature {
-        Some(TemperatureSource::File { name, .. }) => match aux_text(name) {
-            Some(text) => hydra::uds::io::climate::parse_climate_file(&text)
-                .map_err(|e| format!("climate file {name:?}: {e}"))?,
+        Some(TemperatureSource::File { name, units, .. }) => match aux_text(name) {
+            Some(text) => {
+                hydra::uds::io::climate::parse_any_climate_file(
+                    &text,
+                    net.options.flow_units.is_us(),
+                    *units,
+                )
+                .map_err(|e| format!("climate file {name:?}: {e}"))?
+                .0
+            }
             None => Vec::new(),
         },
         _ => Vec::new(),

@@ -454,7 +454,7 @@ fn open_uds(
     pending: &mut Vec<Diagnostic>,
     hotstart: &mut Option<Hotstart>,
 ) -> Result<EngineSession, Failure> {
-    use hydra::uds::io::climate::parse_climate_file;
+    use hydra::uds::io::climate::parse_any_climate_file;
     use hydra::uds::io::objects::parse_network;
     use hydra::uds::model::TemperatureSource;
     use hydra::uds::simulation::engine::{OpenError, Simulation as UdsSimulation};
@@ -467,13 +467,17 @@ fn open_uds(
     let (net, _) = parse_network(&text);
 
     let climate = match &net.climate.temperature {
-        Some(TemperatureSource::File { name, .. }) => match aux.get_text(name) {
-            Some(text) => parse_climate_file(&text).map_err(|e| {
-                Failure::one(
-                    EXIT_INPUT,
-                    Diagnostic::error("input/parse", format!("climate file {name:?}: {e}")),
-                )
-            })?,
+        Some(TemperatureSource::File { name, units, .. }) => match aux.get_text(name) {
+            Some(text) => {
+                parse_any_climate_file(&text, net.options.flow_units.is_us(), *units)
+                    .map_err(|e| {
+                        Failure::one(
+                            EXIT_INPUT,
+                            Diagnostic::error("input/parse", format!("climate file {name:?}: {e}")),
+                        )
+                    })?
+                    .0
+            }
             None => {
                 // Not fatal, but it changes the answer, so it is said
                 // loudly rather than run past.

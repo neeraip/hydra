@@ -1200,8 +1200,8 @@ than silently ignored.
 > for the whole simulation. A misaligned file is therefore indistinguishable
 > from a working one by looking at the results, which is the same class of
 > defect as a rain file read as dry. This engine refuses a climate file
-> that is recognised as a layout and yields no readings for a month it was
-> asked for, naming the file and the layout it was read as.
+> that is recognised as a layout and yields no readings at all, naming the
+> layout it was read as.
 >
 > *Source: `climate.c:climate_openFile` seeding `FileValue[TMIN]` and
 > `[TMAX]` from `Temp.ta`, `project.c:915` setting that to 70.0, and
