@@ -456,11 +456,26 @@ refuses both.
 > *Source: `hotstart.c:20–25`, and `openHotstartFile2` which compares five
 > counts and `UnitSystem`.*
 
-**A capability not yet covered is refused by name.** A checkpoint of a model
-using a feature whose state this engine does not yet persist would restore
-that feature from a default and continue plausibly and wrongly. Saving one
-is refused with the feature named, exactly as any other deferred capability
-is (§1.8), until its state is carried.
+**Supplied files are not in the checkpoint, and are checked against it.**
+An interface file's contents belong to the caller, who read them and handed
+them in; a checkpoint holds neither the bytes nor a copy of them, and a
+restored run must be given the same files again. What it does hold is a
+fingerprint of each, and how far into one the run had read where reading is
+sequential at all. Two of the three formats are read by looking up an
+instant rather than by advancing through the file, so for those there is no
+position to carry and the fingerprint is the whole of the check.
+
+Restoring against a file that differs is refused, and so is restoring
+against no file where the run had one, or a file where it had none. Either
+would continue a run on inflows that are not the ones it was receiving,
+which is indistinguishable from a correct run until the results are
+compared with something.
+
+**No capability is refused.** Every state this engine holds is carried. Were
+one added and not carried, a checkpoint of a model using it would restore it
+from a default and continue plausibly and wrongly, so the rule that applies
+is the ordinary one (§1.8): refuse with the capability named until its state
+travels.
 
 **Completeness is the contract, and is checked rather than asserted.** A
 state omitted from a checkpoint does not fail; it continues from a default

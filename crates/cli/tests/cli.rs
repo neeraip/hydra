@@ -567,3 +567,133 @@ fn readable_results_still_produce_a_report_with_real_sections() {
         "good results must not yield failed sections:\n{text}"
     );
 }
+
+// ── Checkpointing (uds §12.3) ───────────────────────────────────────────
+
+/// The drainage fixture with an explicit clock, so the run can be cut in
+/// half and resumed.
+fn uds_fixture(end_time: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .join("tests/fixtures/uds/runoff_interface.inp");
+    std::fs::read_to_string(path)
+        .expect("fixture readable")
+        .replace(
+            "END_TIME      03:00:00",
+            &format!("END_TIME      {end_time}"),
+        )
+}
+
+/// A run resumed from a checkpoint produces the same results file as a run
+/// that was never interrupted.
+///
+/// The engine's own tests establish this through its API. This one
+/// establishes that the CLI reaches it: the flags, the order the
+/// checkpoint is loaded in relative to the auxiliary files, and the
+/// writing of it after the run.
+#[test]
+fn a_resumed_run_matches_an_uninterrupted_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let whole_inp = dir.path().join("whole.inp");
+    let half_inp = dir.path().join("half.inp");
+    std::fs::write(&whole_inp, uds_fixture("03:00:00")).expect("write");
+    std::fs::write(&half_inp, uds_fixture("01:30:00")).expect("write");
+
+    let whole_out = dir.path().join("whole.out");
+    hydra()
+        .args(["run", whole_inp.to_str().expect("path")])
+        .args(["--results", whole_out.to_str().expect("path")])
+        .args([
+            "--summary",
+            dir.path().join("whole.rpt").to_str().expect("path"),
+        ])
+        .assert()
+        .success();
+
+    let cp = dir.path().join("run.hcp");
+    hydra()
+        .args(["run", half_inp.to_str().expect("path")])
+        .args(["--checkpoint", cp.to_str().expect("path")])
+        .args([
+            "--summary",
+            dir.path().join("half.rpt").to_str().expect("path"),
+        ])
+        .assert()
+        .success();
+    assert!(cp.exists(), "no checkpoint was written");
+
+    let resumed_out = dir.path().join("resumed.out");
+    hydra()
+        .args(["run", whole_inp.to_str().expect("path")])
+        .args(["--resume", cp.to_str().expect("path")])
+        .args(["--results", resumed_out.to_str().expect("path")])
+        .args([
+            "--summary",
+            dir.path().join("resumed.rpt").to_str().expect("path"),
+        ])
+        .assert()
+        .success();
+
+    let want = std::fs::read(&whole_out).expect("whole results");
+    let got = std::fs::read(&resumed_out).expect("resumed results");
+    assert!(!want.is_empty(), "the uninterrupted run wrote nothing");
+    assert_eq!(
+        want.len(),
+        got.len(),
+        "the two results files differ in length"
+    );
+    assert!(want == got, "the resumed run's results differ");
+}
+
+/// A checkpoint from another model is refused with a usable message and
+/// the input exit code, rather than restored onto whatever lines up.
+#[test]
+fn resuming_another_models_checkpoint_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let inp = dir.path().join("m.inp");
+    std::fs::write(&inp, uds_fixture("01:30:00")).expect("write");
+    let cp = dir.path().join("run.hcp");
+    hydra()
+        .args(["run", inp.to_str().expect("path")])
+        .args(["--checkpoint", cp.to_str().expect("path")])
+        .args([
+            "--summary",
+            dir.path().join("a.rpt").to_str().expect("path"),
+        ])
+        .assert()
+        .success();
+
+    let other = dir.path().join("other.inp");
+    std::fs::write(&other, uds_fixture("01:30:00").replace("J1", "JX")).expect("write");
+    hydra()
+        .args(["run", other.to_str().expect("path")])
+        .args(["--resume", cp.to_str().expect("path")])
+        .args([
+            "--summary",
+            dir.path().join("b.rpt").to_str().expect("path"),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("different model"));
+}
+
+/// The distribution engine does not checkpoint, and says so rather than
+/// writing no file and letting a script believe it has one.
+#[test]
+fn checkpointing_a_distribution_model_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    hydra()
+        .args([
+            "run",
+            fixture_path("check_valve.inp").to_str().expect("path"),
+        ])
+        .args([
+            "--checkpoint",
+            dir.path().join("x.hcp").to_str().expect("path"),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("does not checkpoint"));
+}

@@ -358,6 +358,11 @@ pub struct Simulation {
     /// the other half of the same option and fills `runoff_in` instead;
     /// a run does one or the other, never both.
     runoff_out: Option<Vec<(f64, Vec<crate::io::iface::ParcelReplay>)>>,
+    /// §12.3: a fingerprint of each interface file supplied to this run,
+    /// as `(what it is, hash of its bytes)`. A checkpoint carries these so
+    /// a restored run given a different file, or none, is refused rather
+    /// than continued on inflows it was never receiving.
+    supplied: Vec<(&'static str, u64)>,
     /// A supplied runoff interface file (§14.8.2) and the cursor into it.
     /// When present the surface is not stepped at all and the hydrology
     /// clock follows the file's own steps.
@@ -668,6 +673,7 @@ impl Simulation {
                 surface_quality,
                 inlets,
                 climate_records,
+                supplied: Vec::new(),
                 iface_in: None,
                 rdii_in: None,
                 runoff_in: None,
@@ -2251,6 +2257,7 @@ impl Simulation {
     /// periods and add as boundary inflows at their vertices.
     pub fn supply_routing_inflows(&mut self, text: &str) -> Result<(), String> {
         self.iface_in = Some(crate::io::iface::parse_routing_file(text, &self.net)?);
+        self.note_supplied("routing inflows", text.as_bytes());
         Ok(())
     }
 
@@ -2271,6 +2278,7 @@ impl Simulation {
         }
         let ifc = crate::io::iface::parse_runoff_file(bytes, &self.net)?;
         self.runoff_in = Some((ifc, 0));
+        self.note_supplied("runoff", bytes);
         Ok(())
     }
 
@@ -2280,6 +2288,7 @@ impl Simulation {
     pub fn supply_rdii(&mut self, bytes: &[u8]) -> Result<(), String> {
         let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
         self.rdii_in = Some(crate::io::iface::parse_rdii_file(bytes, &self.net, cv)?);
+        self.note_supplied("sewer inflow", bytes);
         Ok(())
     }
 
@@ -2291,9 +2300,6 @@ impl Simulation {
     /// checkpoint must not have.
     pub fn save_checkpoint(&self, w: &mut impl std::io::Write) -> Result<(), String> {
         use crate::simulation::checkpoint as cp;
-        if let Some(gap) = self.checkpoint_gap() {
-            return Err(gap);
-        }
         let io = |e: std::io::Error| e.to_string();
         w.write_all(cp::STAMP).map_err(io)?;
         w.write_all(&cp::VERSION.to_le_bytes()).map_err(io)?;
@@ -2359,6 +2365,60 @@ impl Simulation {
             cp::put_u(w, notice.message.len() as u64).map_err(io)?;
             w.write_all(notice.message.as_bytes()).map_err(io)?;
         }
+        // §12.3: the interface-file records collected so far. The rainfall
+        // cache is not among them: it is fixed at load from the records the
+        // caller supplied, so a restored session already has it.
+        cp::put_u(w, self.rdii_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
+        for (at, flows) in self.rdii_out.iter().flatten() {
+            cp::put_f(w, *at).map_err(io)?;
+            cp::put_fs(w, flows).map_err(io)?;
+        }
+        cp::put_u(w, self.runoff_out.as_ref().map_or(0, Vec::len) as u64).map_err(io)?;
+        for (dt, rows) in self.runoff_out.iter().flatten() {
+            cp::put_f(w, *dt).map_err(io)?;
+            cp::put_u(w, rows.len() as u64).map_err(io)?;
+            for rec in rows {
+                for v in [
+                    rec.rainfall,
+                    rec.snow_depth,
+                    rec.evap,
+                    rec.infil,
+                    rec.runoff,
+                    rec.gw_flow,
+                    rec.gw_elev,
+                    rec.soil_moisture,
+                ] {
+                    cp::put_f(w, v).map_err(io)?;
+                }
+                cp::put_fs(w, &rec.washoff).map_err(io)?;
+            }
+        }
+        // §12.3: which interface files this run was given, and how far it
+        // has read the one that is read sequentially. The files themselves
+        // are the caller's and are not copied here.
+        cp::put_u(w, self.supplied.len() as u64).map_err(io)?;
+        for (role, hash) in &self.supplied {
+            cp::put_u(w, role.len() as u64).map_err(io)?;
+            w.write_all(role.as_bytes()).map_err(io)?;
+            cp::put_u(w, *hash).map_err(io)?;
+        }
+        cp::put_u(w, self.runoff_in.as_ref().map_or(0, |(_, at)| *at as u64)).map_err(io)?;
+        cp::put_u(w, self.runoff_now.len() as u64).map_err(io)?;
+        for rec in &self.runoff_now {
+            for v in [
+                rec.rainfall,
+                rec.snow_depth,
+                rec.evap,
+                rec.infil,
+                rec.runoff,
+                rec.gw_flow,
+                rec.gw_elev,
+                rec.soil_moisture,
+            ] {
+                cp::put_f(w, v).map_err(io)?;
+            }
+            cp::put_fs(w, &rec.washoff).map_err(io)?;
+        }
         // Controls, sewer inflow and street inlets (§12.3).
         cp::put_b(w, self.controls.is_some()).map_err(io)?;
         if let Some(controls) = &self.controls {
@@ -2403,9 +2463,6 @@ impl Simulation {
     /// the wrong element and run.
     pub fn load_checkpoint(&mut self, bytes: &[u8]) -> Result<(), String> {
         use crate::simulation::checkpoint as cp;
-        if let Some(gap) = self.checkpoint_gap() {
-            return Err(gap);
-        }
         let mut r = cp::Reader::new(bytes);
         r.tag(cp::STAMP)?;
         let version = r.u32()?;
@@ -2479,6 +2536,93 @@ impl Simulation {
                 t,
                 message: r.text()?,
             });
+        }
+        let n = r.u()? as usize;
+        let mut rdii_rows = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            let at = r.f()?;
+            rdii_rows.push((at, r.fs()?));
+        }
+        if self.rdii_out.is_some() {
+            self.rdii_out = Some(rdii_rows);
+        } else if n > 0 {
+            return Err("checkpoint collected an RDII file this run does not write".into());
+        }
+        let n = r.u()? as usize;
+        let mut runoff_rows = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            let dt = r.f()?;
+            let rows = r.u()? as usize;
+            let mut recs = Vec::with_capacity(rows.min(4096));
+            for _ in 0..rows {
+                recs.push(crate::io::iface::ParcelReplay {
+                    rainfall: r.f()?,
+                    snow_depth: r.f()?,
+                    evap: r.f()?,
+                    infil: r.f()?,
+                    runoff: r.f()?,
+                    gw_flow: r.f()?,
+                    gw_elev: r.f()?,
+                    soil_moisture: r.f()?,
+                    washoff: r.fs()?,
+                });
+            }
+            runoff_rows.push((dt, recs));
+        }
+        if self.runoff_out.is_some() {
+            self.runoff_out = Some(runoff_rows);
+        } else if n > 0 {
+            return Err("checkpoint collected a runoff file this run does not write".into());
+        }
+        let n = r.u()? as usize;
+        let mut want: Vec<(String, u64)> = Vec::with_capacity(n.min(8));
+        for _ in 0..n {
+            let role = r.text()?;
+            want.push((role, r.u()?));
+        }
+        let have: Vec<(String, u64)> = self
+            .supplied
+            .iter()
+            .map(|(role, hash)| ((*role).to_string(), *hash))
+            .collect();
+        if want != have {
+            let names = |v: &[(String, u64)]| {
+                if v.is_empty() {
+                    "none".to_string()
+                } else {
+                    v.iter()
+                        .map(|(r, _)| r.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            };
+            return Err(format!(
+                "this checkpoint was taken while reading {} and this run was \
+                 given {}; the same files must be supplied before restoring \
+                 (§12.3)",
+                names(&want),
+                names(&have)
+            ));
+        }
+        let at = r.u()? as usize;
+        if let Some((_, cursor)) = &mut self.runoff_in {
+            *cursor = at;
+        }
+        let n = r.u()? as usize;
+        self.runoff_now = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            let rec = crate::io::iface::ParcelReplay {
+                rainfall: r.f()?,
+                snow_depth: r.f()?,
+                evap: r.f()?,
+                infil: r.f()?,
+                runoff: r.f()?,
+                gw_flow: r.f()?,
+                gw_elev: r.f()?,
+                soil_moisture: r.f()?,
+                washoff: r.fs()?,
+            };
+            self.runoff_now.push(rec);
         }
         if r.b()? {
             match &mut self.controls {
@@ -2554,6 +2698,20 @@ impl Simulation {
         Ok(())
     }
 
+    /// Record that an interface file was supplied, by what it is and a
+    /// hash of its bytes (§12.3).
+    fn note_supplied(&mut self, role: &'static str, bytes: &[u8]) {
+        let mut h = crate::simulation::checkpoint::Fnv::new();
+        h.write(bytes);
+        let hash = h.finish();
+        match self.supplied.iter_mut().find(|(r, _)| *r == role) {
+            // Supplying twice replaces, as the field it fills does.
+            Some(slot) => slot.1 = hash,
+            None => self.supplied.push((role, hash)),
+        }
+        self.supplied.sort_by_key(|(r, _)| *r);
+    }
+
     /// A hash of the model's shape and every element identifier, in model
     /// order (§12.3).
     fn model_fingerprint(&self) -> u64 {
@@ -2583,24 +2741,6 @@ impl Simulation {
             h.write(c.id.as_bytes());
         }
         h.finish()
-    }
-
-    /// The first capability this model uses whose state a checkpoint does
-    /// not yet carry, named as a refusal (§12.3).
-    fn checkpoint_gap(&self) -> Option<String> {
-        let unmet = |what: &str| {
-            Some(format!(
-                "a checkpoint of this model would lose its {what}, so it is \
-                 refused rather than restored from a default (§12.3)"
-            ))
-        };
-        if self.iface_in.is_some() || self.rdii_in.is_some() || self.runoff_in.is_some() {
-            return unmet("position in the interface files it reads");
-        }
-        if self.rdii_out.is_some() || self.rain_out.is_some() || self.runoff_out.is_some() {
-            return unmet("half-written interface files");
-        }
-        None
     }
 
     /// Write the rainfall interface file for this model's gages, if it

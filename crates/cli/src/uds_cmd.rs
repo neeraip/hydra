@@ -313,6 +313,34 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         }
     }
 
+    // §12.3: resume before the run starts and after every auxiliary file
+    // is in place, since the checkpoint is checked against the files this
+    // run was given.
+    if let Some(name) = args.resume.as_deref() {
+        let path = std::path::Path::new(name);
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                emit_error(
+                    "io/checkpoint",
+                    &format!("checkpoint {}: {e}", path.display()),
+                    None,
+                    None,
+                );
+                return EXIT_IO;
+            }
+        };
+        if let Err(e) = sim.load_checkpoint(&bytes) {
+            emit_error(
+                "input/checkpoint",
+                &format!("checkpoint {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_INPUT;
+        }
+    }
+
     // ── Run ───────────────────────────────────────────────────────────────────
     // The drive loop, results persistence, warning emission, and summary
     // writing are the shared per-engine dispatch in hydra::engines — only
@@ -381,6 +409,27 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             emit_error(
                 "io/interface",
                 &format!("RDII interface file {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_IO;
+        }
+    }
+    // §12.3: the checkpoint is written from the finished run, so a script
+    // that resumes from it continues where this one stopped.
+    if let Some(name) = args.checkpoint.as_deref() {
+        let path = std::path::Path::new(name);
+        let written = std::fs::File::create(path)
+            .map_err(|e| e.to_string())
+            .and_then(|f| {
+                let mut w = std::io::BufWriter::new(f);
+                sim.save_checkpoint(&mut w)?;
+                std::io::Write::flush(&mut w).map_err(|e| e.to_string())
+            });
+        if let Err(e) = written {
+            emit_error(
+                "io/checkpoint",
+                &format!("checkpoint {}: {e}", path.display()),
                 None,
                 None,
             );

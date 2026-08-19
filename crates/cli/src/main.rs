@@ -99,6 +99,18 @@ struct RunArgs {
     /// `.json` when the path ends in `.json`). Omitted, it goes to stdout.
     #[arg(long, value_name = "PATH")]
     summary: Option<String>,
+
+    /// Path to write a checkpoint of the finished run to. A run resumed
+    /// from one continues exactly as if it had never stopped. Drainage
+    /// models only for now.
+    #[arg(long, value_name = "PATH")]
+    checkpoint: Option<String>,
+
+    /// Path of a checkpoint to resume from, in place of starting the model
+    /// at its beginning. The model and every auxiliary file must be the
+    /// ones the checkpoint was taken from.
+    #[arg(long, value_name = "PATH")]
+    resume: Option<String>,
 }
 
 fn main() {
@@ -322,6 +334,20 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
     };
     if engine.key == "uds" {
         return uds_cmd::run(args, cli, &bytes);
+    }
+    // §12.3 is the drainage engine's contract. Saying so beats writing no
+    // file and letting a script believe it has one to resume from.
+    for (flag, path) in [
+        ("--checkpoint", &args.checkpoint),
+        ("--resume", &args.resume),
+    ] {
+        if path.is_some() {
+            emit_usage_error(&format!(
+                "{flag} is for drainage models; the {} engine does not checkpoint",
+                engine.key
+            ));
+            return EXIT_INPUT;
+        }
     }
 
     let network = match io::parse(&bytes) {

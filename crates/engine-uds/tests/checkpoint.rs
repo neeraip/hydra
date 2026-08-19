@@ -207,27 +207,89 @@ fn a_reordered_model_is_refused() {
     assert!(err.contains("reordered"), "{err}");
 }
 
-/// A model whose state is not yet carried is refused by name.
+/// A run reading an interface file checkpoints and restores, given the
+/// same file again.
 #[test]
-fn a_model_whose_state_is_not_carried_is_refused() {
-    let replaying = parcel_model("", "[FILES]\nUSE RUNOFF runoff.bin");
-    let (mut sim, _, _) = Simulation::open(&replaying).expect("open");
-    // One record is enough: what matters is that the session is reading a
-    // file, and a checkpoint does not yet carry how far it has read.
-    let mut file = b"SWMM5-RUNOFF".to_vec();
-    for v in [2i32, 0, 3, 1] {
-        file.extend_from_slice(&v.to_le_bytes());
-    }
-    file.extend_from_slice(&300.0f32.to_le_bytes());
-    file.extend_from_slice(&[0u8; 2 * 8 * 4]);
-    sim.supply_runoff(&file).expect("supply");
+fn a_replaying_run_restores_when_the_file_is_supplied_again() {
+    let (mut whole, _, _) = Simulation::open(&replay_model()).expect("open");
+    whole.supply_runoff(&replay_file()).expect("supply");
+    whole.run();
+    let want = every_output(&whole);
 
+    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
+    first.supply_runoff(&replay_file()).expect("supply");
+    let target = ((whole.snapshots.len() as f64 * 0.4) as usize).max(1);
+    while first.snapshots.len() < target {
+        assert!(first.step(), "the run ended before the checkpoint instant");
+    }
     let mut cp = Vec::new();
-    let err = sim
-        .save_checkpoint(&mut cp)
-        .expect_err("interface position");
-    assert!(err.contains("interface files it reads"), "{err}");
-    assert!(cp.is_empty(), "nothing may be written when it is refused");
+    first.save_checkpoint(&mut cp).expect("checkpoint");
+
+    let (mut second, _, _) = Simulation::open(&replay_model()).expect("open");
+    second.supply_runoff(&replay_file()).expect("supply");
+    second.load_checkpoint(&cp).expect("restore");
+    second.run();
+    let got = every_output(&second);
+    assert!(want.results == got.results, "the results file diverged");
+    assert_eq!(
+        String::from_utf8_lossy(&want.report),
+        String::from_utf8_lossy(&got.report),
+        "the report diverged"
+    );
+}
+
+/// Restoring without the file, or with a different one, is refused.
+///
+/// Neither would fail on its own: the run would continue on inflows it
+/// was never receiving and look entirely healthy.
+#[test]
+fn a_replaying_run_is_refused_without_the_same_file() {
+    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
+    first.supply_runoff(&replay_file()).expect("supply");
+    while first.snapshots.len() < 2 {
+        assert!(first.step(), "the run ended early");
+    }
+    let mut cp = Vec::new();
+    first.save_checkpoint(&mut cp).expect("checkpoint");
+
+    // No file at all.
+    let (mut bare, _, _) = Simulation::open(&replay_model()).expect("open");
+    let err = bare.load_checkpoint(&cp).expect_err("no file supplied");
+    assert!(err.contains("runoff"), "{err}");
+    assert!(err.contains("given none"), "{err}");
+
+    // A file of the same shape carrying different flows.
+    let (mut other, _, _) = Simulation::open(&replay_model()).expect("open");
+    other.supply_runoff(&replay_file_of(2.0)).expect("supply");
+    let err = other.load_checkpoint(&cp).expect_err("a different file");
+    assert!(err.contains("same files must be supplied"), "{err}");
+}
+
+/// Two parcels, no constituents, CMS: the shape `supply_runoff` expects.
+fn replay_file_of(runoff: f32) -> Vec<u8> {
+    let mut b = b"SWMM5-RUNOFF".to_vec();
+    for v in [2i32, 0, 3, 12] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for _ in 0..12 {
+        b.extend_from_slice(&300.0f32.to_le_bytes());
+        for parcel in 0..2 {
+            let mut row = [0.0f32; 8];
+            row[4] = runoff * (1.0 + parcel as f32);
+            for x in row {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+    }
+    b
+}
+
+fn replay_file() -> Vec<u8> {
+    replay_file_of(0.5)
+}
+
+fn replay_model() -> String {
+    parcel_model("", "[FILES]\nUSE RUNOFF runoff.bin")
 }
 
 /// A truncated checkpoint is refused rather than read short.
@@ -1007,4 +1069,65 @@ fn pid_model() -> String {
             "[INFLOWS]",
             "[CONTROLS]\nRULE HOLD\nIF NODE S1 DEPTH > 0.3\nTHEN ORIFICE R1 SETTING = PID 0.5 2.0 0.5\n\n[INFLOWS]",
         )
+}
+
+#[test]
+fn a_replaying_checkpoint_survives_a_round_trip() {
+    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
+    first.supply_runoff(&replay_file()).expect("supply");
+    while first.snapshots.len() < 3 {
+        assert!(first.step(), "the run ended early");
+    }
+    let mut once = Vec::new();
+    first.save_checkpoint(&mut once).expect("checkpoint");
+
+    let (mut second, _, _) = Simulation::open(&replay_model()).expect("open");
+    second.supply_runoff(&replay_file()).expect("supply");
+    second.load_checkpoint(&once).expect("restore");
+    let mut twice = Vec::new();
+    second
+        .save_checkpoint(&mut twice)
+        .expect("checkpoint again");
+    assert_eq!(
+        once.len(),
+        twice.len(),
+        "the two checkpoints differ in length"
+    );
+    assert!(once == twice, "the two checkpoints differ");
+}
+
+/// A run collecting interface files of its own checkpoints and restores
+/// with what it has collected so far.
+///
+/// This was the last thing a checkpoint refused. Without it a run saving
+/// a runoff file, restored partway, would write a file starting where the
+/// checkpoint did and claim it covered the run.
+#[test]
+fn a_collecting_run_keeps_what_it_has_collected() {
+    let saving = parcel_model("", "[FILES]\nSAVE RUNOFF runoff.bin");
+    let (mut whole, _, _) = Simulation::open(&saving).expect("open");
+    whole.run();
+    let mut want = Vec::new();
+    whole.write_runoff(&mut want).expect("write");
+
+    let (mut first, _, _) = Simulation::open(&saving).expect("open");
+    let target = ((whole.snapshots.len() as f64 * 0.4) as usize).max(1);
+    while first.snapshots.len() < target {
+        assert!(first.step(), "the run ended before the checkpoint instant");
+    }
+    let mut cp = Vec::new();
+    first.save_checkpoint(&mut cp).expect("checkpoint");
+
+    let (mut second, _, _) = Simulation::open(&saving).expect("open");
+    second.load_checkpoint(&cp).expect("restore");
+    second.run();
+    let mut got = Vec::new();
+    second.write_runoff(&mut got).expect("write");
+
+    assert_eq!(
+        want.len(),
+        got.len(),
+        "the restored run wrote a file of a different length"
+    );
+    assert!(want == got, "the restored run's runoff file differs");
 }
