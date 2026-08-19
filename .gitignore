@@ -437,3 +437,7 @@ crates/demo/www/hydra.html
 # The bundled Simulation1 declares SAVE HOTSTART, so running the CLI on it
 # in place writes this beside the model. A run artifact, never a source.
 crates/demo/models/*.hsf
+
+# cargo-mutants working output (`just mutants`)
+mutants.out/
+mutants.out.old/

@@ -120,6 +120,24 @@ sta1 2012 6 29 0 2 0.25
 }
 
 // ── Archival station records (§14.12.1) ─────────────────────────────────────
+//
+// `just mutants crates/engine-uds/src/io/rain.rs` reports four mutants no
+// test catches, and all four are equivalent rather than uncovered. They
+// are listed here so the next reader does not chase them again:
+//
+//   `head = 7 + year_width + 2 + 2 + 3` with the last `+ 2 + 2` read as
+//   `+ 2 * 2`, which is the same number for both year widths;
+//
+//   the two offsets in `line.get(7..7 + w + 4)`, which only lengthen a
+//   slice that is never indexed past `w + 4`, and every line of these
+//   layouts is longer than either bound;
+//
+//   `line.len() > 30` read as `>= 30`, where a line of exactly thirty
+//   characters is refused either way, once for its length and once for
+//   holding no readings.
+//
+// Everything else the tool suggests is caught. When this file changes,
+// run it again rather than trusting this note.
 
 /// The archival layouts this engine reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,6 +561,43 @@ fn archive_day(date: Date, seconds: f64) -> f64 {
 }
 
 #[cfg(test)]
+mod station_format_tests {
+    use super::*;
+
+    /// The clock's own boundaries: the last valid instant of a day is
+    /// read, and the first invalid one is refused.
+    #[test]
+    fn the_last_instant_of_a_day_is_a_time_and_the_next_is_not() {
+        let line = |h: u32, m: u32| format!("STA01  2020  1  1  {h}  {m}  0.10\n");
+        let last = parse_rain_file(&line(23, 59)).expect("23:59 is a time");
+        assert_eq!(1, last.len());
+        assert!(parse_rain_file(&line(24, 0)).is_err(), "24:00 is not");
+        assert!(parse_rain_file(&line(23, 60)).is_err(), "23:60 is not");
+    }
+
+    /// A reading's minutes reach its instant. Every fixture here reads on
+    /// the hour, so an hour read as minutes, or minutes dropped, changed
+    /// nothing anyone checked.
+    #[test]
+    fn the_minutes_of_a_reading_reach_its_instant() {
+        let r = parse_rain_file("STA01  2020  1  1  2  45  0.10\n").expect("parse");
+        assert_eq!(
+            2.0 * 3600.0 + 45.0 * 60.0,
+            r[0].seconds,
+            "two hours and forty-five minutes past midnight"
+        );
+    }
+
+    /// A date that is not a date is refused rather than read.
+    #[test]
+    fn a_date_that_is_not_a_date_is_refused() {
+        assert!(parse_rain_file("STA01  2020  13  1  0  0  0.10\n").is_err());
+        assert!(parse_rain_file("STA01  2020  1  32  0  0  0.10\n").is_err());
+        assert!(parse_rain_file("STA01  2020  12  31  0  0  0.10\n").is_ok());
+    }
+}
+
+#[cfg(test)]
 mod archive_tests {
     use super::*;
 
@@ -661,6 +716,96 @@ mod archive_tests {
             hours(&dropped),
             "the flagged reading must not appear"
         );
+    }
+
+    /// A line too short to hold the layout it looks like is not that
+    /// layout. Recognition reads fixed columns, so accepting a line one
+    /// character short reads a station id out of a field that ends before
+    /// it does.
+    #[test]
+    fn a_line_too_short_for_its_layout_is_not_recognised() {
+        // The Canadian hourly layout needs its eighteen-character head
+        // and twenty-four seven-character groups.
+        let full = fixture("cmc_hly.dat");
+        let record = full.lines().next().expect("a line");
+        assert!(parse_archive_file(&format!("{record}\n")).is_ok());
+        let short = &record[..record.len() - 1];
+        assert!(
+            parse_archive_file(&format!("{short}\n")).is_err(),
+            "a line one character short must not be read as this layout"
+        );
+
+        // The tape layout needs more than thirty characters before its
+        // first reading group.
+        let tape = fixture("nws_tape.dat");
+        let line = tape.lines().next().expect("a line");
+        assert!(parse_archive_file(&format!("{}\n", &line[..30])).is_err());
+    }
+
+    /// A station that is not a number is not one of these layouts. Every
+    /// agency writing them numbers its stations, and a header line that
+    /// happens to sit in the right columns is not a record.
+    #[test]
+    fn a_station_that_is_not_a_number_is_not_recognised() {
+        let named = fixture("nws_space.dat").replace("123456", "STA_01");
+        let err = parse_archive_file(&named).unwrap_err();
+        assert!(err.contains("not an archival station record"), "{err}");
+    }
+
+    /// Tape recognition reads a station and a division from their own
+    /// columns, and both must be numbers. A line with one and not the
+    /// other is a line that happens to look like a record.
+    #[test]
+    fn a_tape_line_needs_both_its_numeric_fields() {
+        let good = fixture("nws_tape.dat");
+        assert!(parse_archive_file(&good).is_ok(), "the fixture reads");
+        // Columns 9..11 are the division.
+        let line = good.lines().next().expect("a line");
+        let broken = format!("{}XX{}\n", &line[..9], &line[11..]);
+        assert!(
+            parse_archive_file(&broken).is_err(),
+            "a non-numeric division must not read as a tape record"
+        );
+        // And columns 3..9 are the station.
+        let broken = format!("{}ABCDEF{}\n", &line[..3], &line[9..]);
+        assert!(parse_archive_file(&broken).is_err());
+    }
+
+    /// The calendar date a Canadian record carries, read from its own
+    /// columns rather than inferred: the month and day sit at fixed
+    /// offsets past a year field whose width differs between the two.
+    #[test]
+    fn a_canadian_record_carries_its_own_calendar_date() {
+        // 2020-01-01 is day 43831 of the predecessor's calendar; the
+        // first reading of cmc_hly lands on it at midnight.
+        let (rec, _) = parse_archive_file(&fixture("cmc_hly.dat")).expect("parse");
+        assert_eq!(43_831.0, rec.readings[0].0, "2020-01-01 00:00");
+        // Move the record to the last day of February and it moves with
+        // it: 43831 + 31 + 28 = 43890 is 2020-02-29.
+        let moved = fixture("cmc_hly.dat").replacen("20200101", "20200229", 1);
+        let (rec, _) = parse_archive_file(&moved).expect("parse");
+        assert_eq!(43_890.0, rec.readings[0].0, "2020-02-29 00:00");
+    }
+
+    /// A date field out of range is not a record, whatever else the line
+    /// carries: the month and day are read from fixed columns, so a line
+    /// whose columns hold something else reads as month 47.
+    #[test]
+    fn a_line_whose_date_is_not_a_date_is_skipped() {
+        let good = fixture("nws_space.dat");
+        let (rec, _) = parse_archive_file(&good).expect("parse");
+        assert_eq!(2, rec.readings.len());
+        // Either field alone is enough to say this is not a record. Both
+        // wrong at once cannot tell them apart, which is what the first
+        // version of this asked and why the check's own `or` went
+        // untested.
+        for date in ["2020 47 01", "2020 01 99", "2020 47 99"] {
+            let bad = good.replace("2020 01 01", date);
+            assert!(
+                parse_archive_file(&bad).is_err(),
+                "{date} is not a date, so that line holds no readings"
+            );
+        }
     }
 
     #[test]
