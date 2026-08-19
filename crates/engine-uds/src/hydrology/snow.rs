@@ -6,6 +6,15 @@
 
 use crate::model::{SnowSurface, Snowpack};
 
+// `just mutants crates/engine-uds/src/hydrology/snow.rs` reports the
+// sea-level guard in `gamma` as uncaught, and it is equivalent rather
+// than uncovered: the guard reads `z <= 0.0`, and at exactly zero the
+// branch it guards evaluates `0.0032 · 0^2.4`, which is nothing, so both
+// readings give the same 29.9 inches of mercury. The guard earns its
+// place below zero, where the fractional power is undefined, and that is
+// covered. When this file changes, run it again rather than trusting
+// this note.
+
 /// Exact feet-to-metres.
 const FT: f64 = 0.3048;
 
@@ -606,5 +615,236 @@ impl SnowPack {
         }
         self.exported = r.f()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod melt_relation_tests {
+    use super::*;
+
+    /// A climate with everything at rest, so a test moves one thing.
+    fn climate() -> SnowClimate {
+        SnowClimate {
+            ta: 0.0,
+            wind: 0.0,
+            snow_temp: 0.0,
+            ati_weight: 0.5,
+            rnm: 0.6,
+            elevation: 0.0,
+            season: 0.0,
+            adc_impervious: None,
+            adc_pervious: None,
+        }
+    }
+
+    fn surface(dh_min: f64, dh_max: f64) -> SurfaceState {
+        SurfaceState {
+            dh_min,
+            dh_max,
+            t_base: 0.0,
+            fw_frac: 0.0,
+            si: None,
+            wsnow: 0.0,
+            fw: 0.0,
+            coldc: 0.0,
+            ati: 0.0,
+            awe: 1.0,
+            sba: 0.0,
+            sbws: 0.0,
+            imelt: 0.0,
+        }
+    }
+
+    // ── The atmospheric-pressure fit ────────────────────────────────────
+
+    /// §4.2: $p_a = 29.9 - 1.02z + 0.0032z^{2.4}$ in inches of mercury,
+    /// $z$ in thousands of feet, and $\gamma = 0.000359\,p_a$. Asserted
+    /// against the fit the specification writes, at heights where each of
+    /// its three terms matters.
+    #[test]
+    fn the_psychrometric_factor_follows_the_elevation_fit() {
+        let at = |metres: f64| {
+            let mut c = climate();
+            c.elevation = metres;
+            c.gamma()
+        };
+        let thousand_ft = 1000.0 * FT;
+
+        assert!((at(0.0) - 0.000_359 * 29.9).abs() < 1e-15, "sea level");
+
+        let z = 1.0_f64;
+        let pa = 29.9 - 1.02 * z + 0.0032 * z.powf(2.4);
+        assert!(
+            (at(thousand_ft) - 0.000_359 * pa).abs() < 1e-15,
+            "a thousand feet"
+        );
+
+        // The fractional power only shows well above sea level.
+        let z = 5.0_f64;
+        let pa = 29.9 - 1.02 * z + 0.0032 * z.powf(2.4);
+        assert!(
+            (at(5.0 * thousand_ft) - 0.000_359 * pa).abs() < 1e-15,
+            "five thousand feet"
+        );
+        assert!(
+            at(5.0 * thousand_ft) < at(0.0),
+            "and pressure falls with height"
+        );
+    }
+
+    /// §4.2: the fit is bypassed at or below sea level, because the
+    /// fractional power is undefined for a negative height. It is a
+    /// domain guard, not a claim that sea level is special, so a site
+    /// below it takes the sea-level value rather than an extrapolation.
+    #[test]
+    fn a_site_below_sea_level_takes_the_sea_level_pressure() {
+        let below = |metres: f64| {
+            let mut c = climate();
+            c.elevation = metres;
+            c.gamma()
+        };
+        assert_eq!(below(0.0), below(-100.0), "a hundred metres down");
+        assert!(below(-100.0).is_finite(), "and it is a number at all");
+    }
+
+    // ── Anderson's rain-on-snow budget ──────────────────────────────────
+
+    /// §4.2: the saturated budget applies during rain *above* 0.02 in/hr,
+    /// and nothing below or at that threshold melts this way.
+    #[test]
+    fn the_rain_melt_budget_starts_above_its_threshold() {
+        let mut c = climate();
+        c.ta = 10.0;
+        c.wind = 2.0;
+        let inhr = |v: f64| v * FT / 43_200.0;
+
+        assert_eq!(0.0, rain_melt(0.0, &c), "no rain");
+        assert!(rain_melt(inhr(0.019), &c) == 0.0, "below the threshold");
+        assert!(rain_melt(inhr(0.021), &c) > 0.0, "above it");
+
+        // The threshold itself is inclusive, and standing on it takes
+        // some care: an SI rate built as 0.02·ft/43200 converts back to
+        // 0.020000000000000004, one ulp past. The value one ulp below
+        // converts back to exactly the threshold.
+        let exactly = inhr(0.02).next_down();
+        assert_eq!(
+            0.02,
+            exactly / FT * 43_200.0,
+            "this is the rate the threshold is written at"
+        );
+        assert_eq!(
+            0.0,
+            rain_melt(exactly, &c),
+            "exactly the threshold is not above it"
+        );
+    }
+
+    /// §4.2, stated as the specification states it:
+    /// $(0.001167 + 7.5\gamma U_A + 0.007 i)(T_a - 32) + 8.5 U_A(e_a - 0.18)$,
+    /// with the wind function $U_A$ in miles per hour.
+    #[test]
+    fn the_rain_melt_budget_is_andersons() {
+        let mut c = climate();
+        c.ta = 5.0;
+        c.wind = 3.0;
+        c.elevation = 300.0;
+        let rain_inhr = 0.1;
+        let rain = rain_inhr * FT / 43_200.0;
+
+        let ua = 0.006 * (3.0 / 0.447_04);
+        let ta_f = 5.0 * 9.0 / 5.0 + 32.0;
+        let expected_inhr = (0.001_167 + 7.5 * c.gamma() * ua + 0.007 * rain_inhr) * (ta_f - 32.0)
+            + 8.5 * ua * (c.ea() - 0.18);
+        let expected = expected_inhr * FT / 43_200.0;
+
+        let got = rain_melt(rain, &c);
+        assert!(
+            (got - expected).abs() < 1e-12 * expected.abs(),
+            "{got} is not the budget {expected}"
+        );
+    }
+
+    /// The wind function is in miles an hour, which is why a climate
+    /// file's wind column had to be converted before it arrived here.
+    #[test]
+    fn the_wind_function_is_one_mile_an_hour_at_its_own_unit() {
+        let mut still = climate();
+        still.ta = 5.0;
+        let mut breezy = climate();
+        breezy.ta = 5.0;
+        breezy.wind = 0.447_04;
+        let rain = 0.1 * FT / 43_200.0;
+
+        // 0.006 per mile an hour: the difference between the two runs is
+        // that coefficient acting through the budget's two wind terms.
+        let delta = rain_melt(rain, &breezy) - rain_melt(rain, &still);
+        let ua = 0.006;
+        let ta_f = 5.0 * 9.0 / 5.0 + 32.0;
+        let expected_inhr =
+            7.5 * still.gamma() * ua * (ta_f - 32.0) + 8.5 * ua * (still.ea() - 0.18);
+        assert!(
+            (delta - expected_inhr * FT / 43_200.0).abs() < 1e-15,
+            "one mile an hour of wind added {delta}"
+        );
+    }
+
+    // ── The seasonal degree-day sweep ───────────────────────────────────
+
+    /// §4.2: the coefficient sweeps between the user's 21 December
+    /// minimum and 21 June maximum, and the sweep is the sine's value.
+    #[test]
+    fn the_degree_day_coefficient_sweeps_between_its_two_ends() {
+        let s = surface(1.0, 3.0);
+        assert!((s.dhm(1.0) - 3.0).abs() < 1e-15, "midsummer is the maximum");
+        assert!(
+            (s.dhm(-1.0) - 1.0).abs() < 1e-15,
+            "midwinter is the minimum"
+        );
+        assert!(
+            (s.dhm(0.0) - 2.0).abs() < 1e-15,
+            "and the equinox is between"
+        );
+        // Halfway to summer is halfway up.
+        assert!((s.dhm(0.5) - 2.5).abs() < 1e-15);
+    }
+
+    // ── The areal depletion curve ───────────────────────────────────────
+
+    /// §4.2: an absent curve is full cover, and the curve is read by
+    /// interpolating its ten intervals.
+    #[test]
+    fn the_depletion_curve_interpolates_its_ten_intervals() {
+        assert_eq!(1.0, areal_cover(None, 0.5), "no curve is full cover");
+
+        // A curve rising evenly from nothing to nine tenths.
+        let t = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+        assert_eq!(0.0, areal_cover(Some(t), 0.0), "no snow is no cover");
+        assert_eq!(0.0, areal_cover(Some(t), -0.5), "and neither is less");
+        assert_eq!(1.0, areal_cover(Some(t), 1.0), "full depth is full cover");
+
+        // On a table point, and halfway between two.
+        assert!((areal_cover(Some(t), 0.3) - 0.3).abs() < 1e-12);
+        assert!((areal_cover(Some(t), 0.35) - 0.35).abs() < 1e-12);
+
+        // The last interval runs to one rather than off the end of the
+        // table, which has no tenth entry to interpolate towards.
+        assert!((areal_cover(Some(t), 0.95) - 0.95).abs() < 1e-12);
+    }
+
+    /// A curve that is not a straight line is read as the curve it is,
+    /// which a linear reading of the index would flatten.
+    #[test]
+    fn a_curved_depletion_curve_is_not_read_as_a_line() {
+        let t = [0.0, 0.05, 0.1, 0.2, 0.35, 0.55, 0.7, 0.8, 0.88, 0.95];
+        assert!(
+            (areal_cover(Some(t), 0.4) - 0.35).abs() < 1e-12,
+            "on a point"
+        );
+        // Halfway through the fifth interval: 0.35 to 0.55.
+        assert!((areal_cover(Some(t), 0.45) - 0.45).abs() < 1e-12);
+        assert!(
+            areal_cover(Some(t), 0.2) < 0.2,
+            "the curve sits below the diagonal here"
+        );
     }
 }
