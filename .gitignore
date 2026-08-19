@@ -25,7 +25,6 @@
 # Icon must end with two \r
 Icon
 
-
 # Thumbnails
 ._*
 
@@ -441,5 +440,4 @@ crates/demo/models/*.hsf
 # cargo-mutants working output (`just mutants`)
 mutants.out/
 mutants.out.old/
-# Its scratch trees, kept out of Spotlight's way by the name.
-.mutants-tmp.noindex/
+

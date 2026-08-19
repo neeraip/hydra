@@ -110,19 +110,22 @@ test-wasm:
 # `io/iface.rs` came back 185 missed of 407 that way, nearly all of them
 # phantoms.
 #
-# The scratch trees go in a `.noindex` directory. cargo-mutants copies the
-# whole source tree and relinks a fresh set of test binaries for every
-# mutant, and on macOS each new binary wakes Spotlight, Gatekeeper and
-# XProtect: indexing and scanning them cost more CPU than the run itself,
-# and left three trees totalling 10 GB behind. macOS skips any directory
-# whose name ends in `.noindex`, which removes the indexing half.
+# The scratch trees go outside the repository, in a `.noindex` directory.
+# cargo-mutants copies the whole source tree and relinks a fresh set of
+# test binaries for every mutant, which is gigabytes of churn per run, and
+# two things react to it: macOS wakes Spotlight, Gatekeeper and XProtect on
+# every new binary, and anything watching the working tree — an editor, a
+# file manager, `fseventsd` itself — wakes on every write. The `.noindex`
+# suffix answers the first (macOS skips such directories) and staying out
+# of the repository answers the second. Putting it *inside* the repository
+# traded one for the other: `fseventsd` alone then ran at 200%.
 #
 # Usage: just mutants crates/engine-uds/src/io/rain.rs
 #        just mutants crates/report/src/render.rs hydra-report
 # Needs `cargo install cargo-mutants`.
 mutants FILE PKG="hydra-engine-uds":
-    mkdir -p .mutants-tmp.noindex
-    TMPDIR="$PWD/.mutants-tmp.noindex" cargo mutants -p {{PKG}} --file {{FILE}}
+    mkdir -p "${TMPDIR:-/tmp}/hydra-mutants.noindex"
+    TMPDIR="${TMPDIR:-/tmp}/hydra-mutants.noindex" cargo mutants -p {{PKG}} --file {{FILE}}
 
 # Run Python script unit tests
 test-scripts:
