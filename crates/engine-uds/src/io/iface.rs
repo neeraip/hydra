@@ -26,6 +26,7 @@ const FLOW_WORDS: [(&str, f64); 6] = [
 ];
 
 /// A parsed routing interface file, resolved against a model.
+#[derive(Debug)]
 pub struct RoutingInterface {
     /// The file's reporting step (s).
     pub step: f64,
@@ -875,6 +876,191 @@ fn flow_unit_word(units: crate::io::options::FlowUnits) -> &'static str {
         Cms => "CMS",
         Lps => "LPS",
         Mld => "MLD",
+    }
+}
+
+#[cfg(test)]
+mod routing_iface_tests {
+    use super::*;
+    use crate::io::objects::parse_network;
+
+    /// Two vertices and one constituent, so a file naming both can be
+    /// read column by column and a mismatch is visible.
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[JUNCTIONS]
+J1  100  4
+J2  99   4
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  J2  100  0.013  0  0
+C2  J2  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0
+C2  CIRCULAR  1  0  0  0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  0
+
+[REPORT]
+";
+
+    fn model() -> Network {
+        let (net, diags) = parse_network(MODEL);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        net
+    }
+
+    /// A two-node, two-constituent file whose records run 01:00 to 03:00.
+    /// `flow_unit` is the file's own declaration, not the model's.
+    fn file(flow_unit: &str, rows: &[(u32, [f64; 2], [f64; 2])]) -> String {
+        let mut s =
+            format!("SWMM5 interface file\ntitle\n60\n2\nFLOW {flow_unit}\nTSS\n2\nJ1\nJ2\n");
+        for (hour, j1, j2) in rows {
+            s.push_str(&format!(
+                "J1  2020 01 01 {hour} 0 0  {}  {}\n",
+                j1[0], j1[1]
+            ));
+            s.push_str(&format!(
+                "J2  2020 01 01 {hour} 0 0  {}  {}\n",
+                j2[0], j2[1]
+            ));
+        }
+        s
+    }
+
+    fn at(ifc: &RoutingInterface, hour: f64) -> Vec<(usize, f64, Vec<f64>)> {
+        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
+            year: 2020,
+            month: 1,
+            day: 1,
+        }) as f64
+            * 86_400.0;
+        ifc.inflows_at(day + hour * 3600.0, 1)
+    }
+
+    /// The file's own span is served inclusive of both ends and nothing
+    /// beyond: an instant outside it contributes no inflow rather than
+    /// the nearest record held flat, which would invent hours of it.
+    #[test]
+    fn the_span_is_inclusive_of_its_ends_and_empty_outside() {
+        let net = model();
+        let text = file(
+            "CMS",
+            &[(1, [1.0, 10.0], [2.0, 20.0]), (3, [3.0, 30.0], [4.0, 40.0])],
+        );
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+
+        assert!(at(&ifc, 0.5).is_empty(), "before the first record");
+        assert!(at(&ifc, 3.5).is_empty(), "after the last");
+        assert_eq!(2, at(&ifc, 1.0).len(), "at the first instant");
+        assert_eq!(2, at(&ifc, 3.0).len(), "at the last instant");
+        assert_eq!(2, at(&ifc, 2.0).len(), "between them");
+    }
+
+    /// Each record's values reach the vertex the file names, and a
+    /// midpoint is the average of the two records bracketing it.
+    #[test]
+    fn values_interpolate_between_the_bracketing_records() {
+        let net = model();
+        let text = file(
+            "CMS",
+            &[(1, [1.0, 10.0], [2.0, 20.0]), (3, [3.0, 30.0], [4.0, 40.0])],
+        );
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+
+        let first = at(&ifc, 1.0);
+        assert!((first[0].1 - 1.0).abs() < 1e-9, "J1 at its first record");
+        assert!((first[1].1 - 2.0).abs() < 1e-9, "J2 at its first record");
+        assert!((first[0].2[0] - 10.0).abs() < 1e-9, "J1 concentration");
+
+        // Halfway between 01:00 and 03:00.
+        let mid = at(&ifc, 2.0);
+        assert!((mid[0].1 - 2.0).abs() < 1e-9, "J1 halfway: {}", mid[0].1);
+        assert!((mid[1].1 - 3.0).abs() < 1e-9, "J2 halfway: {}", mid[1].1);
+        assert!(
+            (mid[0].2[0] - 20.0).abs() < 1e-9,
+            "the concentration interpolates too: {}",
+            mid[0].2[0]
+        );
+    }
+
+    /// A file of one record holds it across the whole of its own instant
+    /// and nothing else, which is a different path from the interpolated
+    /// one and had no test at all.
+    #[test]
+    fn a_single_record_is_held_at_its_own_instant() {
+        let net = model();
+        let text = file("CMS", &[(1, [5.0, 50.0], [6.0, 60.0])]);
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+        let one = at(&ifc, 1.0);
+        assert_eq!(2, one.len());
+        assert!((one[0].1 - 5.0).abs() < 1e-9, "J1 flow {}", one[0].1);
+        assert!((one[0].2[0] - 50.0).abs() < 1e-9, "J1 concentration");
+        assert!(at(&ifc, 0.9).is_empty(), "before its instant");
+        assert!(at(&ifc, 1.1).is_empty(), "after it");
+    }
+
+    /// Flows convert from the file's declared unit, not the model's. The
+    /// model here is metric, so a file in CFS is not read as CMS.
+    #[test]
+    fn flows_convert_from_the_files_own_unit() {
+        let net = model();
+        let metric = file("CMS", &[(1, [1.0, 0.0], [0.0, 0.0])]);
+        let imperial = file("CFS", &[(1, [1.0, 0.0], [0.0, 0.0])]);
+        let a = parse_routing_file(&metric, &net).expect("parse");
+        let b = parse_routing_file(&imperial, &net).expect("parse");
+        assert!((at(&a, 1.0)[0].1 - 1.0).abs() < 1e-9, "one CMS is one m³/s");
+        assert!(
+            (at(&b, 1.0)[0].1 - 0.028_316_846_6).abs() < 1e-9,
+            "one CFS is 0.0283 m³/s, not one: {}",
+            at(&b, 1.0)[0].1
+        );
+        // Concentrations are not flows and do not convert.
+        let dirty = file("CFS", &[(1, [1.0, 25.0], [0.0, 0.0])]);
+        let c = parse_routing_file(&dirty, &net).expect("parse");
+        assert!((at(&c, 1.0)[0].2[0] - 25.0).abs() < 1e-9);
+    }
+
+    /// A constituent the model does not carry reads as nothing, and the
+    /// ones it does keep their own columns.
+    #[test]
+    fn an_unmatched_constituent_reads_as_zero() {
+        let net = model();
+        let text = file("CMS", &[(1, [1.0, 25.0], [0.0, 0.0])]).replace("TSS\n", "LEAD\n");
+        let ifc = parse_routing_file(&text, &net).expect("parse");
+        assert_eq!(
+            vec![0.0],
+            at(&ifc, 1.0)[0].2,
+            "a column for a constituent this model has not is not TSS"
+        );
+        // And the flow beside it still arrives.
+        assert!((at(&ifc, 1.0)[0].1 - 1.0).abs() < 1e-9);
+    }
+
+    /// A declared count is a length claim about a file that may not hold
+    /// it, and each period allocates their product.
+    #[test]
+    fn declared_counts_are_bounded() {
+        let net = model();
+        let nodes = "SWMM5\ntitle\n60\n1\nFLOW CMS\n999999\nJ1\n";
+        let err = parse_routing_file(nodes, &net).unwrap_err();
+        assert!(err.contains("999999 nodes"), "{err}");
+
+        let cons = "SWMM5\ntitle\n60\n999999\nFLOW CMS\n";
+        let err = parse_routing_file(cons, &net).unwrap_err();
+        assert!(err.contains("999999 constituents"), "{err}");
+
+        // And a file declaring no FLOW column at all is not one of these.
+        let none = "SWMM5\ntitle\n60\n0\n";
+        let err = parse_routing_file(none, &net).unwrap_err();
+        assert!(err.contains("no FLOW column"), "{err}");
     }
 }
 
