@@ -1506,3 +1506,326 @@ mod archive_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod section_grammar_tests {
+    use crate::io::objects::parse_network;
+    use crate::io::survey::{Diagnostic, DiagnosticKind};
+    use crate::model::{EvaporationSource, Network};
+
+    /// A model just large enough for the climate sections to refer into.
+    fn model(sections: &str) -> (Network, Vec<Diagnostic>) {
+        parse_network(&format!(
+            "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  TS1
+
+[TIMESERIES]
+TS1  0:00  1.0
+
+[PATTERNS]
+P1  MONTHLY  1 1 1 1 1 1 1 1 1 1 1 1
+
+[JUNCTIONS]
+J1  100  3
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.01  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3  0.5  4  7  0
+
+{sections}
+"
+        ))
+    }
+
+    /// Every token a `BadValue` diagnostic named, in order.
+    fn bad_tokens(d: &[Diagnostic]) -> Vec<String> {
+        d.iter()
+            .filter_map(|x| match &x.kind {
+                DiagnosticKind::BadValue { token } => Some(token.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn missing(d: &[Diagnostic]) -> usize {
+        d.iter()
+            .filter(|x| matches!(x.kind, DiagnosticKind::MissingItems))
+            .count()
+    }
+
+    // ── Which token a diagnostic names ──────────────────────────────────
+
+    /// A diagnostic names the token that was wrong, not its neighbour.
+    ///
+    /// Each of these reads its values at an offset from the line's start,
+    /// and the offset is repeated in the diagnostic. Nothing asserted
+    /// which token came back, so the two could disagree and every test
+    /// still passed: the bad value is put *second* in each list, because
+    /// that is the position where a wrong offset names a different token.
+    #[test]
+    fn a_bad_value_is_reported_by_its_own_token() {
+        let (_, d) = model("[TEMPERATURE]\nWINDSPEED  MONTHLY  1 x 3 4 5 6 7 8 9 10 11 12");
+        assert_eq!(vec!["x"], bad_tokens(&d), "the monthly wind list");
+
+        let (_, d) = model("[TEMPERATURE]\nSNOWMELT  0.5  x  0.6  100  45  -75");
+        assert_eq!(vec!["x"], bad_tokens(&d), "the snowmelt list");
+
+        let (_, d) = model("[TEMPERATURE]\nADC  IMPERV  1 x 1 1 1 1 1 1 1 1");
+        assert_eq!(vec!["x"], bad_tokens(&d), "the depletion curve");
+    }
+
+    /// The substituted-conductivity notice names the month's own value.
+    #[test]
+    fn a_substituted_conductivity_names_the_value_it_replaced() {
+        let (_, d) = model("[ADJUSTMENTS]\nCONDUCTIVITY  1 0 1 1 1 1 1 1 1 1 1 1");
+        let requested: Vec<&str> = d
+            .iter()
+            .filter_map(|x| match &x.kind {
+                DiagnosticKind::SubstitutedOption { keyword, requested }
+                    if *keyword == "CONDUCTIVITY" =>
+                {
+                    Some(requested.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(vec!["0"], requested, "February's zero, not January's one");
+    }
+
+    // ── Arity ───────────────────────────────────────────────────────────
+
+    /// A list of twelve months is twelve long, and a short one is
+    /// reported rather than read past its end.
+    #[test]
+    fn a_short_monthly_list_is_missing_items() {
+        let (_, d) = model("[TEMPERATURE]\nWINDSPEED  MONTHLY  1 2 3");
+        assert_eq!(1, missing(&d), "a list of three is not a year");
+        let (_, d) = model("[ADJUSTMENTS]\nRAINFALL  1 1 1 1 1 1 1 1 1 1 1");
+        assert_eq!(1, missing(&d), "eleven months is not a year either");
+        let (net, d) = model("[ADJUSTMENTS]\nRAINFALL  1 1 1 1 1 1 1 1 1 1 1 2");
+        assert_eq!(0, missing(&d), "and twelve is");
+        assert!((net.climate.adjust_rainfall[11] - 2.0).abs() < 1e-12);
+    }
+
+    /// A parcel pattern needs the parcel and the pattern both.
+    #[test]
+    fn a_parcel_pattern_needs_both_of_its_names() {
+        let (_, d) = model("[ADJUSTMENTS]\nN-PERV  S1");
+        assert_eq!(1, missing(&d));
+        let (net, d) = model("[ADJUSTMENTS]\nN-PERV  S1  P1");
+        assert_eq!(0, missing(&d));
+        assert_eq!(Some(0), net.parcels[0].n_perv_pattern);
+    }
+
+    /// Pan coefficients are optional, so a bare `FILE` is a whole line
+    /// and must not be reported as one short.
+    #[test]
+    fn evaporation_from_a_file_needs_no_pan_coefficients() {
+        let (net, d) = model("[EVAPORATION]\nFILE");
+        assert_eq!(0, missing(&d), "a bare FILE is complete");
+        let EvaporationSource::File { pan } = net.climate.evaporation else {
+            panic!("not file evaporation");
+        };
+        assert_eq!([1.0; 12], pan, "and its coefficients default to one");
+
+        // Given, they are read.
+        let (net, _) = model("[EVAPORATION]\nFILE  0.7 1 1 1 1 1 1 1 1 1 1 1");
+        let EvaporationSource::File { pan } = net.climate.evaporation else {
+            panic!("not file evaporation");
+        };
+        assert!((pan[0] - 0.7).abs() < 1e-12);
+    }
+
+    // ── Each keyword does its own thing ─────────────────────────────────
+
+    /// Evaporation from daily temperatures is its own source, and an arm
+    /// that vanished would leave a model silently evaporating nothing.
+    #[test]
+    fn evaporation_from_temperature_is_its_own_source() {
+        let (net, d) = model("[EVAPORATION]\nTEMPERATURE");
+        assert_eq!(0, missing(&d), "TEMPERATURE needs no value");
+        assert_eq!(EvaporationSource::Temperature, net.climate.evaporation);
+    }
+
+    /// The three parcel patterns are three different fields.
+    #[test]
+    fn each_parcel_pattern_lands_on_its_own_field() {
+        let (net, _) = model("[ADJUSTMENTS]\nN-PERV  S1  P1");
+        let p = &net.parcels[0];
+        assert_eq!(
+            (Some(0), None, None),
+            (p.n_perv_pattern, p.dstore_pattern, p.infil_pattern)
+        );
+
+        let (net, _) = model("[ADJUSTMENTS]\nDSTORE  S1  P1");
+        let p = &net.parcels[0];
+        assert_eq!(
+            (None, Some(0), None),
+            (p.n_perv_pattern, p.dstore_pattern, p.infil_pattern)
+        );
+
+        let (net, _) = model("[ADJUSTMENTS]\nINFIL  S1  P1");
+        let p = &net.parcels[0];
+        assert_eq!(
+            (None, None, Some(0)),
+            (p.n_perv_pattern, p.dstore_pattern, p.infil_pattern)
+        );
+    }
+
+    /// The monthly evaporation offset is a rate and converts like one.
+    #[test]
+    fn the_evaporation_adjustment_converts_to_a_rate() {
+        let (net, _) = model("[ADJUSTMENTS]\nEVAPORATION  1 0 0 0 0 0 0 0 0 0 0 0");
+        // An inch a day, this model being in US units.
+        let inch_per_day = 0.0254 / 86_400.0;
+        assert!(
+            (net.climate.adjust_evaporation[0] - inch_per_day).abs() < 1e-18,
+            "{}",
+            net.climate.adjust_evaporation[0]
+        );
+        assert_eq!(0.0, net.climate.adjust_evaporation[1]);
+    }
+
+    /// Each `[TEMPERATURE]` form declares how many tokens it needs, and a
+    /// line short of that is reported rather than read past its end.
+    #[test]
+    fn each_temperature_form_reports_a_line_too_short_for_it() {
+        for (line, what) in [
+            ("TIMESERIES", "a series with no name"),
+            (
+                "SNOWMELT  0.5  0.5  0.6  100  45",
+                "five of six snowmelt values",
+            ),
+            (
+                "ADC  IMPERV  1 1 1 1 1 1 1 1 1",
+                "nine of ten depletion values",
+            ),
+        ] {
+            let (_, d) = model(&format!("[TEMPERATURE]\n{line}"));
+            assert_eq!(1, missing(&d), "{what}");
+        }
+        // And each is complete at its own length.
+        for line in [
+            "TIMESERIES  TS1",
+            "SNOWMELT  0.5  0.5  0.6  100  45  -75",
+            "ADC  IMPERV  1 1 1 1 1 1 1 1 1 1",
+        ] {
+            let (_, d) = model(&format!("[TEMPERATURE]\n{line}"));
+            assert_eq!(0, missing(&d), "{line}");
+        }
+    }
+
+    /// A climate-file declaration takes an optional start date and an
+    /// optional units word, in that order, and reads each only when it is
+    /// there. Every one of these is a separate decision about how long
+    /// the line is.
+    #[test]
+    fn a_climate_file_declaration_reads_its_optional_tokens() {
+        use crate::io::options::Date;
+        use crate::model::{FileTempUnits, TemperatureSource};
+        let src = |text: &str| {
+            let (net, d) = model(&format!("[TEMPERATURE]\n{text}"));
+            assert_eq!(0, missing(&d), "{text}");
+            net.climate.temperature.clone()
+        };
+        let file = |start, units| {
+            Some(TemperatureSource::File {
+                name: "CLIMATE.DAT".into(),
+                start,
+                units,
+            })
+        };
+        let jan15 = Date {
+            year: 2024,
+            month: 1,
+            day: 15,
+        };
+
+        assert_eq!(
+            file(None, FileTempUnits::Fahrenheit),
+            src("FILE  CLIMATE.DAT"),
+            "the name alone, and this model's own default units"
+        );
+        assert_eq!(
+            file(Some(jan15), FileTempUnits::Fahrenheit),
+            src("FILE  CLIMATE.DAT  01/15/2024"),
+            "a start date when one is given"
+        );
+        assert_eq!(
+            file(Some(jan15), FileTempUnits::Celsius),
+            src("FILE  CLIMATE.DAT  01/15/2024  C"),
+            "and a units word after it"
+        );
+        assert_eq!(
+            file(None, FileTempUnits::Celsius),
+            src("FILE  CLIMATE.DAT  *  C"),
+            "a star holds the date's place without setting one"
+        );
+    }
+
+    // ── Ranges and keyword matching ─────────────────────────────────────
+
+    /// A depletion curve is a fraction: a value outside zero to one is
+    /// not a curve, and is reported rather than stored.
+    #[test]
+    fn a_depletion_fraction_outside_zero_to_one_is_refused() {
+        let (_, d) = model("[TEMPERATURE]\nADC  IMPERV  0 0.5 1 1 1 1 1 1 1 2");
+        assert_eq!(vec!["2"], bad_tokens(&d), "two is not a fraction");
+        let (_, d) = model("[TEMPERATURE]\nADC  IMPERV  0 0.5 1 1 1 1 1 1 1 1");
+        assert!(bad_tokens(&d).is_empty(), "the ends of the range are in it");
+    }
+
+    /// §14.3: a keyword is matched when the table's entry is a prefix of
+    /// the token, so a token that merely *begins* with a keyword is
+    /// accepted. That is the predecessor's rule and it is kept, but it
+    /// accepts things nobody meant, so every such match is said out loud.
+    /// A token spelled exactly is not one of them.
+    #[test]
+    fn a_keyword_matched_by_prefix_is_reported_and_an_exact_one_is_not() {
+        let prefixed = |text: &str| -> Vec<String> {
+            let (_, d) = model(text);
+            d.iter()
+                .filter_map(|x| match &x.kind {
+                    DiagnosticKind::PrefixMatched { token, .. } => Some(token.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            vec!["TIMESERIESX"],
+            prefixed("[TEMPERATURE]\nTIMESERIESX  TS1"),
+            "a token extending a keyword is accepted and noted"
+        );
+        assert!(
+            prefixed("[TEMPERATURE]\nTIMESERIES  TS1").is_empty(),
+            "the exact spelling is not a prefix match"
+        );
+        // And it really was accepted, not merely noted.
+        let (net, _) = model("[TEMPERATURE]\nTIMESERIESX  TS1");
+        assert!(
+            matches!(
+                net.climate.temperature,
+                Some(crate::model::TemperatureSource::Series(_))
+            ),
+            "the prefixed keyword still selected the series source"
+        );
+    }
+}
