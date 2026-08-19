@@ -308,6 +308,24 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             return EXIT_IO;
         }
     }
+    // §14.8.1: SAVE keeps the convolved hydrograph so a later run need not
+    // recompute it. SCRATCH asks for the same work and then discards it, so
+    // it is not written; the results are identical either way.
+    if let Some((hydra::uds::model::FileMode::Save, name)) = &iface.rdii {
+        let path = match resolve_aux_path(&args.model, name) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        if let Err(e) = create_and_write(&path, |w| sim.write_rdii(w).map(|_| ())) {
+            emit_error(
+                "io/interface",
+                &format!("RDII interface file {}: {e}", path.display()),
+                None,
+                None,
+            );
+            return EXIT_IO;
+        }
+    }
     if let Err(e) = es.finish_results() {
         emit_error("io/output", &e.to_string(), None, None);
         return EXIT_IO;

@@ -325,6 +325,10 @@ pub struct Simulation {
     /// A supplied RDII interface file (§14.8.1). When present it *is* the
     /// RDII hydrograph and the convolutions are not run.
     rdii_in: Option<crate::io::iface::RdiiInterface>,
+    /// Convolved RDII for `SAVE` (§14.8.1): `(epoch s, flow per assignment)`
+    /// at each hydrology step. Collected only when the model asks for a
+    /// file, since a long run holds one row per step per assignment.
+    rdii_out: Option<Vec<(f64, Vec<f64>)>>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -529,15 +533,9 @@ impl Simulation {
                 None => {}
             }
         }
-        // §14.8.1: RDII files are read. `USE` opens and waits for the
-        // caller to supply the bytes, as routing inflows do; writing is
-        // still deferred and says so.
-        if let Some((crate::model::FileMode::Save, _)) = &net.interface_files.rdii {
-            findings.push(ValidationDiagnostic {
-                element: String::new(),
-                kind: crate::io::validate::ValidationKind::InterfaceFileNotWritten { role: "RDII" },
-            });
-        }
+        // §14.8.1: RDII files are read and written. `USE` opens and waits
+        // for the caller to supply the bytes, as routing inflows do; `SAVE`
+        // collects the convolved hydrograph for `write_rdii`.
         // One routing file never serves both roles in a run (§14.8).
         if let (Some(a), Some(b)) = (&net.interface_files.inflows, &net.interface_files.outflows) {
             if a == b {
@@ -605,6 +603,14 @@ impl Simulation {
                 climate_records,
                 iface_in: None,
                 rdii_in: None,
+                rdii_out: matches!(
+                    net.interface_files.rdii,
+                    Some((
+                        crate::model::FileMode::Save | crate::model::FileMode::Scratch,
+                        _
+                    ))
+                )
+                .then(Vec::new),
                 climate_state: ClimateDayState {
                     last_day: i64::MIN,
                     ..ClimateDayState::default()
@@ -862,6 +868,9 @@ impl Simulation {
                     })
                     .collect(),
             };
+            if let Some(rows) = &mut self.rdii_out {
+                rows.push((epoch, rdii_flows.iter().map(|(_, q)| *q).collect()));
+            }
             for (vertex, q) in rdii_flows {
                 lats[vertex] += q;
                 if routing_active {
@@ -1990,6 +1999,22 @@ impl Simulation {
         let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
         self.rdii_in = Some(crate::io::iface::parse_rdii_file(bytes, &self.net, cv)?);
         Ok(())
+    }
+
+    /// Write the RDII interface file (§14.8.1) in the text form, if the
+    /// model asked for one. `false` when it did not.
+    ///
+    /// The declared step is the longer of the two hydrology steps, which
+    /// bounds every gap between the records, so the written hydrograph
+    /// leaves no instant of the run uncovered.
+    pub fn write_rdii(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
+        let Some(rows) = &self.rdii_out else {
+            return Ok(false);
+        };
+        let vertices: Vec<usize> = self.rdii.iter().map(|r| r.vertex).collect();
+        let step = self.net.options.wet_step.max(self.net.options.dry_step);
+        crate::io::iface::write_rdii_file(&self.net, &vertices, step, rows, w)?;
+        Ok(true)
     }
 
     /// Write the routing interface outflow file (§14.8): outlet

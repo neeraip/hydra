@@ -287,10 +287,10 @@ An RDII interface file replays a hydrograph of rainfall-derived infiltration
 and inflow per vertex, so a model whose unit hydrographs and rainfall have
 not changed need not recompute them. It is read (`USE`) in either of the
 predecessor's two encodings, chosen by the first ten bytes: `SWMM5-RDII`
-begins the binary form, and anything else is parsed as the text form.
-Writing (`SAVE`) is deferred and reports itself as such (charter §1.8): a
-declared file opens the model and is named as not written, since the results
-do not depend on it.
+begins the binary form, and anything else is parsed as the text form. It is
+written (`SAVE`) in the text form. The two usages are exclusive, as the
+predecessor's single slot makes them: a file is read or written, never both
+in one run.
 
 **Binary.** The stamp, then a signed 32-bit step in seconds, a signed 32-bit
 vertex count, and that many signed 32-bit values, followed by one record per
@@ -340,11 +340,30 @@ predecessor's behaviour and the right one for this file — an RDII hydrograph
 is a volume already apportioned to a step, and interpolating it would move
 water between steps that the unit hydrographs put where they did.
 
-**Writing, when it arrives,** will emit the text form. It is the encoding
-that survives a model whose vertices have been reordered, it declares its own
-units, and it is the one a modeller can read; the binary form's only
-advantage is size, which the format's inability to identify its own vertices
-does not earn. Both forms are read.
+**Writing.** Export emits the text form. It is the encoding that survives a
+model whose vertices have been reordered, it declares its own units, and it
+is the one a modeller can read; the binary form's only advantage is size,
+which the format's inability to identify its own vertices does not earn.
+Both forms are read.
+
+A record is written at each hydrology step, carrying the flow that step
+convolved, and the declared step is the longer of the model's two hydrology
+steps. That value bounds every gap between records, since a hydrology step is
+one of the two and may only be shortened by a gage boundary, so the written
+hydrograph is continuous: no instant of the run falls outside some record's
+window. Where the run took the shorter step the windows overlap, which
+costs nothing, because a reader takes the last record at or before the
+instant it wants.
+
+> **DEVIATION from SWMM:** the predecessor writes on a uniform grid, its
+> RDII step being its wet step, because its convolution runs on that grid.
+> This engine convolves on the hydrology clock, which alternates between the
+> wet and dry steps, and writes what it computed rather than resampling it.
+> A file written here therefore reproduces the run that wrote it exactly,
+> where a uniform grid would have to interpolate the dry-weather recession
+> or carry it at the wet step's density.
+>
+> *Source: `rdii.c:733` — `RdiiStep = WetStep`.*
 
 ### 14.9 Output
 

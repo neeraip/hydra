@@ -566,6 +566,65 @@ fn parse_rdii_text(text: &str, net: &Network) -> Result<RdiiInterface, String> {
     })
 }
 
+/// Write an RDII interface file in the text form (§14.8.1).
+///
+/// `records` are `(epoch s, flow m³/s per assignment)` as the run
+/// convolved them, and `step` the longer of the model's hydrology steps,
+/// which bounds every gap between them.
+pub fn write_rdii_file(
+    net: &Network,
+    vertices: &[usize],
+    step: f64,
+    records: &[(f64, Vec<f64>)],
+    w: &mut impl Write,
+) -> io::Result<()> {
+    let unit = match net.options.flow_units {
+        crate::io::options::FlowUnits::Cfs => "CFS",
+        crate::io::options::FlowUnits::Gpm => "GPM",
+        crate::io::options::FlowUnits::Mgd => "MGD",
+        crate::io::options::FlowUnits::Cms => "CMS",
+        crate::io::options::FlowUnits::Lps => "LPS",
+        crate::io::options::FlowUnits::Mld => "MLD",
+    };
+    let cv = flow_cv_of(net.options.flow_units);
+    writeln!(w, "SWMM5")?;
+    writeln!(w, "RDII hydrographs")?;
+    writeln!(w, "{}", step.round() as i64)?;
+    // One constituent: the flow itself.
+    writeln!(w, "1")?;
+    writeln!(w, "FLOW {unit}")?;
+    writeln!(w, "{}", vertices.len())?;
+    for v in vertices {
+        writeln!(w, "{}", net.vertices[*v].id)?;
+    }
+    writeln!(w, "Node             Year Mon Day Hr Min Sec Flow")?;
+    for (epoch, flows) in records {
+        let days = (*epoch / 86_400.0).floor();
+        let date = crate::simulation::time::civil_from_days(days as i64);
+        let secs = *epoch - days * 86_400.0;
+        let (hr, min, sec) = (
+            (secs / 3600.0) as u32,
+            ((secs % 3600.0) / 60.0) as u32,
+            (secs % 60.0).round() as u32,
+        );
+        for (v, q) in vertices.iter().zip(flows) {
+            writeln!(
+                w,
+                "{} {} {} {} {} {} {} {:.6}",
+                net.vertices[*v].id,
+                date.year,
+                date.month,
+                date.day,
+                hr,
+                min,
+                sec,
+                q / cv
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod rdii_tests {
     use super::*;

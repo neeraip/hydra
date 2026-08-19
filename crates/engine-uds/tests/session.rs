@@ -3177,3 +3177,222 @@ TS1  6:00  0.0
         "the file declares {expected} m³ and the run received {supplied}"
     );
 }
+
+/// A run's own RDII file, read back, reproduces the run.
+///
+/// This is the whole promise of the format: compute the hydrograph once
+/// and reuse it. The writer and the reader are only useful if they agree,
+/// and each is easy to get self-consistently wrong — a date origin, a unit
+/// conversion, or a step that leaves gaps would all pass their own tests
+/// and fail this one.
+#[test]
+fn an_rdii_file_written_by_a_run_reproduces_that_run() {
+    fn model(files: &str) -> String {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS           LPS
+FLOW_ROUTING         DYNWAVE
+START_DATE           03/15/2023
+START_TIME           00:00:00
+END_DATE             03/15/2023
+END_TIME             06:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:20:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+{files}
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+J2  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+C2  J2  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+C2  CIRCULAR  2  0  0  0  1
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT   0.4  1.0  2.0
+UH1  ALL  MEDIUM  0.3  3.0  2.0
+
+[RDII]
+J1  UH1  40
+J2  UH1  25
+
+[TIMESERIES]
+TS1  0:00  20.0
+TS1  1:00  0.0
+TS1  6:00  0.0
+
+[REPORT]
+"
+        )
+    }
+
+    // The run that computes the hydrograph and saves it.
+    let (mut saver, diags, _) = Simulation::open(&model("SAVE RDII rdii.txt")).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    saver.run();
+    let computed = saver.ledgers().network.inflow;
+    let mut file = Vec::new();
+    assert!(
+        saver.write_rdii(&mut file).expect("write"),
+        "a SAVE model writes"
+    );
+    let file = String::from_utf8(file).expect("the text form is text");
+
+    // Two vertices, so a file that mixed their columns would show up.
+    assert!(file.contains("J1"), "{file}");
+    assert!(file.contains("J2"), "{file}");
+    // Written in the model's own units, which the text form declares.
+    assert!(
+        file.contains("FLOW LPS"),
+        "{}",
+        &file[..120.min(file.len())]
+    );
+
+    // The run that reuses it. Its convolution must not run at all.
+    let (mut reader, _, _) = Simulation::open(&model("USE RDII rdii.txt")).expect("open");
+    reader.supply_rdii(file.as_bytes()).expect("supply");
+    reader.run();
+    let replayed = reader.ledgers().network.inflow;
+
+    assert!(computed > 0.0, "the saving run produced no RDII");
+    assert!(
+        (replayed - computed).abs() < computed * 0.01,
+        "replaying the file gave {replayed} against the run's own {computed}"
+    );
+}
+
+/// A model that asks for no RDII file writes none, and says so by
+/// answering `false` rather than producing an empty one.
+#[test]
+fn a_model_without_an_rdii_file_writes_nothing() {
+    let (sim, _, _) = Simulation::open(
+        "\
+[OPTIONS]
+FLOW_UNITS  CMS
+[JUNCTIONS]
+J1  10  4  0  0  0
+[OUTFALLS]
+O1  8  FREE  NO
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+[REPORT]
+",
+    )
+    .expect("open");
+    let mut out = Vec::new();
+    assert!(!sim.write_rdii(&mut out).expect("write"));
+    assert!(out.is_empty());
+}
+
+/// The declared step bounds every gap between records.
+///
+/// §14.8.1 writes a record at each hydrology step and declares the *longer*
+/// of the two, so the written hydrograph leaves no instant uncovered: where
+/// the run took the shorter step the windows overlap, which costs nothing,
+/// and where it took the longer they abut. Declaring the wet step instead
+/// would leave the whole dry-weather recession in gaps, which a reader
+/// serves as no flow.
+///
+/// The round-trip test does not catch that on its own: its rain falls in
+/// the first hour, so most of its volume is written while the run is on the
+/// wet step and the missing recession moves the total by less than its
+/// tolerance.
+#[test]
+fn a_written_rdii_file_leaves_no_gap_between_its_records() {
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           03/15/2023
+START_TIME           00:00:00
+END_DATE             03/15/2023
+END_TIME             08:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:20:00
+ROUTING_STEP         0:00:30
+
+[FILES]
+SAVE RDII rdii.txt
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  TS1
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2  0  0  0  1
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT  0.4  1.0  2.0
+
+[RDII]
+J1  UH1  40
+
+[TIMESERIES]
+TS1  0:00  20.0
+TS1  0:30  0.0
+TS1  8:00  0.0
+
+[REPORT]
+";
+    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    sim.run();
+    let mut file = Vec::new();
+    assert!(sim.write_rdii(&mut file).expect("write"));
+    let text = String::from_utf8(file).expect("text form");
+
+    let (net, _) = hydra_engine_uds::io::objects::parse_network(MODEL);
+    let parsed = hydra_engine_uds::io::iface::parse_rdii_file(text.as_bytes(), &net, 1.0)
+        .expect("the file we just wrote must read back");
+
+    assert!(
+        parsed.records.len() > 20,
+        "only {} records: the run was too short to say anything",
+        parsed.records.len()
+    );
+    // The run must actually have taken the longer step somewhere, or this
+    // proves nothing about gaps.
+    let widest = parsed
+        .records
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .fold(0.0f64, f64::max);
+    assert!(
+        widest > 5.0 * 60.0 + 1.0,
+        "every step was the wet step ({widest}s apart at most), so the dry \
+         tail never exercised the bound"
+    );
+    assert!(
+        widest <= parsed.step + 1.0,
+        "records are {widest}s apart under a declared step of {}s, so the \
+         hydrograph has a hole a reader serves as no flow",
+        parsed.step
+    );
+}
