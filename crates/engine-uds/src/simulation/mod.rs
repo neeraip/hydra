@@ -10,6 +10,7 @@
 //! by identity. Hydrology (§3–§4) drives the cascade; transport (§8)
 //! joins as it lands.
 
+pub mod checkpoint;
 pub mod controls;
 pub mod expression;
 pub mod time;

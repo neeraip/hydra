@@ -174,10 +174,15 @@ still advances so evaporation continues to apply.
 
 ### 10.2 Transactions
 
-Every routing trial step of §6.5 is a **transaction**: rejection restores
-vertex, channel, structure, rule, and accounting state completely, per §1.5. The
-snapshot capability this requires is the same capability the checkpoint
-contract of §12.3 persists; they are one design.
+Every routing trial step of §6.5 is a **transaction**: a rejected step leaves
+vertex, channel, structure, rule, and accounting state exactly as it was, per
+§1.5. A trial is computed forward into its own result and committed only once
+accepted, so nothing is ever rolled back and no snapshot of the accepted state
+is taken.
+
+That is a stronger guarantee than restoring a snapshot would be, and it is
+why it carries none of the checkpoint's work: the checkpoint of §12.3 must
+capture the accepted state in full, and this mechanism never has to name it.
 
 ### 10.3 Event Windows
 
@@ -426,6 +431,36 @@ therefore also carries:
 
 The last of those is what makes a checkpoint large: a restored run must be
 able to write the whole run's results, not the part after the checkpoint.
+
+**Format.** The stamp `HYDRA-UDS-CHECKPOINT`, a 32-bit version, then a
+fingerprint of the model the checkpoint came from, then the state. Every
+quantity is a 64-bit float, in the engine's own units: a checkpoint that
+narrowed one to single precision could not continue bit-identically, which
+is the whole of what it promises, and a checkpoint converted to a model's
+display units would restore something subtly other than what it saved.
+
+The fingerprint is the counts of parcels, vertices, channels, constituents
+and land uses, and a hash of every element identifier in model order. Counts
+alone let a checkpoint load into a model with the same shape and different
+elements, and let a reordered model load a checkpoint whose every value then
+belongs to the wrong element. Hashing the identifiers costs one pass and
+refuses both.
+
+> **DEVIATION from SWMM:** the predecessor checks the counts and the unit
+> system, and its own documentation states the rest of the risk plainly:
+> "no test is made to insure that these components are of the same sub-type
+> and maintain the same order as when the hot start file was created". A
+> reordered model therefore restores every value onto the wrong element and
+> runs. This engine refuses.
+>
+> *Source: `hotstart.c:20–25`, and `openHotstartFile2` which compares five
+> counts and `UnitSystem`.*
+
+**A capability not yet covered is refused by name.** A checkpoint of a model
+using a feature whose state this engine does not yet persist would restore
+that feature from a default and continue plausibly and wrongly. Saving one
+is refused with the feature named, exactly as any other deferred capability
+is (§1.8), until its state is carried.
 
 **Completeness is the contract, and is checked rather than asserted.** A
 state omitted from a checkpoint does not fail; it continues from a default

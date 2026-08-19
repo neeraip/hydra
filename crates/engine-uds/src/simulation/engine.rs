@@ -2283,6 +2283,250 @@ impl Simulation {
         Ok(())
     }
 
+    /// Write a checkpoint of this session (§12.3).
+    ///
+    /// A model using a capability whose state is not yet carried is
+    /// refused with the capability named: restoring it from a default
+    /// would continue plausibly and wrongly, which is the one outcome a
+    /// checkpoint must not have.
+    pub fn save_checkpoint(&self, w: &mut impl std::io::Write) -> Result<(), String> {
+        use crate::simulation::checkpoint as cp;
+        if let Some(gap) = self.checkpoint_gap() {
+            return Err(gap);
+        }
+        let io = |e: std::io::Error| e.to_string();
+        w.write_all(cp::STAMP).map_err(io)?;
+        w.write_all(&cp::VERSION.to_le_bytes()).map_err(io)?;
+        cp::put_u(w, self.model_fingerprint()).map_err(io)?;
+        // Clocks and the accounting the ledgers are built from.
+        for v in [
+            self.hydro_t,
+            self.next_report,
+            self.next_rule_t,
+            self.vol_dwf,
+            self.vol_ext,
+            self.vol_wet,
+            self.vol_gw,
+            self.vol_rdii,
+            self.last_ext_total,
+            self.last_dwf_total,
+        ] {
+            cp::put_f(w, v).map_err(io)?;
+        }
+        for vs in [&self.last_lat, &self.last_inlet_lat] {
+            cp::put_fs(w, vs).map_err(io)?;
+        }
+        for (at, lats) in [&self.hydro_prev, &self.hydro_now] {
+            cp::put_f(w, *at).map_err(io)?;
+            cp::put_fs(w, lats).map_err(io)?;
+        }
+        cp::put_fs(w, &self.hydro_mass_prev.concat().concat()).map_err(io)?;
+        cp::put_fs(w, &self.hydro_mass_now.concat().concat()).map_err(io)?;
+        // Latches: a restored run must neither repeat a warning nor
+        // swallow one it has not issued (§12.3).
+        cp::put_b(w, self.hydro_degraded_warned).map_err(io)?;
+        cp::put_b(w, self.runoff_exhausted).map_err(io)?;
+        cp::put_u(w, self.series_warned.len() as u64).map_err(io)?;
+        for flag in &self.series_warned {
+            cp::put_b(w, *flag).map_err(io)?;
+        }
+        cp::put_u(w, self.lateral_override.len() as u64).map_err(io)?;
+        // Sorted so a checkpoint of one state is one file: a map's own
+        // order is not part of the state and must not reach the bytes.
+        let mut overrides: Vec<_> = self.lateral_override.iter().collect();
+        overrides.sort_by_key(|(k, _)| **k);
+        for (vertex, q) in overrides {
+            cp::put_u(w, *vertex as u64).map_err(io)?;
+            cp::put_f(w, *q).map_err(io)?;
+        }
+        self.climate_state.checkpoint_put(w).map_err(io)?;
+        // The output so far, so a restored run writes the whole run's
+        // results rather than the part after the checkpoint (§12.3).
+        cp::put_u(w, self.snapshots.len() as u64).map_err(io)?;
+        for snap in &self.snapshots {
+            snap.checkpoint_put(w).map_err(io)?;
+        }
+        cp::put_u(w, self.notices.len() as u64).map_err(io)?;
+        for notice in &self.notices {
+            cp::put_f(w, notice.t).map_err(io)?;
+            cp::put_u(w, notice.message.len() as u64).map_err(io)?;
+            w.write_all(notice.message.as_bytes()).map_err(io)?;
+        }
+        self.router.checkpoint_put(w).map_err(io)?;
+        Ok(())
+    }
+
+    /// Restore a checkpoint over this session (§12.3).
+    ///
+    /// The session must be one this model opened: the fingerprint refuses
+    /// a checkpoint from another model, or from the same model with its
+    /// elements reordered, which would otherwise restore every value onto
+    /// the wrong element and run.
+    pub fn load_checkpoint(&mut self, bytes: &[u8]) -> Result<(), String> {
+        use crate::simulation::checkpoint as cp;
+        if let Some(gap) = self.checkpoint_gap() {
+            return Err(gap);
+        }
+        let mut r = cp::Reader::new(bytes);
+        r.tag(cp::STAMP)?;
+        let version = r.u32()?;
+        if version != cp::VERSION {
+            return Err(format!(
+                "checkpoint is version {version} and this build writes version {}",
+                cp::VERSION
+            ));
+        }
+        let fingerprint = r.u()?;
+        if fingerprint != self.model_fingerprint() {
+            return Err(
+                "this checkpoint was taken from a different model, or from this \
+                 one before its elements were renamed or reordered (§12.3)"
+                    .into(),
+            );
+        }
+        for slot in [
+            &mut self.hydro_t,
+            &mut self.next_report,
+            &mut self.next_rule_t,
+            &mut self.vol_dwf,
+            &mut self.vol_ext,
+            &mut self.vol_wet,
+            &mut self.vol_gw,
+            &mut self.vol_rdii,
+            &mut self.last_ext_total,
+            &mut self.last_dwf_total,
+        ] {
+            *slot = r.f()?;
+        }
+        for slot in [&mut self.last_lat, &mut self.last_inlet_lat] {
+            *slot = r.fs()?;
+        }
+        for slot in [&mut self.hydro_prev, &mut self.hydro_now] {
+            slot.0 = r.f()?;
+            slot.1 = r.fs()?;
+        }
+        let shape = |v: &Vec<Vec<Vec<f64>>>| (v.len(), v.first().map_or(0, Vec::len));
+        for slot in [&mut self.hydro_mass_prev, &mut self.hydro_mass_now] {
+            let (outer, middle) = shape(slot);
+            let flat = r.fs()?;
+            let inner = flat.len().checked_div(outer * middle).unwrap_or(0);
+            if flat.len() != outer * middle * inner {
+                return Err("checkpoint holds a constituent mass field of another shape".into());
+            }
+            let mut it = flat.into_iter();
+            *slot = (0..outer)
+                .map(|_| {
+                    (0..middle)
+                        .map(|_| it.by_ref().take(inner).collect())
+                        .collect()
+                })
+                .collect();
+        }
+        self.hydro_degraded_warned = r.b()?;
+        self.runoff_exhausted = r.b()?;
+        let n = r.u()? as usize;
+        if n != self.series_warned.len() {
+            return Err(format!(
+                "checkpoint holds {n} series latches where this model has {}",
+                self.series_warned.len()
+            ));
+        }
+        for flag in self.series_warned.iter_mut() {
+            *flag = r.b()?;
+        }
+        let n = r.u()? as usize;
+        self.lateral_override.clear();
+        for _ in 0..n {
+            let vertex = r.u()? as usize;
+            self.lateral_override.insert(vertex, r.f()?);
+        }
+        self.climate_state.checkpoint_get(&mut r)?;
+        let n = r.u()? as usize;
+        self.snapshots = (0..n)
+            .map(|_| Snapshot::checkpoint_get(&mut r))
+            .collect::<Result<Vec<_>, _>>()?;
+        let n = r.u()? as usize;
+        self.notices = Vec::with_capacity(n);
+        for _ in 0..n {
+            let t = r.f()?;
+            self.notices.push(RuntimeNotice {
+                t,
+                message: r.text()?,
+            });
+        }
+        self.router.checkpoint_get(&mut r)?;
+        // Bytes left over mean a layout this build does not share, which
+        // the version alone did not catch.
+        if !r.at_end() {
+            return Err("checkpoint holds more than this build reads".into());
+        }
+        Ok(())
+    }
+
+    /// A hash of the model's shape and every element identifier, in model
+    /// order (§12.3).
+    fn model_fingerprint(&self) -> u64 {
+        let mut h = crate::simulation::checkpoint::Fnv::new();
+        for n in [
+            self.net.parcels.len(),
+            self.net.vertices.len(),
+            self.net.links.len(),
+            self.net.constituents.len(),
+            self.net.land_uses.len(),
+        ] {
+            h.write(&(n as u64).to_le_bytes());
+        }
+        // Order matters as much as membership: the predecessor compares
+        // counts alone and says so, and a reordered model then restores
+        // every value onto the wrong element.
+        for v in &self.net.vertices {
+            h.write(v.id.as_bytes());
+        }
+        for l in &self.net.links {
+            h.write(l.id.as_bytes());
+        }
+        for p in &self.net.parcels {
+            h.write(p.id.as_bytes());
+        }
+        for c in &self.net.constituents {
+            h.write(c.id.as_bytes());
+        }
+        h.finish()
+    }
+
+    /// The first capability this model uses whose state a checkpoint does
+    /// not yet carry, named as a refusal (§12.3).
+    fn checkpoint_gap(&self) -> Option<String> {
+        let unmet = |what: &str| {
+            Some(format!(
+                "a checkpoint of this model would lose its {what}, so it is \
+                 refused rather than restored from a default (§12.3)"
+            ))
+        };
+        if self.surface.is_some() {
+            return unmet("surface state");
+        }
+        if !self.net.constituents.is_empty() {
+            return unmet("constituent state");
+        }
+        if self.controls.is_some() {
+            return unmet("control state");
+        }
+        if !self.rdii.is_empty() {
+            return unmet("sewer inflow state");
+        }
+        if self.inlets.is_some() {
+            return unmet("street inlet state");
+        }
+        if self.iface_in.is_some() || self.rdii_in.is_some() || self.runoff_in.is_some() {
+            return unmet("position in the interface files it reads");
+        }
+        if self.rdii_out.is_some() || self.rain_out.is_some() || self.runoff_out.is_some() {
+            return unmet("half-written interface files");
+        }
+        None
+    }
+
     /// Write the rainfall interface file for this model's gages, if it
     /// asked for one (§14.8.3). `false` when it did not.
     ///
@@ -3165,5 +3409,233 @@ mod interface_file_modes {
             Simulation::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")).is_ok(),
             "a cache nothing reads must not refuse the model"
         );
+    }
+}
+
+impl Snapshot {
+    /// Write one reporting record (§12.3). A restored run must be able to
+    /// write the whole run's results, not the part after the checkpoint.
+    fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_fs, put_u};
+        let Snapshot {
+            t,
+            depths,
+            flows,
+            node_head,
+            node_volume,
+            node_lateral,
+            node_inflow,
+            node_flooding,
+            node_quality,
+            link_depth,
+            link_velocity,
+            link_volume,
+            link_capacity,
+            link_quality,
+            subcatch,
+            system,
+        } = self;
+        put_f(w, *t)?;
+        for vs in [
+            depths,
+            flows,
+            node_head,
+            node_volume,
+            node_lateral,
+            node_inflow,
+            node_flooding,
+            link_depth,
+            link_velocity,
+            link_volume,
+            link_capacity,
+        ] {
+            put_fs(w, vs)?;
+        }
+        for rows in [node_quality, link_quality] {
+            put_u(w, rows.len() as u64)?;
+            for row in rows {
+                put_fs(w, row)?;
+            }
+        }
+        put_u(w, subcatch.len() as u64)?;
+        for rec in subcatch {
+            rec.checkpoint_put(w)?;
+        }
+        for v in system {
+            put_f(w, *v)?;
+        }
+        Ok(())
+    }
+
+    fn checkpoint_get(
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<Snapshot, String> {
+        let t = r.f()?;
+        let mut fs = || r.fs();
+        let depths = fs()?;
+        let flows = fs()?;
+        let node_head = fs()?;
+        let node_volume = fs()?;
+        let node_lateral = fs()?;
+        let node_inflow = fs()?;
+        let node_flooding = fs()?;
+        let link_depth = fs()?;
+        let link_velocity = fs()?;
+        let link_volume = fs()?;
+        let link_capacity = fs()?;
+        let mut rows = || -> Result<Vec<Vec<f64>>, String> {
+            let n = r.u()? as usize;
+            (0..n).map(|_| r.fs()).collect()
+        };
+        let node_quality = rows()?;
+        let link_quality = rows()?;
+        let n = r.u()? as usize;
+        let subcatch = (0..n)
+            .map(|_| SubcatchRecord::checkpoint_get(r))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut system = [0.0; 15];
+        for v in &mut system {
+            *v = r.f()?;
+        }
+        Ok(Snapshot {
+            t,
+            depths,
+            flows,
+            node_head,
+            node_volume,
+            node_lateral,
+            node_inflow,
+            node_flooding,
+            node_quality,
+            link_depth,
+            link_velocity,
+            link_volume,
+            link_capacity,
+            link_quality,
+            subcatch,
+            system,
+        })
+    }
+}
+
+impl SubcatchRecord {
+    fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_fs};
+        let SubcatchRecord {
+            rain,
+            snow_depth,
+            evap,
+            infil,
+            runoff,
+            gw_flow,
+            gw_elev,
+            soil_moisture,
+            washoff,
+        } = self;
+        for v in [
+            rain,
+            snow_depth,
+            evap,
+            infil,
+            runoff,
+            gw_flow,
+            gw_elev,
+            soil_moisture,
+        ] {
+            put_f(w, *v)?;
+        }
+        put_fs(w, washoff)
+    }
+
+    fn checkpoint_get(
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<SubcatchRecord, String> {
+        Ok(SubcatchRecord {
+            rain: r.f()?,
+            snow_depth: r.f()?,
+            evap: r.f()?,
+            infil: r.f()?,
+            runoff: r.f()?,
+            gw_flow: r.f()?,
+            gw_elev: r.f()?,
+            soil_moisture: r.f()?,
+            washoff: r.fs()?,
+        })
+    }
+}
+
+impl ClimateDayState {
+    fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let ClimateDayState {
+            last_day,
+            tmin,
+            tmax,
+            tave,
+            trng,
+            trng1,
+            prev_tmax,
+            hrsr,
+            hrss,
+            hrday,
+            dhrdy,
+            dydif,
+            ma_ta,
+            ma_tr,
+            front,
+            t_ave7,
+            t_rng7,
+            hargreaves,
+            file_evap,
+            wind,
+        } = self;
+        // A day index, written as the bits of its own type so a day
+        // before the epoch survives.
+        w.write_all(&last_day.to_le_bytes())?;
+        for v in [
+            tmin, tmax, tave, trng, trng1, hrsr, hrss, hrday, dhrdy, dydif, t_ave7, t_rng7,
+            hargreaves, file_evap, wind,
+        ] {
+            put_f(w, *v)?;
+        }
+        put_b(w, prev_tmax.is_some())?;
+        put_f(w, prev_tmax.unwrap_or(0.0))?;
+        put_fs(w, ma_ta)?;
+        put_fs(w, ma_tr)?;
+        put_u(w, *front as u64)?;
+        Ok(())
+    }
+
+    fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.last_day = r.i64()?;
+        for slot in [
+            &mut self.tmin,
+            &mut self.tmax,
+            &mut self.tave,
+            &mut self.trng,
+            &mut self.trng1,
+            &mut self.hrsr,
+            &mut self.hrss,
+            &mut self.hrday,
+            &mut self.dhrdy,
+            &mut self.dydif,
+            &mut self.t_ave7,
+            &mut self.t_rng7,
+            &mut self.hargreaves,
+            &mut self.file_evap,
+            &mut self.wind,
+        ] {
+            *slot = r.f()?;
+        }
+        let has = r.b()?;
+        let v = r.f()?;
+        self.prev_tmax = has.then_some(v);
+        self.ma_ta = r.fs()?;
+        self.ma_tr = r.fs()?;
+        self.front = r.u()? as usize;
+        Ok(())
     }
 }

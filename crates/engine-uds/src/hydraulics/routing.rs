@@ -4628,3 +4628,521 @@ W1  RECT_OPEN  1.0  8  0  0
         assert!((1.5..1.75).contains(&cd), "cd {cd}");
     }
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl Router {
+    /// Write every piece of accepted routing state (§12.3).
+    ///
+    /// The destructure is exhaustive on purpose. Fields bound to `_` are
+    /// parameters, rebuilt from the model when the checkpoint is loaded;
+    /// everything else is state and is written. A field added to `Router`
+    /// fails to compile here until it has been put in one group or the
+    /// other, which is the only check that does not depend on a test
+    /// happening to exercise it.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
+        let Router {
+            // Parameters: the model builds these.
+            chans: _,
+            verts: _,
+            structs: _,
+            ids: _,
+            dt_user: _,
+            dt_floor: _,
+            courant_factor: _,
+            max_trials: _,
+            head_tol: _,
+            min_surface_area: _,
+            continuity_tol: _,
+            err_tol: _,
+            allow_ponding: _,
+            normal_flow: _,
+            stor_evap_frac: _,
+            stor_seep_ksat: _,
+            // State.
+            t,
+            y,
+            q,
+            sq,
+            sett,
+            sett_cur,
+            chan_open,
+            struct_flip_t,
+            chan_flip_t,
+            a_mid,
+            net_flow,
+            flood_now,
+            chan_evap_now,
+            chan_seep_now,
+            stor_ga,
+            stor_evap_now,
+            stor_seep_now,
+            hist,
+            dt_prev,
+            quiet_streak,
+            evap_rate,
+            report,
+            vertex_stats,
+            pump_prev_off,
+            link_stats,
+            worst_counts,
+            stats_start,
+        } = self;
+        put_f(w, *t)?;
+        for vs in [y, q, sq, sett, sett_cur, struct_flip_t, chan_flip_t] {
+            put_fs(w, vs)?;
+        }
+        for vs in [a_mid, net_flow, flood_now, chan_evap_now, chan_seep_now] {
+            put_fs(w, vs)?;
+        }
+        for vs in [stor_evap_now, stor_seep_now] {
+            put_fs(w, vs)?;
+        }
+        for flags in [chan_open, pump_prev_off] {
+            put_u(w, flags.len() as u64)?;
+            for f in flags {
+                put_b(w, *f)?;
+            }
+        }
+        put_u(w, stor_ga.len() as u64)?;
+        for slot in stor_ga {
+            put_b(w, slot.is_some())?;
+            if let Some(state) = slot {
+                state.checkpoint_put(w)?;
+            }
+        }
+        put_u(w, hist.len() as u64)?;
+        for (ht, heads) in hist {
+            put_f(w, *ht)?;
+            put_fs(w, heads)?;
+        }
+        put_f(w, *dt_prev)?;
+        put_u(w, u64::from(*quiet_streak))?;
+        put_f(w, *evap_rate)?;
+        put_f(w, *stats_start)?;
+        put_u(w, worst_counts.len() as u64)?;
+        for c in worst_counts {
+            put_u(w, *c)?;
+        }
+        report.checkpoint_put(w)?;
+        put_u(w, vertex_stats.len() as u64)?;
+        for s in vertex_stats {
+            s.checkpoint_put(w)?;
+        }
+        put_u(w, link_stats.len() as u64)?;
+        for s in link_stats {
+            s.checkpoint_put(w)?;
+        }
+        Ok(())
+    }
+
+    /// Restore what `checkpoint_put` wrote, over a router the model has
+    /// already built. Parameters are left as the model made them.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.t = r.f()?;
+        for slot in [
+            &mut self.y,
+            &mut self.q,
+            &mut self.sq,
+            &mut self.sett,
+            &mut self.sett_cur,
+            &mut self.struct_flip_t,
+            &mut self.chan_flip_t,
+            &mut self.a_mid,
+            &mut self.net_flow,
+            &mut self.flood_now,
+            &mut self.chan_evap_now,
+            &mut self.chan_seep_now,
+            &mut self.stor_evap_now,
+            &mut self.stor_seep_now,
+        ] {
+            let want = slot.len();
+            let got = r.fs()?;
+            if got.len() != want {
+                return Err(format!(
+                    "checkpoint holds {} values where this model has {want}",
+                    got.len()
+                ));
+            }
+            *slot = got;
+        }
+        for flags in [&mut self.chan_open, &mut self.pump_prev_off] {
+            let n = r.u()? as usize;
+            if n != flags.len() {
+                return Err(format!(
+                    "checkpoint holds {n} states where this model has {}",
+                    flags.len()
+                ));
+            }
+            for flag in flags.iter_mut() {
+                *flag = r.b()?;
+            }
+        }
+        let n = r.u()? as usize;
+        if n != self.stor_ga.len() {
+            return Err(format!(
+                "checkpoint holds {n} storage infiltration states where this \
+                 model has {}",
+                self.stor_ga.len()
+            ));
+        }
+        for i in 0..n {
+            if r.b()? {
+                match &mut self.stor_ga[i] {
+                    Some(state) => state.checkpoint_get(r)?,
+                    // The model decides which vertices infiltrate, so a
+                    // checkpoint carrying a state the model has no slot
+                    // for is a checkpoint of another model.
+                    None => {
+                        return Err("checkpoint infiltrates a vertex this model does not".into())
+                    }
+                }
+            } else if self.stor_ga[i].is_some() {
+                return Err("this model infiltrates a vertex the checkpoint does not".into());
+            }
+        }
+        let n = r.u()? as usize;
+        self.hist = Vec::with_capacity(n);
+        for _ in 0..n {
+            let ht = r.f()?;
+            self.hist.push((ht, r.fs()?));
+        }
+        self.dt_prev = r.f()?;
+        self.quiet_streak = u32::try_from(r.u()?).map_err(|_| "implausible step counter")?;
+        self.evap_rate = r.f()?;
+        self.stats_start = r.f()?;
+        let n = r.u()? as usize;
+        self.worst_counts = (0..n).map(|_| r.u()).collect::<Result<_, _>>()?;
+        self.report.checkpoint_get(r)?;
+        let n = r.u()? as usize;
+        if n != self.vertex_stats.len() {
+            return Err(format!(
+                "checkpoint holds statistics for {n} vertices where this model \
+                 has {}",
+                self.vertex_stats.len()
+            ));
+        }
+        for s in &mut self.vertex_stats {
+            s.checkpoint_get(r)?;
+        }
+        let n = r.u()? as usize;
+        if n != self.link_stats.len() {
+            return Err(format!(
+                "checkpoint holds statistics for {n} channels where this model \
+                 has {}",
+                self.link_stats.len()
+            ));
+        }
+        for s in &mut self.link_stats {
+            s.checkpoint_get(r)?;
+        }
+        Ok(())
+    }
+}
+
+impl RoutingReport {
+    /// Write this record (§12.3). Exhaustive by design: a field added
+    /// here fails to compile until it is written.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_u};
+        let RoutingReport {
+            accepted,
+            rejected,
+            degraded,
+            inflow,
+            outflow,
+            flooding,
+            negative_out,
+            initial_storage,
+            losses,
+            evaporation,
+            dt_min,
+            dt_max,
+            iterations,
+            nonconverged,
+            elapsed,
+            dt_bands,
+        } = self;
+        put_u(w, *accepted)?;
+        put_u(w, *rejected)?;
+        put_u(w, degraded.len() as u64)?;
+        for (at, who) in degraded {
+            put_f(w, *at)?;
+            put_u(w, who.len() as u64)?;
+            w.write_all(who.as_bytes())?;
+        }
+        put_f(w, *inflow)?;
+        put_f(w, *outflow)?;
+        put_f(w, *flooding)?;
+        put_f(w, *negative_out)?;
+        put_f(w, *initial_storage)?;
+        put_f(w, *losses)?;
+        put_f(w, *evaporation)?;
+        put_f(w, *dt_min)?;
+        put_f(w, *dt_max)?;
+        put_u(w, *iterations)?;
+        put_u(w, *nonconverged)?;
+        put_f(w, *elapsed)?;
+        for v in dt_bands {
+            put_u(w, *v)?;
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.accepted = r.u()?;
+        self.rejected = r.u()?;
+        let n = r.u()? as usize;
+        self.degraded = Vec::with_capacity(n);
+        for _ in 0..n {
+            let at = r.f()?;
+            self.degraded.push((at, r.text()?));
+        }
+        self.inflow = r.f()?;
+        self.outflow = r.f()?;
+        self.flooding = r.f()?;
+        self.negative_out = r.f()?;
+        self.initial_storage = r.f()?;
+        self.losses = r.f()?;
+        self.evaporation = r.f()?;
+        self.dt_min = r.f()?;
+        self.dt_max = r.f()?;
+        self.iterations = r.u()?;
+        self.nonconverged = r.u()?;
+        self.elapsed = r.f()?;
+        for i in 0..5 {
+            self.dt_bands[i] = r.u()?;
+        }
+        Ok(())
+    }
+}
+
+impl VertexStats {
+    /// Write this record (§12.3). Exhaustive by design: a field added
+    /// here fails to compile until it is written.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_u};
+        let VertexStats {
+            max_depth,
+            t_max_depth,
+            depth_sum,
+            reported_max_depth,
+            max_flood,
+            t_max_flood,
+            flood_time,
+            flood_volume,
+            max_ponded_volume,
+            surcharge_time,
+            max_crown_height,
+            min_rim_depth,
+            max_lat_inflow,
+            max_total_inflow,
+            t_max_total_inflow,
+            lat_inflow_volume,
+            total_inflow_volume,
+            outflow_volume,
+            initial_volume,
+            final_volume,
+            volume_sum,
+            max_volume,
+            t_max_volume,
+            evap_loss_volume,
+            exfil_loss_volume,
+            max_outflow,
+            full_volume,
+            out_volume,
+            out_peak,
+            out_time,
+            steps,
+            obs_time,
+        } = self;
+        put_f(w, *max_depth)?;
+        put_f(w, *t_max_depth)?;
+        put_f(w, *depth_sum)?;
+        put_f(w, *reported_max_depth)?;
+        put_f(w, *max_flood)?;
+        put_f(w, *t_max_flood)?;
+        put_f(w, *flood_time)?;
+        put_f(w, *flood_volume)?;
+        put_f(w, *max_ponded_volume)?;
+        put_f(w, *surcharge_time)?;
+        put_f(w, *max_crown_height)?;
+        put_f(w, *min_rim_depth)?;
+        put_f(w, *max_lat_inflow)?;
+        put_f(w, *max_total_inflow)?;
+        put_f(w, *t_max_total_inflow)?;
+        put_f(w, *lat_inflow_volume)?;
+        put_f(w, *total_inflow_volume)?;
+        put_f(w, *outflow_volume)?;
+        put_f(w, *initial_volume)?;
+        put_f(w, *final_volume)?;
+        put_f(w, *volume_sum)?;
+        put_f(w, *max_volume)?;
+        put_f(w, *t_max_volume)?;
+        put_f(w, *evap_loss_volume)?;
+        put_f(w, *exfil_loss_volume)?;
+        put_f(w, *max_outflow)?;
+        put_f(w, *full_volume)?;
+        put_f(w, *out_volume)?;
+        put_f(w, *out_peak)?;
+        put_f(w, *out_time)?;
+        put_u(w, *steps)?;
+        put_f(w, *obs_time)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.max_depth = r.f()?;
+        self.t_max_depth = r.f()?;
+        self.depth_sum = r.f()?;
+        self.reported_max_depth = r.f()?;
+        self.max_flood = r.f()?;
+        self.t_max_flood = r.f()?;
+        self.flood_time = r.f()?;
+        self.flood_volume = r.f()?;
+        self.max_ponded_volume = r.f()?;
+        self.surcharge_time = r.f()?;
+        self.max_crown_height = r.f()?;
+        self.min_rim_depth = r.f()?;
+        self.max_lat_inflow = r.f()?;
+        self.max_total_inflow = r.f()?;
+        self.t_max_total_inflow = r.f()?;
+        self.lat_inflow_volume = r.f()?;
+        self.total_inflow_volume = r.f()?;
+        self.outflow_volume = r.f()?;
+        self.initial_volume = r.f()?;
+        self.final_volume = r.f()?;
+        self.volume_sum = r.f()?;
+        self.max_volume = r.f()?;
+        self.t_max_volume = r.f()?;
+        self.evap_loss_volume = r.f()?;
+        self.exfil_loss_volume = r.f()?;
+        self.max_outflow = r.f()?;
+        self.full_volume = r.f()?;
+        self.out_volume = r.f()?;
+        self.out_peak = r.f()?;
+        self.out_time = r.f()?;
+        self.steps = r.u()?;
+        self.obs_time = r.f()?;
+        Ok(())
+    }
+}
+
+impl LinkStats {
+    /// Write this record (§12.3). Exhaustive by design: a field added
+    /// here fails to compile until it is written.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_f, put_u};
+        let LinkStats {
+            max_flow,
+            t_max_flow,
+            max_velocity,
+            max_depth,
+            full_time,
+            obs_time,
+            class_time,
+            norm_limited_time,
+            inlet_control_time,
+            full_both_time,
+            full_up_time,
+            full_down_time,
+            above_normal_time,
+            capacity_limited_time,
+            full_depth,
+            full_flow,
+            instability_count,
+            steps,
+            prev_flow,
+            prev_delta,
+            on_time,
+            startups,
+            min_flow,
+            max_pump_flow,
+            volume,
+            energy_kwh,
+            off_low_time,
+            off_high_time,
+        } = self;
+        put_f(w, *max_flow)?;
+        put_f(w, *t_max_flow)?;
+        put_f(w, *max_velocity)?;
+        put_f(w, *max_depth)?;
+        put_f(w, *full_time)?;
+        put_f(w, *obs_time)?;
+        for v in class_time {
+            put_f(w, *v)?;
+        }
+        put_f(w, *norm_limited_time)?;
+        put_f(w, *inlet_control_time)?;
+        put_f(w, *full_both_time)?;
+        put_f(w, *full_up_time)?;
+        put_f(w, *full_down_time)?;
+        put_f(w, *above_normal_time)?;
+        put_f(w, *capacity_limited_time)?;
+        put_f(w, *full_depth)?;
+        put_f(w, *full_flow)?;
+        put_u(w, *instability_count)?;
+        put_u(w, *steps)?;
+        put_f(w, *prev_flow)?;
+        put_f(w, *prev_delta)?;
+        put_f(w, *on_time)?;
+        put_u(w, u64::from(*startups))?;
+        put_f(w, *min_flow)?;
+        put_f(w, *max_pump_flow)?;
+        put_f(w, *volume)?;
+        put_f(w, *energy_kwh)?;
+        put_f(w, *off_low_time)?;
+        put_f(w, *off_high_time)?;
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        self.max_flow = r.f()?;
+        self.t_max_flow = r.f()?;
+        self.max_velocity = r.f()?;
+        self.max_depth = r.f()?;
+        self.full_time = r.f()?;
+        self.obs_time = r.f()?;
+        for i in 0..7 {
+            self.class_time[i] = r.f()?;
+        }
+        self.norm_limited_time = r.f()?;
+        self.inlet_control_time = r.f()?;
+        self.full_both_time = r.f()?;
+        self.full_up_time = r.f()?;
+        self.full_down_time = r.f()?;
+        self.above_normal_time = r.f()?;
+        self.capacity_limited_time = r.f()?;
+        self.full_depth = r.f()?;
+        self.full_flow = r.f()?;
+        self.instability_count = r.u()?;
+        self.steps = r.u()?;
+        self.prev_flow = r.f()?;
+        self.prev_delta = r.f()?;
+        self.on_time = r.f()?;
+        self.startups = u32::try_from(r.u()?).map_err(|_| "implausible count")?;
+        self.min_flow = r.f()?;
+        self.max_pump_flow = r.f()?;
+        self.volume = r.f()?;
+        self.energy_kwh = r.f()?;
+        self.off_low_time = r.f()?;
+        self.off_high_time = r.f()?;
+        Ok(())
+    }
+}

@@ -528,3 +528,168 @@ fn green_ampt_f2(f1: f64, c1: f64, ks: f64, ts: f64) -> f64 {
     }
     f2_min
 }
+
+// ── Checkpointing (§12.3) ────────────────────────────────────────────────────
+
+impl InfilState {
+    /// Write this relation's state (§12.3).
+    ///
+    /// Every variant and every field is named. The parameters are written
+    /// too rather than bound to `_`: they are the *realised* values, which
+    /// a monthly pattern moves during a run (§3.1), so restoring them from
+    /// the model would restore January's conductivity into a run stopped
+    /// in July.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint::{put_b, put_f, put_u};
+        match self {
+            InfilState::Horton {
+                f0,
+                f_min,
+                kd,
+                kr,
+                f_max,
+                tp,
+                fe,
+            } => {
+                put_u(w, 0)?;
+                for v in [f0, f_min, kd, kr, f_max, tp, fe] {
+                    put_f(w, *v)?;
+                }
+            }
+            InfilState::ModHorton {
+                f0,
+                f_min,
+                kd,
+                kr,
+                f_max,
+                fe,
+            } => {
+                put_u(w, 1)?;
+                for v in [f0, f_min, kd, kr, f_max, fe] {
+                    put_f(w, *v)?;
+                }
+            }
+            InfilState::GreenAmpt {
+                ks,
+                suction,
+                imd_max,
+                modified,
+                lu,
+                imd,
+                f,
+                fu,
+                sat,
+                t,
+            } => {
+                put_u(w, 2)?;
+                for v in [ks, suction, imd_max, lu, imd, f, fu, t] {
+                    put_f(w, *v)?;
+                }
+                put_b(w, *modified)?;
+                put_b(w, *sat)?;
+            }
+            InfilState::CurveNumber {
+                s_max,
+                regen,
+                t_max,
+                s,
+                se,
+                p,
+                f,
+                f_prev,
+                t,
+            } => {
+                put_u(w, 3)?;
+                for v in [s_max, regen, t_max, s, se, p, f, f_prev, t] {
+                    put_f(w, *v)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Read back what `checkpoint_put` wrote, in place.
+    ///
+    /// The relation is the model's, not the checkpoint's: a checkpoint of
+    /// a different relation is refused rather than replacing the one the
+    /// model asked for.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let tag = r.u()?;
+        let want = match self {
+            InfilState::Horton { .. } => 0,
+            InfilState::ModHorton { .. } => 1,
+            InfilState::GreenAmpt { .. } => 2,
+            InfilState::CurveNumber { .. } => 3,
+        };
+        if tag != want {
+            return Err(format!(
+                "checkpoint holds infiltration relation {tag} where this model \
+                 uses {want}"
+            ));
+        }
+        match self {
+            InfilState::Horton {
+                f0,
+                f_min,
+                kd,
+                kr,
+                f_max,
+                tp,
+                fe,
+            } => {
+                for v in [f0, f_min, kd, kr, f_max, tp, fe] {
+                    *v = r.f()?;
+                }
+            }
+            InfilState::ModHorton {
+                f0,
+                f_min,
+                kd,
+                kr,
+                f_max,
+                fe,
+            } => {
+                for v in [f0, f_min, kd, kr, f_max, fe] {
+                    *v = r.f()?;
+                }
+            }
+            InfilState::GreenAmpt {
+                ks,
+                suction,
+                imd_max,
+                modified,
+                lu,
+                imd,
+                f,
+                fu,
+                sat,
+                t,
+            } => {
+                for v in [ks, suction, imd_max, lu, imd, f, fu, t] {
+                    *v = r.f()?;
+                }
+                *modified = r.b()?;
+                *sat = r.b()?;
+            }
+            InfilState::CurveNumber {
+                s_max,
+                regen,
+                t_max,
+                s,
+                se,
+                p,
+                f,
+                f_prev,
+                t,
+            } => {
+                for v in [s_max, regen, t_max, s, se, p, f, f_prev, t] {
+                    *v = r.f()?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
