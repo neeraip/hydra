@@ -394,9 +394,12 @@ belongs in the layout project, because that box is a stub and not a
 layout.
 
 **Not currently covered, and known:** no end-to-end test drives the real
-Tauri shell, and the network list's rows have no test — `NetworkList.test.ts`
-imports three decisions and never renders the component. That is now a gap
-rather than an impossibility. The editor tables are covered
+Tauri shell. The network list's rows are covered now
+(`NetworkListRow.test.tsx` renders the row and asserts its badge, its value
+column, the second line's two conditions, the zoom control, hover, and that
+the click gestures still reach the decisions `NetworkList.test.ts` tests in
+isolation — deleting either call left every one of those green). The editor
+tables are covered
 (`KindTable.test.tsx` renders the component and asserts row listing, header
 sort, per-row edit addressing and virtualised mounting), and the layout layer
 does assert colour as well as geometry: `PrimaryButton.layout.test.tsx` pins
