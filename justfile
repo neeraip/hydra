@@ -110,10 +110,19 @@ test-wasm:
 # `io/iface.rs` came back 185 missed of 407 that way, nearly all of them
 # phantoms.
 #
+# The scratch trees go in a `.noindex` directory. cargo-mutants copies the
+# whole source tree and relinks a fresh set of test binaries for every
+# mutant, and on macOS each new binary wakes Spotlight, Gatekeeper and
+# XProtect: indexing and scanning them cost more CPU than the run itself,
+# and left three trees totalling 10 GB behind. macOS skips any directory
+# whose name ends in `.noindex`, which removes the indexing half.
+#
 # Usage: just mutants crates/engine-uds/src/io/rain.rs
+#        just mutants crates/report/src/render.rs hydra-report
 # Needs `cargo install cargo-mutants`.
-mutants FILE:
-    cargo mutants -p hydra-engine-uds --file {{FILE}}
+mutants FILE PKG="hydra-engine-uds":
+    mkdir -p .mutants-tmp.noindex
+    TMPDIR="$PWD/.mutants-tmp.noindex" cargo mutants -p {{PKG}} --file {{FILE}}
 
 # Run Python script unit tests
 test-scripts:
