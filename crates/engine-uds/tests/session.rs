@@ -1769,6 +1769,79 @@ fn a_hotstart_carries_how_wet_the_ground_already_is() {
     assert!(dry_rate > 0.0, "dry ground infiltrates something");
 }
 
+/// A hotstart carries the water table.
+///
+/// The round-trip test above watches the network. Groundwater state
+/// reaches none of what it checks, so `hotstart_set` on the aquifer could
+/// be replaced by nothing at all and the whole workspace stayed green,
+/// which would mean a resumed run starting from the model's initial water
+/// table however long the previous run had been draining it.
+#[test]
+fn a_hotstart_carries_the_water_table() {
+    let inp = gw_model(0.01, 1.5, 99.0);
+    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    while a.time() < 6.0 * 3600.0 {
+        a.step();
+    }
+    let drained = a.snapshots.last().expect("a reporting boundary").subcatch[0].gw_elev;
+    let mut saved = Vec::new();
+    a.save_hotstart(&mut saved).expect("save");
+
+    let first_elevation = |sim: &mut Simulation| {
+        while sim.snapshots.is_empty() {
+            sim.step();
+        }
+        sim.snapshots[0].subcatch[0].gw_elev
+    };
+    let (mut resumed, _, _) = Simulation::open(&inp).expect("open");
+    resumed.load_hotstart(&saved).expect("load");
+    let carried = first_elevation(&mut resumed);
+    let (mut fresh, _, _) = Simulation::open(&inp).expect("open");
+    let initial = first_elevation(&mut fresh);
+
+    assert!(
+        (carried - drained).abs() < (initial - drained).abs() * 0.25,
+        "the resumed run started at {carried}, the saved table was \
+         {drained} and the model's own is {initial}"
+    );
+}
+
+/// A hotstart carries the snow pack, for the same reason and with the
+/// same consequence: a resumed winter run would otherwise start bare.
+#[test]
+fn a_hotstart_carries_the_snow_pack() {
+    let temps = "\
+TEMP  0:00   -5
+TEMP  48:00  -5";
+    let inp = snow_model(temps);
+    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    while a.time() < 6.0 * 3600.0 {
+        a.step();
+    }
+    let lying = a.snapshots.last().expect("a reporting boundary").subcatch[0].snow_depth;
+    assert!(lying > 0.0, "six cold hours built a pack: {lying}");
+    let mut saved = Vec::new();
+    a.save_hotstart(&mut saved).expect("save");
+
+    let first_depth = |sim: &mut Simulation| {
+        while sim.snapshots.is_empty() {
+            sim.step();
+        }
+        sim.snapshots[0].subcatch[0].snow_depth
+    };
+    let (mut resumed, _, _) = Simulation::open(&inp).expect("open");
+    resumed.load_hotstart(&saved).expect("load");
+    let carried = first_depth(&mut resumed);
+    let (mut fresh, _, _) = Simulation::open(&inp).expect("open");
+    let bare = first_depth(&mut fresh);
+
+    assert!(
+        carried > bare + 0.5 * lying,
+        "the resumed run began with {carried} of snow against a fresh \
+         run's {bare}, the saved pack being {lying}"
+    );
+}
+
 #[test]
 fn a_mismatched_hotstart_is_refused() {
     let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open");
