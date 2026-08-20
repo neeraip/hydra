@@ -501,7 +501,11 @@ pub fn survey(input: &str) -> Survey {
             lines.push(TokenLine {
                 line: line_no,
                 tokens: tokens.iter().map(|t| (*t).to_string()).collect(),
-                raw: content.trim_end().to_string(),
+                raw: if section.keeps_raw_text() {
+                    content.trim_end().to_string()
+                } else {
+                    String::new()
+                },
             });
         }
     }

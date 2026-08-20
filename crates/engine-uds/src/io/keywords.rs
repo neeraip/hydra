@@ -104,6 +104,19 @@ pub enum Section {
 impl Section {
     /// Whether this section is display metadata: parsed for well-formedness
     /// only and preserved verbatim for writers (§14.5).
+    /// Whether this section's lines are consumed as text rather than as
+    /// tokens, so their content must be retained verbatim (§14.5).
+    ///
+    /// Everything else is read through its tokens and never looks at the
+    /// line again, so keeping a copy of it costs an allocation per line
+    /// for nothing. A rainfall record can be three quarters of a million
+    /// lines, which is where that stops being nothing.
+    pub fn keeps_raw_text(self) -> bool {
+        // `[CONTROLS]` carries the rule clauses, and the variable and
+        // expression lines the same section admits, all as text.
+        self.is_display_metadata() || matches!(self, Section::Controls)
+    }
+
     pub fn is_display_metadata(self) -> bool {
         matches!(
             self,
