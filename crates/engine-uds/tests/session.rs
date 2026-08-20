@@ -1691,6 +1691,177 @@ EVP  0:00  240
     );
 }
 
+// ── §6.7 initial conditions ─────────────────────────────────────────────
+
+/// A routing-only model whose links differ in exactly the ways §6.7
+/// distinguishes: two carry an initial flow into one junction with
+/// different offsets there, one is dry but offset, one reaches a staged
+/// outfall, and one reaches storage.
+///
+/// The two flow-carrying links are given the same slope — J5 sits 0.6 m
+/// higher to pay for its own outlet offset — so they imply the same
+/// normal depth and the averaging at J2 is a claim about offsets alone.
+fn seeding_model(init_flow: f64) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    01/01/2024
+START_TIME    00:00
+END_DATE      01/01/2024
+END_TIME      01:00
+ROUTING_STEP  10
+
+[JUNCTIONS]
+J1  101    5
+J2  100    5
+J3  100    5  1.5
+J4  100    5
+J5  101.6  5
+
+[STORAGE]
+ST1  100  5  0  FUNCTIONAL  100  0  0
+
+[OUTFALLS]
+O1  99  FIXED  100.5
+
+[CONDUITS]
+C1  J1  J2   100  0.013  0    0    {init_flow}
+C5  J5  J2   100  0.013  0    0.6  {init_flow}
+C2  J2  J3   100  0.013  0.4  0    0
+C3  J3  O1   100  0.013  0    0    0
+C4  J4  ST1  100  0.013  0.7  0    0
+
+[XSECTIONS]
+C1  RECT_OPEN  3  2  0  0  2
+C5  RECT_OPEN  3  2  0  0  2
+C2  CIRCULAR   1.5  0  0  0
+C3  CIRCULAR   1.5  0  0  0
+C4  CIRCULAR   1.5  0  0  0
+
+[REPORT]
+"
+    )
+}
+
+/// Manning normal depth in an open rectangle, solved here rather than
+/// asked of the engine: $\psi = A R^{2/3}$ with $A = by$ and
+/// $R = A/(b + 2y)$, bisected for the depth matching the section factor
+/// the flow implies.
+fn rect_normal_depth(psi: f64, width: f64) -> f64 {
+    let (mut lo, mut hi) = (0.0_f64, 10.0_f64);
+    for _ in 0..200 {
+        let y = 0.5 * (lo + hi);
+        let a = width * y;
+        let r = a / (width + 2.0 * y);
+        if a * r.powf(2.0 / 3.0) < psi {
+            lo = y;
+        } else {
+            hi = y;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// §6.7: a user-supplied initial channel flow implies Manning normal
+/// depth, per barrel, and the vertex it comes from takes that depth.
+#[test]
+fn an_initial_flow_implies_the_normal_depth_it_carries() {
+    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    assert!(
+        (sim.flow("C1").expect("C1") - 4.0).abs() < 1e-12,
+        "the channel carries the flow it was given"
+    );
+    // Four cumecs down two barrels is two each, on a slope of one in a
+    // hundred, through a rectangle two metres wide.
+    let psi = 0.013 * 2.0 / (0.01_f64).sqrt();
+    let expected = rect_normal_depth(psi, 2.0);
+    let j1 = sim.depth("J1").expect("J1");
+    assert!(
+        (j1 - expected).abs() < 1e-5,
+        "J1 was seeded at {j1}, and the normal depth for {psi} is {expected}"
+    );
+    // The barrels matter: all four cumecs down one barrel would be deeper.
+    assert!(
+        rect_normal_depth(0.013 * 4.0 / (0.01_f64).sqrt(), 2.0) > expected + 1e-3,
+        "the per-barrel split is doing something"
+    );
+}
+
+/// §6.7: a vertex without a supplied depth takes the *average*, over the
+/// links that carry an initial flow, of end depth plus that link's own
+/// offset. J2 is reached by two such links whose outlet offsets differ.
+#[test]
+fn a_junction_averages_its_flowing_links_end_depths_and_offsets() {
+    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let psi = 0.013 * 2.0 / (0.01_f64).sqrt();
+    let y = rect_normal_depth(psi, 2.0);
+
+    // Both links imply the same depth; one lands 0.6 m up, so the mean
+    // of the two offsets is 0.3.
+    let j2 = sim.depth("J2").expect("J2");
+    assert!(
+        (j2 - (y + 0.3)).abs() < 1e-5,
+        "J2 was seeded at {j2}, the mean of {y} and {} being {}",
+        y + 0.6,
+        y + 0.3
+    );
+    // Their upstream ends have one link each and no offset there.
+    for v in ["J1", "J5"] {
+        let d = sim.depth(v).expect(v);
+        assert!(
+            (d - y).abs() < 1e-5,
+            "{v} was seeded at {d} rather than {y}"
+        );
+    }
+}
+
+/// §6.7: a vertex whose connecting links all start dry starts dry itself,
+/// because an offset alone is geometry rather than water. J4's only link
+/// is dry and offset 0.7 m; averaging that offset in would pour phantom
+/// depth into the junction.
+#[test]
+fn a_vertex_reached_only_by_dry_links_starts_dry() {
+    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    assert_eq!(
+        0.0,
+        sim.depth("J4").expect("J4"),
+        "a dry link's offset is not water"
+    );
+    // And with no initial flow anywhere, nothing is seeded at all.
+    let (dry, _, _) = Simulation::open(&seeding_model(0.0)).expect("open");
+    for v in ["J1", "J2", "J5"] {
+        assert_eq!(0.0, dry.depth(v).expect(v), "{v}");
+    }
+    assert_eq!(0.0, dry.flow("C1").expect("C1"));
+}
+
+/// §6.7: a supplied depth is used as given rather than averaged with what
+/// the links imply.
+#[test]
+fn a_supplied_depth_is_not_averaged_away() {
+    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    assert!(
+        (sim.depth("J3").expect("J3") - 1.5).abs() < 1e-12,
+        "J3 was given 1.5 m: {}",
+        sim.depth("J3").unwrap()
+    );
+}
+
+/// §6.7: an outfall is seeded from its own boundary condition, not from
+/// its neighbours. A staged boundary is water standing against the outlet
+/// before the run begins, and it belongs to the opening storage of §11.1
+/// rather than arriving as volume created on the first step.
+#[test]
+fn a_staged_outfall_starts_holding_the_water_its_stage_implies() {
+    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    assert!(
+        (sim.depth("O1").expect("O1") - 1.5).abs() < 1e-9,
+        "the outfall holds {} rather than its stage's 1.5 m",
+        sim.depth("O1").unwrap()
+    );
+}
+
 // ── §14.8 hotstart ──────────────────────────────────────────────────────
 
 #[test]

@@ -5238,7 +5238,12 @@ impl LinkStats {
 //
 //   `x <= points[0].0` read as `<` in the linear table lookup: on the
 //   first abscissa the interpolation below returns a fraction of zero,
-//   which is the first point's own value again.
+//   which is the first point's own value again;
+//
+//   `*init_flow > 0.0` read as `>=` when seeding §6.7 initial state. A
+//   zero flow gives a zero section factor, whose normal depth is zero, so
+//   the end depth is unchanged and the dry-link guard below skips the
+//   link either way.
 //
 // Everything else the tool suggests about these two is caught. When this
 // file changes, run it again rather than trusting this note.
