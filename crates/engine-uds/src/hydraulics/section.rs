@@ -48,6 +48,11 @@ pub struct Section {
     y_full: f64,
     a_full: f64,
     r_full: f64,
+    /// Top width at full depth. Stored because a closed section spends
+    /// much of a surcharged run at its crown, and asking for it there
+    /// costs the same inverse cosine as anywhere else for a value that
+    /// never changes.
+    w_full: f64,
     w_max: f64,
     y_at_w_max: f64,
     psi_max: f64,
@@ -1178,6 +1183,7 @@ impl Section {
                 y_full: 0.0,
                 a_full: 0.0,
                 r_full: 0.0,
+                w_full: 0.0,
                 w_max: 0.0,
                 y_at_w_max: 0.0,
                 psi_max: 0.0,
@@ -1195,6 +1201,7 @@ impl Section {
             y_full,
             a_full: 0.0,
             r_full: 0.0,
+            w_full: 0.0,
             w_max: 0.0,
             y_at_w_max: 0.0,
             psi_max: 0.0,
@@ -1202,6 +1209,7 @@ impl Section {
             crit_full: 0.0,
         };
         s.a_full = s.area(y_full);
+        s.w_full = s.top_width(y_full);
         s.crit_full = match &s.kind {
             Kind::Circle { .. } => s.a_full.powi(3) / s.top_width(y_full).max(1e-30),
             Kind::Transect(t) => {
@@ -1647,7 +1655,7 @@ impl Section {
             return (self.area(y), 0.0);
         }
         if yc >= self.y_full {
-            return (self.area(y), self.r_full);
+            return (self.a_full, self.r_full);
         }
         if matches!(self.kind, Kind::Tabulated { .. }) {
             return (self.area(y), self.tabulated_radius(yc));
@@ -1674,6 +1682,39 @@ impl Section {
                 _ => r,
             },
         )
+    }
+
+    /// Area, hydraulic radius and top width at one depth, from one pass.
+    ///
+    /// [`Self::area_and_radius`] already computes the width — `geom`
+    /// returns it — and drops it, and §6.3's momentum update then asks for
+    /// it separately at the same depth. On a circular section that second
+    /// ask is another inverse cosine for a number the first call held, and
+    /// a circular section is most of a drainage model. The values are the
+    /// ones the separate accessors give, to the last bit: this shares the
+    /// arithmetic rather than approximating it.
+    pub(crate) fn area_radius_width(&self, y: f64) -> (f64, f64, f64) {
+        let yc = y.clamp(0.0, self.y_full);
+        // The kinds `area_and_radius` answers without `geom` compute their
+        // width cheaply, so they keep their own path rather than pay for
+        // one they would not otherwise take.
+        if yc >= self.y_full {
+            return (self.a_full, self.r_full, self.w_full);
+        }
+        if yc <= 0.0 || matches!(self.kind, Kind::Tabulated { .. } | Kind::Transect(_)) {
+            let (a, r) = self.area_and_radius(y);
+            return (a, r, self.top_width(y));
+        }
+        let (a, w, p) = self.geom(yc);
+        if p <= 0.0 {
+            return (a, 0.0, w);
+        }
+        let r = a / p;
+        let r = match &self.kind {
+            Kind::Ellipse { r_scale, .. } => r * r_scale,
+            _ => r,
+        };
+        (a, r, w)
     }
 
     /// A tabulated family's hydraulic radius: from its R table where one

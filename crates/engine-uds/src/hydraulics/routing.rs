@@ -281,6 +281,31 @@ impl SlotGeom {
         self.sec.area(y_full) + self.band_full + self.w_slot * (y - y_full)
     }
 
+    /// Area, hydraulic radius and top width together (§6.3).
+    ///
+    /// The momentum update wants all three at the same depth and used to
+    /// ask for the area and radius, then the width, which on a circular
+    /// section rebuilt the filled angle for a value the first call had
+    /// already found.
+    fn area_radius_width(&self, y: f64) -> (f64, f64, f64) {
+        let y_full = self.sec.y_full();
+        if y >= y_full {
+            let w = if self.w_slot == 0.0 {
+                self.sec.top_width(y)
+            } else {
+                self.w_slot
+            };
+            return (self.area(y), self.sec.r_full(), w);
+        }
+        if self.w_slot == 0.0 || y <= self.y_x {
+            return self.sec.area_radius_width(y);
+        }
+        // In the crown band the area is the slot's; the radius and width
+        // are still the section's own, and the width is floored there.
+        let (_, r, w) = self.sec.area_radius_width(y);
+        (self.area(y), r, w.max(self.w_slot))
+    }
+
     /// Area and hydraulic radius together, sharing one pass over the
     /// section where the slot logic allows it — the §6.3 update wants
     /// both at the same depth, and asking twice rebuilds the geometry
@@ -3099,10 +3124,10 @@ impl Router {
             }
         }
 
-        let (a1, r1) = sec.area_and_radius(y1);
+        let (a1, r1, w1) = sec.area_radius_width(y1);
         let a2 = sec.area(y2);
         let y_mid = 0.5 * (y1 + y2);
-        let (a_mid, r_mid) = sec.area_and_radius(y_mid);
+        let (a_mid, r_mid, w_mid) = sec.area_radius_width(y_mid);
         let is_full = y1 >= y_full && y2 >= y_full;
 
         // Dry channels carry no flow this trial (§6.6); a channel closed
@@ -3122,9 +3147,15 @@ impl Router {
         if v.abs() > V_MAX {
             v = V_MAX * v.signum();
         }
-        let fr = froude(v, a_mid, sec.width(y_mid.max(DRY)));
+        // The widths came back with the areas above; `DRY` floors the
+        // depth those asked at, so a dry end still reads its own width.
+        let fr = froude(v, a_mid, if y_mid >= DRY { w_mid } else { sec.width(DRY) });
         // §6.6: the kinematic-limit criterion reads the *upstream* end.
-        let fr_up = froude(q_last / a1.max(DRY), a1.max(DRY), sec.width(y1.max(DRY)));
+        let fr_up = froude(
+            q_last / a1.max(DRY),
+            a1.max(DRY),
+            if y1 >= DRY { w1 } else { sec.width(DRY) },
+        );
 
         // Inertial damping and upstream weighting.
         let mut sigma = if fr <= 0.5 {
