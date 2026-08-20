@@ -430,9 +430,12 @@ mod tests {
         let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
             hydra::engines::EngineSession::from_uds(sim),
             Some(out.clone()),
-            3600.0,
-            false,
-            None,
+            crate::commands::simulation::RunContext {
+                duration_seconds: 3600.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -571,9 +574,12 @@ mod tests {
         let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
             hydra::engines::EngineSession::from_uds(sim),
             Some(out.clone()),
-            3600.0,
-            false,
-            None,
+            crate::commands::simulation::RunContext {
+                duration_seconds: 3600.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );

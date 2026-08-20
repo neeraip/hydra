@@ -13,7 +13,7 @@ use super::projects::{
 };
 use super::simulation::{
     emit_or_warn, progress_percent, run_loop_outcome, run_sim_loops, try_acquire_run_target,
-    RunLoopError, SimulationProgressDto, SIMULATION_PROGRESS_EVENT,
+    RunContext, RunLoopError, SimulationProgressDto, SIMULATION_PROGRESS_EVENT,
 };
 
 const RUN_QUEUE_UPDATE_EVENT: &str = "run_queue_update";
@@ -598,7 +598,13 @@ async fn process_queue(app: tauri::AppHandle) {
 pub(crate) fn open_uds_with_aux(
     text: &str,
     aux_dir: &std::path::Path,
-) -> Result<hydra::uds::simulation::Simulation, String> {
+) -> Result<
+    (
+        hydra::uds::simulation::Simulation,
+        Vec<super::simulation::RunWarningDto>,
+    ),
+    String,
+> {
     use hydra::uds::model::{GageSource, TemperatureSource};
 
     // Survey the declarations; parse problems are ignored here — the open
@@ -629,6 +635,7 @@ pub(crate) fn open_uds_with_aux(
         let path = super::aux_files::aux_file_path(aux_dir, name)?;
         std::fs::read(path).ok()
     };
+    let mut warnings: Vec<super::simulation::RunWarningDto> = Vec::new();
     let missing = |kind: &str, name: &String| {
         format!(
             "the model reads {kind} {name:?}, which was not imported with \
@@ -659,12 +666,20 @@ pub(crate) fn open_uds_with_aux(
                 continue;
             }
             let rain_text = aux_text(file).ok_or_else(|| missing("rain record", file))?;
-            // The notices this drops report an accumulation period spread
-            // evenly (§14.12.1). The queue surfaces no run warnings at
-            // all yet, engine warnings included; they belong there when it
-            // does, rather than in a channel of their own.
-            let (records, _notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
+            // §14.12.1: an accumulation this engine spread evenly is said
+            // out loud, because four identical hours read as a measurement
+            // to anyone not told otherwise. These are raised before the
+            // session exists, so they travel to `warnings.json` beside the
+            // session's own rather than through it.
+            let (records, notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
                 .map_err(|e| format!("rain record {file:?}: {e}"))?;
+            for notice in notices {
+                warnings.push(super::simulation::RunWarningDto {
+                    code: "rain-record".to_string(),
+                    message: format!("rain record {file:?}: {notice}"),
+                    element_id: None,
+                });
+            }
             rain_files.push((file.clone(), records));
         }
     }
@@ -716,7 +731,7 @@ pub(crate) fn open_uds_with_aux(
         sim.supply_rdii(&bytes)
             .map_err(|e| format!("RDII interface file {name:?}: {e}"))?;
     }
-    Ok(sim)
+    Ok((sim, warnings))
 }
 
 /// Run a single simulation on behalf of the queue processor.
@@ -749,6 +764,7 @@ async fn run_sim_for_queue(
     // Per-engine session construction; everything after this point drives
     // the run through the engine-neutral session.
     let engine_key = project_engine_key(&app_data, project_id);
+    let mut pre_run_warnings: Vec<super::simulation::RunWarningDto> = Vec::new();
     let (es, network_digest, run_quality, duration_seconds) = match engine_key.as_str() {
         "wds" => {
             let network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
@@ -770,7 +786,8 @@ async fn run_sim_for_queue(
         "uds" => {
             let text = String::from_utf8_lossy(&raw_bytes).into_owned();
             let aux_dir = bundle::aux_dir(&app_data, project_id);
-            let sim = open_uds_with_aux(&text, &aux_dir)?;
+            let (sim, opening_warnings) = open_uds_with_aux(&text, &aux_dir)?;
+            pre_run_warnings = opening_warnings;
             let duration_seconds = sim.duration();
             (
                 hydra::engines::EngineSession::from_uds(sim),
@@ -814,9 +831,12 @@ async fn run_sim_for_queue(
         run_sim_loops(
             es,
             Some(out_path),
-            duration_seconds,
-            run_quality,
-            network_digest,
+            RunContext {
+                duration_seconds,
+                run_quality,
+                network_digest,
+                pre_run_warnings,
+            },
             |phase, ss, done, failed, msg| {
                 emit_or_warn(
                     &app_emit,
@@ -992,9 +1012,47 @@ C1  CIRCULAR  1.0  0  0  0
         let dir = tempfile::tempdir().expect("temp dir");
         std::fs::write(dir.path().join("nws_space.dat"), &text).expect("write");
 
-        let sim = open_uds_with_aux(&gage_file_model("nws_space.dat"), dir.path())
+        let (sim, _) = open_uds_with_aux(&gage_file_model("nws_space.dat"), dir.path())
             .expect("an archival record should open here as it does at the command line");
         assert!(sim.duration() > 0.0);
+    }
+
+    /// §14.12.1: an accumulation period the engine spread evenly is said
+    /// out loud, because four identical hours read as a measurement to
+    /// anyone not told otherwise. These are raised opening the model, so
+    /// they have to travel beside the session's own warnings rather than
+    /// through it.
+    #[test]
+    fn a_spread_accumulation_is_reported_to_the_reader() {
+        let archive = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/archive/nws_accum.dat");
+        let text = std::fs::read_to_string(&archive).expect("fixture readable");
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("nws_accum.dat"), &text).expect("write");
+
+        let (_sim, warnings) =
+            open_uds_with_aux(&gage_file_model("nws_accum.dat"), dir.path()).expect("open");
+        assert_eq!(1, warnings.len(), "{warnings:?}");
+        assert_eq!("rain-record", warnings[0].code);
+        assert!(
+            warnings[0].message.contains("divided evenly"),
+            "{:?}",
+            warnings[0]
+        );
+        assert!(
+            warnings[0].message.contains("nws_accum.dat"),
+            "{:?}",
+            warnings[0]
+        );
+
+        // A record with nothing to say says nothing.
+        let plain = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/archive/nws_space.dat");
+        let text = std::fs::read_to_string(&plain).expect("fixture readable");
+        std::fs::write(dir.path().join("nws_space.dat"), &text).expect("write");
+        let (_sim, quiet) =
+            open_uds_with_aux(&gage_file_model("nws_space.dat"), dir.path()).expect("open");
+        assert!(quiet.is_empty(), "{quiet:?}");
     }
 
     /// A file the model names and the project does not hold is an error

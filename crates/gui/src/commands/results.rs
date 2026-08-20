@@ -1309,9 +1309,12 @@ Duration  0
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
-            0.0,
-            false,
-            Some(digest),
+            crate::commands::simulation::RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(digest),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -1522,9 +1525,12 @@ Duration  0
         let (_s, err, _w, _st) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
             Some(out.clone()),
-            0.0,
-            false,
-            None,
+            crate::commands::simulation::RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -1628,9 +1634,12 @@ Duration  0
         let (_s, err, _w, _st) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
             Some(out.clone()),
-            0.0,
-            false,
-            None,
+            crate::commands::simulation::RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );

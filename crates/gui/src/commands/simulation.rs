@@ -357,15 +357,34 @@ pub(crate) fn progress_percent(simulated_seconds: f64, duration_seconds: f64) ->
 /// Returns `(sim, Some(error))` on failure and `(sim, None)` on success.
 ///
 /// Designed to be called inside `tauri::async_runtime::spawn_blocking`.
+/// What a run is, apart from the session that performs it and the place
+/// its results go.
+///
+/// These arrived as four more positional parameters and were one too many
+/// for a reader to keep straight at a call site, three of them being
+/// `f64`, `bool` and `Option<u64>` in a row.
+pub(crate) struct RunContext {
+    /// Simulated seconds the run covers, for progress reporting.
+    pub duration_seconds: f64,
+    /// Whether the run carries a quality solve.
+    pub run_quality: bool,
+    /// Topology digest of the network being run, recorded beside the
+    /// results so a consumer can tell later that the model has been
+    /// edited since. `None` for engines whose model has no digest yet.
+    pub network_digest: Option<u64>,
+    /// Warnings raised before the session existed, opening the model and
+    /// reading the files it names. This function owns `warnings.json`, so
+    /// it owns the whole set: a notice from the opener would otherwise
+    /// have no way to reach the reader, the session's own collection
+    /// being the only channel and the session not yet built when the
+    /// opener speaks.
+    pub pre_run_warnings: Vec<RunWarningDto>,
+}
+
 pub(crate) fn run_sim_loops<F, C>(
     mut es: hydra::engines::EngineSession,
     out_path: Option<std::path::PathBuf>,
-    duration_seconds: f64,
-    run_quality: bool,
-    // Topology digest of the network being run, recorded beside the results so
-    // a consumer can tell later that the model has been edited since. `None`
-    // for engines whose model has no digest yet.
-    network_digest: Option<u64>,
+    run: RunContext,
     emit: F,
     should_cancel: C,
 ) -> (
@@ -378,6 +397,12 @@ where
     F: Fn(&'static str, f64, bool, bool, Option<String>),
     C: Fn() -> bool,
 {
+    let RunContext {
+        duration_seconds,
+        run_quality,
+        network_digest,
+        pre_run_warnings,
+    } = run;
     let wall_start = std::time::Instant::now();
     let mut hyd_steps: u32 = 0;
     // Never write `out_path` directly: stream to `<name>.tmp` and promote it
@@ -546,7 +571,9 @@ where
     if let Some(final_path) = out_path.as_ref() {
         match warnings_sync_after_run(run_err.as_ref(), streamed, final_path.is_file()) {
             WarningsSync::Write => {
-                sync_run_warnings_file(final_path, Some(&collect_run_warnings(&es)));
+                let mut warnings = pre_run_warnings;
+                warnings.extend(collect_run_warnings(&es));
+                sync_run_warnings_file(final_path, Some(&warnings));
                 // Same lifecycle as the warnings: this describes the results
                 // just published, so it is written and cleared with them.
                 sync_run_meta_file(
@@ -661,9 +688,12 @@ mod tests {
         let (_es, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_uds(sim),
             Some(out.clone()),
-            3600.0,
-            false,
-            None,
+            RunContext {
+                duration_seconds: 3600.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
             |phase, _, _, _, _| phases.lock().unwrap().push(phase),
             || false,
         );
@@ -699,9 +729,12 @@ mod tests {
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
-            0.0,
-            false,
-            Some(0),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -724,9 +757,12 @@ mod tests {
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
-            0.0,
-            false,
-            Some(0),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || true, // cancel immediately
         );
@@ -823,9 +859,12 @@ mod tests {
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out),
-            0.0,
-            false,
-            Some(0),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -834,6 +873,44 @@ mod tests {
         assert!(
             warnings.is_empty(),
             "steady-state fixture yields no warnings: {warnings:?}"
+        );
+    }
+
+    /// A warning raised before the session existed reaches the reader.
+    ///
+    /// Opening a model reads the files it names, and that can have
+    /// something to say: an accumulation period spread evenly across the
+    /// hours it covers, for one. The session is not built yet when the
+    /// opener speaks, and the session's own collection is the only other
+    /// channel, so `warnings.json` has to carry both or the opener's are
+    /// lost.
+    #[test]
+    fn run_sim_loops_carries_warnings_raised_before_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let opening = vec![RunWarningDto {
+            code: "rain-record".to_string(),
+            message: "rain record \"acc.dat\": an accumulated total was divided evenly".to_string(),
+            element_id: None,
+        }];
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
+            Some(out),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: opening.clone(),
+            },
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "steady-state run must succeed: {err:?}");
+        let written = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        assert_eq!(
+            vec![opening[0].code.clone()],
+            written.iter().map(|w| w.code.clone()).collect::<Vec<_>>(),
+            "the opener's warning should stand beside the session's: {written:?}"
         );
     }
 
@@ -871,9 +948,12 @@ Duration  0
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
             Some(out),
-            0.0,
-            false,
-            Some(0),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
@@ -898,9 +978,12 @@ Duration  0
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out),
-            0.0,
-            false,
-            Some(0),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
             |_, _, _, _, _| {},
             || false,
         );
