@@ -405,15 +405,46 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
         },
     };
 
+    // §14.9: `[REPORT]` gates the body as it does in the predecessor.
+    // `DISABLED` suppresses everything the run produced, leaving the
+    // banner — a report that says which engine ran and nothing else is
+    // what the reader asked for.
+    let rpt = &inp.net.report;
     write_banner(inp, w)?;
+    if rpt.disabled {
+        writeln!(w, "\n  Analysis complete.")?;
+        return Ok(());
+    }
     write_options(inp, &rv, w)?;
-    write_control_actions(inp, w)?;
-    write_continuity(inp, &rv, w)?;
-    write_diagnostics(inp, w)?;
-    write_step_summary(inp, w)?;
+    if rpt.control_actions {
+        write_control_actions(inp, w)?;
+    }
+    if rpt.continuity {
+        write_continuity(inp, &rv, w)?;
+    }
+    if rpt.flow_stats {
+        write_diagnostics(inp, w)?;
+        write_step_summary(inp, w)?;
+    }
     write_summary_tables(inp, &rv, w)?;
     writeln!(w, "\n  Analysis complete.")?;
     Ok(())
+}
+
+/// A vertex's §11.1 flow-balance error as a percentage: what came in
+/// against what left and what stayed.
+///
+/// Two readers need the identical number — the node inflow table's last
+/// column and the highest-errors list — and a list that disagreed with the
+/// table it points into would be worse than no list.
+fn vertex_balance_error(st: &VertexStats) -> f64 {
+    let inflow = st.total_inflow_volume + st.initial_volume;
+    let outflow = st.outflow_volume + st.final_volume;
+    if inflow > 1e-9 {
+        100.0 * (1.0 - outflow / inflow)
+    } else {
+        0.0
+    }
 }
 
 // ── Banner and options ──────────────────────────────────────────────────
@@ -706,6 +737,8 @@ fn write_control_actions(inp: &ReportInputs, w: &mut impl Write) -> io::Result<(
 }
 
 fn write_diagnostics(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
+    write_highest_continuity_errors(inp, w)?;
+
     // The §6.5 error estimate names a governing vertex on every accepted
     // step; the ones named most often are the elements the step size is
     // actually being chosen for.
@@ -751,6 +784,52 @@ fn write_diagnostics(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
         for (id, n) in &inp.worst {
             writeln!(w, "  Node {id} ({n})")?;
         }
+    }
+    Ok(())
+}
+
+/// The vertices whose own flow balance closes worst (§11.2).
+///
+/// Terminal vertices are skipped: with nothing leaving by a link, the
+/// balance is not a statement about the solver. So are vertices that
+/// barely saw water, where a percentage of almost nothing is noise — the
+/// predecessor's threshold is a tenth of a cubic foot, kept here in the
+/// unit it was written in rather than rounded to something tidier in
+/// metres. Below one percent nothing is listed at all, and a run where no
+/// vertex reaches that omits the block rather than printing a list of
+/// well-behaved vertices, which would read as a complaint.
+fn write_highest_continuity_errors(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
+    const NEGLIGIBLE_INFLOW_M3: f64 = 0.1 * 0.028_316_846_592;
+    // The predecessor seeds its five slots with -1 and inserts on
+    // `|x| > |slot|`, so a vertex under one percent never enters.
+    const WORTH_LISTING_PERCENT: f64 = 1.0;
+    const LISTED: usize = 5;
+    let mut outgoing = vec![0_u32; inp.net.vertices.len()];
+    for l in &inp.net.links {
+        if let Some(n) = outgoing.get_mut(l.from) {
+            *n += 1;
+        }
+    }
+    let mut worst: Vec<(&str, f64)> = inp
+        .net
+        .vertices
+        .iter()
+        .zip(inp.vertex_stats)
+        .enumerate()
+        .filter(|(i, (_, st))| {
+            outgoing[*i] > 0 && st.total_inflow_volume + st.initial_volume > NEGLIGIBLE_INFLOW_M3
+        })
+        .map(|(_, (v, st))| (v.id.as_str(), vertex_balance_error(st)))
+        .filter(|(_, err)| err.abs() > WORTH_LISTING_PERCENT)
+        .collect();
+    worst.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+    worst.truncate(LISTED);
+    if worst.is_empty() {
+        return Ok(());
+    }
+    heading(w, "Highest Continuity Errors")?;
+    for (id, err) in worst {
+        writeln!(w, "  Node {id} ({err:.2}%)")?;
     }
     Ok(())
 }
@@ -962,15 +1041,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
     )?;
     rule(w, 97)?;
     for (v, st) in inp.net.vertices.iter().zip(inp.vertex_stats) {
-        // The §11.1 error statistic applied to this vertex alone: what
-        // came in against what left and what stayed.
-        let inflow = st.total_inflow_volume + st.initial_volume;
-        let outflow = st.outflow_volume + st.final_volume;
-        let err = if inflow > 1e-9 {
-            100.0 * (1.0 - outflow / inflow)
-        } else {
-            0.0
-        };
+        let err = vertex_balance_error(st);
         writeln!(
             w,
             "  {:<ID_W$}{:<KIND_W$}{:>9.2}{:>9.2}{:>13}{:>12}{:>12}{:>12.3}",

@@ -690,17 +690,35 @@ nothing to report prints the predecessor's sentence saying so rather than
 an empty table.
 
 The blocks, in order: the banner and title; the analysis-options summary,
-including the process-model checklist; the runoff quantity and quality
-continuity balances; the flow routing and quality routing continuity
-balances; the control-actions log; the time-step critical elements, flow
-instability indexes, and non-converging vertices; the routing time-step
-summary; then the per-object summary tables — subcatchment runoff,
-subcatchment washoff, node depth, node inflow, node surcharge, node
-flooding, storage volume, outfall loading, link flow, flow classification,
-conduit surcharge, pumping, and link pollutant load — each gated as the
-predecessor gates it, and each drawn from the §11.2 catalogue. Continuity
-blocks whose subject is absent from the model do not print; the runoff
-blocks require a surface, the quality blocks require a constituent.
+including the process-model checklist; the control-actions log; the runoff
+quantity and quality continuity balances; the flow routing and quality
+routing continuity balances; the highest continuity errors, time-step
+critical elements, flow instability indexes, and non-converging vertices;
+the routing time-step summary; then the per-object summary tables —
+subcatchment runoff, subcatchment washoff, node depth, node inflow, node
+surcharge, node flooding, storage volume, outfall loading, link flow, flow
+classification, conduit surcharge, pumping, and link pollutant load — each
+drawn from the §11.2 catalogue. Continuity blocks whose subject is absent
+from the model do not print; the runoff blocks require a surface, the
+quality blocks require a constituent.
+
+**`[REPORT]` gates the body**, as it does in the predecessor. `DISABLED`
+suppresses everything the run produced, leaving the banner. `CONTINUITY`
+gates the four continuity balances, `FLOWSTATS` the diagnostics and the
+routing time-step summary together, and `CONTROLS` the control-actions
+log. The highest continuity errors list names the vertices whose own §11.1
+balance closes worst, skipping terminal vertices — with nothing leaving by
+a link the balance says nothing about the solver — and vertices that barely
+saw water, below the predecessor's threshold of a tenth of a cubic foot,
+where a percentage of almost nothing is noise.
+
+**Not carried: the input echo.** The predecessor's `INPUT` flag prints an
+element count and summaries of the gages, parcels, vertices, links, cross
+sections and shapes before the results. This engine parses the flag and
+prints none of it. The echo restates the model file rather than the run, so
+a reader holding the report also holds its source; a reader who needs it
+reads the model. This is a stated gap, not an oversight, and it is the one
+place the report is not section-for-section with the predecessor's.
 
 Volumes print in acre-feet and 10⁶ gallons under US flow units,
 hectare-metres and 10⁶ litres under SI; depths in inches or millimetres.

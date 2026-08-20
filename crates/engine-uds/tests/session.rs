@@ -5762,3 +5762,136 @@ ADC         PERV    1 1 1 1 1 1 1 1 1 1";
         "a 50 mm pack at 21 °C must melt; nothing left the parcel"
     );
 }
+
+/// A routed model whose `[REPORT]` block is whatever is given.
+fn reported_model(report: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+FLOW_ROUTING  DYNWAVE
+START_DATE    01/15/2024
+START_TIME    00:00
+END_DATE      01/15/2024
+END_TIME      02:00
+ROUTING_STEP  5
+REPORT_STEP   0:01:00
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+J2  9   4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE
+
+[CONDUITS]
+C1  J1  J2  200  0.013  0  0
+C2  J2  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.0  0  0  0
+C2  CIRCULAR  1.0  0  0  0
+
+[DWF]
+J1  FLOW  0.05  HRLY
+
+[PATTERNS]
+HRLY  HOURLY  0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.2 2.4
+HRLY          2.6 2.8 3.0 3.2 3.4 3.6 3.8 4.0 4.2 4.4 4.6 4.8
+
+[CONTROLS]
+RULE  R1
+IF    NODE J1 DEPTH > 0.05
+THEN  CONDUIT C2 STATUS = CLOSED
+
+[REPORT]
+{report}
+"
+    )
+}
+
+fn report_text(model: &str) -> String {
+    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    String::from_utf8(buf).expect("utf8")
+}
+
+#[test]
+fn the_report_block_gates_the_body() {
+    // §14.9: the flags were parsed and then ignored, so a reader asking
+    // for less got the lot, and DISABLED YES produced a full report.
+    const CONTINUITY: &str = "Flow Routing Continuity";
+    const STEPS: &str = "Routing Time Step Summary";
+    const CONTROLS: &str = "Control Actions Taken";
+    const TABLES: &str = "Node Depth Summary";
+
+    let all = report_text(&reported_model(
+        "CONTINUITY YES\nFLOWSTATS YES\nCONTROLS YES",
+    ));
+    for block in [CONTINUITY, STEPS, CONTROLS, TABLES] {
+        assert!(all.contains(block), "asking for everything dropped {block}");
+    }
+
+    let no_continuity = report_text(&reported_model("CONTINUITY NO\nCONTROLS YES"));
+    assert!(!no_continuity.contains(CONTINUITY));
+    assert!(no_continuity.contains(STEPS), "CONTINUITY NO took the rest");
+
+    // FLOWSTATS carries the diagnostics and the step summary together.
+    let no_stats = report_text(&reported_model("FLOWSTATS NO\nCONTROLS YES"));
+    assert!(!no_stats.contains(STEPS));
+    assert!(!no_stats.contains("Highest Flow Instability Indexes"));
+    assert!(no_stats.contains(CONTINUITY), "FLOWSTATS NO took the rest");
+    assert!(no_stats.contains(TABLES), "FLOWSTATS NO took the tables");
+
+    let no_controls = report_text(&reported_model("CONTROLS NO"));
+    assert!(!no_controls.contains(CONTROLS));
+
+    // DISABLED leaves the banner and nothing the run produced.
+    let off = report_text(&reported_model(
+        "DISABLED YES\nCONTINUITY YES\nFLOWSTATS YES",
+    ));
+    for block in [CONTINUITY, STEPS, CONTROLS, TABLES, "Analysis Options"] {
+        assert!(!off.contains(block), "DISABLED YES still printed {block}");
+    }
+    assert!(
+        off.contains("URBAN DRAINAGE ENGINE"),
+        "the banner must survive"
+    );
+}
+
+#[test]
+fn the_highest_continuity_errors_list_skips_terminal_and_quiet_vertices() {
+    // The list names vertices whose own balance closes worst. An outfall
+    // has nothing leaving by a link, so its balance says nothing about
+    // the solver and the predecessor never lists one.
+    let rpt = report_text(&reported_model(
+        "CONTINUITY YES\nFLOWSTATS YES\nCONTROLS YES",
+    ));
+    let Some(block) = rpt.split("Highest Continuity Errors").nth(1) else {
+        // No vertex reached one percent: then the block must be absent
+        // rather than printing a list of well-behaved vertices.
+        assert!(!rpt.contains("Highest Continuity Errors"));
+        return;
+    };
+    let listed: Vec<&str> = block
+        .lines()
+        .take_while(|l| !l.trim().is_empty() || l.contains("Node"))
+        .filter(|l| l.trim_start().starts_with("Node "))
+        .collect();
+    assert!(
+        !listed.iter().any(|l| l.contains("O1")),
+        "a terminal vertex was listed: {listed:?}"
+    );
+    for line in &listed {
+        let pct: f64 = line
+            .rsplit('(')
+            .next()
+            .and_then(|s| s.trim_end_matches("%)").parse().ok())
+            .unwrap_or_else(|| panic!("unparsable row {line}"));
+        assert!(pct.abs() > 1.0, "listed a vertex under one percent: {line}");
+    }
+    assert!(listed.len() <= 5, "more than five listed: {listed:?}");
+}
