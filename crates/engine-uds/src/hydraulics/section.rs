@@ -679,12 +679,45 @@ fn circle_theta(d: f64, y: f64) -> f64 {
 }
 
 fn circle_area(d: f64, y: f64) -> f64 {
-    let t = circle_theta(d, y);
-    d * d / 8.0 * (t - t.sin())
+    // $\sin\theta = 2\sin(\theta/2)\cos(\theta/2)$, and both halves are
+    // already to hand without trigonometry: the chord is $d\sin(\theta/2)$
+    // and the cosine is the very argument the angle was taken from. So the
+    // segment costs one inverse cosine, which is irreducible — a circular
+    // segment's area is an inverse-trigonometric quantity — and no sine.
+    let c = (1.0 - 2.0 * y / d).clamp(-1.0, 1.0);
+    let t = 2.0 * c.acos();
+    // Both forms of $\theta - \sin\theta$ cancel as $\theta \to 0$, where
+    // the difference falls away to $\theta^3/6$. The identity cancels
+    // harder, because the chord reaches it by a rounding of its own
+    // rather than from the very angle being subtracted. Against a
+    // 50-digit reference over a metre pipe: above a thousandth of full
+    // depth the identity holds to 5e-12 relative against the sine's
+    // 7e-14, both of them some twelve orders below the millimetre the
+    // solver converges heads to. Below that the identity degrades
+    // steeply, so there the sine is kept and the worst case over the
+    // whole range is exactly what it was — a band the router has already
+    // called dry, `DRY` sitting a quarter of the way into it.
+    const CANCELS: f64 = 0.13;
+    let sin_t = if t < CANCELS {
+        t.sin()
+    } else {
+        2.0 * (circle_width(d, y) / d) * c
+    };
+    d * d / 8.0 * (t - sin_t)
 }
 
+/// The chord of a circle of diameter `d` at depth `y`.
+///
+/// $W = 2\sqrt{y(d-y)}$, the same quantity as $d\sin(\theta/2)$ and
+/// reached without the angle. Two reasons, and the second is the better
+/// one. It costs a square root where the trigonometric form costs an
+/// inverse cosine and a sine, and a partly full circular pipe is most of
+/// a drainage model. And it is the more accurate of the two: the inverse
+/// cosine is ill-conditioned as its argument approaches ±1, which is a
+/// nearly empty or nearly full pipe, where this form is exact to within
+/// a rounding of its own product.
 fn circle_width(d: f64, y: f64) -> f64 {
-    d * (circle_theta(d, y) / 2.0).sin()
+    2.0 * (y * (d - y)).max(0.0).sqrt()
 }
 
 fn circle_perimeter(d: f64, y: f64) -> f64 {
@@ -1613,11 +1646,7 @@ impl Section {
         match &self.kind {
             Kind::Circle { d } => {
                 let t = circle_theta(*d, y);
-                (
-                    d * d / 8.0 * (t - t.sin()),
-                    d * (t / 2.0).sin(),
-                    d * t / 2.0,
-                )
+                (circle_area(*d, y), circle_width(*d, y), d * t / 2.0)
             }
             Kind::FilledCircle {
                 d,
@@ -1628,8 +1657,8 @@ impl Section {
             } => {
                 let t = circle_theta(*d, y + y_bot);
                 (
-                    d * d / 8.0 * (t - t.sin()) - a_bot,
-                    d * (t / 2.0).sin(),
+                    circle_area(*d, y + y_bot) - a_bot,
+                    circle_width(*d, y + y_bot),
                     d * t / 2.0 - p_bot + w_bot,
                 )
             }
