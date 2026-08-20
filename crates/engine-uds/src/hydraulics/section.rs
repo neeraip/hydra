@@ -1323,12 +1323,15 @@ impl Section {
         self.r_full
     }
 
-    /// Maximum top width (m) and the depth where it occurs.
+    /// The depth where the top width peaks, and that width (m) — in that
+    /// order, which is the opposite of how the sentence reads. Callers
+    /// want `.1` far more often than `.0`.
     pub fn w_max(&self) -> (f64, f64) {
         (self.y_at_w_max, self.w_max)
     }
 
-    /// The section-factor peak $\Psi_{max}$ and its depth (§5.1).
+    /// The depth where the section factor peaks, and that peak
+    /// $\Psi_{max}$ (§5.1) — depth first, as [`Self::w_max`] does.
     pub fn psi_max(&self) -> (f64, f64) {
         (self.y_at_psi_max, self.psi_max)
     }

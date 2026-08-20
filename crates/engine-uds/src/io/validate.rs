@@ -677,11 +677,69 @@ fn vertex_depths(net: &Network) -> Vec<f64> {
 /// The mutable full-depth slot of a vertex, where one exists.
 fn full_depth_mut(kind: &mut VertexKind) -> Option<&mut f64> {
     match kind {
-        VertexKind::Junction { max_depth, .. } | VertexKind::Storage { max_depth, .. } => {
-            Some(max_depth)
-        }
-        _ => None,
+        // Dividers included: the predecessor exempts storage without a
+        // surcharge allowance and nothing else.
+        VertexKind::Junction { max_depth, .. }
+        | VertexKind::Storage { max_depth, .. }
+        | VertexKind::Divider { max_depth, .. } => Some(max_depth),
+        // An outfall has no depth to raise — its stage imposes one — so
+        // it is not raised but *derived on demand* by
+        // [`outfall_crown`], which the §14.9 property table asks for.
+        VertexKind::Outfall { .. } => None,
     }
+}
+
+/// The crown an outfall would be raised to, had it a depth to raise
+/// (§14.7).
+///
+/// The predecessor stores a full depth on every node and raises this one
+/// like any other; here an outfall carries no depth, because nothing
+/// routes against it. §14.9's property table still publishes one, so it
+/// is computed from the same rule rather than written as zero — the
+/// downstream vertex of a channel is raised by that channel, and the
+/// upstream vertex of anything but a pump or a bottom orifice by that
+/// link.
+pub fn outfall_crown(net: &Network, vi: usize, len_cv: f64) -> f64 {
+    let mut crown: f64 = 0.0;
+    for li in 0..net.links.len() {
+        let l = &net.links[li];
+        if l.from != vi && l.to != vi {
+            continue;
+        }
+        let exempt = matches!(l.kind, LinkKind::Pump { .. })
+            || matches!(
+                l.kind,
+                LinkKind::Orifice {
+                    orientation: OrificeOrientation::Bottom,
+                    ..
+                }
+            );
+        let is_channel = matches!(l.kind, LinkKind::Channel { .. });
+        if l.to == vi && !is_channel {
+            continue;
+        }
+        if l.from == vi && exempt {
+            continue;
+        }
+        let Some(Ok(b)) = build_for_link(net, li, len_cv) else {
+            continue;
+        };
+        let y_full = b.section.y_full();
+        let offset = if l.to == vi {
+            match &l.kind {
+                LinkKind::Channel { offset2, .. } => match offset2 {
+                    Offset::Depth(h) => *h,
+                    Offset::Elevation(e) => (e - net.vertices[vi].invert).max(0.0),
+                    Offset::Missing => 0.0,
+                },
+                _ => 0.0,
+            }
+        } else {
+            link_offset1(&l.kind)
+        };
+        crown = crown.max(offset + y_full);
+    }
+    crown
 }
 
 fn surcharge_of(kind: &VertexKind) -> f64 {
@@ -1282,6 +1340,50 @@ C2  CIRCULAR  1.5  0  0  0
             k,
             ValidationKind::MaxDepthRaised { .. }
         )));
+    }
+
+    #[test]
+    fn a_divider_is_raised_to_its_crown_like_any_other_vertex() {
+        // The predecessor exempts storage without a surcharge allowance
+        // and nothing else, so a divider is raised. It was skipped here
+        // because the accessor that finds a vertex's depth had no arm
+        // for one, and nothing said so.
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  8
+
+[DIVIDERS]
+D1  100  C2  CUTOFF  1  0  0  0  1  0  0
+
+[OUTFALLS]
+O1  90  FREE
+
+[CONDUITS]
+C1  J1  D1  400  0.013  0  0
+C2  D1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  6  0  0  0
+C2  CIRCULAR  2  0  0  0
+";
+        let (net, _) = validated(inp);
+        let d1 = net
+            .vertices
+            .iter()
+            .find(|v| v.id == "D1")
+            .expect("the divider");
+        let VertexKind::Divider { max_depth, .. } = d1.kind else {
+            panic!("D1 is not a divider")
+        };
+        // C1 arrives with a 6 ft crown at zero offset; the divider's own
+        // declared depth is 1 ft.
+        assert!(
+            (max_depth - 6.0 * 0.3048).abs() < 1e-9,
+            "divider depth {max_depth} m, expected C1's crown"
+        );
     }
 
     #[test]

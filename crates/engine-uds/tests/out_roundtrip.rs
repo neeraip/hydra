@@ -151,3 +151,169 @@ fn a_truncated_or_corrupted_file_is_refused_by_name() {
         let _ = std::fs::remove_file(p);
     }
 }
+
+/// The §14.9 static property tables, decoded from the bytes a run writes.
+///
+/// The reader serves results, not properties, so a test that wants to know
+/// what a consumer of the file would read has to decode them itself.
+struct Properties {
+    node_ids: Vec<String>,
+    link_ids: Vec<String>,
+    /// Per node: (type code, invert, max depth).
+    nodes: Vec<(i32, f32, f32)>,
+    /// Per link: (type code, offset1, offset2, full depth, length).
+    links: Vec<(i32, f32, f32, f32, f32)>,
+}
+
+impl Properties {
+    fn decode(b: &[u8]) -> Properties {
+        let i32_at = |p: usize| i32::from_le_bytes(b[p..p + 4].try_into().unwrap());
+        let f32_at = |p: usize| f32::from_le_bytes(b[p..p + 4].try_into().unwrap());
+        let (ns, nn, nl, npol) = (
+            i32_at(12) as usize,
+            i32_at(16) as usize,
+            i32_at(20) as usize,
+            i32_at(24) as usize,
+        );
+        let mut p = 28;
+        let mut ids = Vec::new();
+        for _ in 0..ns + nn + nl + npol {
+            let n = i32_at(p) as usize;
+            p += 4;
+            ids.push(String::from_utf8(b[p..p + n].to_vec()).expect("ascii id"));
+            p += n;
+        }
+        p += 4 * npol; // pollutant unit codes
+        let skip_table = |p: &mut usize| {
+            let count = i32_at(*p) as usize;
+            *p += 4 + 4 * count;
+        };
+        skip_table(&mut p);
+        p += 4 * ns; // subcatchment areas
+        skip_table(&mut p);
+        let mut nodes = Vec::with_capacity(nn);
+        for _ in 0..nn {
+            nodes.push((i32_at(p), f32_at(p + 4), f32_at(p + 8)));
+            p += 12;
+        }
+        skip_table(&mut p);
+        let mut links = Vec::with_capacity(nl);
+        for _ in 0..nl {
+            links.push((
+                i32_at(p),
+                f32_at(p + 4),
+                f32_at(p + 8),
+                f32_at(p + 12),
+                f32_at(p + 16),
+            ));
+            p += 20;
+        }
+        Properties {
+            node_ids: ids[ns..ns + nn].to_vec(),
+            link_ids: ids[ns + nn..ns + nn + nl].to_vec(),
+            nodes,
+            links,
+        }
+    }
+    fn node(&self, id: &str) -> (i32, f32, f32) {
+        let i = self.node_ids.iter().position(|x| x == id).expect("node");
+        self.nodes[i]
+    }
+    fn link(&self, id: &str) -> (i32, f32, f32, f32, f32) {
+        let i = self.link_ids.iter().position(|x| x == id).expect("link");
+        self.links[i]
+    }
+}
+
+fn properties_of(model: &str) -> Properties {
+    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    while sim.step() {}
+    let mut buf = Vec::new();
+    sim.write_out(&mut buf).expect("write");
+    Properties::decode(&buf)
+}
+
+/// A junction, an outfall, one conduit, and one regulator of each kind
+/// sharing an offset well above their vertices' inverts.
+const REGULATOR_MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+FLOW_ROUTING  DYNWAVE
+START_DATE    01/15/2024
+START_TIME    00:00
+END_DATE      01/15/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  10  4  0  0  0
+J2  10  4  0  0  0
+
+[OUTFALLS]
+O1  8  FREE
+O2  8  FREE
+O3  8  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[WEIRS]
+W1  J1  O2  TRANSVERSE  1.25  1.7  NO  0  0  NO
+
+[ORIFICES]
+R1  J2  O3  SIDE  0.75  0.65  NO  0
+
+[XSECTIONS]
+C1  CIRCULAR     1.5  0    0  0
+W1  RECT_OPEN    2.0  3.0  0  0
+R1  RECT_CLOSED  0.6  0.6  0  0
+
+[REPORT]
+NODES  ALL
+LINKS  ALL
+";
+
+#[test]
+fn a_regulator_writes_its_one_offset_into_both_columns() {
+    // §14.9: the predecessor mirrors offset1 into offset2 for orifices,
+    // weirs and outlets (link.c:366 and :375). Writing zero downstream
+    // places every regulator at its downstream vertex's invert as far as
+    // a reader of the file can tell.
+    let p = properties_of(REGULATOR_MODEL);
+    let (_, w1, w2, ..) = p.link("W1");
+    assert!(
+        (w1 - 1.25).abs() < 1e-5 && (w2 - 1.25).abs() < 1e-5,
+        "weir offsets {w1} and {w2}, both should be its crest"
+    );
+    let (_, r1, r2, ..) = p.link("R1");
+    assert!(
+        (r1 - 0.75).abs() < 1e-5 && (r2 - 0.75).abs() < 1e-5,
+        "orifice offsets {r1} and {r2}, both should be its opening"
+    );
+    // A conduit keeps two genuinely independent offsets.
+    let (_, c1, c2, ..) = p.link("C1");
+    assert!((c1 - 0.0).abs() < 1e-5 && (c2 - 0.0).abs() < 1e-5);
+}
+
+#[test]
+fn an_outfall_carries_the_crown_of_its_connecting_link() {
+    // §14.7's crown raising exempts storage without a surcharge
+    // allowance and nothing else, so a terminal vertex is raised like
+    // any other. It could not be: the model had nowhere to put the
+    // depth, so every outfall published zero and a reader asking how
+    // full one was divided by it.
+    let p = properties_of(REGULATOR_MODEL);
+    // O1 sits below C1's crown: a 1.5 m circular pipe at zero offset.
+    let (kind, _, depth) = p.node("O1");
+    assert_eq!(kind, 1, "O1 must be written as an outfall");
+    assert!(
+        (depth - 1.5).abs() < 1e-5,
+        "outfall depth {depth}, should be the conduit crown 1.5"
+    );
+    // A weir raises its upstream vertex only; the downstream one is
+    // raised by conduits alone, so O2 stays at zero.
+    let (_, _, o2) = p.node("O2");
+    assert!((o2 - 0.0).abs() < 1e-5, "weir raised its outfall to {o2}");
+}

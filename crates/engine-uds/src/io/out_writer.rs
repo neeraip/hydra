@@ -153,11 +153,20 @@ pub fn write_out(
     put_i32(w, 0)?; // INPUT_TYPE_CODE
     put_i32(w, 2)?; // INPUT_INVERT
     put_i32(w, 3)?; // INPUT_MAX_DEPTH
+                    // The §5 section build takes the file's depth-like geometry in its
+                    // own unit; both the outfall crowns below and the link table later
+                    // need the same factor.
+    let len_cv = if net.options.flow_units.is_us() {
+        0.3048
+    } else {
+        1.0
+    };
     for &vi in &nodes {
         let v = &net.vertices[vi];
         let (code, max_depth) = match &v.kind {
             VertexKind::Junction { max_depth, .. } => (0, *max_depth),
-            VertexKind::Outfall { .. } => (1, 0.0),
+            // §14.9: derived, not stored — see `validate::outfall_crown`.
+            VertexKind::Outfall { .. } => (1, crate::io::validate::outfall_crown(net, vi, len_cv)),
             VertexKind::Storage { max_depth, .. } => (2, *max_depth),
             VertexKind::Divider { max_depth, .. } => (3, *max_depth),
         };
@@ -200,24 +209,25 @@ pub fn write_out(
                 (0, o1, o2, *length)
             }
             LinkKind::Pump { .. } => (1, 0.0, 0.0, 0.0),
+            // §14.9: a regulator has one offset and the table has two
+            // columns, so the predecessor writes it into both. A reader
+            // taking the downstream column at face value would place
+            // every weir and orifice at its downstream vertex's invert.
             LinkKind::Orifice { offset, .. } => {
-                (2, off(offset, net.vertices[l.from].invert), 0.0, 0.0)
+                let o = off(offset, net.vertices[l.from].invert);
+                (2, o, o, 0.0)
             }
             LinkKind::Weir { offset, .. } => {
-                (3, off(offset, net.vertices[l.from].invert), 0.0, 0.0)
+                let o = off(offset, net.vertices[l.from].invert);
+                (3, o, o, 0.0)
             }
             LinkKind::Outlet { offset, .. } => {
-                (4, off(offset, net.vertices[l.from].invert), 0.0, 0.0)
+                let o = off(offset, net.vertices[l.from].invert);
+                (4, o, o, 0.0)
             }
         };
         // Full depth from the §5 section build (pumps have none, as in
-        // the predecessor's table). The build's factor converts the
-        // file's depth-like geometry to SI.
-        let len_cv = if net.options.flow_units.is_us() {
-            0.3048
-        } else {
-            1.0
-        };
+        // the predecessor's table).
         let y_full = crate::io::validate::build_for_link(net, li, len_cv)
             .and_then(|r| r.ok())
             .map_or(0.0, |b| b.section.y_full());
