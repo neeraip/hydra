@@ -787,17 +787,29 @@ fn parse_storage(
     };
     n += 1;
     let seepage = if t.len() > n {
-        if !need(t, n + 3, diags, l) {
-            return;
-        }
-        let Some(psi) = number(&t[n], diags, l) else {
-            return;
-        };
-        let Some(ksat) = number(&t[n + 1], diags, l) else {
-            return;
-        };
-        let Some(imd) = number(&t[n + 2], diags, l) else {
-            return;
+        // §14.5: one trailing value is the conductivity by itself, the
+        // suction head and moisture deficit being zero. Requiring all
+        // three here refused real files, which write a lone zero to say
+        // the unit does not seep.
+        let (psi, ksat, imd) = if t.len() == n + 1 {
+            let Some(ksat) = number(&t[n], diags, l) else {
+                return;
+            };
+            (0.0, ksat, 0.0)
+        } else {
+            if !need(t, n + 3, diags, l) {
+                return;
+            }
+            let Some(psi) = number(&t[n], diags, l) else {
+                return;
+            };
+            let Some(ksat) = number(&t[n + 1], diags, l) else {
+                return;
+            };
+            let Some(imd) = number(&t[n + 2], diags, l) else {
+                return;
+            };
+            (psi, ksat, imd)
         };
         Some(StorageSeepage {
             suction: psi * cv.suction,
@@ -1586,6 +1598,12 @@ O1  95.0  FIXED  96.5  YES
 [STORAGE]
 S1  90.0  10.0  1.0  FUNCTIONAL  20  1.5  100
 S2  90.0  10.0  0.0  PYRAMIDAL   10  8  2  0  0.5
+S3  90.0  10.0  0.0  TABULAR  STO  0  0  0.0000
+S4  90.0  10.0  0.0  TABULAR  STO  0  0  1.5  0.2  0.3
+S5  90.0  10.0  0.0  TABULAR  STO  0  0  0.75
+
+[CURVES]
+STO  STORAGE  0  0  10  50
 
 [DIVIDERS]
 D1  98.0  C1  OVERFLOW  4.0
@@ -1679,6 +1697,76 @@ C1  CIRCULAR  4.0  0  0  0  2
         assert_eq!(exponent, 1.5);
         assert!((coeff - 20.0 * 0.3048_f64.powf(0.5)).abs() < 1e-12);
         assert!((constant - 100.0 * 0.3048 * 0.3048).abs() < 1e-12);
+    }
+
+    /// §14.5: a storage line's seepage tail may be a single value, which
+    /// is the conductivity alone with the suction head and moisture
+    /// deficit zero.
+    ///
+    /// Requiring all three refused real files. The published Bellinge
+    /// model writes a lone zero on every storage line to say the unit
+    /// does not seep, and every one of its storage units was rejected
+    /// with "too few items for this section's grammar".
+    #[test]
+    fn a_storage_seepage_tail_of_one_value_is_the_conductivity() {
+        let (net, diags) = parse(FIXTURE);
+        assert!(
+            !diags.iter().any(|d| d.kind.is_error()),
+            "{:?}",
+            diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .collect::<Vec<_>>()
+        );
+        let VertexKind::Storage { ref seepage, .. } = net.vertices[4].kind else {
+            panic!("S3 should be a storage unit")
+        };
+        let seepage = seepage.as_ref().expect("a lone value is a seepage tail");
+        assert_eq!(0.0, seepage.conductivity, "the value is the conductivity");
+        assert_eq!(0.0, seepage.suction, "and the other two are zero");
+        assert_eq!(0.0, seepage.initial_deficit);
+
+        // A zero says nothing about *which* slot the lone value fills, so
+        // a non-zero one says it: the conductivity converts and the other
+        // two stay at nothing.
+        let VertexKind::Storage { ref seepage, .. } = net.vertices[6].kind else {
+            panic!("S5 should be a storage unit")
+        };
+        let seepage = seepage.as_ref().expect("a lone value is a seepage tail");
+        assert!(
+            seepage.conductivity > 0.0,
+            "0.75 is the conductivity, not the suction: {seepage:?}"
+        );
+        assert_eq!(0.0, seepage.suction, "{seepage:?}");
+        assert_eq!(0.0, seepage.initial_deficit, "{seepage:?}");
+
+        // Three values are still the full Green-Ampt triple, converted.
+        let VertexKind::Storage { ref seepage, .. } = net.vertices[5].kind else {
+            panic!("S4 should be a storage unit")
+        };
+        let seepage = seepage.as_ref().expect("three values are a seepage tail");
+        assert!(seepage.suction > 0.0, "suction {}", seepage.suction);
+        assert!(
+            seepage.conductivity > 0.0,
+            "conductivity {}",
+            seepage.conductivity
+        );
+        assert_eq!(0.3, seepage.initial_deficit, "a fraction does not convert");
+    }
+
+    /// Two trailing values are not a form the predecessor accepts, and
+    /// this engine refuses them rather than guessing which two they are.
+    #[test]
+    fn a_storage_seepage_tail_of_two_values_is_refused() {
+        let two = FIXTURE.replace(
+            "S3  90.0  10.0  0.0  TABULAR  STO  0  0  0.0000",
+            "S3  90.0  10.0  0.0  TABULAR  STO  0  0  0.0  1.5",
+        );
+        let (_net, diags) = parse(&two);
+        assert!(
+            diags.iter().any(|d| d.kind.is_error()),
+            "two trailing values should be refused"
+        );
     }
 
     #[test]

@@ -143,6 +143,16 @@ later line for the same object and slot **replaces** the earlier one, as it
 does throughout the predecessor's ecosystem, and each override is reported.
 Accumulating them would silently change what a legal file means.
 
+**A storage unit's seepage tail.** After a storage unit's geometry,
+surcharge depth and evaporation fraction, its line may carry Green-Ampt
+seepage parameters: suction head, saturated conductivity, initial moisture
+deficit. A *single* trailing value is the conductivity alone, with the
+other two zero. That is the predecessor's own shorthand, and it is the
+form real files use to say "no seepage" by writing a conductivity of zero.
+Two trailing values are not a form, and a line carrying two is refused.
+Seepage is proportional to conductivity, so a zero conductivity is no
+seepage whatever the other two parameters say.
+
 `[REPORT]`'s dual grammar is reproduced: six yes/no directives (a seventh,
 `NODESTATS`, is the deprecated form §14.3 honours) and three list-valued
 ones (`SUBCATCHMENTS`, `NODES`, `LINKS`) whose `ALL`/`NONE`/
