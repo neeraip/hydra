@@ -5224,7 +5224,21 @@ impl LinkStats {
 //   `yy <= 0.0` read as `<` when a storage table opens below the invert.
 //   A point at exactly zero depth contributes no volume either way — the
 //   running lower bound is already zero, so the trapezoid it would add has
-//   no width — and the area it carries is picked up by both paths.
+//   no width — and the area it carries is picked up by both paths;
+//
+//   `top_width(m) > w_slot` read as `>=` inside the slot's bisection,
+//   which decides a branch only when the width lands exactly on the slot
+//   width, and the bisection converges to the same crossing either way;
+//
+//   `w_slot == 0.0 || y <= y_x` read with `&&` in `area_and_radius`. Both
+//   routes out of that test return the section's own area and radius
+//   below the crossing depth — one through the shared pass and one
+//   through the two functions separately — and a test asserts they agree,
+//   which is what makes the mutation unobservable;
+//
+//   `x <= points[0].0` read as `<` in the linear table lookup: on the
+//   first abscissa the interpolation below returns a fraction of zero,
+//   which is the first point's own value again.
 //
 // Everything else the tool suggests about these two is caught. When this
 // file changes, run it again rather than trusting this note.
@@ -5462,5 +5476,288 @@ mod friction_factor_tests {
         // Just below the threshold the term is still there, and it makes
         // a difference the comparison can see.
         assert!(swamee_jain(e, hrad, 9.9e9) > f, "the term is still carried");
+    }
+}
+
+#[cfg(test)]
+mod table_helper_tests {
+    use super::*;
+
+    /// §7.1: a stepwise table holds each value until the next abscissa is
+    /// passed, so the value returned is the first point *strictly beyond*
+    /// the argument. On a breakpoint the earlier interval has not ended.
+    #[test]
+    fn a_stepwise_table_holds_each_value_to_its_own_breakpoint() {
+        let t = [(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
+        assert_eq!(20.0, interval_lookup(&t, 0.0), "on the first breakpoint");
+        assert_eq!(20.0, interval_lookup(&t, 0.5), "inside the first interval");
+        assert_eq!(30.0, interval_lookup(&t, 1.0), "on the second");
+        assert_eq!(30.0, interval_lookup(&t, 1.9), "inside the second");
+        assert_eq!(10.0, interval_lookup(&t, -1.0), "before the table");
+        // Past the end the last value stands rather than falling to zero.
+        assert_eq!(30.0, interval_lookup(&t, 99.0), "beyond the table");
+        assert_eq!(0.0, interval_lookup(&[], 1.0), "an empty table is zero");
+    }
+
+    /// A linear table interpolates between its points and clamps flat at
+    /// both ends rather than extrapolating.
+    #[test]
+    fn a_linear_table_interpolates_and_clamps_at_its_ends() {
+        // The table deliberately does not open at the origin, and no two
+        // of its intervals share a value: a table starting at zero makes
+        // an interpolation reading `x + x0` indistinguishable from
+        // `x - x0`, and a flat interval hides the slope entirely.
+        let t = [(1.0, 10.0), (3.0, 30.0), (4.0, 34.0)];
+        assert_eq!(10.0, linear_lookup(&t, -5.0), "before the table");
+        assert_eq!(10.0, linear_lookup(&t, 1.0), "on the first point");
+        assert!((linear_lookup(&t, 2.0) - 20.0).abs() < 1e-12, "halfway");
+        assert!(
+            (linear_lookup(&t, 1.5) - 15.0).abs() < 1e-12,
+            "a quarter in"
+        );
+        assert_eq!(30.0, linear_lookup(&t, 3.0), "on an interior point");
+        assert!(
+            (linear_lookup(&t, 3.5) - 32.0).abs() < 1e-12,
+            "the next interval"
+        );
+        assert_eq!(34.0, linear_lookup(&t, 99.0), "beyond the table");
+        assert_eq!(0.0, linear_lookup(&[], 1.0), "an empty table is zero");
+    }
+
+    /// §11.2: six edges spanning the routing step down to the floor,
+    /// largest first and spaced logarithmically, so the five intervals
+    /// the report prints have equal ratios.
+    #[test]
+    fn the_step_bands_span_the_range_logarithmically() {
+        let (top, floor) = (30.0, 0.3);
+        let e = step_bands(top, floor);
+        assert!((e[0] - top).abs() < 1e-12, "the first edge is the step");
+        assert!(
+            (e[5] - floor).abs() < 1e-12,
+            "the last is the floor: {}",
+            e[5]
+        );
+        // Five equal ratios, which is what "logarithmically" means here.
+        let r = (floor / top).powf(0.2);
+        for k in 1..6 {
+            assert!((e[k] - e[k - 1] * r).abs() < 1e-12, "edge {k}");
+        }
+        assert!(e.windows(2).all(|w| w[0] > w[1]), "largest first");
+    }
+
+    /// A floor above the step leaves no range to divide: the bands
+    /// collapse rather than inverting.
+    #[test]
+    fn a_floor_above_the_step_collapses_the_bands() {
+        let e = step_bands(1.0, 5.0);
+        assert!(e.iter().all(|&x| (x - 5.0).abs() < 1e-12), "{e:?}");
+    }
+
+    /// A step falls in the first band whose lower edge it clears, and
+    /// anything at or below the floor falls in the last.
+    #[test]
+    fn a_step_falls_in_the_band_that_holds_it() {
+        let (top, floor) = (30.0, 0.3);
+        let e = step_bands(top, floor);
+        assert_eq!(0, step_band(top, top, floor), "the whole step");
+        assert_eq!(
+            0,
+            step_band(e[1] * 1.01, top, floor),
+            "just inside the first"
+        );
+        assert_eq!(1, step_band(e[1], top, floor), "on the first lower edge");
+        assert_eq!(4, step_band(floor, top, floor), "the floor itself");
+        assert_eq!(4, step_band(floor / 10.0, top, floor), "and below it");
+        // Every band is reachable, so none of the five is dead.
+        let bands: Vec<usize> = (0..5)
+            .map(|k| step_band(0.5 * (e[k] + e[k + 1]), top, floor))
+            .collect();
+        assert_eq!(vec![0, 1, 2, 3, 4], bands, "each interval's midpoint");
+    }
+}
+
+#[cfg(test)]
+mod slot_geometry_tests {
+    use super::*;
+    use crate::hydraulics::section::build_section;
+    use crate::model::XsectShape;
+    use std::f64::consts::PI;
+
+    fn section(shape: XsectShape, geom: [f64; 4]) -> Section {
+        build_section(shape, geom, 1.0, None)
+            .expect("a section")
+            .section
+    }
+
+    fn circle(diameter: f64) -> Section {
+        section(XsectShape::Circular, [diameter, 0.0, 0.0, 0.0])
+    }
+
+    /// §6.2: the slot width is derived from a stated celerity rather than
+    /// posited, $w_{slot} = gA_{full}/c^2$. The specification works the
+    /// example through: a one-metre circular channel at the default
+    /// 50 m/s gets a slot 3.081 mm wide.
+    #[test]
+    fn the_slot_width_comes_from_the_celerity() {
+        let g = SlotGeom::build(circle(1.0), 50.0);
+        let expected = GRAVITY * (PI / 4.0) / (50.0 * 50.0);
+        assert!((g.w_slot - expected).abs() < 1e-15, "{}", g.w_slot);
+        assert!(
+            (g.w_slot - 3.081e-3).abs() < 1e-6,
+            "the specification's worked example: {} m",
+            g.w_slot
+        );
+
+        // Faster waves mean a narrower slot, and the relation is inverse
+        // square rather than merely decreasing.
+        let quick = SlotGeom::build(circle(1.0), 100.0);
+        assert!(
+            (quick.w_slot - g.w_slot / 4.0).abs() < 1e-18,
+            "{}",
+            quick.w_slot
+        );
+    }
+
+    /// An open section carries no slot, and its geometry is the section's
+    /// own untouched.
+    #[test]
+    fn an_open_section_carries_no_slot() {
+        let open = section(XsectShape::RectOpen, [2.0, 3.0, 0.0, 0.0]);
+        let g = SlotGeom::build(open.clone(), 50.0);
+        assert_eq!(0.0, g.w_slot);
+        for y in [0.1, 1.0, 1.9, 5.0] {
+            assert_eq!(open.top_width(y), g.width(y), "width at {y}");
+            assert_eq!(open.area(y.min(open.y_full())), g.area(y), "area at {y}");
+        }
+    }
+
+    /// §6.2, and the consistency §5.1 asks for: the slot-modified area
+    /// integrates the floored width, so $\\tilde W = d\\tilde A/dy$ holds
+    /// *through the crown band*, which is the part the slot invents and
+    /// the part nothing else checks.
+    #[test]
+    fn the_width_is_the_derivative_of_the_area_everywhere() {
+        for sec in [
+            circle(1.0),
+            section(XsectShape::RectClosed, [1.5, 2.0, 0.0, 0.0]),
+            section(XsectShape::Circular, [0.3, 0.0, 0.0, 0.0]),
+        ] {
+            let y_full = sec.y_full();
+            let g = SlotGeom::build(sec, 50.0);
+            let h = 1.0e-7;
+            // Swept from the engine's own dry threshold upward, and
+            // deliberately over the crossing depth and the crown, where
+            // the three arms meet.
+            //
+            // Below `DRY` the two disagree, and knowingly: the floored
+            // width applies from zero up, while the area takes the slot
+            // correction only above the crossing depth, so a closed
+            // section whose true width has not yet reached the slot width
+            // integrates to less than the floor. For a one-metre circular
+            // channel that region ends at 2.4 micrometres, against a dry
+            // threshold of 305. It is two orders of magnitude inside the
+            // depth at which the vertex is dry and no update runs.
+            let mut y = DRY;
+            while y < 1.4 * y_full {
+                let slope = (g.area(y + h) - g.area(y - h)) / (2.0 * h);
+                let w = g.width(y);
+                assert!(
+                    (slope - w).abs() < 1.0e-4 * w.max(1.0e-4),
+                    "at {y} of {y_full}: dA/dy is {slope}, width is {w}"
+                );
+                y += y_full / 97.0;
+            }
+        }
+    }
+
+    /// The area has no step in it: the three arms meet at the crossing
+    /// depth and at the crown, which is what makes the vertex update
+    /// well-posed at all.
+    #[test]
+    fn the_area_is_continuous_across_both_joins() {
+        let g = SlotGeom::build(circle(1.0), 50.0);
+        let y_full = g.sec.y_full();
+        assert!(g.y_x < y_full, "the crossing depth is below the crown");
+        let h = 1.0e-9;
+        for (join, what) in [(g.y_x, "the crossing depth"), (y_full, "the crown")] {
+            let below = g.area(join - h);
+            let above = g.area(join + h);
+            assert!(
+                (above - below).abs() < 1.0e-6,
+                "{what}: {below} jumps to {above}"
+            );
+        }
+    }
+
+    /// §6.2: above the crown the slot alone carries the water, and the
+    /// hydraulic radius holds at its full value because the slot is
+    /// storage rather than conveyance.
+    #[test]
+    fn above_the_crown_the_slot_is_the_whole_geometry() {
+        let g = SlotGeom::build(circle(1.0), 50.0);
+        let y_full = g.sec.y_full();
+        let full_area = g.area(y_full);
+
+        for surcharge in [0.001, 0.5, 1.0, 10.0] {
+            let y = y_full + surcharge;
+            assert!(
+                (g.width(y) - g.w_slot).abs() < 1e-18,
+                "width at {y} is {}",
+                g.width(y)
+            );
+            assert!(
+                (g.area(y) - (full_area + g.w_slot * surcharge)).abs() < 1e-12,
+                "area at {y} is {}",
+                g.area(y)
+            );
+            let (a, r) = g.area_and_radius(y);
+            assert!((a - g.area(y)).abs() < 1e-18, "the pair agrees on area");
+            assert!((r - g.sec.r_full()).abs() < 1e-18, "radius holds full");
+        }
+
+        // A metre of surcharge on a one-metre pipe stores well under a
+        // percent of the full area: the storage artefact the celerity
+        // bounds (§6.2).
+        assert!(
+            g.w_slot / (PI / 4.0) < 0.005,
+            "slot storage is {} of the full area per metre",
+            g.w_slot / (PI / 4.0)
+        );
+    }
+
+    /// The pair that shares a pass must agree with the two functions it
+    /// stands in for, at every depth and in every arm.
+    #[test]
+    fn the_shared_pass_agrees_with_asking_separately() {
+        let sec = circle(1.0);
+        let y_full = sec.y_full();
+        let g = SlotGeom::build(sec.clone(), 50.0);
+        let mut y = 0.01;
+        while y < 1.3 * y_full {
+            let (a, r) = g.area_and_radius(y);
+            assert!((a - g.area(y)).abs() < 1e-15, "area at {y}");
+            let expected_r = if y >= y_full {
+                sec.r_full()
+            } else {
+                sec.hyd_radius(y)
+            };
+            assert!((r - expected_r).abs() < 1e-15, "radius at {y}: {r}");
+            y += y_full / 53.0;
+        }
+    }
+
+    /// A section whose width never falls to the slot width has no crown
+    /// band to correct for, and must not go looking for a crossing that
+    /// is not there.
+    #[test]
+    fn a_lid_wider_than_the_slot_has_no_crown_band() {
+        // A rectangular closed section keeps its full width to the crown.
+        let g = SlotGeom::build(section(XsectShape::RectClosed, [1.0, 2.0, 0.0, 0.0]), 50.0);
+        assert_eq!(g.y_x, g.sec.y_full(), "the crossing is the crown itself");
+        assert_eq!(0.0, g.band_full, "and there is no band to correct");
+        // Its area is the section's right up to the crown.
+        let y_full = g.sec.y_full();
+        assert!((g.area(0.5 * y_full) - g.sec.area(0.5 * y_full)).abs() < 1e-15);
+        assert!((g.area(y_full) - g.sec.a_full()).abs() < 1e-15);
     }
 }
