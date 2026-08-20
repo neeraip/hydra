@@ -125,6 +125,30 @@ influence graph is loop-free. This is what permits three clocks:
 > at $t = 0$; both are the earliest instant at which their engine has an
 > answer.
 
+The run's **duration** is the difference of two instants, each of them a
+whole number of seconds: a day count times 86 400 plus the seconds past
+midnight. It is therefore exact, and a run started at one minute past the
+hour and ended at five past lasts 240 seconds.
+
+> **DEVIATION from SWMM:** the predecessor holds both instants as decimal
+> days and recovers the duration by subtracting them and multiplying by
+> 86 400, then takes the floor. Neither instant is representable, and for
+> many ordinary pairs the product lands a hair below the whole second:
+> 00:01 to 00:05 gives 239.99999999999997, floored to 239. The run is then
+> a second short, and its last reporting instant never arrives, so the
+> results file holds one fewer period than the reporting clock calls for.
+> The published Bellinge model is such a pair, 00:01 on one day to 23:59
+> on the next: 172 679 seconds there against 172 680 here.
+>
+> Both engines agree wherever the arithmetic happens to land clean, which
+> is why this shows up as an occasional missing final period rather than a
+> systematic offset. Reproducing it would mean shortening a run to match a
+> rounding artefact.
+>
+> *Source: `project.c:172` and `toolkit.c:254`, `floor((EndDateTime -
+> StartDateTime) * SECperDAY)`; the run loop's `NewRoutingTime <
+> RoutingDuration` in `swmm5.c:473`.*
+
 
 Per routing period: hydrology advances by whole hydrology steps until it
 covers the routing period's end; routing advances one trial step under §6.5's

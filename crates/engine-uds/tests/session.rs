@@ -1691,6 +1691,52 @@ EVP  0:00  240
     );
 }
 
+/// §10: the run's duration is the difference of two whole-second
+/// instants, so a run from 00:01 to 00:05 lasts 240 seconds and reports
+/// at every one of its four reporting instants, the last included.
+///
+/// The predecessor holds those instants as decimal days and floors the
+/// product, which for this pair gives 239.99999999999997 and so 239
+/// seconds. Its last reporting instant never arrives. The published
+/// Bellinge model is such a pair, which is where this was noticed.
+#[test]
+fn a_run_lasts_the_whole_of_the_time_between_its_two_instants() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    01/01/2020
+START_TIME    00:01:00
+END_DATE      01/01/2020
+END_TIME      00:05:00
+REPORT_STEP   0:01:00
+ROUTING_STEP  10
+
+[JUNCTIONS]
+J1  100  5
+
+[OUTFALLS]
+O1  99  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0
+
+[REPORT]
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    assert_eq!(240.0, sim.duration(), "four minutes, to the second");
+    sim.run();
+    assert_eq!(
+        4,
+        sim.snapshots.len(),
+        "one record per reporting instant, the last included"
+    );
+    let last = sim.snapshots.last().expect("a record");
+    assert_eq!(240.0, last.t, "the final record closes the final interval");
+}
+
 // ── §6.7 initial conditions ─────────────────────────────────────────────
 
 /// A routing-only model whose links differ in exactly the ways §6.7
