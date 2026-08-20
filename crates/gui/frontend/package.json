@@ -1,6 +1,6 @@
 {
   "name": "hydra-gui-frontend",
-  "version": "2.20.0",
+  "version": "2.20.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.15.1",
