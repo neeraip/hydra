@@ -536,6 +536,7 @@ pub fn parse_options(
                             DiagnosticKind::SubstitutedOption {
                                 keyword,
                                 requested: value.to_string(),
+                                used: "the run damps inertia on the \u{a7}6.3 taper",
                             },
                         ));
                     }
@@ -551,6 +552,9 @@ pub fn parse_options(
                             DiagnosticKind::SubstitutedOption {
                                 keyword,
                                 requested: value.to_string(),
+                                used: "the run surcharges through the \u{a7}6.2 slot, \
+                                       which can put peak depths well below the \
+                                       predecessor's closure",
                             },
                         ));
                     }
@@ -567,6 +571,8 @@ pub fn parse_options(
                         DiagnosticKind::SubstitutedOption {
                             keyword,
                             requested: value.to_string(),
+                            used: "the run keeps stepping, growing the step while \
+                                   the network is quiescent instead",
                         },
                     ));
                 }
@@ -747,6 +753,7 @@ fn parse_routing(
                 DiagnosticKind::SubstitutedOption {
                     keyword: "FLOW_ROUTING",
                     requested: value.to_string(),
+                    used: "the run routes with the dynamic-wave solver",
                 },
             ));
         }

@@ -376,6 +376,7 @@ pub(crate) fn parse_adjustments(
                                 DiagnosticKind::SubstitutedOption {
                                     keyword: "CONDUCTIVITY",
                                     requested: t[1 + i].to_string(),
+                                    used: "the month is left unadjusted",
                                 },
                             ));
                         } else {
@@ -1599,11 +1600,9 @@ S1  3  0.5  4  7  0
         let requested: Vec<&str> = d
             .iter()
             .filter_map(|x| match &x.kind {
-                DiagnosticKind::SubstitutedOption { keyword, requested }
-                    if *keyword == "CONDUCTIVITY" =>
-                {
-                    Some(requested.as_str())
-                }
+                DiagnosticKind::SubstitutedOption {
+                    keyword, requested, ..
+                } if *keyword == "CONDUCTIVITY" => Some(requested.as_str()),
                 _ => None,
             })
             .collect();

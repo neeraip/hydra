@@ -126,12 +126,20 @@ pub enum DiagnosticKind {
         matched: &'static str,
     },
     /// A predecessor behaviour this engine substitutes (§14.4): the run
-    /// notice naming what was requested.
+    /// notice naming what was requested and what runs in its place.
     SubstitutedOption {
         /// The option keyword.
         keyword: &'static str,
         /// The requested value, as written.
         requested: String,
+        /// What the run uses instead, in the reader's words. Naming it is
+        /// the point: a notice that a value was "substituted" tells a
+        /// reader something was changed and not what their results now
+        /// mean, and the difference can be large — surcharging a
+        /// drainage network through a slot rather than the predecessor's
+        /// closure moved the summed peak depth of a thousand-node model
+        /// by a fifth.
+        used: &'static str,
     },
     /// An option accepted and ignored, with the reason recorded in §14.4
     /// (the lengthening transform's retirement).
@@ -248,8 +256,12 @@ impl std::fmt::Display for DiagnosticKind {
             DiagnosticKind::PrefixMatched { token, matched } => {
                 write!(f, "{token:?} matched keyword {matched} by prefix")
             }
-            DiagnosticKind::SubstitutedOption { keyword, requested } => {
-                write!(f, "option {keyword} {requested:?} substituted")
+            DiagnosticKind::SubstitutedOption {
+                keyword,
+                requested,
+                used,
+            } => {
+                write!(f, "option {keyword} {requested:?} substituted; {used}")
             }
             DiagnosticKind::IgnoredOption { keyword } => {
                 write!(f, "option {keyword} accepted and ignored")
