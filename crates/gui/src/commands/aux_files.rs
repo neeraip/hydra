@@ -192,6 +192,79 @@ C1  J1  O1  100  0.013  0  0
 C1  CIRCULAR  1.0  0  0  0
 ";
 
+    /// `supported` decides what the import asks the modeller to locate, so
+    /// it has to move with the run path. A format the run reads and the
+    /// import does not collect is a run that fails on a file the user was
+    /// never asked for; one the import collects and the run ignores is a
+    /// file gathered for nothing.
+    ///
+    /// This is the import side of that invariant. The run side is
+    /// `run_queue`'s own tests, which open a model against each of these.
+    #[test]
+    fn the_import_collects_exactly_what_a_run_reads() {
+        const EVERY_SIDECAR: &str = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[RAINGAGES]
+rg1  VOLUME  0:01  1.0  FILE  \"rain.dat\"  sta1  MM
+
+[TEMPERATURE]
+FILE  climate.dat
+
+[FILES]
+USE HOTSTART   hot.hsf
+USE INFLOWS    inflow.txt
+USE RAINFALL   rain.iface
+USE RUNOFF     runoff.iface
+USE RDII       rdii.iface
+
+[TIMESERIES]
+TS1  FILE  \"series.dat\"
+
+[JUNCTIONS]
+J1  10  2
+
+[OUTFALLS]
+O1  9  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.0  0  0  0
+";
+        let (network, _) = hydra::uds::io::objects::parse_network(EVERY_SIDECAR);
+        let refs = uds_sidecar_refs(&network);
+        let flag = |name: &str| {
+            refs.iter()
+                .find(|r| r.file == name)
+                .unwrap_or_else(|| {
+                    let names: Vec<&str> = refs.iter().map(|r| r.file.as_str()).collect();
+                    panic!("{name} was not collected at all; the import asks for {names:?}")
+                })
+                .supported
+        };
+
+        // Everything a run reads, the import asks for.
+        for name in [
+            "rain.dat",
+            "climate.dat",
+            "hot.hsf",
+            "inflow.txt",
+            "rain.iface",
+            "runoff.iface",
+            "rdii.iface",
+        ] {
+            assert!(flag(name), "{name} is read by a run and must be collected");
+        }
+
+        // An external data series is parsed and written back, and no part
+        // of a run consumes one, so the import says so rather than
+        // promising it.
+        assert!(!flag("series.dat"), "no run reads an external data series");
+    }
+
     #[test]
     fn attach_covers_a_reference_and_refuses_a_stranger() {
         use super::super::network_dto::NetworkStateInner;
