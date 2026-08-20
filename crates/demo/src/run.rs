@@ -494,36 +494,101 @@ fn open_uds(
         _ => Vec::new(),
     };
 
-    let (mut sim, diags, findings) =
-        UdsSimulation::open_with_climate(&text, climate).map_err(|e| match e {
-            OpenError::Parse(diags) => Failure {
-                exit: EXIT_INPUT,
-                diagnostics: diags
-                    .iter()
-                    .filter(|d| d.kind.is_error())
-                    .map(|d| Diagnostic::error("input/parse", d.to_string()))
-                    .collect(),
-            },
-            OpenError::Validation(findings) => Failure {
-                exit: EXIT_INPUT,
-                diagnostics: findings
-                    .iter()
-                    .filter(|v| v.kind.is_error())
-                    .map(|v| Diagnostic::error("validation/network", v.to_string()))
-                    .collect(),
-            },
-            OpenError::Routing(r) => Failure::one(
-                EXIT_INPUT,
-                Diagnostic::error("input/unsupported", r.to_string()),
-            ),
-            OpenError::Surface(s) => Failure::one(
-                EXIT_INPUT,
-                Diagnostic::error("input/unsupported", s.to_string()),
-            ),
-            OpenError::Controls(msg) | OpenError::Transport(msg) => {
-                Failure::one(EXIT_INPUT, Diagnostic::error("input/unsupported", msg))
+    // §14.8.3 and §14.12: the rainfall interface cache, then the gages'
+    // own records in whichever layout each is written. Read here for the
+    // same reason the CLI reads them — a model that runs differently in
+    // the browser than at a terminal is a defect in whichever is behind —
+    // and a file that was not dropped in is a warning rather than a
+    // refusal, which is this surface's own policy for auxiliary files.
+    let rain_iface = match &net.interface_files.rainfall {
+        Some((hydra::uds::model::FileMode::Use, name)) => match aux.get(name) {
+            Some(bytes) => Some(bytes.to_vec()),
+            None => {
+                pending.push(Diagnostic::warning(
+                    "input/notice",
+                    format!(
+                        "the model declares a rainfall interface file ({name:?}) that was \
+                         not supplied, so the gages' own records are read instead"
+                    ),
+                ));
+                None
             }
-        })?;
+        },
+        _ => None,
+    };
+    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
+    if rain_iface.is_none() {
+        for gage in &net.gages {
+            let hydra::uds::model::GageSource::File { file, .. } = &gage.source else {
+                continue;
+            };
+            if rain_files.iter().any(|(name, _)| name == file) {
+                continue;
+            }
+            match aux.get_text(file) {
+                Some(rain_text) => {
+                    let (records, notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
+                        .map_err(|e| {
+                            Failure::one(
+                                EXIT_INPUT,
+                                Diagnostic::error(
+                                    "input/parse",
+                                    format!("rain record {file:?}: {e}"),
+                                ),
+                            )
+                        })?;
+                    for notice in notices {
+                        pending.push(Diagnostic::warning(
+                            "input/rain",
+                            format!("rain record {file:?}: {notice}"),
+                        ));
+                    }
+                    rain_files.push((file.clone(), records));
+                }
+                None => pending.push(Diagnostic::warning(
+                    "input/notice",
+                    format!(
+                        "the model reads rainfall from {file:?}, which was not supplied, \
+                         so its gage receives no rain"
+                    ),
+                )),
+            }
+        }
+    }
+
+    let opened = match &rain_iface {
+        Some(bytes) => UdsSimulation::open_with_rain_interface(&text, climate, bytes),
+        None => UdsSimulation::open_with_rain_records(&text, climate, rain_files),
+    };
+    let (mut sim, diags, findings) = opened.map_err(|e| match e {
+        OpenError::Parse(diags) => Failure {
+            exit: EXIT_INPUT,
+            diagnostics: diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .map(|d| Diagnostic::error("input/parse", d.to_string()))
+                .collect(),
+        },
+        OpenError::Validation(findings) => Failure {
+            exit: EXIT_INPUT,
+            diagnostics: findings
+                .iter()
+                .filter(|v| v.kind.is_error())
+                .map(|v| Diagnostic::error("validation/network", v.to_string()))
+                .collect(),
+        },
+        OpenError::Routing(r) => Failure::one(
+            EXIT_INPUT,
+            Diagnostic::error("input/unsupported", r.to_string()),
+        ),
+        OpenError::Surface(s) => Failure::one(
+            EXIT_INPUT,
+            Diagnostic::error("input/unsupported", s.to_string()),
+        ),
+        OpenError::Controls(msg) | OpenError::Transport(msg) => {
+            Failure::one(EXIT_INPUT, Diagnostic::error("input/unsupported", msg))
+        }
+    })?;
 
     for d in diags.iter().filter(|d| !d.kind.is_error()) {
         pending.push(Diagnostic::warning("input/notice", d.to_string()));
@@ -572,6 +637,45 @@ fn open_uds(
                 format!(
                     "the model declares a hotstart file ({name:?}) that was not supplied, \
                      so the run starts from the model's initial state"
+                ),
+            )),
+        }
+    }
+
+    if let Some((hydra::uds::model::FileMode::Use, name)) = &iface.runoff {
+        match aux.get(name) {
+            Some(bytes) => sim.supply_runoff(bytes).map_err(|e| {
+                Failure::one(
+                    EXIT_INPUT,
+                    Diagnostic::error(
+                        "input/parse",
+                        format!("runoff interface file {name:?}: {e}"),
+                    ),
+                )
+            })?,
+            None => pending.push(Diagnostic::warning(
+                "input/notice",
+                format!(
+                    "the model replays runoff from {name:?}, which was not supplied, \
+                     so the surface is computed instead"
+                ),
+            )),
+        }
+    }
+
+    if let Some((hydra::uds::model::FileMode::Use, name)) = &iface.rdii {
+        match aux.get(name) {
+            Some(bytes) => sim.supply_rdii(bytes).map_err(|e| {
+                Failure::one(
+                    EXIT_INPUT,
+                    Diagnostic::error("input/parse", format!("RDII interface file {name:?}: {e}")),
+                )
+            })?,
+            None => pending.push(Diagnostic::warning(
+                "input/notice",
+                format!(
+                    "the model reads sewer inflow from {name:?}, which was not supplied, \
+                     so it is convolved from the unit hydrographs instead"
                 ),
             )),
         }

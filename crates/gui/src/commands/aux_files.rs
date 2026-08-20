@@ -65,11 +65,17 @@ pub(crate) fn aux_file_path(dir: &std::path::Path, referenced: &str) -> Option<s
 }
 
 /// External files a drainage model references, deduplicated in reference
-/// order. `supported` says whether the run path consumes supplied bytes:
-/// rain records, climate records, hotstart state, and routing inflows do;
-/// the rainfall/runoff/RDII interface formats and external `[TIMESERIES]`
-/// files are declared but not yet served (the engine refuses or reads
-/// empty), and the import must say so rather than promise them.
+/// order. `supported` says whether the run path consumes supplied bytes.
+///
+/// Rain records, climate records, hotstart state, routing inflows and the
+/// rainfall, runoff and RDII interface formats all do: the run path reads
+/// the same set the CLI reads. External `[TIMESERIES]` files do not. They
+/// are parsed and written back, but no part of a run consumes one, so the
+/// import says so rather than promising it.
+///
+/// This flag decides what the import asks the modeller to locate, so a
+/// format the run needs and the import does not collect is a run that
+/// fails on a file the user was never asked for.
 pub(crate) fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<SidecarSource> {
     use hydra::uds::model::{FileMode, GageSource, TemperatureSource, TimeSeriesSource};
     let mut out: Vec<SidecarSource> = Vec::new();
@@ -103,7 +109,7 @@ pub(crate) fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<Side
         (&iface.rdii, "RDII interface file"),
     ] {
         if let Some((FileMode::Use, name)) = slot {
-            push(name, role, false);
+            push(name, role, true);
         }
     }
     for series in &network.timeseries {

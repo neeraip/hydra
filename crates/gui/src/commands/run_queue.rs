@@ -581,12 +581,20 @@ async fn process_queue(app: tauri::AppHandle) {
     }
 }
 
-/// Open a drainage session with every auxiliary record its model names —
-/// daily climate and external rain files (§12.1) — read from the
-/// project's `base/aux/` directory, where archive import placed them.
-/// A referenced file absent from `aux/` is simply not supplied: the
-/// engine then refuses the load naming exactly what is missing, which is
-/// the error the user should see.
+/// Open a drainage session with every auxiliary record its model names,
+/// read from the project's `base/aux/` directory where archive import
+/// placed them.
+///
+/// This reads the same set the CLI reads, through the same entry points,
+/// because the two are reference consumers of one public API and a model
+/// that runs differently in the two is a defect in whichever is behind.
+/// That means daily climate records, external rain records in any layout
+/// §14.12 serves, and the rainfall, runoff, RDII, hotstart and routing
+/// inflow interface files of §14.8.
+///
+/// A file the model names and `aux/` does not hold is an error rather
+/// than a silent omission: running without a record the model asked for
+/// answers a different question without saying so.
 pub(crate) fn open_uds_with_aux(
     text: &str,
     aux_dir: &std::path::Path,
@@ -617,33 +625,63 @@ pub(crate) fn open_uds_with_aux(
         _ => Vec::new(),
     };
 
-    let mut rain_files: Vec<(String, Vec<hydra::uds::io::rain::RainReading>)> = Vec::new();
-    for gage in &net.gages {
-        let GageSource::File { file, .. } = &gage.source else {
-            continue;
-        };
-        if rain_files.iter().any(|(name, _)| name == file) {
-            continue;
-        }
-        if let Some(text) = aux_text(file) {
-            let readings = hydra::uds::io::rain::parse_rain_file(&text)
-                .map_err(|e| format!("rain record {file:?}: {e}"))?;
-            rain_files.push((file.clone(), readings));
-        }
-    }
-
-    let (mut sim, _diags, _findings) =
-        hydra::uds::simulation::Simulation::open_with_files(text, climate_records, rain_files)
-            .map_err(|e| format!("Cannot open the model: {e}"))?;
-
-    // Post-open auxiliary state, mirroring the CLI: a declared hotstart
-    // or routing-inflows file is loaded from aux/, and its absence is an
-    // error rather than a silent cold start — running without state the
-    // model asked for would answer a different question without saying so.
     let aux_bytes = |name: &str| {
         let path = super::aux_files::aux_file_path(aux_dir, name)?;
         std::fs::read(path).ok()
     };
+    let missing = |kind: &str, name: &String| {
+        format!(
+            "the model reads {kind} {name:?}, which was not imported with \
+             it. Re-import the model and locate the file"
+        )
+    };
+
+    // §14.8.3: a rainfall interface file caches records already parsed, so
+    // when the model reads one the gages' own records are not read at all.
+    let rain_iface = match &net.interface_files.rainfall {
+        Some((hydra::uds::model::FileMode::Use, name)) => {
+            Some(aux_bytes(name).ok_or_else(|| missing("rainfall interface file", name))?)
+        }
+        _ => None,
+    };
+
+    // §14.12: one read per distinct file a gage names, in whichever layout
+    // it is written. The station format and the six archival layouts are
+    // recognised from the file itself, so a model pointed at an archive
+    // runs here exactly as it runs at the command line.
+    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
+    if rain_iface.is_none() {
+        for gage in &net.gages {
+            let GageSource::File { file, .. } = &gage.source else {
+                continue;
+            };
+            if rain_files.iter().any(|(name, _)| name == file) {
+                continue;
+            }
+            let rain_text = aux_text(file).ok_or_else(|| missing("rain record", file))?;
+            // The notices this drops report an accumulation period spread
+            // evenly (§14.12.1). The queue surfaces no run warnings at
+            // all yet, engine warnings included; they belong there when it
+            // does, rather than in a channel of their own.
+            let (records, _notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
+                .map_err(|e| format!("rain record {file:?}: {e}"))?;
+            rain_files.push((file.clone(), records));
+        }
+    }
+
+    let opened = match &rain_iface {
+        Some(bytes) => hydra::uds::simulation::Simulation::open_with_rain_interface(
+            text,
+            climate_records,
+            bytes,
+        ),
+        None => hydra::uds::simulation::Simulation::open_with_rain_records(
+            text,
+            climate_records,
+            rain_files,
+        ),
+    };
+    let (mut sim, _diags, _findings) = opened.map_err(|e| format!("Cannot open the model: {e}"))?;
     if let Some(name) = &net.interface_files.hotstart_use {
         let bytes = aux_bytes(name).ok_or_else(|| {
             format!(
@@ -657,14 +695,26 @@ pub(crate) fn open_uds_with_aux(
     if let Some(name) = &net.interface_files.inflows {
         let text = aux_bytes(name)
             .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .ok_or_else(|| {
-                format!(
-                    "the model reads routing inflows file {name:?}, which was \
-                     not imported with it. Re-import the model and locate the file"
-                )
-            })?;
+            .ok_or_else(|| missing("routing inflows file", name))?;
         sim.supply_routing_inflows(&text)
             .map_err(|e| format!("routing inflows file {name:?}: {e}"))?;
+    }
+
+    // §14.8.2: a runoff interface file replaces the surface entirely, so a
+    // model declaring one and not receiving it computes the hydrology the
+    // modeller asked to reuse instead.
+    if let Some((hydra::uds::model::FileMode::Use, name)) = &net.interface_files.runoff {
+        let bytes = aux_bytes(name).ok_or_else(|| missing("runoff interface file", name))?;
+        sim.supply_runoff(&bytes)
+            .map_err(|e| format!("runoff interface file {name:?}: {e}"))?;
+    }
+
+    // §14.8.1: an RDII interface file replaces the convolution, for the
+    // same reason. Either encoding, so bytes.
+    if let Some((hydra::uds::model::FileMode::Use, name)) = &net.interface_files.rdii {
+        let bytes = aux_bytes(name).ok_or_else(|| missing("RDII interface file", name))?;
+        sim.supply_rdii(&bytes)
+            .map_err(|e| format!("RDII interface file {name:?}: {e}"))?;
     }
     Ok(sim)
 }
@@ -885,6 +935,80 @@ enum QueueRunResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drainage model whose only gage reads an external rain file.
+    fn gage_file_model(file: &str) -> String {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    01/01/2020
+START_TIME    00:00
+END_DATE      01/01/2020
+END_TIME      06:00
+ROUTING_STEP  10
+
+[RAINGAGES]
+G1  VOLUME  1:00  1.0  FILE  \"{file}\"  123456  IN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  10  3
+
+[OUTFALLS]
+O1  9  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.0  0  0  0
+
+[REPORT]
+"
+        )
+    }
+
+    /// The command line and the desktop application are two reference
+    /// consumers of one public API, and a model that runs differently in
+    /// the two is a defect in whichever is behind.
+    ///
+    /// The desktop run path read gage files with the station-format
+    /// parser alone, so a model pointed at one of the six archival
+    /// layouts §14.12.1 serves opened at a terminal and failed here.
+    #[test]
+    fn an_archival_rain_record_opens_the_same_way_the_cli_opens_it() {
+        let archive = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/uds/archive/nws_space.dat");
+        let text = std::fs::read_to_string(&archive).expect("fixture readable");
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("nws_space.dat"), &text).expect("write");
+
+        let sim = open_uds_with_aux(&gage_file_model("nws_space.dat"), dir.path())
+            .expect("an archival record should open here as it does at the command line");
+        assert!(sim.duration() > 0.0);
+    }
+
+    /// A file the model names and the project does not hold is an error
+    /// naming it, not a silent run without rain. Rain is the forcing: a
+    /// runoff model given none produces nothing and looks like it worked.
+    #[test]
+    fn a_rain_file_the_project_does_not_hold_is_named() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let Err(err) = open_uds_with_aux(&gage_file_model("absent.dat"), dir.path()) else {
+            panic!("a missing rain record should refuse");
+        };
+        assert!(err.contains("absent.dat"), "{err}");
+        assert!(err.contains("not imported"), "{err}");
+    }
 
     /// A minimal drainage model that starts from a hotstart file.
     const HOTSTART_INP: &str = "\
