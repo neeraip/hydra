@@ -1067,6 +1067,18 @@ impl Surface {
         self.rate_of(gi, epoch)
     }
 
+    /// The precipitation a parcel's gage records at an instant (m/s).
+    ///
+    /// A reporting record asks for this rather than reusing the rate the
+    /// last hydrology step ran on (§14.9): the step's rate belongs to the
+    /// step's window, which need not contain the instant being reported.
+    /// Zero for a parcel this compartment does not carry.
+    pub fn parcel_rain_at(&self, pi: usize, epoch: f64) -> f64 {
+        self.parcels
+            .get(pi)
+            .map_or(0.0, |p| self.rate_of(p.gage, epoch))
+    }
+
     /// A gage's intensity (m/s), the injected one where one stands
     /// (§12.4). Every reader of a gage goes through here, so an injection
     /// cannot reach one path and miss another.

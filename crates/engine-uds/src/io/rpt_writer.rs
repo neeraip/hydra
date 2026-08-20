@@ -253,9 +253,13 @@ fn continuity_head(
     writeln!(w, "  \n  \n{top}\n{mid}\n{bot}")
 }
 
-/// An elapsed instant as the predecessor's `days hr:min`, 13 columns.
-fn elapsed(t: f64) -> String {
-    let total_min = (t / 60.0).floor().max(0.0);
+/// An instant as the predecessor's `days hr:min`, 13 columns.
+///
+/// `t` is a run time and `origin` the report start (§14.9): the statistics
+/// these instants belong to begin there, so that is what they print
+/// against. Anything at or before the origin prints as zero.
+fn elapsed(t: f64, origin: f64) -> String {
+    let total_min = ((t - origin) / 60.0).floor().max(0.0);
     let days = (total_min / 1440.0).floor();
     let rem = total_min - days * 1440.0;
     let h = (rem / 60.0).floor();
@@ -808,6 +812,9 @@ fn write_step_summary(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> 
 #[allow(clippy::too_many_lines)]
 fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Result<()> {
     let hr = |sec: f64| sec / 3600.0;
+    // §14.9: every instant below prints against the report start, which is
+    // where the statistics themselves begin (§11.2).
+    let origin = crate::simulation::time::report_start_offset(&inp.net.options);
     let fu = format!("{:?}", inp.net.options.flow_units).to_uppercase();
     let lw = rv.len_word();
 
@@ -922,7 +929,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             rv.len(mean),
             rv.len(st.max_depth),
             rv.len(v.invert + st.max_depth),
-            elapsed(st.t_max_depth),
+            elapsed(st.t_max_depth, origin),
             rv.len(st.reported_max_depth)
         )?;
     }
@@ -971,7 +978,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             vertex_kind(v),
             rv.q(st.max_lat_inflow),
             rv.q(st.max_total_inflow),
-            elapsed(st.t_max_total_inflow),
+            elapsed(st.t_max_total_inflow, origin),
             g3(rv.mgal(st.lat_inflow_volume)),
             g3(rv.mgal(st.total_inflow_volume)),
             err
@@ -1070,7 +1077,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 v.id,
                 hr(st.flood_time),
                 rv.q(st.max_flood),
-                elapsed(st.t_max_flood),
+                elapsed(st.t_max_flood, origin),
                 rv.mgal(st.flood_volume),
                 rv.kcuft(st.max_ponded_volume)
             )?;
@@ -1131,7 +1138,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 100.0 * st.exfil_loss_volume / through,
                 rv.kcuft(st.max_volume),
                 100.0 * st.max_volume / st.full_volume,
-                elapsed(st.t_max_volume),
+                elapsed(st.t_max_volume, origin),
                 rv.q(st.max_outflow)
             )?;
         }
@@ -1270,7 +1277,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             l.id,
             link_kind(l),
             rv.q(st.max_flow),
-            elapsed(st.t_max_flow)
+            elapsed(st.t_max_flow, origin)
         )?;
         if st.full_flow > 0.0 && st.full_depth > 0.0 {
             writeln!(

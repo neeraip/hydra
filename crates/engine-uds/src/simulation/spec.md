@@ -282,6 +282,14 @@ every accepted step. The catalogue is adopted from the predecessor and
 enumerated here, because §14.9's report is defined against it: a statistic
 absent from this list is a column that cannot be printed.
 
+**The two families keep different windows.** Per-object statistics begin at
+the **report start**, so a summary column and the results file describe the
+same span of the run. Numerical-performance statistics span the whole run:
+they describe the solver rather than the network, and steps taken before
+reporting begins are still steps the run took. A report start earlier than
+the simulation start is the simulation start. Every recorded instant is a
+run time; §14.9 fixes the origin it prints against.
+
 Time-weighted means are accumulated as $\sum x\,\Delta t$ against
 $\sum \Delta t$ over the same steps, never as unweighted step means — the
 step size varies, so the two differ.

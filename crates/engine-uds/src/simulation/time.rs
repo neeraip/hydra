@@ -38,9 +38,72 @@ pub fn weekday(days: i64) -> u32 {
     (days + 4).rem_euclid(7) as u32
 }
 
+/// Seconds from the simulation start to the report start (§11.2).
+///
+/// Two things read this and they must agree: the router gates its
+/// per-object statistics on it, and the report measures every printed
+/// instant from it (§14.9). A report start before the run start is the run
+/// start, so the answer is never negative.
+pub fn report_start_offset(o: &crate::io::options::AnalysisOptions) -> f64 {
+    let Some((d, s)) = o.report_start else {
+        return 0.0;
+    };
+    let start = days_from_civil(o.start_date) as f64 * 86_400.0 + o.start_time;
+    (days_from_civil(d) as f64 * 86_400.0 + s - start).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn opts(
+        start: (i32, u32, u32),
+        start_s: f64,
+        report: Option<((i32, u32, u32), f64)>,
+    ) -> crate::io::options::AnalysisOptions {
+        let d = |(year, month, day): (i32, u32, u32)| Date { year, month, day };
+        crate::io::options::AnalysisOptions {
+            start_date: d(start),
+            start_time: start_s,
+            report_start: report.map(|(rd, rs)| (d(rd), rs)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_report_origin_is_the_offset_from_the_run_start() {
+        // No declaration: reporting begins with the run.
+        assert_eq!(report_start_offset(&opts((2024, 6, 1), 0.0, None)), 0.0);
+        // Later the same day, counted from the run's start time, not midnight.
+        assert_eq!(
+            report_start_offset(&opts(
+                (2024, 6, 1),
+                3600.0,
+                Some(((2024, 6, 1), 4.0 * 3600.0))
+            )),
+            3.0 * 3600.0
+        );
+        // Across a date boundary.
+        assert_eq!(
+            report_start_offset(&opts((2024, 6, 1), 0.0, Some(((2024, 6, 3), 0.0)))),
+            2.0 * 86_400.0
+        );
+    }
+
+    #[test]
+    fn a_report_start_before_the_run_start_is_the_run_start() {
+        // The predecessor clamps it (`project.c:151`), and an unclamped
+        // negative would make the statistics gate and the printed origin
+        // disagree about where the run begins.
+        assert_eq!(
+            report_start_offset(&opts((2024, 6, 5), 0.0, Some(((2024, 6, 1), 0.0)))),
+            0.0
+        );
+        assert_eq!(
+            report_start_offset(&opts((2024, 6, 1), 7200.0, Some(((2024, 6, 1), 0.0)))),
+            0.0
+        );
+    }
 
     #[test]
     fn civil_round_trips_and_weekdays_hold() {

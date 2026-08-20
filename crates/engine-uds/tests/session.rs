@@ -5150,11 +5150,18 @@ fn injected_precipitation_supersedes_a_dry_record() {
     let (dry, _) = forced_run(FORCING_MODEL, |_, _| {});
     assert_eq!(0.0, dry, "the model's own record must be dry");
 
-    // 20 mm/h for the first half of the run, then released.
+    // 20 mm/h until two reporting instants have passed, then released.
+    //
+    // Counted in reporting instants, not in `step` calls, for the reason
+    // the tail check below already gives: a reported precipitation is
+    // looked up at the reporting instant (§14.9), so an injection released
+    // between two of them drives the run without ever appearing in the
+    // series. Released at step 12 it never did — twelve routing steps is
+    // three minutes, and the first instant is at five.
     let (wet, _) = forced_run(FORCING_MODEL, |sim, step| {
         if step == 0 {
             assert!(sim.set_precipitation("G1", Some(20.0e-3 / 3600.0)));
-        } else if step == 12 {
+        } else if sim.snapshots.len() >= 2 {
             assert!(sim.set_precipitation("G1", None));
         }
     });
@@ -5465,5 +5472,293 @@ fn an_injected_drain_empties_a_control_measure() {
         Some(from_model),
         sim.drain("S1", "RB1"),
         "release must restore the model's own drain"
+    );
+}
+
+/// A model whose rain falls well after any report start under test, so the
+/// peak itself is the same run to run and only its printed origin moves.
+fn late_rain_model(report_start: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:05:00
+{report_start}
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  3:00  50
+RAIN  4:00  0
+"
+    )
+}
+
+/// `(days, "hh:mm", max_depth)` from a summary table's row for `id`.
+fn instant_in(rpt: &str, table: &str, id: &str) -> (u32, String, f64) {
+    let body = rpt.split(table).nth(1).expect("table present");
+    let row = body
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some(id))
+        .unwrap_or_else(|| panic!("no row for {id} in {table}:\n{body}"));
+    let t: Vec<&str> = row.split_whitespace().collect();
+    (
+        t[5].parse().expect("days"),
+        t[6].to_string(),
+        t[3].parse().expect("max"),
+    )
+}
+
+#[test]
+fn report_instants_are_measured_from_the_report_start() {
+    // §14.9: the predecessor prints `aDate - ReportStart`, so a run that
+    // reports two hours in must show every instant two hours earlier than
+    // the same run reporting from the beginning. The peak is the same
+    // physical moment in both — the rain falls at 03:00, after either
+    // report start — so any difference is the origin alone.
+    let mut seen = Vec::new();
+    for start in ["", "REPORT_START_TIME  02:00"] {
+        let (mut sim, _, _) = Simulation::open(&late_rain_model(start)).expect("open");
+        sim.run();
+        let mut buf = Vec::new();
+        sim.write_report(&mut buf).expect("report");
+        let rpt = String::from_utf8(buf).expect("utf8");
+        seen.push(instant_in(&rpt, "Node Depth Summary", "J1"));
+    }
+    let (d0, hm0, max0) = &seen[0];
+    let (d1, hm1, max1) = &seen[1];
+    // The same peak, so a difference in the column is the datum moving.
+    assert!(
+        (max0 - max1).abs() < 1e-9,
+        "peak depth moved between runs: {max0} vs {max1}"
+    );
+    let mins = |d: &u32, hm: &String| {
+        let (h, m) = hm.split_once(':').expect("hh:mm");
+        *d * 1440 + h.parse::<u32>().expect("hh") * 60 + m.parse::<u32>().expect("mm")
+    };
+    assert_eq!(
+        mins(d0, hm0) - mins(d1, hm1),
+        120,
+        "report start two hours in must move the instant two hours earlier: \
+         {d0} {hm0} against {d1} {hm1}"
+    );
+    // And the later origin is not simply zero: the peak still lands after it.
+    assert!(mins(d1, hm1) > 0, "instant collapsed to the origin");
+}
+
+#[test]
+fn a_reported_precipitation_is_the_gage_rate_at_the_reporting_instant() {
+    // §14.9: the record stamped at instant T carries the gage's rate for
+    // the interval containing T. Taking the last hydrology step's rate
+    // instead puts the whole series one interval early, which is what a
+    // reader diffing two engines' rainfall columns sees first.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:30
+ROUTING_STEP  10
+WET_STEP      0:05:00
+DRY_STEP      0:05:00
+REPORT_STEP   0:05:00
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  0
+RAIN  0:10  12
+RAIN  0:15  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    // (minutes, mm/h) at each reporting instant.
+    let series: Vec<(i64, f64)> = sim
+        .snapshots
+        .iter()
+        .map(|s| {
+            (
+                (s.t / 60.0).round() as i64,
+                s.subcatch[0].rain * 1000.0 * 3600.0,
+            )
+        })
+        .collect();
+    let at = |m: i64| {
+        series
+            .iter()
+            .find(|(t, _)| *t == m)
+            .unwrap_or_else(|| panic!("no period at {m} min in {series:?}"))
+            .1
+    };
+    // The burst covers [0:10, 0:15). It belongs to the instant that opens
+    // it, not the one that closes it.
+    assert!(at(10) > 11.9, "0:10 should carry the burst, got {}", at(10));
+    assert!(at(5) < 0.001, "0:05 is still dry, got {}", at(5));
+    assert!(
+        at(15) < 0.001,
+        "0:15 opens the dry interval after the burst, got {}",
+        at(15)
+    );
+}
+
+/// A snow model whose `[TEMPERATURE]` block carries whatever is given and
+/// whose pack starts with `sd0` mm of water equivalent. No precipitation:
+/// anything that leaves the parcel left the pack.
+fn standing_snow_model(temperature: &str, sd0: f64) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    01/15/2024
+START_TIME    00:00
+END_DATE      01/16/2024
+END_TIME      00:00
+ROUTING_STEP  30
+WET_STEP      0:15:00
+DRY_STEP      0:15:00
+REPORT_STEP   1:00:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  PRECIP
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0  SP1
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[SNOWPACKS]
+SP1  PLOWABLE  2  4  0  0.10  0     0  0.0
+SP1  IMPERV    2  4  0  0.10  {sd0}  0  1.0
+SP1  PERV      2  4  0  0.10  {sd0}  0  1.0
+
+[TEMPERATURE]
+{temperature}
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+PRECIP  0:00  0
+PRECIP  1:00  0
+"
+    )
+}
+
+#[test]
+fn a_model_without_a_temperature_record_runs_at_the_default() {
+    // §3.1: the predecessor holds 70 °F when nothing is declared, and the
+    // results file carries it. Reporting zero instead says 0 °C, which is
+    // a temperature, not an absence.
+    let (mut sim, _, _) = Simulation::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
+    sim.run();
+    let ta = sim.snapshots[0].system[0];
+    assert!(
+        (ta - 21.111_111).abs() < 1e-4,
+        "expected the 70 °F default in °C, got {ta}"
+    );
+}
+
+#[test]
+fn a_temperature_record_is_reported_without_a_snowmelt_block() {
+    // Air temperature is a property of the run, not of the snow model.
+    // Reading it off the snow climate reported zero for every model
+    // lacking a `[SNOWMELT]` declaration, record or no record.
+    let inp = standing_snow_model("TIMESERIES  TEMP", 0.0).replace(
+        "PRECIP  0:00  0",
+        "TEMP    0:00  -4\nTEMP    12:00  -4\nPRECIP  0:00  0",
+    );
+    let (mut sim, diags, _) = Simulation::open(&inp).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let ta = sim.snapshots[0].system[0];
+    assert!(
+        (ta - (-4.0)).abs() < 1e-6,
+        "the declared record must be reported, got {ta}"
+    );
+}
+
+#[test]
+fn a_standing_pack_melts_against_the_default_temperature() {
+    // The default is operative, not decorative. With no record declared
+    // the predecessor melts at 70 °F; leaving the snow climate absent
+    // froze the pack for the whole run instead, and no test would have
+    // noticed because nothing was reported about it either.
+    let melting = "SNOWMELT    0.5  0.5  0.6  100  45  -75
+ADC         IMPERV  1 1 1 1 1 1 1 1 1 1
+ADC         PERV    1 1 1 1 1 1 1 1 1 1";
+    let (mut sim, diags, _) = Simulation::open(&standing_snow_model(melting, 50.0)).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let runoff: f64 = sim.snapshots.iter().map(|s| s.subcatch[0].runoff).sum();
+    assert!(
+        runoff > 0.0,
+        "a 50 mm pack at 21 °C must melt; nothing left the parcel"
     );
 }

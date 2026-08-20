@@ -608,6 +608,41 @@ simulation, both as the predecessor's readers expect. Node and link values
 are period-interpolated; the period-averaged variant is served as the
 predecessor defines it, settings exempted.
 
+**A reported precipitation is a lookup, not a leftover.** The subcatchment
+record's precipitation is the gage's rate for the recording interval that
+contains the reporting instant, carrying the monthly adjustment in force
+there. It is not the rate the last completed hydrology step ran on: the
+hydrology and reporting clocks are independent (§10.1), so a step's rate
+belongs to a window that need not contain the instant being stamped, and on
+a run where the two happen to align it lands one interval early. Every other
+field of the record is live state read at the instant. The runoff interface
+file of §14.8.2 keeps the step's own rate instead, because its rows are
+steps rather than reporting instants.
+
+> **CORRESPONDENCE:** the predecessor keeps two rainfall values per gage for
+> exactly this reason: the one its runoff step consumes, and a separate
+> reported one re-evaluated at every reporting instant.
+>
+> *Source: `gage.c:535` — `gage_setReportRainfall`, called from
+> `output.c:593` before each period's subcatchment records are written.*
+
+> **CORRESPONDENCE:** the surface *loss* rates are stamped the other way
+> round, and this engine does not follow. The predecessor's runoff clock
+> runs ahead of its routing clock, so when a period is written the
+> hydrology step *opening* at that instant has already been taken, and the
+> infiltration and evaporation rates written are that step's. Here the
+> surface stands exactly at the instant, and the rates written are those of
+> the step that closed there. On a run whose hydrology and reporting clocks
+> align, the two series are the same values one period apart; the §11.1
+> volumes are identical either way, because nothing about the accounting
+> depends on which period carries a rate. Matching the predecessor would
+> mean stamping an instant with a step not yet taken, which is a property
+> of its loop order rather than a definition of the format.
+>
+> *Source: `swmm5.c:589` — `while (NewRunoffTime < nextRoutingTime)
+> runoff_execute();` before `routing_execute`; `subcatch.c:885` takes
+> `infilLoss` and `evapLoss` unweighted while runoff is interpolated.*
+
 **Reading binary results** is the same format's other half, and the one
 filesystem carve-out inside this engine: results files can dwarf the model
 that produced them, so the reader operates on an explicitly supplied path
@@ -658,8 +693,20 @@ summary, the outfall loading summary, and the link pollutant load summary —
 print in the predecessor's load units: pounds under US flow units,
 kilograms under SI, and log₁₀ of the count (zero when the count is zero)
 for count-type constituents, each column labelled with its unit word.
-Instants print as the predecessor's elapsed `days hr:min`; control actions
-print as absolute dates.
+Instants print as the predecessor's elapsed `days hr:min`, measured from
+the **report start** and never negative; control actions print as absolute
+dates.
+
+> **CORRESPONDENCE:** the origin is the report start in both engines, and
+> the choice is easy to get wrong. Per-object statistics begin at the report
+> start (§11.2), so measuring their instants from the simulation start
+> would print an origin the numbers themselves never see. A model that
+> reports four hours into a two-day run has every instant column shifted by
+> those four hours between the two conventions, with nothing on the page to
+> say which is meant.
+>
+> *Source: `swmm5.c:1567` — `x = aDate - ReportStart`, and
+> `project.c:151` — `ReportStart = MAX(ReportStart, StartDateTime)`.*
 
 Four content differences are inherent and carried openly: the
 flow-classification table's adjusted/actual length ratio is identically 1

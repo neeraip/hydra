@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use super::time::{civil_from_days, days_from_civil, weekday};
+use super::time::{civil_from_days, days_from_civil, report_start_offset, weekday};
 use crate::hydraulics::routing::{Router, RouterRefusal, RoutingReport};
 use crate::hydrology::groundwater::GwState;
 use crate::hydrology::infiltration::InfilFactors;
@@ -28,6 +28,12 @@ use crate::model::{
 /// Truncation threshold for assembled lateral inflows (m³/s) — the
 /// predecessor's flow tolerance, converted.
 const FLOW_TOL: f64 = 2.832e-7;
+
+/// Air temperature (°C) for a model declaring no temperature source
+/// (§3.1): the predecessor's 70 °F, expressed here in the engine's own
+/// unit. Operative, not decorative — a declared snow pack melts against
+/// it, so a model that omits the record still has a climate.
+const DEFAULT_AIR_TEMPERATURE_C: f64 = 5.0 / 9.0 * (70.0 - 32.0);
 
 /// Why a session could not be opened (§12.1: every entry point returns a
 /// typed error rather than faulting).
@@ -661,10 +667,7 @@ impl Simulation {
         let inlets = crate::hydraulics::inlets::Inlets::build(&net, &router);
         let mut router = router;
         // §11.2: per-object statistics gate on the report start date.
-        router.stats_start = match net.options.report_start {
-            Some((d, sec)) => days_from_civil(d) as f64 * 86_400.0 + sec - start_epoch_for_surface,
-            None => 0.0,
-        };
+        router.stats_start = report_start_offset(&net.options);
 
         // §9.1: compile the control rules; never-true premises warn.
         let mut rule_advisories = Vec::new();
@@ -1410,7 +1413,7 @@ impl Simulation {
             // came from.
             if self.runoff_out.is_some() {
                 let rows: Vec<_> = self
-                    .parcel_records(&surface)
+                    .parcel_records(&surface, &|pi| surface.qstep(pi).rain_rate)
                     .iter()
                     .map(parcel_replay)
                     .collect();
@@ -1437,21 +1440,10 @@ impl Simulation {
     /// air temperature from its series with the monthly offset, wind from
     /// the monthly averages, and the seasonal melt sweep.
     fn snow_climate(&mut self, month_index: usize) -> Option<SnowClimate> {
-        use crate::model::{TemperatureSource, WindSource};
+        use crate::model::WindSource;
         let sm = self.net.climate.snowmelt.clone()?;
         let t = self.hydro_t;
-        let ta = match &self.net.climate.temperature {
-            Some(TemperatureSource::Series(ts)) => {
-                let ts = *ts;
-                self.series_value(ts, t, true) + self.net.climate.adjust_temperature[month_index]
-            }
-            // File temperatures interpolate sinusoidally between the
-            // daily extremes (§3.1); the adjustment rode the extremes.
-            Some(TemperatureSource::File { .. }) if !self.climate_records.is_empty() => {
-                self.climate_temperature(t)
-            }
-            _ => return None,
-        };
+        let ta = self.air_temperature(t, month_index);
         let wind = match &self.net.climate.wind {
             WindSource::Monthly(w) => w[month_index],
             WindSource::File => self.climate_state.wind,
@@ -1598,6 +1590,33 @@ impl Simulation {
         // already converted. Both feed the same rain-melt relation, so
         // both have to reach it in the same unit.
         st.wind = wind.unwrap_or(0.0) * 0.447_04;
+    }
+
+    /// The air temperature in force at run time `t` (°C), from whichever
+    /// source the model declares (§3.1).
+    ///
+    /// Separate from [`Self::snow_climate`] because the two answer
+    /// different questions and the answers differ. A run always has an air
+    /// temperature — a model declaring no source runs at the predecessor's
+    /// constant, and melts a declared pack against it — while a snow
+    /// climate exists only for a model that declares snowmelt. Reading the
+    /// temperature off the snow climate reported zero for every model
+    /// without a `[SNOWMELT]` block, including ones carrying a full
+    /// temperature record.
+    fn air_temperature(&mut self, t: f64, month_index: usize) -> f64 {
+        use crate::model::TemperatureSource;
+        match &self.net.climate.temperature {
+            Some(TemperatureSource::Series(ts)) => {
+                let ts = *ts;
+                self.series_value(ts, t, true) + self.net.climate.adjust_temperature[month_index]
+            }
+            // File temperatures interpolate sinusoidally between the
+            // daily extremes (§3.1); the adjustment rode the extremes.
+            Some(TemperatureSource::File { .. }) if !self.climate_records.is_empty() => {
+                self.climate_temperature(t)
+            }
+            _ => DEFAULT_AIR_TEMPERATURE_C,
+        }
     }
 
     /// The climate temperature (°C) at run time `t` from daily records:
@@ -1840,7 +1859,17 @@ impl Simulation {
     /// the reporting snapshot, and the runoff interface file a run saves
     /// (§14.8.2). The file is defined as holding what the results file
     /// reports, so the two cannot be allowed to drift.
-    fn parcel_records(&self, surface: &Surface) -> Vec<SubcatchRecord> {
+    ///
+    /// `rain` is the one field they disagree about, so each caller states
+    /// it. A reporting record carries the gage's rate at the reporting
+    /// instant (§14.9); an interface row carries the rate the step it
+    /// replays actually ran on (§14.8.2). Reading one from the other is
+    /// how the reported series came to sit an interval early.
+    fn parcel_records(
+        &self,
+        surface: &Surface,
+        rain: &dyn Fn(usize) -> f64,
+    ) -> Vec<SubcatchRecord> {
         let np = self.net.constituents.len();
         let mut out = Vec::with_capacity(self.net.parcels.len());
         for pi in 0..self.net.parcels.len() {
@@ -1851,7 +1880,7 @@ impl Simulation {
                 .as_ref()
                 .map_or_else(|| vec![0.0; np], |sq| sq.conc[pi].clone());
             let mut rec = SubcatchRecord {
-                rain: q.rain_rate,
+                rain: rain(pi),
                 snow_depth: q.snow_depth,
                 evap,
                 infil,
@@ -1874,9 +1903,7 @@ impl Simulation {
     /// Assemble the full §14.9 record set at a reporting boundary.
     fn record_snapshot(&mut self, t: f64) -> Snapshot {
         let month = self.calendar(t).0;
-        let air_temp = self
-            .snow_climate((month - 1) as usize)
-            .map_or(0.0, |c| c.ta);
+        let air_temp = self.air_temperature(t, (month - 1) as usize);
         let nv = self.net.vertices.len();
         let nl = self.net.links.len();
         let np = self.net.constituents.len();
@@ -1934,7 +1961,12 @@ impl Simulation {
                 });
             }
         } else if let Some(surface) = &self.surface {
-            subcatch = self.parcel_records(surface);
+            // §14.9: precipitation is looked up at the reporting instant,
+            // under the monthly adjustment in force there.
+            let epoch = self.start_epoch + t;
+            let factor = self.net.climate.adjust_rainfall[(month - 1) as usize];
+            subcatch =
+                self.parcel_records(surface, &|pi| surface.parcel_rain_at(pi, epoch) * factor);
         }
         // The fifteen system series (§14.9), SI.
         let total_area: f64 = self.net.parcels.iter().map(|p| p.area).sum();

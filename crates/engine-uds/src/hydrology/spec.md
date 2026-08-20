@@ -49,6 +49,14 @@ overnight limb spanning from the previous day's maximum so days join
 continuously. Saturation vapour pressure follows from the same temperature
 by the fitted exponential the rain-melt relation of §4.2 consumes.
 
+A model declaring neither source runs at a constant **21.1 °C (70 °F)**, the
+predecessor's default. The value is operative rather than decorative: a
+declared snow pack melts against it, as it does there. Air temperature is a
+property of the run and not of the snow model, so it is served whenever it
+is asked for — a model carrying a temperature record but no snowmelt
+declaration still reports that record, and the results file's air-temperature
+series (§14.9) is never absent.
+
 **Evaporation** applies to ponded water, subsurface moisture, channels,
 storage units, and control measures, from one of five sources: a constant;
 monthly averages; a supplied series — deliberately a *step* function,
