@@ -1769,6 +1769,85 @@ C1  CIRCULAR  4.0  0  0  0  2
         );
     }
 
+    /// §14.5: an outfall's flap gate and its routed-to parcel are
+    /// independently optional, and both are read when both are given.
+    ///
+    /// The predecessor tests each tail with an exact token count rather
+    /// than by length, so a line carrying both satisfies only the second
+    /// and the gate is discarded. A gate silently dropped leaves the
+    /// outfall admitting reverse flow it was told to block.
+    #[test]
+    fn an_outfall_reads_both_of_its_optional_tails() {
+        const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+P1  G1  J1  2  50  100  0.5  0
+
+[SUBAREAS]
+P1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+P1  3  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  5
+
+[OUTFALLS]
+O1  95  FIXED  96.5  YES  P1
+O2  95  FREE   YES  P1
+O3  95  FIXED  96.5  YES
+O4  95  FIXED  96.5
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0
+
+[TIMESERIES]
+TS1  0:00  1.0
+";
+        let (net, diags) = parse(INP);
+        assert!(
+            !diags.iter().any(|d| d.kind.is_error()),
+            "{:?}",
+            diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .collect::<Vec<_>>()
+        );
+        let gate_and_route = |v: &Vertex| {
+            let VertexKind::Outfall {
+                flap_gate,
+                route_to_parcel,
+                ..
+            } = v.kind
+            else {
+                panic!("{} should be an outfall", v.id)
+            };
+            (flap_gate, route_to_parcel)
+        };
+        // Both tails, on a stage that costs a token, and on one that does
+        // not: the gate survives either way.
+        let by_id = |id: &str| {
+            gate_and_route(
+                net.vertices
+                    .iter()
+                    .find(|v| v.id == id)
+                    .unwrap_or_else(|| panic!("{id} missing")),
+            )
+        };
+        assert_eq!((true, Some(0)), by_id("O1"), "a staged outfall with both");
+        assert_eq!((true, Some(0)), by_id("O2"), "a free outfall with both");
+        assert_eq!((true, None), by_id("O3"), "the gate alone");
+        assert_eq!((false, None), by_id("O4"), "neither");
+    }
+
     #[test]
     fn pyramidal_storage_compiles_to_the_quadratic_in_si() {
         let (net, _) = parse(FIXTURE);

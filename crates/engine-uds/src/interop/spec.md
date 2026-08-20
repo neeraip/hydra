@@ -153,6 +153,20 @@ Two trailing values are not a form, and a line carrying two is refused.
 Seepage is proportional to conductivity, so a zero conductivity is no
 seepage whatever the other two parameters say.
 
+**An outfall's two optional tails** are a flap gate and the parcel its
+outflow is routed to, in that order, and either may be given without the
+other. Both are read here whenever they are present.
+
+> **DEVIATION from SWMM:** the predecessor tests the two tails with
+> `ntoks == n` and `ntoks == n+1` rather than by length, so a line
+> carrying *both* satisfies only the second: the parcel is read and the
+> flap gate is silently discarded, leaving the outfall ungated. Its own
+> documented format for the section lists `(flapGate) (routeTo)` as
+> independently optional, so the gate is read here. A file giving only one
+> of the two behaves identically in both.
+>
+> *Source: `node.c:outfall_readParams`, `:1392` and `:1399`.*
+
 `[REPORT]`'s dual grammar is reproduced: six yes/no directives (a seventh,
 `NODESTATS`, is the deprecated form §14.3 honours) and three list-valued
 ones (`SUBCATCHMENTS`, `NODES`, `LINKS`) whose `ALL`/`NONE`/
