@@ -1862,6 +1862,194 @@ fn a_staged_outfall_starts_holding_the_water_its_stage_implies() {
     );
 }
 
+// ── §14.7 channel slope ─────────────────────────────────────────────────
+
+/// One conduit of a stated length and drop, carrying an initial flow so
+/// §6.7 seeds its upstream vertex at Manning normal depth. That depth is
+/// the probe: it is a function of the section factor
+/// $\psi = n q/\sqrt{S}$, so reading it back tells us which slope the
+/// router computed.
+fn slope_probe_model(length: f64, upper: f64, min_slope_percent: f64) -> String {
+    slope_probe_model_at(length, upper, min_slope_percent, 2.0)
+}
+
+fn slope_probe_model_at(length: f64, upper: f64, min_slope_percent: f64, flow: f64) -> String {
+    slope_probe_offset(length, upper, min_slope_percent, flow, 0.0, 0.0)
+}
+
+fn slope_probe_offset(
+    length: f64,
+    upper: f64,
+    min_slope_percent: f64,
+    flow: f64,
+    off1: f64,
+    off2: f64,
+) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    01/01/2024
+START_TIME    00:00
+END_DATE      01/01/2024
+END_TIME      01:00
+ROUTING_STEP  10
+MIN_SLOPE     {min_slope_percent}
+
+[JUNCTIONS]
+J1  {upper}  9
+J2  100      9
+
+[OUTFALLS]
+O1  99  FREE
+
+[CONDUITS]
+C1  J1  J2  {length}  0.013  {off1}  {off2}  {flow}
+C2  J2  O1  100       0.013  0  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  3  2  0  0  1
+C2  RECT_OPEN  3  2  0  0  1
+
+[REPORT]
+"
+    )
+}
+
+/// The slope the probe implies, recovered from the seeded depth.
+fn slope_from_seed(depth: f64, flow: f64, width: f64, n: f64) -> f64 {
+    let a = width * depth;
+    let r = a / (width + 2.0 * depth);
+    let psi = a * r.powf(2.0 / 3.0);
+    let root = n * flow / psi;
+    root * root
+}
+
+/// §14.7: a channel's slope is its drop over its *horizontal* run, not
+/// over its length along the bed. The two agree for the long shallow
+/// conduits of ordinary drainage and diverge sharply for a steep one:
+/// six metres of drop over ten metres of pipe is a slope of 0.75, not
+/// 0.6.
+#[test]
+fn a_channels_slope_is_its_drop_over_its_horizontal_run() {
+    let (sim, _, _) = Simulation::open(&slope_probe_model(10.0, 106.0, 0.0)).expect("open");
+    let seeded = sim.depth("J1").expect("J1");
+    let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
+    let dz: f64 = 6.0;
+    let expected = dz / (10.0_f64 * 10.0 - dz * dz).sqrt();
+    assert!(
+        (got / expected - 1.0).abs() < 1e-3,
+        "the router used a slope of {got}, and the horizontal run gives \
+         {expected} where the bed length would give {}",
+        dz / 10.0
+    );
+}
+
+/// §14.7: the degenerate geometry whose drop exceeds its length has no
+/// horizontal run to speak of, and falls back to the drop over the
+/// length. Reading it the other way asks for the square root of a
+/// negative number.
+#[test]
+fn a_drop_exceeding_the_length_falls_back_to_the_bed_slope() {
+    let (sim, _, _) = Simulation::open(&slope_probe_model(5.0, 106.0, 0.0)).expect("open");
+    let seeded = sim.depth("J1").expect("J1");
+    assert!(seeded.is_finite() && seeded > 0.0, "seeded at {seeded}");
+    let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
+    assert!(
+        (got / (6.0 / 5.0) - 1.0).abs() < 1e-3,
+        "the router used {got} rather than the drop over the length, 1.2"
+    );
+}
+
+/// §14.7: the slope is floored at the minimum-slope option, so a flat
+/// channel routes at the floor rather than at nothing.
+#[test]
+fn a_flat_channel_takes_the_minimum_slope() {
+    // Level inverts, and a floor of one percent.
+    let (sim, _, _) = Simulation::open(&slope_probe_model(100.0, 100.0, 1.0)).expect("open");
+    let seeded = sim.depth("J1").expect("J1");
+    let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
+    assert!(
+        (got / 0.01 - 1.0).abs() < 1e-3,
+        "a level channel routed at {got} rather than the one percent floor"
+    );
+
+    // And the floor does not hold a steeper channel back.
+    let (steep, _, _) = Simulation::open(&slope_probe_model(100.0, 110.0, 1.0)).expect("open");
+    let got = slope_from_seed(steep.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
+    assert!(
+        got > 0.05,
+        "a ten-metre drop is steeper than the floor: {got}"
+    );
+}
+
+/// §14.7: a level channel still routes. The drop is floored at the
+/// smallest the engine will represent — a thousandth of a foot — so the
+/// slope is tiny rather than zero, and a zero would divide the section
+/// factor by nothing.
+#[test]
+fn a_level_channel_takes_the_smallest_drop_rather_than_none() {
+    let flow = 0.3;
+    let (sim, _, _) =
+        Simulation::open(&slope_probe_model_at(100.0, 100.0, 0.0, flow)).expect("open");
+    let seeded = sim.depth("J1").expect("J1");
+    assert!(seeded.is_finite() && seeded > 0.0, "seeded at {seeded}");
+    let got = slope_from_seed(seeded, flow, 2.0, 0.013);
+    let floor: f64 = 0.001 * 0.3048;
+    let expected = floor / (100.0_f64 * 100.0 - floor * floor).sqrt();
+    assert!(
+        (got / expected - 1.0).abs() < 1e-2,
+        "a level channel routed at {got} rather than the floored {expected}"
+    );
+}
+
+/// §14.7: an adverse channel is reversed internally, and routes at the
+/// same slope as the equivalent falling one. The reversal happens at
+/// validation, which compares end elevations *including offsets* and
+/// swaps the endpoints and the offsets together, so what this asserts is
+/// that the reversal reaches the router intact.
+#[test]
+fn an_adverse_channel_uses_the_size_of_its_drop() {
+    // The downstream invert six metres above the upstream one.
+    let (adverse, _, _) = Simulation::open(&slope_probe_model(100.0, 94.0, 0.0)).expect("open");
+    let (normal, _, _) = Simulation::open(&slope_probe_model(100.0, 106.0, 0.0)).expect("open");
+    let a = slope_from_seed(adverse.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
+    let n = slope_from_seed(normal.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
+    assert!(
+        (a / n - 1.0).abs() < 1e-3,
+        "the adverse channel routed at {a} against the falling one's {n}"
+    );
+    assert!(
+        a > 0.05,
+        "and it is the real slope, not the flat floor: {a}"
+    );
+}
+
+/// §14.7: the slope is measured between the *inverts the link actually
+/// sits on*, which is each vertex's invert plus that end's offset. Two
+/// level inverts with two metres of offset at one end are a bed that
+/// falls two metres, and dropping either offset would leave it level and
+/// route at the flat-channel floor instead.
+#[test]
+fn the_offsets_are_part_of_the_bed_the_slope_is_measured_along() {
+    // Level inverts, and two metres of outlet offset: the bed falls
+    // backwards by two metres over a hundred.
+    let (sim, _, _) =
+        Simulation::open(&slope_probe_offset(100.0, 100.0, 0.0, 2.0, 0.0, 2.0)).expect("open");
+    let got = slope_from_seed(sim.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
+    let dz: f64 = 2.0;
+    let expected = dz / (100.0_f64 * 100.0 - dz * dz).sqrt();
+    assert!(
+        (got / expected - 1.0).abs() < 1e-2,
+        "the router used {got}; two metres of offset over a hundred is \
+         {expected}, and ignoring the offsets would leave a level bed"
+    );
+    assert!(
+        got > 0.01,
+        "and it is a real slope, not the flat-channel floor: {got}"
+    );
+}
+
 // ── §14.8 hotstart ──────────────────────────────────────────────────────
 
 #[test]

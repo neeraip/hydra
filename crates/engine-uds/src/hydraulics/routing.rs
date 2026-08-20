@@ -5243,7 +5243,14 @@ impl LinkStats {
 //   `*init_flow > 0.0` read as `>=` when seeding §6.7 initial state. A
 //   zero flow gives a zero section factor, whose normal depth is zero, so
 //   the end depth is unchanged and the dry-link guard below skips the
-//   link either way.
+//   link either way;
+//
+//   the `.abs()` on a channel's elevation drop. Validation reverses an
+//   adverse channel before the router is built (§14.7), comparing end
+//   elevations with their offsets already added and swapping the
+//   endpoints and the offsets together, so every channel reaching here
+//   already falls. The call is defensive and cannot be observed; the
+//   reversal it stands behind is tested at session level instead.
 //
 // Everything else the tool suggests about these two is caught. When this
 // file changes, run it again rather than trusting this note.
