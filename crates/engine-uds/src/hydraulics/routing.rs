@@ -5211,3 +5211,256 @@ impl LinkStats {
         Ok(())
     }
 }
+
+// `just mutants crates/engine-uds/src/hydraulics/routing.rs` reports two
+// mutants in the geometry and friction relations that no test catches, and
+// both are equivalent rather than uncovered:
+//
+//   `re <= 2000.0` read as `<`, which decides between the laminar law and
+//   the transitional blend at exactly 2000. The blend begins at 0.032 and
+//   64/2000 is 0.032, so the two regimes meet there and both readings
+//   return the same number;
+//
+//   `yy <= 0.0` read as `<` when a storage table opens below the invert.
+//   A point at exactly zero depth contributes no volume either way — the
+//   running lower bound is already zero, so the trapezoid it would add has
+//   no width — and the area it carries is picked up by both paths.
+//
+// Everything else the tool suggests about these two is caught. When this
+// file changes, run it again rather than trusting this note.
+
+#[cfg(test)]
+mod storage_geometry_tests {
+    use super::*;
+
+    /// The three storage geometries at a shape each, chosen so no two
+    /// agree anywhere but the origin.
+    fn geometries() -> Vec<(&'static str, StoreArea)> {
+        vec![
+            (
+                "functional",
+                StoreArea::Functional {
+                    coeff: 30.0,
+                    exponent: 0.5,
+                    constant: 12.0,
+                },
+            ),
+            (
+                "shape",
+                StoreArea::Shape {
+                    a0: 8.0,
+                    a1: 5.0,
+                    a2: 2.0,
+                },
+            ),
+            (
+                "table",
+                StoreArea::Table(vec![(0.0, 10.0), (1.0, 25.0), (2.5, 40.0), (4.0, 55.0)]),
+            ),
+        ]
+    }
+
+    /// Volume is the integral of area over depth.
+    ///
+    /// The two are written separately, in closed form for the first two
+    /// geometries and as a running trapezoid for the third, so nothing
+    /// makes them agree except being right. Integrating one numerically
+    /// and comparing it against the other is the claim that binds them,
+    /// and it holds a storage node's mass balance together.
+    #[test]
+    fn the_volume_is_the_integral_of_the_area() {
+        for (what, g) in geometries() {
+            for &depth in &[0.5, 1.0, 2.0, 3.3, 4.0] {
+                let n = 20_000;
+                let h = depth / n as f64;
+                // Midpoint rule: exact for the linear pieces, and second
+                // order on the curved ones.
+                let mut integral = 0.0;
+                for i in 0..n {
+                    integral += g.area((i as f64 + 0.5) * h) * h;
+                }
+                let got = g.volume(depth);
+                assert!(
+                    (got - integral).abs() < 1e-6 * integral.max(1.0),
+                    "{what} at {depth} m: volume {got} against the integral {integral}"
+                );
+            }
+        }
+    }
+
+    /// A depth below the invert is no depth: neither function extrapolates
+    /// backwards into a negative store.
+    #[test]
+    fn a_negative_depth_is_an_empty_store() {
+        for (what, g) in geometries() {
+            assert_eq!(g.volume(-1.0), g.volume(0.0), "{what} volume");
+            assert_eq!(g.area(-1.0), g.area(0.0), "{what} area");
+            assert_eq!(0.0, g.volume(0.0), "{what} holds nothing at the invert");
+        }
+    }
+
+    /// The functional form is $A = A_0 + a y^b$ and its integral, both
+    /// asserted against the relation rather than against each other.
+    #[test]
+    fn the_functional_form_is_its_relation_and_its_integral() {
+        let g = StoreArea::Functional {
+            coeff: 30.0,
+            exponent: 0.5,
+            constant: 12.0,
+        };
+        let y = 4.0_f64;
+        assert!((g.area(y) - (12.0 + 30.0 * y.powf(0.5))).abs() < 1e-12);
+        assert!(
+            (g.volume(y) - (12.0 * y + 30.0 * y.powf(1.5) / 1.5)).abs() < 1e-12,
+            "{}",
+            g.volume(y)
+        );
+        // A constant-area store is a prism, which the exponent's +1 is
+        // what makes it: coefficient zero leaves the constant alone.
+        let flat = StoreArea::Functional {
+            coeff: 0.0,
+            exponent: 0.5,
+            constant: 12.0,
+        };
+        assert!((flat.volume(3.0) - 36.0).abs() < 1e-12);
+    }
+
+    /// The polynomial form is $A = a_0 + a_1 y + a_2 y^2$ and its
+    /// integral $a_0 y + a_1 y^2/2 + a_2 y^3/3$.
+    #[test]
+    fn the_polynomial_form_is_its_relation_and_its_integral() {
+        let g = StoreArea::Shape {
+            a0: 8.0,
+            a1: 5.0,
+            a2: 2.0,
+        };
+        let y = 3.0;
+        assert!((g.area(y) - (8.0 + 5.0 * y + 2.0 * y * y)).abs() < 1e-12);
+        let expected = 8.0 * y + 5.0 * y * y / 2.0 + 2.0 * y * y * y / 3.0;
+        assert!((g.volume(y) - expected).abs() < 1e-12, "{}", g.volume(y));
+    }
+
+    /// A tabulated store interpolates between its points and extends flat
+    /// beyond both ends: a depth past the last point keeps the last area
+    /// rather than running off the table or back to zero.
+    #[test]
+    fn a_tabulated_store_interpolates_and_extends_flat() {
+        let g = StoreArea::Table(vec![(0.0, 10.0), (1.0, 25.0), (2.5, 40.0)]);
+
+        assert!((g.area(0.0) - 10.0).abs() < 1e-12, "on the first point");
+        assert!((g.area(1.0) - 25.0).abs() < 1e-12, "on a middle point");
+        assert!((g.area(0.5) - 17.5).abs() < 1e-12, "halfway to it");
+        // Two thirds of the way from 1.0 to 2.5.
+        assert!((g.area(2.0) - 35.0).abs() < 1e-12, "{}", g.area(2.0));
+        assert!(
+            (g.area(9.0) - 40.0).abs() < 1e-12,
+            "flat past the last point"
+        );
+
+        // And the volume follows: past the table the store gains the last
+        // area per metre and nothing else.
+        let at_top = g.volume(2.5);
+        assert!(
+            (g.volume(3.5) - (at_top + 40.0)).abs() < 1e-12,
+            "{} against {}",
+            g.volume(3.5),
+            at_top + 40.0
+        );
+    }
+
+    /// A table that opens below the invert contributes nothing from the
+    /// part below it: the store starts at zero depth whatever the curve
+    /// says underneath.
+    #[test]
+    fn a_table_reaching_below_the_invert_starts_at_the_invert() {
+        let g = StoreArea::Table(vec![(-1.0, 5.0), (0.0, 10.0), (2.0, 30.0)]);
+        assert!((g.area(0.0) - 10.0).abs() < 1e-12, "the invert's own area");
+        assert!((g.volume(0.0)).abs() < 1e-12, "and no volume at it");
+        // Trapezoid from 10 to 30 over two metres.
+        assert!((g.volume(2.0) - 40.0).abs() < 1e-12, "{}", g.volume(2.0));
+    }
+
+    /// An empty table is an empty store rather than a panic.
+    #[test]
+    fn an_empty_table_is_an_empty_store() {
+        let g = StoreArea::Table(Vec::new());
+        assert_eq!(0.0, g.area(1.0));
+        assert_eq!(0.0, g.volume(1.0));
+    }
+}
+
+#[cfg(test)]
+mod friction_factor_tests {
+    use super::*;
+
+    /// §7.7: laminar below a Reynolds number of 2000, $f = 64/Re$.
+    #[test]
+    fn the_laminar_regime_is_sixty_four_over_reynolds() {
+        for re in [100.0, 1000.0, 1999.0] {
+            let f = swamee_jain(1.0e-3, 0.25, re);
+            assert!((f - 64.0 / re).abs() < 1e-15, "at {re}: {f}");
+        }
+        // The regime is inclusive of its own end, and the friction factor
+        // is continuous across it: the blend above starts at 0.032, which
+        // is exactly 64/2000, so both readings of the boundary give the
+        // same number. That continuity is the property worth having; it
+        // also makes the comparison itself untestable, which the note at
+        // the head of this module records.
+        assert!((swamee_jain(1.0e-3, 0.25, 2000.0) - 64.0 / 2000.0).abs() < 1e-15);
+        assert!(
+            (64.0_f64 / 2000.0 - 0.032).abs() < 1e-15,
+            "the two regimes meet"
+        );
+    }
+
+    /// §7.7: a linear blend from 0.032 to the turbulent value between
+    /// 2000 and 4000.
+    #[test]
+    fn the_transitional_regime_blends_linearly_to_the_turbulent_one() {
+        let (e, hrad) = (1.0e-3, 0.25);
+        let at_4000 = swamee_jain(e, hrad, 4000.0);
+        let blend = |re: f64| 0.032 + (at_4000 - 0.032) * (re - 2000.0) / 2000.0;
+
+        for re in [2001.0, 2500.0, 3000.0, 3999.0] {
+            let f = swamee_jain(e, hrad, re);
+            assert!(
+                (f - blend(re)).abs() < 1e-15,
+                "at {re}: {f} not {}",
+                blend(re)
+            );
+        }
+        // Halfway across is halfway between the two ends.
+        let mid = swamee_jain(e, hrad, 3000.0);
+        assert!((mid - (0.032 + at_4000) / 2.0).abs() < 1e-15, "{mid}");
+    }
+
+    /// §7.7: the Swamee-Jain form itself above 4000, which approximates
+    /// Colebrook-White in closed form.
+    #[test]
+    fn the_turbulent_regime_is_the_swamee_jain_form() {
+        let (e, hrad, re) = (1.5e-3, 0.3_f64, 1.0e5_f64);
+        let x = e / 3.7 / (4.0 * hrad) + 5.74 / re.powf(0.9);
+        let expected = 0.25 / (x.log10() * x.log10());
+        let f = swamee_jain(e, hrad, re);
+        assert!((f - expected).abs() < 1e-15, "{f} not {expected}");
+
+        // Rougher pipe, more friction; larger pipe, less.
+        assert!(swamee_jain(3.0e-3, hrad, re) > f, "roughness raises it");
+        assert!(swamee_jain(e, 0.6, re) < f, "a larger radius lowers it");
+    }
+
+    /// §7.7: at extreme Reynolds numbers the fully rough form applies,
+    /// the Reynolds term having stopped mattering.
+    #[test]
+    fn the_fully_rough_form_drops_the_reynolds_term() {
+        let (e, hrad) = (1.5e-3, 0.3_f64);
+        let x = e / 3.7 / (4.0 * hrad);
+        let expected = 0.25 / (x.log10() * x.log10());
+        let f = swamee_jain(e, hrad, 1.0e10);
+        assert!((f - expected).abs() < 1e-15, "{f} not {expected}");
+
+        // Just below the threshold the term is still there, and it makes
+        // a difference the comparison can see.
+        assert!(swamee_jain(e, hrad, 9.9e9) > f, "the term is still carried");
+    }
+}
