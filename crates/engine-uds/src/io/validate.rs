@@ -140,10 +140,10 @@ pub enum ValidationKind {
     /// A rule mixing `AND` and `OR` premises: firing may depend on the
     /// §9.1 precedence correction.
     RuleMixesAndOr,
-    /// A sanitary-inflow pattern whose declared type does not match the
-    /// slot it occupies — it contributes its own type's multiplier from
-    /// wherever it sits (§14.7).
-    DwfPatternSlotMismatch,
+    /// A sanitary-inflow line listing two patterns of the same declared
+    /// type: sorting the slots by type keeps the later one and discards
+    /// the earlier, as the predecessor does (§14.7).
+    DwfPatternDiscarded,
     /// A tidal outfall under a non-midnight start: this engine indexes
     /// the tide by clock time where the predecessor used elapsed time,
     /// so results differ (§14.7).
@@ -176,7 +176,7 @@ impl ValidationKind {
                 | ValidationKind::UserDimensionedEllipse
                 | ValidationKind::StubChannel
                 | ValidationKind::RuleMixesAndOr
-                | ValidationKind::DwfPatternSlotMismatch
+                | ValidationKind::DwfPatternDiscarded
                 | ValidationKind::TidalCurveClockIndexed
                 | ValidationKind::BuildupJumpsToMax
                 | ValidationKind::EmptyModel
@@ -297,8 +297,11 @@ impl std::fmt::Display for ValidationKind {
             ValidationKind::RuleMixesAndOr => {
                 write!(f, "rule mixes AND and OR; firing depends on precedence")
             }
-            ValidationKind::DwfPatternSlotMismatch => {
-                write!(f, "sanitary-inflow pattern type does not match its slot")
+            ValidationKind::DwfPatternDiscarded => {
+                write!(
+                    f,
+                    "two sanitary-inflow patterns of one type; only the later applies"
+                )
             }
             ValidationKind::TidalCurveClockIndexed => {
                 write!(
@@ -426,26 +429,37 @@ fn validate_buildup(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
     }
 }
 
-/// Sanitary-inflow patterns judged against the slots they occupy.
-fn validate_dwf(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
+/// Sanitary-inflow pattern slots sorted into declared-type order (§14.7).
+///
+/// The slot a pattern was written in never meant anything: evaluation
+/// dispatches on the pattern's own type. What the sort decides is what
+/// becomes of a second pattern of the same type, and the answer is that the
+/// later one wins and the earlier is dropped. Multiplying the two instead
+/// compounds factors the author wrote as alternatives, without limit — two
+/// hourly patterns peaking together multiply their peaks.
+fn validate_dwf(net: &mut Network, d: &mut Vec<ValidationDiagnostic>) {
     use crate::model::PatternKind;
-    const SLOTS: [PatternKind; 4] = [
+    const ORDER: [PatternKind; 4] = [
         PatternKind::Monthly,
         PatternKind::Daily,
         PatternKind::Hourly,
         PatternKind::Weekend,
     ];
-    for dwf in &net.dry_weather {
-        for (slot, pat) in dwf.patterns.iter().enumerate() {
-            if let Some(p) = pat {
-                if net.patterns[*p].kind != SLOTS[slot] {
-                    push(
-                        d,
-                        &net.vertices[dwf.vertex].id,
-                        ValidationKind::DwfPatternSlotMismatch,
-                    );
-                }
-            }
+    for i in 0..net.dry_weather.len() {
+        let mut sorted: [Option<usize>; 4] = [None; 4];
+        let mut discarded = false;
+        for p in net.dry_weather[i].patterns.iter().flatten() {
+            let slot = ORDER
+                .iter()
+                .position(|k| *k == net.patterns[*p].kind)
+                .unwrap_or(0);
+            discarded |= sorted[slot].is_some();
+            sorted[slot] = Some(*p);
+        }
+        net.dry_weather[i].patterns = sorted;
+        if discarded {
+            let id = net.vertices[net.dry_weather[i].vertex].id.clone();
+            push(d, &id, ValidationKind::DwfPatternDiscarded);
         }
     }
 }
@@ -1810,10 +1824,11 @@ THEN  CONDUIT C1 STATUS = CLOSED
         let (_, v) = validated(inp);
         // A 1 ft channel with a 20 s routing step is a stub.
         assert!(has(&v, "C1", |k| matches!(k, ValidationKind::StubChannel)));
-        // The hourly pattern sits in the monthly slot.
-        assert!(has(&v, "J1", |k| matches!(
+        // One hourly pattern written first is what almost every model
+        // does, and is not a finding.
+        assert!(!has(&v, "J1", |k| matches!(
             k,
-            ValidationKind::DwfPatternSlotMismatch
+            ValidationKind::DwfPatternDiscarded
         )));
         // AND and OR mix among the premises.
         assert!(has(&v, "MIXED", |k| matches!(
@@ -1864,6 +1879,81 @@ R1  TRAPEZOIDAL  2  3  1  1
         assert!(has(&v, "R1", |k| matches!(
             k,
             ValidationKind::RegulatorShape
+        )));
+    }
+
+    /// A sanitary-inflow model with `patterns` written after the average.
+    fn dwf_model(patterns: &str, extra_patterns: &str) -> String {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[PATTERNS]
+MON  MONTHLY  1 2 3 4 5 6 7 8 9 10 11 12
+HR1  HOURLY  1 1 1 1 1 1 1 1 1 1 1 1
+HR1          1 1 1 1 1 1 1 1 1 1 1 1
+{extra_patterns}
+
+[DWF]
+J1  FLOW  0.02  {patterns}
+"
+        )
+    }
+
+    #[test]
+    fn sanitary_pattern_slots_are_sorted_by_declared_type() {
+        // §14.7: the written order carries no meaning. An hourly pattern
+        // listed first belongs in the hourly slot, whatever position the
+        // line put it in, so evaluation can index slots directly.
+        let (net, v) = validated(&dwf_model("HR1  MON", ""));
+        let slots = net.dry_weather[0].patterns;
+        let kind = |slot: usize| slots[slot].map(|p| net.patterns[p].kind);
+        assert_eq!(kind(0), Some(crate::model::PatternKind::Monthly));
+        assert_eq!(kind(2), Some(crate::model::PatternKind::Hourly));
+        assert_eq!(kind(1), None);
+        assert_eq!(kind(3), None);
+        // Nothing was lost, so nothing is reported.
+        assert!(!has(&v, "J1", |k| matches!(
+            k,
+            ValidationKind::DwfPatternDiscarded
+        )));
+    }
+
+    #[test]
+    fn a_repeated_pattern_type_keeps_the_later_and_says_so() {
+        // The predecessor fills one slot per type, so a second hourly
+        // pattern overwrites the first and the first never applies.
+        // Multiplying them instead compounds two peaks into one.
+        let extra = "HR2  HOURLY  9 9 9 9 9 9 9 9 9 9 9 9
+HR2          9 9 9 9 9 9 9 9 9 9 9 9";
+        let (net, v) = validated(&dwf_model("HR1  HR2", extra));
+        let slots = net.dry_weather[0].patterns;
+        let surviving = slots[2].expect("an hourly pattern survives");
+        assert_eq!(
+            net.patterns[surviving].factors[0], 9.0,
+            "the later pattern must be the one that survives"
+        );
+        assert_eq!(
+            slots.iter().flatten().count(),
+            1,
+            "the discarded pattern must not sit in another slot: {slots:?}"
+        );
+        assert!(has(&v, "J1", |k| matches!(
+            k,
+            ValidationKind::DwfPatternDiscarded
         )));
     }
 }

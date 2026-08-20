@@ -231,17 +231,33 @@ user did not author:
 - street sections compiled to transects (§5.6), inlet placements
   shape-checked, invalid placements removed;
 - equivalent lengths and surface areas computed for orifices and weirs
-  (§7.2–§7.3).
+  (§7.2–§7.3);
+- a sanitary inflow's pattern slots **sorted by the patterns' declared
+  types**, monthly, daily, hourly then weekend, whatever order the line
+  listed them in. Where two patterns share a type only the later one
+  survives, and the discarded one is named.
 
 **Advisories.** Import additionally flags, without mutating: stub channels
 short enough to Courant-limit the run (§6.5); rules mixing `AND` and `OR`
 whose firing depends on the precedence correction (§9.1); a user-dimensioned
 ellipse cross-section, which the predecessor evaluated at fixed proportions
-regardless of the entered width (§5.4); a pattern whose
-declared type does not match the slot it occupies in a sanitary-inflow line,
-which contributes its own type's multiplier from whatever slot it sits in —
-reproduced exactly, warned because the one silent case yields a constant
-factor of 1.
+regardless of the entered width (§5.4).
+
+> **CORRESPONDENCE:** the slot a pattern is written in carries no meaning in
+> either engine, and neither is the position wrong: every pattern applies
+> its own declared type's multiplier, so listing an hourly pattern first —
+> which is what almost every model does, having only one — is ordinary and
+> is not flagged. What the sort decides is what happens to a *second*
+> pattern of the same type. There the predecessor keeps the later one and
+> drops the earlier silently, where multiplying the two would compound
+> factors the author wrote as alternatives. That case is reproduced and
+> named, because a discarded pattern is a line of the model that did
+> nothing.
+>
+> *Source: `inflow.c:402` — `inflow_initDwfInflow`, filling
+> `tmpPattern[Pattern[p].type]` so a repeated type overwrites; evaluated by
+> `inflow.c:432` and `getPatternFactor`, which dispatch on the pattern's own
+> type and never on its slot.*
 
 **Tidal boundary curves** are indexed by clock time.
 
