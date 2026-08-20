@@ -1862,6 +1862,175 @@ fn a_staged_outfall_starts_holding_the_water_its_stage_implies() {
     );
 }
 
+// ── §7.1 pump characteristics ───────────────────────────────────────────
+
+/// A wet well two metres deep over a thousand square metres, pumping to a
+/// stage three metres above its water surface. Every pump type reads a
+/// different argument out of that one state: volume 2000, depth 2, head
+/// difference 3.
+fn pump_model(kind: &str, points: &str) -> String {
+    pump_model_at_speed(kind, points, "")
+}
+
+fn pump_model_at_speed(kind: &str, points: &str, controls: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    01/01/2024
+START_TIME    00:00
+END_DATE      01/01/2024
+END_TIME      00:10
+ROUTING_STEP  1
+REPORT_STEP   00:01:00
+
+[STORAGE]
+ST1  100  6  2  FUNCTIONAL  0  0  1000
+
+[OUTFALLS]
+O1  99  FIXED  105
+
+[JUNCTIONS]
+J9  100  5
+
+[CONDUITS]
+C9  J9  O1  100  0.013  0  0  0
+
+[XSECTIONS]
+C9  CIRCULAR  1  0  0  0
+
+[PUMPS]
+P1  ST1  O1  PC1  ON  0  0
+
+[CURVES]
+PC1  {kind}  {points}
+
+[CONTROLS]
+{controls}
+
+[REPORT]
+"
+    )
+}
+
+/// The pump's flow after one second, before the well has drawn down
+/// enough to matter.
+fn pump_flow(kind: &str, points: &str) -> f64 {
+    let (mut sim, _, _) = Simulation::open(&pump_model(kind, points)).expect("open");
+    sim.step();
+    sim.flow("P1").expect("P1")
+}
+
+/// §7.1 type 3: the centrifugal characteristic, $q(H_2 - H_1)$,
+/// interpolated linearly. The stage stands three metres above the well,
+/// which on this curve is 0.38 m³/s.
+#[test]
+fn a_type_three_pump_reads_its_curve_at_the_head_difference() {
+    let q = pump_flow("PUMP3", "0 0.5   5 0.3   10 0.1");
+    // Between (0, 0.5) and (5, 0.3) at a head of 3.
+    assert!(
+        (q - 0.38).abs() < 1e-3,
+        "{q} is not the curve at three metres"
+    );
+}
+
+/// §7.1 type 5 is a variable-speed type 3, and at unit speed the affinity
+/// scaling is the identity: the head is divided by one and the flow
+/// multiplied by one.
+#[test]
+fn a_type_five_pump_matches_type_three_at_unit_speed() {
+    let pts = "0 0.5   5 0.3   10 0.1";
+    let (three, five) = (pump_flow("PUMP3", pts), pump_flow("PUMP5", pts));
+    assert!(
+        (three - five).abs() < 1e-12,
+        "type 3 gave {three} and type 5 {five}"
+    );
+}
+
+/// §7.1 types 1 and 2 are *stepwise*: the curve's value at the first
+/// point whose abscissa exceeds the argument, not an interpolation. Type
+/// 1 reads the wet well's volume and type 2 its depth, which is why the
+/// two curves here carry the same flows against different abscissae.
+#[test]
+fn the_stepwise_pump_types_read_volume_and_depth_without_interpolating() {
+    // Volume is 2000: the first abscissa beyond it is 3000.
+    let q = pump_flow("PUMP1", "0 0.2   1500 0.4   3000 0.6");
+    assert!(
+        (q - 0.6).abs() < 1e-9,
+        "type 1 gave {q}, not the step's 0.6"
+    );
+
+    // Depth is 2: the first abscissa beyond it is 3.
+    let q = pump_flow("PUMP2", "0 0.2   1 0.4   3 0.7");
+    assert!(
+        (q - 0.7).abs() < 1e-9,
+        "type 2 gave {q}, not the step's 0.7"
+    );
+
+    // Interpolating either would have given something between the
+    // bracketing values instead.
+    assert!(
+        (pump_flow("PUMP1", "0 0.2   1500 0.4   3000 0.6") - 0.5).abs() > 0.05,
+        "a stepwise curve is not interpolated"
+    );
+}
+
+/// §7.1 type 4 is an in-line depth profile and *does* interpolate, which
+/// is what separates it from type 2 on the same argument.
+#[test]
+fn a_type_four_pump_interpolates_on_depth() {
+    let pts = "0 0.2   1 0.4   3 0.6";
+    let q = pump_flow("PUMP4", pts);
+    // Halfway from (1, 0.4) to (3, 0.6) at a depth of 2.
+    assert!((q - 0.5).abs() < 1e-3, "{q} is not the interpolated 0.5");
+    // The stepwise type on the identical curve reads the next point up.
+    let stepwise = pump_flow("PUMP2", pts);
+    assert!(
+        (stepwise - 0.6).abs() < 1e-9 && (q - stepwise).abs() > 0.05,
+        "type 2 gave {stepwise} and type 4 {q}: they read the same curve \
+         differently"
+    );
+}
+
+/// §7.1: type 5's affinity scaling is the whole of its difference from
+/// type 3 — the head is divided by $\omega^2$ before the curve is read and
+/// the flow multiplied by $\omega$ after. At unit speed that is the
+/// identity, which is why the two agree above and why telling them apart
+/// needs a pump running at anything else.
+#[test]
+fn the_affinity_scaling_separates_type_five_from_type_three() {
+    let pts = "0 0.5   5 0.3   10 0.1";
+    let half = "RULE R1\nIF SIMULATION TIME > 0\nTHEN PUMP P1 SETTING = 0.5";
+    let flow = |kind: &str| {
+        let (mut sim, _, _) =
+            Simulation::open(&pump_model_at_speed(kind, pts, half)).expect("open");
+        for _ in 0..3 {
+            sim.step();
+        }
+        sim.flow("P1").expect("P1")
+    };
+
+    // Type 3 reads the curve at the real head of three metres and halves
+    // the result: 0.38 becomes 0.19.
+    let three = flow("PUMP3");
+    assert!(
+        (three - 0.19).abs() < 2e-3,
+        "type 3 at half speed gave {three}"
+    );
+
+    // Type 5 reads it at 3/0.25 = 12 metres, past the curve's end, where
+    // it clamps to 0.1 — and then halves that.
+    let five = flow("PUMP5");
+    assert!(
+        (five - 0.05).abs() < 2e-3,
+        "type 5 at half speed gave {five}"
+    );
+    assert!(
+        three > 2.0 * five,
+        "the affinity law makes a real difference: {three} against {five}"
+    );
+}
+
 // ── §14.7 channel slope ─────────────────────────────────────────────────
 
 /// One conduit of a stated length and drop, carrying an initial flow so
