@@ -45,7 +45,7 @@ fn is_flow_sentinel(token: &str) -> bool {
 
 /// Parse `[POLLUTANTS]`.
 pub(crate) fn parse_constituents(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<Constituent> {
@@ -58,22 +58,22 @@ pub(crate) fn parse_constituents(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(u) = match_keyword(UNITS, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(u) = match_keyword(UNITS, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         let mut x = [0.0; 4]; // c_rain, c_gw, c_rdii, decay
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
             let Ok(v) = t[2 + i].finite_f64() else {
-                diags.push(bad(l, &t[2 + i]));
+                diags.push(bad(l, t[2 + i]));
                 ok = false;
                 break;
             };
             // The three concentrations are non-negative; decay may be
             // negative (growth).
             if i < 3 && v < 0.0 {
-                diags.push(bad(l, &t[2 + i]));
+                diags.push(bad(l, t[2 + i]));
                 ok = false;
                 break;
             }
@@ -93,16 +93,16 @@ pub(crate) fn parse_constituents(
         let mut co_constituent = None;
         let mut co_fraction = 0.0;
         if t.len() >= 9 && t[7] != "*" {
-            let Some(&co) = s.resolve(ObjectKind::Constituent, &t[7]) else {
-                diags.push(unresolved(l, &t[7]));
+            let Some(&co) = s.resolve(ObjectKind::Constituent, t[7]) else {
+                diags.push(unresolved(l, t[7]));
                 continue;
             };
             let Ok(f) = t[8].finite_f64() else {
-                diags.push(bad(l, &t[8]));
+                diags.push(bad(l, t[8]));
                 continue;
             };
             if f < 0.0 {
-                diags.push(bad(l, &t[8]));
+                diags.push(bad(l, t[8]));
                 continue;
             }
             co_constituent = Some(co);
@@ -128,7 +128,7 @@ pub(crate) fn parse_constituents(
             continue;
         }
         out.push(Constituent {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             units: [
                 ConcentrationUnits::MgPerL,
                 ConcentrationUnits::UgPerL,
@@ -150,7 +150,7 @@ pub(crate) fn parse_constituents(
 
 /// Parse `[LANDUSES]`, sized for the constituent count.
 pub(crate) fn parse_land_uses(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     n_constituents: usize,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<LandUse> {
@@ -167,7 +167,7 @@ pub(crate) fn parse_land_uses(
             let mut ok = true;
             for (i, si) in sweep.iter_mut().enumerate() {
                 let Ok(v) = t[1 + i].finite_f64() else {
-                    diags.push(bad(l, &t[1 + i]));
+                    diags.push(bad(l, t[1 + i]));
                     ok = false;
                     break;
                 };
@@ -177,12 +177,12 @@ pub(crate) fn parse_land_uses(
                 continue;
             }
             if !(0.0..=1.0).contains(&sweep[1]) {
-                diags.push(bad(l, &t[2]));
+                diags.push(bad(l, t[2]));
                 continue;
             }
         }
         out.push(LandUse {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             sweep_interval: sweep[0],
             sweep_removal: sweep[1],
             sweep_days_since: sweep[2],
@@ -195,7 +195,7 @@ pub(crate) fn parse_land_uses(
 
 /// Fill `[BUILDUP]` relations into their land uses.
 pub(crate) fn parse_buildup(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     land_uses: &mut [LandUse],
     diags: &mut Vec<Diagnostic>,
@@ -208,16 +208,16 @@ pub(crate) fn parse_buildup(
         if t.len() < 3 {
             continue; // the predecessor ignores short lines here
         }
-        let Some(&lu) = s.resolve(ObjectKind::LandUse, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&lu) = s.resolve(ObjectKind::LandUse, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&p) = s.resolve(ObjectKind::Constituent, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
-        let Some(form_i) = match_keyword(FORMS, &t[2]) else {
-            diags.push(bad(l, &t[2]));
+        let Some(form_i) = match_keyword(FORMS, t[2]) else {
+            diags.push(bad(l, t[2]));
             continue;
         };
         let form = [
@@ -242,17 +242,17 @@ pub(crate) fn parse_buildup(
                     match t[3 + i].finite_f64() {
                         Ok(v) if v >= 0.0 => *ci = v,
                         _ => {
-                            diags.push(bad(l, &t[3 + i]));
+                            diags.push(bad(l, t[3 + i]));
                             ok = false;
                             break;
                         }
                     }
                 }
                 if ok {
-                    match s.resolve(ObjectKind::TimeSeries, &t[5]) {
+                    match s.resolve(ObjectKind::TimeSeries, t[5]) {
                         Some(&ts) => series = Some(ts),
                         None => {
-                            diags.push(unresolved(l, &t[5]));
+                            diags.push(unresolved(l, t[5]));
                             ok = false;
                         }
                     }
@@ -260,12 +260,12 @@ pub(crate) fn parse_buildup(
             } else {
                 for (i, ci) in coeffs.iter_mut().enumerate() {
                     let Ok(v) = t[3 + i].finite_f64() else {
-                        diags.push(bad(l, &t[3 + i]));
+                        diags.push(bad(l, t[3 + i]));
                         ok = false;
                         break;
                     };
                     if v < 0.0 {
-                        diags.push(bad(l, &t[3 + i]));
+                        diags.push(bad(l, t[3 + i]));
                         ok = false;
                         break;
                     }
@@ -275,15 +275,15 @@ pub(crate) fn parse_buildup(
             if !ok {
                 continue;
             }
-            let Some(n) = match_keyword(NORMALIZERS, &t[6]) else {
-                diags.push(bad(l, &t[6]));
+            let Some(n) = match_keyword(NORMALIZERS, t[6]) else {
+                diags.push(bad(l, t[6]));
                 continue;
             };
             normalizer = [BuildupNormalizer::PerArea, BuildupNormalizer::PerCurb][n];
             // The predecessor's power-exponent range check: {0} ∪ [0.01, 10].
             if form == BuildupForm::Power && coeffs[2] > 0.0 && !(0.01..=10.0).contains(&coeffs[2])
             {
-                diags.push(bad(l, &t[5]));
+                diags.push(bad(l, t[5]));
                 continue;
             }
         }
@@ -302,7 +302,7 @@ pub(crate) fn parse_buildup(
 
 /// Fill `[WASHOFF]` relations into their land uses.
 pub(crate) fn parse_washoff(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     land_uses: &mut [LandUse],
     diags: &mut Vec<Diagnostic>,
@@ -314,16 +314,16 @@ pub(crate) fn parse_washoff(
         if t.len() < 3 {
             continue;
         }
-        let Some(&lu) = s.resolve(ObjectKind::LandUse, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&lu) = s.resolve(ObjectKind::LandUse, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&p) = s.resolve(ObjectKind::Constituent, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
-        let Some(form_i) = match_keyword(FORMS, &t[2]) else {
-            diags.push(bad(l, &t[2]));
+        let Some(form_i) = match_keyword(FORMS, t[2]) else {
+            diags.push(bad(l, t[2]));
             continue;
         };
         let form = [
@@ -369,7 +369,7 @@ pub(crate) fn parse_washoff(
 /// Fill `[COVERAGES]` (land-use fractions) into parcels: pairs of
 /// (land use, percent) after the parcel identifier.
 pub(crate) fn parse_coverages(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     net: &mut Network,
     diags: &mut Vec<Diagnostic>,
@@ -381,8 +381,8 @@ pub(crate) fn parse_coverages(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let mut k = 1;
@@ -408,7 +408,7 @@ pub(crate) fn parse_coverages(
                             line: l,
                             kind: DiagnosticKind::OverriddenDefinition {
                                 what: "land-cover",
-                                id: t[0].clone(),
+                                id: t[0].to_string(),
                             },
                         });
                         e.1 = f / 100.0;
@@ -424,7 +424,7 @@ pub(crate) fn parse_coverages(
 /// Fill `[LOADINGS]` (initial buildup) into parcels: pairs of
 /// (constituent, areal load) after the parcel identifier.
 pub(crate) fn parse_loadings(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     net: &mut Network,
     diags: &mut Vec<Diagnostic>,
@@ -436,14 +436,14 @@ pub(crate) fn parse_loadings(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let mut k = 1;
         while k < t.len() {
-            let Some(&p) = s.resolve(ObjectKind::Constituent, &t[k]) else {
-                diags.push(unresolved(l, &t[k]));
+            let Some(&p) = s.resolve(ObjectKind::Constituent, t[k]) else {
+                diags.push(unresolved(l, t[k]));
                 break;
             };
             let Some(vtok) = t.get(k + 1) else {
@@ -462,7 +462,7 @@ pub(crate) fn parse_loadings(
                             line: l,
                             kind: DiagnosticKind::OverriddenDefinition {
                                 what: "initial-loading",
-                                id: t[0].clone(),
+                                id: t[0].to_string(),
                             },
                         });
                         e.1 = x;
@@ -477,7 +477,7 @@ pub(crate) fn parse_loadings(
 
 /// Parse `[INFLOWS]` (direct external inflows).
 pub(crate) fn parse_inflows(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -490,26 +490,26 @@ pub(crate) fn parse_inflows(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vertex) = s.resolve(ObjectKind::Vertex, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&vertex) = s.resolve(ObjectKind::Vertex, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         // Constituent lookup first, FLOW-sentinel fallthrough — the
         // predecessor's order, so a constituent named FLOW wins; the
         // sentinel itself is prefix-matched (§14.3).
-        let constituent = match s.resolve(ObjectKind::Constituent, &t[1]) {
+        let constituent = match s.resolve(ObjectKind::Constituent, t[1]) {
             Some(&p) => Some(p),
-            None if is_flow_sentinel(&t[1]) => None,
+            None if is_flow_sentinel(t[1]) => None,
             None => {
-                diags.push(unresolved(l, &t[1]));
+                diags.push(unresolved(l, t[1]));
                 continue;
             }
         };
         let series = if t[2].is_empty() || t[2] == "\"\"" {
             None
         } else {
-            let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[2]) else {
-                diags.push(unresolved(l, &t[2]));
+            let Some(&ts) = s.resolve(ObjectKind::TimeSeries, t[2]) else {
+                diags.push(unresolved(l, t[2]));
                 continue;
             };
             Some(ts)
@@ -533,7 +533,7 @@ pub(crate) fn parse_inflows(
                     diags.push(err(
                         l,
                         DiagnosticKind::PrefixMatched {
-                            token: tok.clone(),
+                            token: tok.to_string(),
                             matched: TYPES[m],
                         },
                     ));
@@ -607,7 +607,7 @@ pub(crate) fn parse_inflows(
                     line: l,
                     kind: DiagnosticKind::OverriddenDefinition {
                         what: "external-inflow",
-                        id: t[0].clone(),
+                        id: t[0].to_string(),
                     },
                 });
                 *e = entry;
@@ -621,7 +621,7 @@ pub(crate) fn parse_inflows(
 /// Parse `[DWF]` (sanitary inflows): an average and up to four pattern
 /// slots, an empty token skipping a slot.
 pub(crate) fn parse_dry_weather(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -634,23 +634,23 @@ pub(crate) fn parse_dry_weather(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vertex) = s.resolve(ObjectKind::Vertex, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&vertex) = s.resolve(ObjectKind::Vertex, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         // Constituent lookup first, FLOW-sentinel fallthrough — the
         // predecessor's order, so a constituent named FLOW wins; the
         // sentinel itself is prefix-matched (§14.3).
-        let constituent = match s.resolve(ObjectKind::Constituent, &t[1]) {
+        let constituent = match s.resolve(ObjectKind::Constituent, t[1]) {
             Some(&p) => Some(p),
-            None if is_flow_sentinel(&t[1]) => None,
+            None if is_flow_sentinel(t[1]) => None,
             None => {
-                diags.push(unresolved(l, &t[1]));
+                diags.push(unresolved(l, t[1]));
                 continue;
             }
         };
         let Ok(mut average) = t[2].finite_f64() else {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         };
         if constituent.is_none() {
@@ -689,7 +689,7 @@ pub(crate) fn parse_dry_weather(
                     line: l,
                     kind: DiagnosticKind::OverriddenDefinition {
                         what: "sanitary-inflow",
-                        id: t[0].clone(),
+                        id: t[0].to_string(),
                     },
                 });
                 *e = entry;

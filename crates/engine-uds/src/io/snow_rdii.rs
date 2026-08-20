@@ -44,7 +44,7 @@ fn temp_factor(us: bool) -> f64 {
 
 /// Parse `[SNOWPACKS]`.
 pub(crate) fn parse_snowpacks(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     us: bool,
@@ -62,15 +62,15 @@ pub(crate) fn parse_snowpacks(
             continue;
         }
         let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
-            diags.push(unresolved(l, &t[0]));
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let pack = &mut packs[idx];
         if pack.id.is_empty() {
-            pack.id = t[0].clone();
+            pack.id = t[0].to_string();
         }
-        let Some(kind) = match_keyword(SURFACES, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(kind) = match_keyword(SURFACES, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         let n = if kind == 3 { 6 } else { 7 };
@@ -82,7 +82,7 @@ pub(crate) fn parse_snowpacks(
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate().take(n) {
             let Ok(v) = t[2 + i].finite_f64() else {
-                diags.push(bad(l, &t[2 + i]));
+                diags.push(bad(l, t[2 + i]));
                 ok = false;
                 break;
             };
@@ -150,7 +150,7 @@ const MONTHS: &[&str] = &[
 /// Parse `[HYDROGRAPHS]` — the two-token gage form, the modern per-month
 /// response form, and the predecessor's legacy nine-value format.
 pub(crate) fn parse_unit_hydrographs(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -174,17 +174,17 @@ pub(crate) fn parse_unit_hydrographs(
             continue;
         }
         let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
-            diags.push(unresolved(l, &t[0]));
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let group = &mut groups[idx];
         if group.id.is_empty() {
-            group.id = t[0].clone();
+            group.id = t[0].to_string();
         }
         // Two tokens: the gage assignment.
         if t.len() == 2 {
-            let Some(&g) = s.resolve(ObjectKind::Gage, &t[1]) else {
-                diags.push(unresolved(l, &t[1]));
+            let Some(&g) = s.resolve(ObjectKind::Gage, t[1]) else {
+                diags.push(unresolved(l, t[1]));
                 continue;
             };
             group.gage = Some(g);
@@ -197,16 +197,16 @@ pub(crate) fn parse_unit_hydrographs(
         // Month: a name, or ALL (prefix-matched, per the predecessor).
         let up = t[1].to_ascii_uppercase();
         let month: Option<usize> = MONTHS.iter().position(|m| up.starts_with(m));
-        if month.is_none() && match_keyword(&["ALL"], &t[1]).is_none() {
-            diags.push(bad(l, &t[1]));
+        if month.is_none() && match_keyword(&["ALL"], t[1]).is_none() {
+            diags.push(bad(l, t[1]));
             continue;
         }
         let read_response =
-            |from: usize, t: &[String], diags: &mut Vec<Diagnostic>| -> Option<UhResponse> {
+            |from: usize, t: &[&str], diags: &mut Vec<Diagnostic>| -> Option<UhResponse> {
                 let mut x = [0.0; 6];
                 for (i, xi) in x.iter_mut().enumerate().take(3) {
                     let Ok(v) = t.get(from + i)?.finite_f64() else {
-                        diags.push(bad(l, &t[from + i]));
+                        diags.push(bad(l, t[from + i]));
                         return None;
                     };
                     *xi = v;
@@ -238,7 +238,7 @@ pub(crate) fn parse_unit_hydrographs(
                 }
             }
         };
-        if let Some(class) = match_keyword(CLASSES, &t[2]) {
+        if let Some(class) = match_keyword(CLASSES, t[2]) {
             // Modern format: one response of one duration class.
             let Some(resp) = read_response(3, t, diags) else {
                 continue;
@@ -255,7 +255,7 @@ pub(crate) fn parse_unit_hydrographs(
             let mut ok = true;
             for (i, pi) in p.iter_mut().enumerate() {
                 let Ok(v) = t[2 + i].finite_f64() else {
-                    diags.push(bad(l, &t[2 + i]));
+                    diags.push(bad(l, t[2 + i]));
                     ok = false;
                     break;
                 };
@@ -298,7 +298,7 @@ pub(crate) fn parse_unit_hydrographs(
 
 /// Parse `[RDII]` assignments.
 pub(crate) fn parse_rdii(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -311,20 +311,20 @@ pub(crate) fn parse_rdii(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&g) = s.resolve(ObjectKind::UnitHydrographGroup, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&g) = s.resolve(ObjectKind::UnitHydrographGroup, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
         let Ok(area) = t[2].finite_f64() else {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         };
         if area < 0.0 {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         }
         let entry = RdiiInflow {
@@ -339,7 +339,7 @@ pub(crate) fn parse_rdii(
                     line: l,
                     kind: DiagnosticKind::OverriddenDefinition {
                         what: "sewer-inflow",
-                        id: t[0].clone(),
+                        id: t[0].to_string(),
                     },
                 });
                 *e = entry;
@@ -353,7 +353,7 @@ pub(crate) fn parse_rdii(
 /// Parse `[TREATMENT]` expressions: `vertex constituent R|C = expression`,
 /// the expression retained as written.
 pub(crate) fn parse_treatment(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<Treatment> {
@@ -365,12 +365,12 @@ pub(crate) fn parse_treatment(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&p) = s.resolve(ObjectKind::Constituent, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
         // The predecessor joins the remaining tokens, keys the kind on the
@@ -380,12 +380,12 @@ pub(crate) fn parse_treatment(
             Some('R') => TreatmentKind::Removal,
             Some('C') => TreatmentKind::Concentration,
             _ => {
-                diags.push(bad(l, &t[2]));
+                diags.push(bad(l, t[2]));
                 continue;
             }
         };
         let Some(eq) = joined.find('=') else {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         };
         let entry = Treatment {
@@ -405,7 +405,7 @@ pub(crate) fn parse_treatment(
                     line: l,
                     kind: DiagnosticKind::OverriddenDefinition {
                         what: "treatment",
-                        id: t[0].clone(),
+                        id: t[0].to_string(),
                     },
                 });
                 *e = entry;

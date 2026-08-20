@@ -35,7 +35,7 @@ fn unresolved(line: usize, id: &str) -> Diagnostic {
 
 /// Parse a `[STREETS]` section.
 pub(crate) fn parse_streets(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -51,7 +51,7 @@ pub(crate) fn parse_streets(
             continue;
         }
         let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
-            diags.push(unresolved(l, &t[0]));
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         // Crown width, curb height, cross slope (%), roughness: all > 0.
@@ -60,7 +60,7 @@ pub(crate) fn parse_streets(
             match t[k].finite_f64() {
                 Ok(v) if v > 0.0 => x[k] = v,
                 _ => {
-                    diags.push(bad(l, &t[k]));
+                    diags.push(bad(l, t[k]));
                     continue 'line;
                 }
             }
@@ -71,7 +71,7 @@ pub(crate) fn parse_streets(
                 match t[k].finite_f64() {
                     Ok(v) if v >= 0.0 => x[k] = v,
                     _ => {
-                        diags.push(bad(l, &t[k]));
+                        diags.push(bad(l, t[k]));
                         continue 'line;
                     }
                 }
@@ -82,7 +82,7 @@ pub(crate) fn parse_streets(
             match t[7].parse::<u8>() {
                 Ok(v @ 1..=2) => sides = v,
                 _ => {
-                    diags.push(bad(l, &t[7]));
+                    diags.push(bad(l, t[7]));
                     continue;
                 }
             }
@@ -92,7 +92,7 @@ pub(crate) fn parse_streets(
             match t[8].finite_f64() {
                 Ok(v) if v >= 0.0 => x[8] = v,
                 _ => {
-                    diags.push(bad(l, &t[8]));
+                    diags.push(bad(l, t[8]));
                     continue;
                 }
             }
@@ -105,7 +105,7 @@ pub(crate) fn parse_streets(
                     match t[k].finite_f64() {
                         Ok(v) if v > 0.0 => x[k] = v,
                         _ => {
-                            diags.push(bad(l, &t[k]));
+                            diags.push(bad(l, t[k]));
                             continue 'line;
                         }
                     }
@@ -113,7 +113,7 @@ pub(crate) fn parse_streets(
             }
         }
         out[idx] = Street {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             crown_width: x[1] * cv.len,
             curb_height: x[2] * cv.len,
             cross_slope: x[3] / 100.0,
@@ -171,13 +171,13 @@ const GRATE_KINDS: [GrateKind; 8] = [
 const THROAT_ANGLES: &[&str] = &["HORIZONTAL", "INCLINED", "VERTICAL"];
 
 /// Two positive lengths at tokens 2 and 3.
-fn two_lengths(t: &[String], diags: &mut Vec<Diagnostic>, l: usize) -> Option<(f64, f64)> {
+fn two_lengths(t: &[&str], diags: &mut Vec<Diagnostic>, l: usize) -> Option<(f64, f64)> {
     let mut v = [0.0; 2];
     for (i, vi) in v.iter_mut().enumerate() {
         match t[2 + i].finite_f64() {
             Ok(x) if x > 0.0 => *vi = x,
             _ => {
-                diags.push(bad(l, &t[2 + i]));
+                diags.push(bad(l, t[2 + i]));
                 return None;
             }
         }
@@ -187,7 +187,7 @@ fn two_lengths(t: &[String], diags: &mut Vec<Diagnostic>, l: usize) -> Option<(f
 
 /// Parse an `[INLETS]` section.
 pub(crate) fn parse_inlets(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -203,22 +203,22 @@ pub(crate) fn parse_inlets(
             continue;
         }
         let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
-            diags.push(unresolved(l, &t[0]));
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let design = &mut out[idx];
         if design.id.is_empty() {
-            design.id = t[0].clone();
+            design.id = t[0].to_string();
         }
-        let Some(kind) = match_keyword(INLET_TYPES, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(kind) = match_keyword(INLET_TYPES, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         if !t[1].eq_ignore_ascii_case(INLET_TYPES[kind]) {
             diags.push(err(
                 l,
                 DiagnosticKind::PrefixMatched {
-                    token: t[1].clone(),
+                    token: t[1].to_string(),
                     matched: INLET_TYPES[kind],
                 },
             ));
@@ -232,15 +232,15 @@ pub(crate) fn parse_inlets(
                 let Some((length, width)) = two_lengths(t, diags, l) else {
                     continue;
                 };
-                let Some(g) = match_keyword(GRATE_TYPES, &t[4]) else {
-                    diags.push(bad(l, &t[4]));
+                let Some(g) = match_keyword(GRATE_TYPES, t[4]) else {
+                    diags.push(bad(l, t[4]));
                     continue;
                 };
                 if !t[4].eq_ignore_ascii_case(GRATE_TYPES[g]) {
                     diags.push(err(
                         l,
                         DiagnosticKind::PrefixMatched {
-                            token: t[4].clone(),
+                            token: t[4].to_string(),
                             matched: GRATE_TYPES[g],
                         },
                     ));
@@ -256,7 +256,7 @@ pub(crate) fn parse_inlets(
                     match t[5].finite_f64() {
                         Ok(v) if v > 0.0 && v <= 1.0 => area_ratio = v,
                         _ => {
-                            diags.push(bad(l, &t[5]));
+                            diags.push(bad(l, t[5]));
                             continue;
                         }
                     }
@@ -264,7 +264,7 @@ pub(crate) fn parse_inlets(
                         match t[6].finite_f64() {
                             Ok(v) if v >= 0.0 => splash_velocity = v * cv.len,
                             _ => {
-                                diags.push(bad(l, &t[6]));
+                                diags.push(bad(l, t[6]));
                                 continue;
                             }
                         }
@@ -289,8 +289,8 @@ pub(crate) fn parse_inlets(
                 };
                 let mut throat = ThroatAngle::Vertical;
                 if INLET_TYPES[kind] == "CURB" && t.len() > 4 {
-                    let Some(a) = match_keyword(THROAT_ANGLES, &t[4]) else {
-                        diags.push(bad(l, &t[4]));
+                    let Some(a) = match_keyword(THROAT_ANGLES, t[4]) else {
+                        diags.push(bad(l, t[4]));
                         continue;
                     };
                     throat = [
@@ -321,9 +321,9 @@ pub(crate) fn parse_inlets(
             }
             _ => {
                 // CUSTOM: a capture/diversion curve reference.
-                match s.resolve(ObjectKind::Curve, &t[2]) {
+                match s.resolve(ObjectKind::Curve, t[2]) {
                     Some(&c) => design.custom_curve = Some(c),
-                    None => diags.push(unresolved(l, &t[2])),
+                    None => diags.push(unresolved(l, t[2])),
                 }
             }
         }
@@ -337,7 +337,7 @@ const PLACEMENTS: &[&str] = &["AUTOMATIC", "ON_GRADE", "ON_SAG"];
 /// a later line for the same link replaces the earlier, as the
 /// predecessor's single per-link slot does.
 pub(crate) fn parse_inlet_usage(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -350,16 +350,16 @@ pub(crate) fn parse_inlet_usage(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&link) = s.resolve(ObjectKind::Link, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&link) = s.resolve(ObjectKind::Link, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&design) = s.resolve(ObjectKind::Inlet, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&design) = s.resolve(ObjectKind::Inlet, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
-        let Some(&capture_vertex) = s.resolve(ObjectKind::Vertex, &t[2]) else {
-            diags.push(unresolved(l, &t[2]));
+        let Some(&capture_vertex) = s.resolve(ObjectKind::Vertex, t[2]) else {
+            diags.push(unresolved(l, t[2]));
             continue;
         };
         let mut count = 1_u32;
@@ -367,7 +367,7 @@ pub(crate) fn parse_inlet_usage(
             match t[3].parse::<u32>() {
                 Ok(v) if v >= 1 => count = v,
                 _ => {
-                    diags.push(bad(l, &t[3]));
+                    diags.push(bad(l, t[3]));
                     continue;
                 }
             }
@@ -377,7 +377,7 @@ pub(crate) fn parse_inlet_usage(
             match t[4].finite_f64() {
                 Ok(v) if (0.0..=99.0).contains(&v) => pct_clogged = v,
                 _ => {
-                    diags.push(bad(l, &t[4]));
+                    diags.push(bad(l, t[4]));
                     continue;
                 }
             }
@@ -389,7 +389,7 @@ pub(crate) fn parse_inlet_usage(
                 match t[5 + i].finite_f64() {
                     Ok(v) if v >= 0.0 => *xi = v,
                     _ => {
-                        diags.push(bad(l, &t[5 + i]));
+                        diags.push(bad(l, t[5 + i]));
                         ok = false;
                         break;
                     }
@@ -401,8 +401,8 @@ pub(crate) fn parse_inlet_usage(
         }
         let mut placement = InletPlacement::Automatic;
         if t.len() > 8 {
-            let Some(p) = match_keyword(PLACEMENTS, &t[8]) else {
-                diags.push(bad(l, &t[8]));
+            let Some(p) = match_keyword(PLACEMENTS, t[8]) else {
+                diags.push(bad(l, t[8]));
                 continue;
             };
             placement = [

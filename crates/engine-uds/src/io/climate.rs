@@ -55,7 +55,7 @@ fn note_prefix(
 }
 
 /// Read twelve numbers starting at token `at`.
-fn twelve(t: &[String], at: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<[f64; 12]> {
+fn twelve(t: &[&str], at: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<[f64; 12]> {
     if t.len() < at + 12 {
         diags.push(err(l, DiagnosticKind::MissingItems));
         return None;
@@ -63,7 +63,7 @@ fn twelve(t: &[String], at: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Opt
     let mut x = [0.0; 12];
     for (i, xi) in x.iter_mut().enumerate() {
         let Ok(v) = t[at + i].finite_f64() else {
-            diags.push(bad(l, &t[at + i]));
+            diags.push(bad(l, t[at + i]));
             return None;
         };
         *xi = v;
@@ -78,7 +78,7 @@ fn evap_factor(us: bool) -> f64 {
 
 /// Parse a `[TEMPERATURE]` section into `climate`.
 pub(crate) fn parse_temperature(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     us: bool,
@@ -90,11 +90,11 @@ pub(crate) fn parse_temperature(
     for line in lines {
         let t = &line.tokens;
         let l = line.line;
-        let Some(k) = match_keyword(KEYS, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(k) = match_keyword(KEYS, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
-        note_prefix(KEYS, k, &t[0], diags, l);
+        note_prefix(KEYS, k, t[0], diags, l);
         match k {
             // TIMESERIES name
             0 => {
@@ -102,8 +102,8 @@ pub(crate) fn parse_temperature(
                     diags.push(err(l, DiagnosticKind::MissingItems));
                     continue;
                 }
-                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[1]) else {
-                    diags.push(unresolved(l, &t[1]));
+                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, t[1]) else {
+                    diags.push(unresolved(l, t[1]));
                     continue;
                 };
                 climate.temperature = Some(TemperatureSource::Series(ts));
@@ -116,8 +116,8 @@ pub(crate) fn parse_temperature(
                 }
                 let mut start = None;
                 if t.len() > 2 && !t[2].starts_with('*') {
-                    let Some(d) = parse_date_token(&t[2]) else {
-                        diags.push(bad(l, &t[2]));
+                    let Some(d) = parse_date_token(t[2]) else {
+                        diags.push(bad(l, t[2]));
                         continue;
                     };
                     start = Some(d);
@@ -128,11 +128,11 @@ pub(crate) fn parse_temperature(
                     FileTempUnits::Celsius
                 };
                 if t.len() > 3 {
-                    let Some(u) = match_keyword(UNITS, &t[3]) else {
-                        diags.push(bad(l, &t[3]));
+                    let Some(u) = match_keyword(UNITS, t[3]) else {
+                        diags.push(bad(l, t[3]));
                         continue;
                     };
-                    note_prefix(UNITS, u, &t[3], diags, l);
+                    note_prefix(UNITS, u, t[3], diags, l);
                     units = [
                         FileTempUnits::TenthsCelsius,
                         FileTempUnits::Celsius,
@@ -140,7 +140,7 @@ pub(crate) fn parse_temperature(
                     ][u];
                 }
                 climate.temperature = Some(TemperatureSource::File {
-                    name: t[1].clone(),
+                    name: t[1].to_string(),
                     start,
                     units,
                 });
@@ -171,7 +171,7 @@ pub(crate) fn parse_temperature(
                     match t[1 + i].finite_f64() {
                         Ok(v) => *xi = v,
                         Err(_) => {
-                            diags.push(bad(l, &t[1 + i]));
+                            diags.push(bad(l, t[1 + i]));
                             ok = false;
                             break;
                         }
@@ -196,18 +196,18 @@ pub(crate) fn parse_temperature(
                     continue;
                 }
                 const COVERS: &[&str] = &["IMPERV", "PERV"];
-                let Some(c) = match_keyword(COVERS, &t[1]) else {
-                    diags.push(bad(l, &t[1]));
+                let Some(c) = match_keyword(COVERS, t[1]) else {
+                    diags.push(bad(l, t[1]));
                     continue;
                 };
-                note_prefix(COVERS, c, &t[1], diags, l);
+                note_prefix(COVERS, c, t[1], diags, l);
                 let mut v = [0.0_f64; 10];
                 let mut ok = true;
                 for (i, vi) in v.iter_mut().enumerate() {
                     match t[2 + i].finite_f64() {
                         Ok(x) if (0.0..=1.0).contains(&x) => *vi = x,
                         _ => {
-                            diags.push(bad(l, &t[2 + i]));
+                            diags.push(bad(l, t[2 + i]));
                             ok = false;
                             break;
                         }
@@ -228,7 +228,7 @@ pub(crate) fn parse_temperature(
 
 /// Parse an `[EVAPORATION]` section into `climate`.
 pub(crate) fn parse_evaporation(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     us: bool,
     climate: &mut Climate,
@@ -247,11 +247,11 @@ pub(crate) fn parse_evaporation(
     for line in lines {
         let t = &line.tokens;
         let l = line.line;
-        let Some(k) = match_keyword(KEYS, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(k) = match_keyword(KEYS, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
-        note_prefix(KEYS, k, &t[0], diags, l);
+        note_prefix(KEYS, k, t[0], diags, l);
         // TEMPERATURE alone needs no value token.
         if k != 3 && k != 4 && t.len() < 2 {
             diags.push(err(l, DiagnosticKind::MissingItems));
@@ -260,7 +260,7 @@ pub(crate) fn parse_evaporation(
         match k {
             0 => {
                 let Ok(v) = t[1].finite_f64() else {
-                    diags.push(bad(l, &t[1]));
+                    diags.push(bad(l, t[1]));
                     continue;
                 };
                 climate.evaporation = EvaporationSource::Constant(v * f);
@@ -272,8 +272,8 @@ pub(crate) fn parse_evaporation(
                 climate.evaporation = EvaporationSource::Monthly(v.map(|x| x * f));
             }
             2 => {
-                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[1]) else {
-                    diags.push(unresolved(l, &t[1]));
+                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, t[1]) else {
+                    diags.push(unresolved(l, t[1]));
                     continue;
                 };
                 climate.evaporation = EvaporationSource::Series(ts);
@@ -291,8 +291,8 @@ pub(crate) fn parse_evaporation(
                 climate.evaporation = EvaporationSource::File { pan };
             }
             5 => {
-                let Some(&p) = s.resolve(ObjectKind::TimePattern, &t[1]) else {
-                    diags.push(unresolved(l, &t[1]));
+                let Some(&p) = s.resolve(ObjectKind::TimePattern, t[1]) else {
+                    diags.push(unresolved(l, t[1]));
                     continue;
                 };
                 climate.recovery_pattern = Some(p);
@@ -304,7 +304,7 @@ pub(crate) fn parse_evaporation(
                 } else if t[1].eq_ignore_ascii_case("NO") {
                     climate.evaporate_dry_only = false;
                 } else {
-                    diags.push(bad(l, &t[1]));
+                    diags.push(bad(l, t[1]));
                 }
             }
         }
@@ -313,7 +313,7 @@ pub(crate) fn parse_evaporation(
 
 /// Parse an `[ADJUSTMENTS]` section into the network.
 pub(crate) fn parse_adjustments(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     us: bool,
     net: &mut Network,
@@ -341,11 +341,11 @@ pub(crate) fn parse_adjustments(
         if t.len() == 1 {
             continue;
         }
-        let Some(k) = match_keyword(PREFIXES, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(k) = match_keyword(PREFIXES, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
-        note_prefix(CANONICAL, k, &t[0], diags, l);
+        note_prefix(CANONICAL, k, t[0], diags, l);
         match k {
             0 => {
                 if let Some(v) = twelve(t, 1, diags, l) {
@@ -375,7 +375,7 @@ pub(crate) fn parse_adjustments(
                                 l,
                                 DiagnosticKind::SubstitutedOption {
                                     keyword: "CONDUCTIVITY",
-                                    requested: t[1 + i].clone(),
+                                    requested: t[1 + i].to_string(),
                                 },
                             ));
                         } else {
@@ -391,12 +391,12 @@ pub(crate) fn parse_adjustments(
                     diags.push(err(l, DiagnosticKind::MissingItems));
                     continue;
                 }
-                let Some(&parcel) = s.resolve(ObjectKind::Parcel, &t[1]) else {
-                    diags.push(unresolved(l, &t[1]));
+                let Some(&parcel) = s.resolve(ObjectKind::Parcel, t[1]) else {
+                    diags.push(unresolved(l, t[1]));
                     continue;
                 };
-                let Some(&pat) = s.resolve(ObjectKind::TimePattern, &t[2]) else {
-                    diags.push(unresolved(l, &t[2]));
+                let Some(&pat) = s.resolve(ObjectKind::TimePattern, t[2]) else {
+                    diags.push(unresolved(l, t[2]));
                     continue;
                 };
                 // The survey registry can be ahead of `net.parcels` when a

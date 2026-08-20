@@ -32,7 +32,7 @@ fn bad(line: usize, token: &str) -> Diagnostic {
 
 /// Parse a `[TRANSECTS]` section.
 pub(crate) fn parse_transects(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<Transect> {
@@ -57,12 +57,12 @@ pub(crate) fn parse_transects(
                 let mut ok = true;
                 for (i, vi) in v.iter_mut().enumerate() {
                     let Ok(x) = t[1 + i].finite_f64() else {
-                        diags.push(bad(l, &t[1 + i]));
+                        diags.push(bad(l, t[1 + i]));
                         ok = false;
                         break;
                     };
                     if x < 0.0 {
-                        diags.push(bad(l, &t[1 + i]));
+                        diags.push(bad(l, t[1 + i]));
                         ok = false;
                         break;
                     }
@@ -91,7 +91,7 @@ pub(crate) fn parse_transects(
                 let mut ok = true;
                 for (i, xi) in x.iter_mut().enumerate() {
                     let Ok(v) = t[2 + i].finite_f64() else {
-                        diags.push(bad(l, &t[2 + i]));
+                        diags.push(bad(l, t[2 + i]));
                         ok = false;
                         break;
                     };
@@ -107,7 +107,7 @@ pub(crate) fn parse_transects(
                 y_offset = x[7] * cv.len;
                 let meander = if x[5] == 0.0 { 1.0 } else { x[5] };
                 out.push(Transect {
-                    id: t[1].clone(),
+                    id: t[1].to_string(),
                     n_left: n.0,
                     n_right: n.1,
                     n_channel: n.2,
@@ -131,11 +131,11 @@ pub(crate) fn parse_transects(
                 let mut k = 1;
                 while k + 1 < t.len() {
                     let (Ok(elev), Ok(station)) = (t[k].finite_f64(), t[k + 1].finite_f64()) else {
-                        diags.push(bad(l, &t[k]));
+                        diags.push(bad(l, t[k]));
                         break;
                     };
                     if current.stations.len() >= MAX_STATIONS {
-                        diags.push(bad(l, &t[k]));
+                        diags.push(bad(l, t[k]));
                         break;
                     }
                     current
@@ -145,7 +145,7 @@ pub(crate) fn parse_transects(
                 }
             }
             _ => {
-                diags.push(bad(l, &t[0]));
+                diags.push(bad(l, t[0]));
             }
         }
     }

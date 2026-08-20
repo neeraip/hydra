@@ -57,7 +57,7 @@ const LID_LAYERS: &[&str] = &[
 
 /// Read `count` non-negative numbers starting at token `at`.
 fn numbers<const N: usize>(
-    t: &[String],
+    t: &[&str],
     at: usize,
     diags: &mut Vec<Diagnostic>,
     l: usize,
@@ -65,11 +65,11 @@ fn numbers<const N: usize>(
     let mut x = [0.0; N];
     for (i, xi) in x.iter_mut().enumerate() {
         let Ok(v) = t[at + i].finite_f64() else {
-            diags.push(bad(l, &t[at + i]));
+            diags.push(bad(l, t[at + i]));
             return None;
         };
         if v < 0.0 {
-            diags.push(bad(l, &t[at + i]));
+            diags.push(bad(l, t[at + i]));
             return None;
         }
         *xi = v;
@@ -79,7 +79,7 @@ fn numbers<const N: usize>(
 
 /// Parse a `[LID_CONTROLS]` section.
 pub(crate) fn parse_lid_controls(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -95,20 +95,20 @@ pub(crate) fn parse_lid_controls(
             continue;
         }
         let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
-            diags.push(unresolved(l, &t[0]));
+            diags.push(unresolved(l, t[0]));
             continue;
         };
         let ctrl = &mut out[idx];
         if ctrl.id.is_empty() {
-            ctrl.id = t[0].clone();
+            ctrl.id = t[0].to_string();
         }
         // A unit-type code first; a layer keyword otherwise.
-        if let Some(k) = match_keyword(LID_TYPES, &t[1]) {
+        if let Some(k) = match_keyword(LID_TYPES, t[1]) {
             if !t[1].eq_ignore_ascii_case(LID_TYPES[k]) {
                 diags.push(err(
                     l,
                     DiagnosticKind::PrefixMatched {
-                        token: t[1].clone(),
+                        token: t[1].to_string(),
                         matched: LID_TYPES[k],
                     },
                 ));
@@ -116,15 +116,15 @@ pub(crate) fn parse_lid_controls(
             ctrl.kind = Some(LID_KINDS[k]);
             continue;
         }
-        let Some(layer) = match_keyword(LID_LAYERS, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(layer) = match_keyword(LID_LAYERS, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         if !t[1].eq_ignore_ascii_case(LID_LAYERS[layer]) {
             diags.push(err(
                 l,
                 DiagnosticKind::PrefixMatched {
-                    token: t[1].clone(),
+                    token: t[1].to_string(),
                     matched: LID_LAYERS[layer],
                 },
             ));
@@ -141,7 +141,7 @@ pub(crate) fn parse_lid_controls(
                     continue;
                 };
                 if x[1] >= 1.0 {
-                    diags.push(bad(l, &t[3]));
+                    diags.push(bad(l, t[3]));
                     continue;
                 }
                 // No berm: the vegetative fraction is meaningless.
@@ -185,7 +185,7 @@ pub(crate) fn parse_lid_controls(
                 let Some(x) = numbers::<4>(t, 2, diags, l) else {
                     continue;
                 };
-                let covered = t.len() > 6 && match_keyword(&["YES"], &t[6]).is_some();
+                let covered = t.len() > 6 && match_keyword(&["YES"], t[6]).is_some();
                 ctrl.storage = Some(LidStorage {
                     thickness: x[0] * cv.rain_depth,
                     void_frac: x[1] / (x[1] + 1.0),
@@ -209,7 +209,7 @@ pub(crate) fn parse_lid_controls(
                     match t[7].finite_f64() {
                         Ok(v) if v >= 0.0 => regen_days = v,
                         _ => {
-                            diags.push(bad(l, &t[7]));
+                            diags.push(bad(l, t[7]));
                             continue;
                         }
                     }
@@ -219,7 +219,7 @@ pub(crate) fn parse_lid_controls(
                     match t[8].finite_f64() {
                         Ok(v) if (0.0..=1.0).contains(&v) => regen_degree = v,
                         _ => {
-                            diags.push(bad(l, &t[8]));
+                            diags.push(bad(l, t[8]));
                             continue;
                         }
                     }
@@ -273,7 +273,7 @@ pub(crate) fn parse_lid_controls(
                     match t[2 + i].finite_f64() {
                         Ok(v) if v >= 0.0 => *xi = v,
                         _ => {
-                            diags.push(bad(l, &t[2 + i]));
+                            diags.push(bad(l, t[2 + i]));
                             ok = false;
                             break;
                         }
@@ -283,10 +283,10 @@ pub(crate) fn parse_lid_controls(
                     continue;
                 }
                 let curve = if t.len() >= 9 {
-                    match s.resolve(ObjectKind::Curve, &t[8]) {
+                    match s.resolve(ObjectKind::Curve, t[8]) {
                         Some(&c) => Some(c),
                         None => {
-                            diags.push(unresolved(l, &t[8]));
+                            diags.push(unresolved(l, t[8]));
                             continue;
                         }
                     }
@@ -311,8 +311,8 @@ pub(crate) fn parse_lid_controls(
                 }
                 let mut i = 2;
                 while t.len() > i {
-                    let Some(&p) = s.resolve(ObjectKind::Constituent, &t[i]) else {
-                        diags.push(unresolved(l, &t[i]));
+                    let Some(&p) = s.resolve(ObjectKind::Constituent, t[i]) else {
+                        diags.push(unresolved(l, t[i]));
                         break;
                     };
                     i += 1;
@@ -323,7 +323,7 @@ pub(crate) fn parse_lid_controls(
                     let rmvl = match t[i].finite_f64() {
                         Ok(v) if (0.0..=100.0).contains(&v) => v,
                         _ => {
-                            diags.push(bad(l, &t[i]));
+                            diags.push(bad(l, t[i]));
                             break;
                         }
                     };
@@ -355,7 +355,7 @@ fn atoi(token: &str) -> i64 {
 
 /// Parse a `[LID_USAGE]` section.
 pub(crate) fn parse_lid_usage(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -368,17 +368,17 @@ pub(crate) fn parse_lid_usage(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&parcel) = s.resolve(ObjectKind::Parcel, &t[0]) else {
-            diags.push(unresolved(l, &t[0]));
+        let Some(&parcel) = s.resolve(ObjectKind::Parcel, t[0]) else {
+            diags.push(unresolved(l, t[0]));
             continue;
         };
-        let Some(&control) = s.resolve(ObjectKind::ControlMeasure, &t[1]) else {
-            diags.push(unresolved(l, &t[1]));
+        let Some(&control) = s.resolve(ObjectKind::ControlMeasure, t[1]) else {
+            diags.push(unresolved(l, t[1]));
             continue;
         };
-        let n = atoi(&t[2]);
+        let n = atoi(t[2]);
         if n < 0 {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         }
         // Zero replicates: the predecessor drops the line without comment.
@@ -391,22 +391,22 @@ pub(crate) fn parse_lid_usage(
             continue;
         };
         if x[2] > 100.0 {
-            diags.push(bad(l, &t[5]));
+            diags.push(bad(l, t[5]));
             continue;
         }
         if x[3] > 100.0 {
-            diags.push(bad(l, &t[6]));
+            diags.push(bad(l, t[6]));
             continue;
         }
-        let report_file = (t.len() >= 9 && t[8] != "*").then(|| t[8].clone());
+        let report_file = (t.len() >= 9 && t[8] != "*").then(|| t[8].to_string());
         let drain_to = if t.len() >= 10 && t[9] != "*" {
             // A parcel first, then a vertex — the predecessor's order.
-            if let Some(&p) = s.resolve(ObjectKind::Parcel, &t[9]) {
+            if let Some(&p) = s.resolve(ObjectKind::Parcel, t[9]) {
                 Some(ParcelOutlet::Parcel(p))
-            } else if let Some(&v) = s.resolve(ObjectKind::Vertex, &t[9]) {
+            } else if let Some(&v) = s.resolve(ObjectKind::Vertex, t[9]) {
                 Some(ParcelOutlet::Vertex(v))
             } else {
-                diags.push(unresolved(l, &t[9]));
+                diags.push(unresolved(l, t[9]));
                 continue;
             }
         } else {
@@ -417,7 +417,7 @@ pub(crate) fn parse_lid_usage(
             match t[10].finite_f64() {
                 Ok(v) if (0.0..=100.0).contains(&v) => from_pervious = v / 100.0,
                 _ => {
-                    diags.push(bad(l, &t[10]));
+                    diags.push(bad(l, t[10]));
                     continue;
                 }
             }

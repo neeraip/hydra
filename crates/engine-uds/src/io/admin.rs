@@ -27,7 +27,7 @@ fn bad(line: usize, token: &str) -> Diagnostic {
 /// match by prefix, `VARIABLE` and `EXPRESSION` lines tried first, exactly
 /// as the predecessor reads them; clause *content* is kept as written.
 pub(crate) fn parse_controls(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     out: &mut ControlText,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -39,23 +39,23 @@ pub(crate) fn parse_controls(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        if match_keyword(&["VARIABLE"], &t[0]).is_some() {
-            out.variables.push(line.raw.clone());
+        if match_keyword(&["VARIABLE"], t[0]).is_some() {
+            out.variables.push(line.raw.to_string());
             continue;
         }
-        if match_keyword(&["EXPRESSION"], &t[0]).is_some() {
-            out.expressions.push(line.raw.clone());
+        if match_keyword(&["EXPRESSION"], t[0]).is_some() {
+            out.expressions.push(line.raw.to_string());
             continue;
         }
-        let Some(k) = match_keyword(CLAUSES, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(k) = match_keyword(CLAUSES, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
         if !t[0].eq_ignore_ascii_case(CLAUSES[k]) {
             diags.push(err(
                 l,
                 DiagnosticKind::PrefixMatched {
-                    token: t[0].clone(),
+                    token: t[0].to_string(),
                     matched: CLAUSES[k],
                 },
             ));
@@ -67,29 +67,29 @@ pub(crate) fn parse_controls(
                     l,
                     DiagnosticKind::DuplicateIdentifier {
                         kind: ObjectKind::ControlMeasure,
-                        id: t[1].clone(),
+                        id: t[1].to_string(),
                     },
                 ));
                 continue;
             }
             out.rules.push(ControlRule {
-                name: t[1].clone(),
+                name: t[1].to_string(),
                 lines: Vec::new(),
             });
             continue;
         }
         // A clause line belongs to the last-opened rule.
         let Some(rule) = out.rules.last_mut() else {
-            diags.push(bad(l, &t[0]));
+            diags.push(bad(l, t[0]));
             continue;
         };
-        rule.lines.push(line.raw.clone());
+        rule.lines.push(line.raw.to_string());
     }
 }
 
 /// Parse a `[FILES]` section.
 pub(crate) fn parse_files(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     out: &mut InterfaceFiles,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -104,12 +104,12 @@ pub(crate) fn parse_files(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(m) = match_keyword(MODES, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(m) = match_keyword(MODES, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
-        let Some(k) = match_keyword(KINDS, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(k) = match_keyword(KINDS, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         for (table, i, tok) in [(MODES, m, &t[0]), (KINDS, k, &t[1])] {
@@ -117,7 +117,7 @@ pub(crate) fn parse_files(
                 diags.push(err(
                     l,
                     DiagnosticKind::PrefixMatched {
-                        token: tok.clone(),
+                        token: tok.to_string(),
                         matched: table[i],
                     },
                 ));
@@ -133,7 +133,7 @@ pub(crate) fn parse_files(
             FileMode::Use,
             FileMode::Save,
         ][m];
-        let name = t[2].clone();
+        let name = t[2].to_string();
         match KINDS[k] {
             "RAINFALL" => out.rainfall = Some((mode, name)),
             "RUNOFF" => out.runoff = Some((mode, name)),
@@ -146,14 +146,14 @@ pub(crate) fn parse_files(
             },
             "INFLOWS" => {
                 if mode != FileMode::Use {
-                    diags.push(bad(l, &t[0]));
+                    diags.push(bad(l, t[0]));
                     continue;
                 }
                 out.inflows = Some(name);
             }
             _ => {
                 if mode != FileMode::Save {
-                    diags.push(bad(l, &t[0]));
+                    diags.push(bad(l, t[0]));
                     continue;
                 }
                 out.outflows = Some(name);
@@ -164,7 +164,7 @@ pub(crate) fn parse_files(
 
 /// Parse a `[REPORT]` section.
 pub(crate) fn parse_report(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     out: &mut ReportOptions,
     diags: &mut Vec<Diagnostic>,
@@ -214,23 +214,23 @@ pub(crate) fn parse_report(
             ));
             continue;
         }
-        let Some(k) = match_keyword(PREFIXES, &t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(k) = match_keyword(PREFIXES, t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
         if !t[0].eq_ignore_ascii_case(CANONICAL[k]) {
             diags.push(err(
                 l,
                 DiagnosticKind::PrefixMatched {
-                    token: t[0].clone(),
+                    token: t[0].to_string(),
                     matched: CANONICAL[k],
                 },
             ));
         }
         // Yes/no directives.
         if !(2..=4).contains(&k) {
-            let Some(v) = match_keyword(&["NO", "YES"], &t[1]) else {
-                diags.push(bad(l, &t[1]));
+            let Some(v) = match_keyword(&["NO", "YES"], t[1]) else {
+                diags.push(bad(l, t[1]));
                 continue;
             };
             let v = v == 1;
@@ -275,7 +275,9 @@ pub(crate) fn parse_report(
                 None => {
                     diags.push(err(
                         l,
-                        DiagnosticKind::UnresolvedReference { id: tok.clone() },
+                        DiagnosticKind::UnresolvedReference {
+                            id: tok.to_string(),
+                        },
                     ));
                     ok = false;
                     break;
@@ -291,7 +293,7 @@ pub(crate) fn parse_report(
 
 /// Parse an `[EVENTS]` section.
 pub(crate) fn parse_events(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     _cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<EventWindow> {
@@ -303,24 +305,24 @@ pub(crate) fn parse_events(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(start_date) = parse_date_token(&t[0]) else {
-            diags.push(bad(l, &t[0]));
+        let Some(start_date) = parse_date_token(t[0]) else {
+            diags.push(bad(l, t[0]));
             continue;
         };
-        let Some(start_time) = clock_or_hours_to_seconds(&t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(start_time) = clock_or_hours_to_seconds(t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
-        let Some(end_date) = parse_date_token(&t[2]) else {
-            diags.push(bad(l, &t[2]));
+        let Some(end_date) = parse_date_token(t[2]) else {
+            diags.push(bad(l, t[2]));
             continue;
         };
-        let Some(end_time) = clock_or_hours_to_seconds(&t[3]) else {
-            diags.push(bad(l, &t[3]));
+        let Some(end_time) = clock_or_hours_to_seconds(t[3]) else {
+            diags.push(bad(l, t[3]));
             continue;
         };
         if (start_date, start_time) >= (end_date, end_time) {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         }
         out.push(EventWindow {

@@ -30,7 +30,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     // Repeated sections concatenate — a file may reopen any section, and
     // each consumer must see the union in file order (§14.3).
     {
-        let mut merged: Vec<(Section, Vec<TokenLine>)> = Vec::new();
+        let mut merged: Vec<(Section, Vec<TokenLine<'_>>)> = Vec::new();
         for (sec, lines) in s.sections.drain(..) {
             match merged.iter_mut().find(|(m, _)| *m == sec) {
                 Some((_, acc)) => acc.extend(lines),
@@ -341,7 +341,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         if sec.is_display_metadata() && !lines.is_empty() {
             net.display.push(crate::model::DisplaySection {
                 header: super::keywords::canonical_header(*sec).to_string(),
-                lines: lines.iter().map(|l| l.raw.clone()).collect(),
+                lines: lines.iter().map(|l| l.raw.to_string()).collect(),
             });
         }
     }
@@ -425,7 +425,7 @@ fn number(token: &str, diags: &mut Vec<Diagnostic>, line: usize) -> Option<f64> 
 }
 
 fn opt_number(
-    tokens: &[String],
+    tokens: &[&str],
     i: usize,
     default: f64,
     diags: &mut Vec<Diagnostic>,
@@ -437,7 +437,7 @@ fn opt_number(
     }
 }
 
-fn need(tokens: &[String], n: usize, diags: &mut Vec<Diagnostic>, line: usize) -> bool {
+fn need(tokens: &[&str], n: usize, diags: &mut Vec<Diagnostic>, line: usize) -> bool {
     if tokens.len() < n {
         diags.push(err(line, DiagnosticKind::MissingItems));
         return false;
@@ -502,7 +502,11 @@ fn realign(net: &mut Network, s: &Survey, sec: Section, line: &TokenLine) {
         sec,
         Section::Junctions | Section::Outfalls | Section::Storage | Section::Dividers
     );
-    let id = line.tokens.first().cloned().unwrap_or_default();
+    let id = line
+        .tokens
+        .first()
+        .map(|t| (*t).to_string())
+        .unwrap_or_default();
     if is_vertex {
         if let Some(&idx) = s.ids[&ObjectKind::Vertex].get(id.to_ascii_uppercase().as_str()) {
             if net.vertices.len() == idx {
@@ -549,7 +553,7 @@ fn parse_junction(
     if !need(t, 2, diags, l) {
         return;
     }
-    let Some(invert) = number(&t[1], diags, l) else {
+    let Some(invert) = number(t[1], diags, l) else {
         return;
     };
     let mut x = [0.0; 4]; // max, init, surcharge, ponded area
@@ -561,7 +565,7 @@ fn parse_junction(
             diags.push(err(
                 l,
                 DiagnosticKind::BadValue {
-                    token: t[i + 2].clone(),
+                    token: t[i + 2].to_string(),
                 },
             ));
             return;
@@ -569,7 +573,7 @@ fn parse_junction(
         *xi = v;
     }
     net.vertices.push(Vertex {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         invert: invert * cv.len,
         kind: VertexKind::Junction {
             max_depth: x[0] * cv.len,
@@ -593,10 +597,10 @@ fn parse_outfall(
     if !need(t, 3, diags, l) {
         return;
     }
-    let Some(invert) = number(&t[1], diags, l) else {
+    let Some(invert) = number(t[1], diags, l) else {
         return;
     };
-    let Some(kind) = keyword(TYPES, &t[2], diags, l) else {
+    let Some(kind) = keyword(TYPES, t[2], diags, l) else {
         return;
     };
     let mut n = 3; // next token to read
@@ -608,7 +612,7 @@ fn parse_outfall(
                 return;
             }
             n = 4;
-            let Some(v) = number(&t[3], diags, l) else {
+            let Some(v) = number(t[3], diags, l) else {
                 return;
             };
             OutfallStage::Fixed(v * cv.len)
@@ -618,7 +622,7 @@ fn parse_outfall(
                 return;
             }
             n = 4;
-            let Some(c) = resolve(s, ObjectKind::Curve, &t[3], diags, l) else {
+            let Some(c) = resolve(s, ObjectKind::Curve, t[3], diags, l) else {
                 return;
             };
             OutfallStage::Tidal { curve: c }
@@ -628,7 +632,7 @@ fn parse_outfall(
                 return;
             }
             n = 4;
-            let Some(ts) = resolve(s, ObjectKind::TimeSeries, &t[3], diags, l) else {
+            let Some(ts) = resolve(s, ObjectKind::TimeSeries, t[3], diags, l) else {
                 return;
             };
             OutfallStage::Series { series: ts }
@@ -651,7 +655,7 @@ fn parse_outfall(
         route_to_parcel = Some(p);
     }
     net.vertices.push(Vertex {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         invert: invert * cv.len,
         kind: VertexKind::Outfall {
             stage,
@@ -681,21 +685,21 @@ fn parse_storage(
     if !need(t, 6, diags, l) {
         return;
     }
-    let Some(invert) = number(&t[1], diags, l) else {
+    let Some(invert) = number(t[1], diags, l) else {
         return;
     };
-    let Some(max_depth) = number(&t[2], diags, l) else {
+    let Some(max_depth) = number(t[2], diags, l) else {
         return;
     };
-    let Some(init_depth) = number(&t[3], diags, l) else {
+    let Some(init_depth) = number(t[3], diags, l) else {
         return;
     };
-    let Some(rel) = keyword(RELATIONS, &t[4], diags, l) else {
+    let Some(rel) = keyword(RELATIONS, t[4], diags, l) else {
         return;
     };
     let (geometry, mut n) = match rel {
         0 => {
-            let Some(c) = resolve(s, ObjectKind::Curve, &t[5], diags, l) else {
+            let Some(c) = resolve(s, ObjectKind::Curve, t[5], diags, l) else {
                 return;
             };
             (StorageGeometry::Tabular { curve: c }, 6)
@@ -706,7 +710,7 @@ fn parse_storage(
             }
             let mut y = [0.0; 3];
             for (i, yi) in y.iter_mut().enumerate() {
-                let Some(v) = number(&t[5 + i], diags, l) else {
+                let Some(v) = number(t[5 + i], diags, l) else {
                     return;
                 };
                 *yi = v;
@@ -715,7 +719,7 @@ fn parse_storage(
                 diags.push(err(
                     l,
                     DiagnosticKind::BadValue {
-                        token: t[5 + i].clone(),
+                        token: t[5 + i].to_string(),
                     },
                 ));
             };
@@ -792,7 +796,7 @@ fn parse_storage(
         // three here refused real files, which write a lone zero to say
         // the unit does not seep.
         let (psi, ksat, imd) = if t.len() == n + 1 {
-            let Some(ksat) = number(&t[n], diags, l) else {
+            let Some(ksat) = number(t[n], diags, l) else {
                 return;
             };
             (0.0, ksat, 0.0)
@@ -800,13 +804,13 @@ fn parse_storage(
             if !need(t, n + 3, diags, l) {
                 return;
             }
-            let Some(psi) = number(&t[n], diags, l) else {
+            let Some(psi) = number(t[n], diags, l) else {
                 return;
             };
-            let Some(ksat) = number(&t[n + 1], diags, l) else {
+            let Some(ksat) = number(t[n + 1], diags, l) else {
                 return;
             };
-            let Some(imd) = number(&t[n + 2], diags, l) else {
+            let Some(imd) = number(t[n + 2], diags, l) else {
                 return;
             };
             (psi, ksat, imd)
@@ -820,7 +824,7 @@ fn parse_storage(
         None
     };
     net.vertices.push(Vertex {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         invert: invert * cv.len,
         kind: VertexKind::Storage {
             max_depth: max_depth * cv.len,
@@ -846,18 +850,18 @@ fn parse_divider(
     if !need(t, 4, diags, l) {
         return;
     }
-    let Some(invert) = number(&t[1], diags, l) else {
+    let Some(invert) = number(t[1], diags, l) else {
         return;
     };
     let diverted_link = if t[2].is_empty() || t[2] == "*" {
         None
     } else {
-        let Some(k) = resolve(s, ObjectKind::Link, &t[2], diags, l) else {
+        let Some(k) = resolve(s, ObjectKind::Link, t[2], diags, l) else {
             return;
         };
         Some(k)
     };
-    let Some(kind) = keyword(TYPES, &t[3], diags, l) else {
+    let Some(kind) = keyword(TYPES, t[3], diags, l) else {
         return;
     };
     let (rule, n) = match kind {
@@ -865,7 +869,7 @@ fn parse_divider(
             if !need(t, 5, diags, l) {
                 return;
             }
-            let Some(q) = number(&t[4], diags, l) else {
+            let Some(q) = number(t[4], diags, l) else {
                 return;
             };
             (
@@ -879,7 +883,7 @@ fn parse_divider(
             if !need(t, 5, diags, l) {
                 return;
             }
-            let Some(c) = resolve(s, ObjectKind::Curve, &t[4], diags, l) else {
+            let Some(c) = resolve(s, ObjectKind::Curve, t[4], diags, l) else {
                 return;
             };
             (DividerRule::Tabular { curve: c }, 5)
@@ -888,13 +892,13 @@ fn parse_divider(
             if !need(t, 7, diags, l) {
                 return;
             }
-            let Some(q) = number(&t[4], diags, l) else {
+            let Some(q) = number(t[4], diags, l) else {
                 return;
             };
-            let Some(d) = number(&t[5], diags, l) else {
+            let Some(d) = number(t[5], diags, l) else {
                 return;
             };
-            let Some(c) = number(&t[6], diags, l) else {
+            let Some(c) = number(t[6], diags, l) else {
                 return;
             };
             (
@@ -916,7 +920,7 @@ fn parse_divider(
         *xi = v;
     }
     net.vertices.push(Vertex {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         invert: invert * cv.len,
         kind: VertexKind::Divider {
             diverted_link,
@@ -933,12 +937,12 @@ fn parse_divider(
 
 fn link_endpoints(
     s: &Survey,
-    t: &[String],
+    t: &[&str],
     diags: &mut Vec<Diagnostic>,
     l: usize,
 ) -> Option<(usize, usize)> {
-    let from = resolve(s, ObjectKind::Vertex, &t[1], diags, l)?;
-    let to = resolve(s, ObjectKind::Vertex, &t[2], diags, l)?;
+    let from = resolve(s, ObjectKind::Vertex, t[1], diags, l)?;
+    let to = resolve(s, ObjectKind::Vertex, t[2], diags, l)?;
     Some((from, to))
 }
 
@@ -957,16 +961,16 @@ fn parse_conduit(
     let Some((from, to)) = link_endpoints(s, t, diags, l) else {
         return;
     };
-    let Some(length) = number(&t[3], diags, l) else {
+    let Some(length) = number(t[3], diags, l) else {
         return;
     };
-    let Some(roughness) = number(&t[4], diags, l) else {
+    let Some(roughness) = number(t[4], diags, l) else {
         return;
     };
-    let Some(offset1) = cv.offset(&t[5], diags, l) else {
+    let Some(offset1) = cv.offset(t[5], diags, l) else {
         return;
     };
-    let Some(offset2) = cv.offset(&t[6], diags, l) else {
+    let Some(offset2) = cv.offset(t[6], diags, l) else {
         return;
     };
     let Some(init_flow) = opt_number(t, 7, 0.0, diags, l) else {
@@ -976,7 +980,7 @@ fn parse_conduit(
         return;
     };
     net.links.push(Link {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         from,
         to,
         kind: LinkKind::Channel {
@@ -1014,7 +1018,7 @@ fn parse_pump(
     };
     let curve = match t.get(3) {
         None => None,
-        Some(tok) if tok == "*" => None,
+        Some(tok) if *tok == "*" => None,
         Some(tok) => {
             let Some(c) = resolve(s, ObjectKind::Curve, tok, diags, l) else {
                 return;
@@ -1045,7 +1049,7 @@ fn parse_pump(
         return;
     }
     net.links.push(Link {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         from,
         to,
         kind: LinkKind::Pump {
@@ -1073,20 +1077,20 @@ fn parse_orifice(
     let Some((from, to)) = link_endpoints(s, t, diags, l) else {
         return;
     };
-    let Some(orient) = keyword(&["SIDE", "BOTTOM"], &t[3], diags, l) else {
+    let Some(orient) = keyword(&["SIDE", "BOTTOM"], t[3], diags, l) else {
         return;
     };
-    let Some(offset) = cv.offset(&t[4], diags, l) else {
+    let Some(offset) = cv.offset(t[4], diags, l) else {
         return;
     };
-    let Some(cd) = number(&t[5], diags, l) else {
+    let Some(cd) = number(t[5], diags, l) else {
         return;
     };
     if cd < 0.0 {
         diags.push(err(
             l,
             DiagnosticKind::BadValue {
-                token: t[5].clone(),
+                token: t[5].to_string(),
             },
         ));
         return;
@@ -1102,7 +1106,7 @@ fn parse_orifice(
         return;
     };
     net.links.push(Link {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         from,
         to,
         kind: LinkKind::Orifice {
@@ -1142,7 +1146,7 @@ fn parse_weir(
     let Some((from, to)) = link_endpoints(s, t, diags, l) else {
         return;
     };
-    let Some(form_i) = keyword(TYPES, &t[3], diags, l) else {
+    let Some(form_i) = keyword(TYPES, t[3], diags, l) else {
         return;
     };
     let form = [
@@ -1152,38 +1156,38 @@ fn parse_weir(
         WeirForm::Trapezoidal,
         WeirForm::Roadway,
     ][form_i];
-    let Some(offset) = cv.offset(&t[4], diags, l) else {
+    let Some(offset) = cv.offset(t[4], diags, l) else {
         return;
     };
-    let Some(cd) = number(&t[5], diags, l) else {
+    let Some(cd) = number(t[5], diags, l) else {
         return;
     };
     // Optional tail, `*` skipping a slot, per the predecessor.
     let starred = |i: usize| t.get(i).is_some_and(|tok| tok.starts_with('*'));
     let mut flap_gate = false;
     if t.len() > 6 && !starred(6) {
-        let Some(v) = keyword(&["NO", "YES"], &t[6], diags, l) else {
+        let Some(v) = keyword(&["NO", "YES"], t[6], diags, l) else {
             return;
         };
         flap_gate = v == 1;
     }
     let mut end_contractions = 0.0;
     if t.len() > 7 && !starred(7) {
-        let Some(v) = number(&t[7], diags, l) else {
+        let Some(v) = number(t[7], diags, l) else {
             return;
         };
         end_contractions = v;
     }
     let mut end_coeff = 0.0;
     if t.len() > 8 && !starred(8) {
-        let Some(v) = number(&t[8], diags, l) else {
+        let Some(v) = number(t[8], diags, l) else {
             return;
         };
         end_coeff = v;
     }
     let mut can_surcharge = true;
     if t.len() > 9 && !starred(9) {
-        let Some(v) = keyword(&["NO", "YES"], &t[9], diags, l) else {
+        let Some(v) = keyword(&["NO", "YES"], t[9], diags, l) else {
             return;
         };
         can_surcharge = v == 1;
@@ -1192,7 +1196,7 @@ fn parse_weir(
     let mut road_surface = RoadSurface::Unspecified;
     if form == WeirForm::Roadway {
         if t.len() > 10 {
-            let Some(v) = number(&t[10], diags, l) else {
+            let Some(v) = number(t[10], diags, l) else {
                 return;
             };
             road_width = v * cv.len;
@@ -1209,13 +1213,13 @@ fn parse_weir(
     }
     let mut coeff_curve = None;
     if t.len() > 12 && !starred(12) {
-        let Some(c) = resolve(s, ObjectKind::Curve, &t[12], diags, l) else {
+        let Some(c) = resolve(s, ObjectKind::Curve, t[12], diags, l) else {
             return;
         };
         coeff_curve = Some(c);
     }
     net.links.push(Link {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         from,
         to,
         kind: LinkKind::Weir {
@@ -1249,13 +1253,13 @@ fn parse_outlet(
     let Some((from, to)) = link_endpoints(s, t, diags, l) else {
         return;
     };
-    let Some(offset) = cv.offset(&t[3], diags, l) else {
+    let Some(offset) = cv.offset(t[3], diags, l) else {
         return;
     };
     // Relation word carries an optional /DEPTH or /HEAD qualifier.
     let (rel_word, qualifier) = match t[4].split_once('/') {
         Some((r, q)) => (r, Some(q)),
-        None => (t[4].as_str(), None),
+        None => (t[4], None),
     };
     let Some(rel) = keyword(&["TABULAR", "FUNCTIONAL"], rel_word, diags, l) else {
         return;
@@ -1268,10 +1272,10 @@ fn parse_outlet(
         if !need(t, 7, diags, l) {
             return;
         }
-        let Some(a) = number(&t[5], diags, l) else {
+        let Some(a) = number(t[5], diags, l) else {
             return;
         };
-        let Some(b) = number(&t[6], diags, l) else {
+        let Some(b) = number(t[6], diags, l) else {
             return;
         };
         (
@@ -1282,7 +1286,7 @@ fn parse_outlet(
             7,
         )
     } else {
-        let Some(c) = resolve(s, ObjectKind::Curve, &t[5], diags, l) else {
+        let Some(c) = resolve(s, ObjectKind::Curve, t[5], diags, l) else {
             return;
         };
         (OutletRating::Tabular { curve: c }, 6)
@@ -1295,7 +1299,7 @@ fn parse_outlet(
         flap_gate = v == 1;
     }
     net.links.push(Link {
-        id: t[0].clone(),
+        id: t[0].to_string(),
         from,
         to,
         kind: LinkKind::Outlet {
@@ -1395,7 +1399,7 @@ fn parse_losses(
     if !need(t, 4, diags, l) {
         return;
     }
-    let Some(li) = resolve(s, ObjectKind::Link, &t[0], diags, l) else {
+    let Some(li) = resolve(s, ObjectKind::Link, t[0], diags, l) else {
         return;
     };
     let mut x = [0.0_f64; 3];
@@ -1406,7 +1410,7 @@ fn parse_losses(
                 diags.push(err(
                     l,
                     DiagnosticKind::BadValue {
-                        token: t[1 + i].clone(),
+                        token: t[1 + i].to_string(),
                     },
                 ));
                 return;
@@ -1415,7 +1419,7 @@ fn parse_losses(
     }
     let mut flap = false;
     if t.len() >= 5 {
-        let Some(k) = keyword(&["NO", "YES"], &t[4], diags, l) else {
+        let Some(k) = keyword(&["NO", "YES"], t[4], diags, l) else {
             return;
         };
         flap = k == 1;
@@ -1428,7 +1432,7 @@ fn parse_losses(
                 diags.push(err(
                     l,
                     DiagnosticKind::BadValue {
-                        token: t[5].clone(),
+                        token: t[5].to_string(),
                     },
                 ));
                 return;
@@ -1458,16 +1462,16 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
     if !need(t, 3, diags, l) {
         return;
     }
-    let Some(link_i) = resolve(s, ObjectKind::Link, &t[0], diags, l) else {
+    let Some(link_i) = resolve(s, ObjectKind::Link, t[0], diags, l) else {
         return;
     };
-    let Some(shape_i) = keyword(XSECT_WORDS, &t[1], diags, l) else {
+    let Some(shape_i) = keyword(XSECT_WORDS, t[1], diags, l) else {
         return;
     };
     let shape = XSECT_SHAPES[shape_i];
     let xs = match shape {
         XsectShape::Irregular => {
-            let Some(tr) = resolve(s, ObjectKind::Transect, &t[2], diags, l) else {
+            let Some(tr) = resolve(s, ObjectKind::Transect, t[2], diags, l) else {
                 return;
             };
             CrossSection {
@@ -1479,7 +1483,7 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
             }
         }
         XsectShape::Street => {
-            let Some(st) = resolve(s, ObjectKind::Street, &t[2], diags, l) else {
+            let Some(st) = resolve(s, ObjectKind::Street, t[2], diags, l) else {
                 return;
             };
             CrossSection {
@@ -1494,19 +1498,19 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
             if !need(t, 4, diags, l) {
                 return;
             }
-            let Some(y_full) = number(&t[2], diags, l) else {
+            let Some(y_full) = number(t[2], diags, l) else {
                 return;
             };
             if y_full <= 0.0 {
                 diags.push(err(
                     l,
                     DiagnosticKind::BadValue {
-                        token: t[2].clone(),
+                        token: t[2].to_string(),
                     },
                 ));
                 return;
             }
-            let Some(c) = resolve(s, ObjectKind::Curve, &t[3], diags, l) else {
+            let Some(c) = resolve(s, ObjectKind::Curve, t[3], diags, l) else {
                 return;
             };
             // Barrels and the culvert code sit at tokens 6 and 7 for
@@ -1531,7 +1535,7 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
             }
             let mut geom = [0.0; 4];
             for (i, g) in geom.iter_mut().enumerate() {
-                let Some(v) = number(&t[2 + i], diags, l) else {
+                let Some(v) = number(t[2 + i], diags, l) else {
                     return;
                 };
                 *g = v;
@@ -1555,26 +1559,36 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
 /// The optional culvert code at token 7 of an `[XSECTIONS]` line, absent
 /// meaning "not a culvert". `None` reports a token that is present but not
 /// a code, the caller abandoning the line.
-fn culvert_code(t: &[String], diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
+fn culvert_code(t: &[&str], diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
     match t.get(7) {
         None => Some(0),
         Some(tok) => match tok.parse::<u32>() {
             Ok(v) => Some(v),
             Err(_) => {
-                diags.push(err(l, DiagnosticKind::BadValue { token: tok.clone() }));
+                diags.push(err(
+                    l,
+                    DiagnosticKind::BadValue {
+                        token: tok.to_string(),
+                    },
+                ));
                 None
             }
         },
     }
 }
 
-fn barrels(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
+fn barrels(t: &[&str], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
     match t.get(i) {
         None => Some(1),
         Some(tok) => match tok.finite_f64() {
             Ok(v) if v >= 1.0 => Some(v as u32),
             _ => {
-                diags.push(err(l, DiagnosticKind::BadValue { token: tok.clone() }));
+                diags.push(err(
+                    l,
+                    DiagnosticKind::BadValue {
+                        token: tok.to_string(),
+                    },
+                ));
                 None
             }
         },

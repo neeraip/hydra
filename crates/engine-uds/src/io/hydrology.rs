@@ -31,11 +31,11 @@ fn bad(line: usize, token: &str) -> Diagnostic {
     )
 }
 
-fn number(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<f64> {
+fn number(t: &[&str], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<f64> {
     match t[i].finite_f64() {
         Ok(v) => Some(v),
         Err(_) => {
-            diags.push(bad(l, &t[i]));
+            diags.push(bad(l, t[i]));
             None
         }
     }
@@ -43,7 +43,7 @@ fn number(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Opti
 
 /// Parse `[RAINGAGES]`.
 pub(crate) fn parse_gages(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<Gage> {
@@ -56,36 +56,40 @@ pub(crate) fn parse_gages(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(form_i) = match_keyword(FORMS, &t[1]) else {
-            diags.push(bad(l, &t[1]));
+        let Some(form_i) = match_keyword(FORMS, t[1]) else {
+            diags.push(bad(l, t[1]));
             continue;
         };
         let form = [RainForm::Intensity, RainForm::Volume, RainForm::Cumulative][form_i];
         // Interval: decimal hours or a clock string, rounded to seconds.
-        let Some(interval) = clock_or_hours_to_seconds(&t[2]) else {
-            diags.push(bad(l, &t[2]));
+        let Some(interval) = clock_or_hours_to_seconds(t[2]) else {
+            diags.push(bad(l, t[2]));
             continue;
         };
         if interval <= 0.0 {
-            diags.push(bad(l, &t[2]));
+            diags.push(bad(l, t[2]));
             continue;
         }
         let Ok(scf) = t[3].finite_f64() else {
-            diags.push(bad(l, &t[3]));
+            diags.push(bad(l, t[3]));
             continue;
         };
         let source = if t[4].eq_ignore_ascii_case("TIMESERIES") {
             let Some(map) = s.ids.get(&ObjectKind::TimeSeries) else {
                 diags.push(err(
                     l,
-                    DiagnosticKind::UnresolvedReference { id: t[5].clone() },
+                    DiagnosticKind::UnresolvedReference {
+                        id: t[5].to_string(),
+                    },
                 ));
                 continue;
             };
             let Some(&ts) = map.get(t[5].to_ascii_uppercase().as_str()) else {
                 diags.push(err(
                     l,
-                    DiagnosticKind::UnresolvedReference { id: t[5].clone() },
+                    DiagnosticKind::UnresolvedReference {
+                        id: t[5].to_string(),
+                    },
                 ));
                 continue;
             };
@@ -97,21 +101,21 @@ pub(crate) fn parse_gages(
                 Some(u) if u == "IN" => Some(crate::model::RainFileUnit::Inches),
                 Some(u) if u == "MM" => Some(crate::model::RainFileUnit::Millimetres),
                 Some(_) => {
-                    diags.push(bad(l, &t[7]));
+                    diags.push(bad(l, t[7]));
                     continue;
                 }
             };
             GageSource::File {
-                file: t[5].clone(),
-                station: t.get(6).cloned().unwrap_or_default(),
+                file: t[5].to_string(),
+                station: t.get(6).map(|s| (*s).to_string()).unwrap_or_default(),
                 unit,
             }
         } else {
-            diags.push(bad(l, &t[4]));
+            diags.push(bad(l, t[4]));
             continue;
         };
         gages.push(Gage {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             form,
             interval,
             catch_factor: scf,
@@ -124,7 +128,7 @@ pub(crate) fn parse_gages(
 /// Parse `[SUBCATCHMENTS]` into parcels (their other two sections fill in
 /// afterwards).
 pub(crate) fn parse_parcels(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -137,23 +141,27 @@ pub(crate) fn parse_parcels(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(gage) = s.resolve(ObjectKind::Gage, &t[1]) else {
+        let Some(gage) = s.resolve(ObjectKind::Gage, t[1]) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[1].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[1].to_string(),
+                },
             ));
             continue;
         };
         // The outlet may be a vertex or another parcel; either resolves.
-        let vertex = s.resolve(ObjectKind::Vertex, &t[2]);
-        let parcel = s.resolve(ObjectKind::Parcel, &t[2]);
+        let vertex = s.resolve(ObjectKind::Vertex, t[2]);
+        let parcel = s.resolve(ObjectKind::Parcel, t[2]);
         let outlet = match (vertex, parcel) {
             (Some(&v), _) => ParcelOutlet::Vertex(v),
             (None, Some(&p)) => ParcelOutlet::Parcel(p),
             (None, None) => {
                 diags.push(err(
                     l,
-                    DiagnosticKind::UnresolvedReference { id: t[2].clone() },
+                    DiagnosticKind::UnresolvedReference {
+                        id: t[2].to_string(),
+                    },
                 ));
                 continue;
             }
@@ -166,7 +174,7 @@ pub(crate) fn parse_parcels(
                 break;
             };
             if v < 0.0 {
-                diags.push(bad(l, &t[3 + i]));
+                diags.push(bad(l, t[3 + i]));
                 ok = false;
                 break;
             }
@@ -180,7 +188,9 @@ pub(crate) fn parse_parcels(
                 let Some(&sp) = s.resolve(ObjectKind::Snowpack, tok) else {
                     diags.push(err(
                         l,
-                        DiagnosticKind::UnresolvedReference { id: tok.clone() },
+                        DiagnosticKind::UnresolvedReference {
+                            id: tok.to_string(),
+                        },
                     ));
                     continue;
                 };
@@ -193,12 +203,12 @@ pub(crate) fn parse_parcels(
                 l,
                 DiagnosticKind::CappedValue {
                     what: "imperviousness",
-                    token: t[4].clone(),
+                    token: t[4].to_string(),
                 },
             ));
         }
         parcels.push(Parcel {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             gage: *gage,
             outlet,
             area: x[0] * cv.land_area,
@@ -223,7 +233,7 @@ pub(crate) fn parse_parcels(
 
 /// Fill `[SUBAREAS]` parameters into their parcels.
 pub(crate) fn parse_subareas(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     ids: &HashMap<String, usize>,
     parcels: &mut [Parcel],
     cv: &UnitConverter,
@@ -240,7 +250,9 @@ pub(crate) fn parse_subareas(
         let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[0].to_string(),
+                },
             ));
             continue;
         };
@@ -252,7 +264,7 @@ pub(crate) fn parse_subareas(
                 break;
             };
             if v < 0.0 {
-                diags.push(bad(l, &t[1 + i]));
+                diags.push(bad(l, t[1 + i]));
                 ok = false;
                 break;
             }
@@ -261,8 +273,8 @@ pub(crate) fn parse_subareas(
         if !ok {
             continue;
         }
-        let Some(r) = match_keyword(ROUTING, &t[6]) else {
-            diags.push(bad(l, &t[6]));
+        let Some(r) = match_keyword(ROUTING, t[6]) else {
+            diags.push(bad(l, t[6]));
             continue;
         };
         let mut frac_routed = 1.0;
@@ -298,7 +310,7 @@ pub(crate) fn parse_subareas(
 /// Fill `[INFILTRATION]` parameters into their parcels. A trailing model
 /// token overrides the global selection for that parcel (5.2).
 pub(crate) fn parse_infiltration(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     ids: &HashMap<String, usize>,
     parcels: &mut [Parcel],
     global: InfiltrationModel,
@@ -322,13 +334,15 @@ pub(crate) fn parse_infiltration(
         let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[0].to_string(),
+                },
             ));
             continue;
         };
         // Per-parcel override: the LAST token naming a model selects it.
         let mut model = global;
-        if let Some(m) = match_keyword(MODELS, t.last().map_or("", |x| x.as_str())) {
+        if let Some(m) = match_keyword(MODELS, t.last().copied().unwrap_or("")) {
             model = [
                 InfiltrationModel::Horton,
                 InfiltrationModel::ModifiedHorton,
@@ -397,7 +411,7 @@ pub(crate) fn parse_infiltration(
 
 /// Parse `[AQUIFERS]`.
 pub(crate) fn parse_aquifers(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -414,7 +428,7 @@ pub(crate) fn parse_aquifers(
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
             let Ok(v) = t[1 + i].finite_f64() else {
-                diags.push(bad(l, &t[1 + i]));
+                diags.push(bad(l, t[1 + i]));
                 ok = false;
                 break;
             };
@@ -428,7 +442,9 @@ pub(crate) fn parse_aquifers(
                 let Some(&p) = s.resolve(ObjectKind::TimePattern, tok) else {
                     diags.push(err(
                         l,
-                        DiagnosticKind::UnresolvedReference { id: tok.clone() },
+                        DiagnosticKind::UnresolvedReference {
+                            id: tok.to_string(),
+                        },
                     ));
                     continue;
                 };
@@ -437,7 +453,7 @@ pub(crate) fn parse_aquifers(
             None => None,
         };
         out.push(crate::model::Aquifer {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             porosity: x[0],
             wilting_point: x[1],
             field_capacity: x[2],
@@ -458,7 +474,7 @@ pub(crate) fn parse_aquifers(
 
 /// Fill `[GROUNDWATER]` connections into their parcels.
 pub(crate) fn parse_groundwater(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     parcels: &mut [Parcel],
     cv: &UnitConverter,
@@ -471,24 +487,30 @@ pub(crate) fn parse_groundwater(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, t[0]) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[0].to_string(),
+                },
             ));
             continue;
         };
-        let Some(&aq) = s.resolve(ObjectKind::Aquifer, &t[1]) else {
+        let Some(&aq) = s.resolve(ObjectKind::Aquifer, t[1]) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[1].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[1].to_string(),
+                },
             ));
             continue;
         };
-        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[2]) else {
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, t[2]) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[2].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[2].to_string(),
+                },
             ));
             continue;
         };
@@ -496,7 +518,7 @@ pub(crate) fn parse_groundwater(
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
             let Ok(v) = t[3 + i].finite_f64() else {
-                diags.push(bad(l, &t[3 + i]));
+                diags.push(bad(l, t[3 + i]));
                 ok = false;
                 break;
             };
@@ -561,7 +583,7 @@ pub(crate) fn parse_groundwater(
 /// The expression is retained as written (§14.6: expressions evaluate in
 /// the file's unit system).
 pub(crate) fn parse_gwf(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     s: &Survey,
     parcels: &mut [Parcel],
     diags: &mut Vec<Diagnostic>,
@@ -573,10 +595,12 @@ pub(crate) fn parse_gwf(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, t[0]) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[0].to_string(),
+                },
             ));
             continue;
         };
@@ -584,7 +608,9 @@ pub(crate) fn parse_gwf(
         let Some(gw) = parcels.get_mut(pc).and_then(|p| p.groundwater.as_mut()) else {
             diags.push(err(
                 l,
-                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+                DiagnosticKind::UnresolvedReference {
+                    id: t[0].to_string(),
+                },
             ));
             continue;
         };
@@ -593,7 +619,7 @@ pub(crate) fn parse_gwf(
         } else if t[1].eq_ignore_ascii_case("DEEP") {
             gw.deep_expression = Some(expr);
         } else {
-            diags.push(bad(l, &t[1]));
+            diags.push(bad(l, t[1]));
         }
     }
 }

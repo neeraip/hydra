@@ -357,7 +357,10 @@ const OPTION_WORDS: &[&str] = &[
 /// Parse an `[OPTIONS]` section's lines into resolved [`AnalysisOptions`],
 /// appending diagnostics. Unit-dependent values convert after all lines are
 /// read, since `FLOW_UNITS` may appear anywhere.
-pub fn parse_options(lines: &[TokenLine], diagnostics: &mut Vec<Diagnostic>) -> AnalysisOptions {
+pub fn parse_options(
+    lines: &[TokenLine<'_>],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> AnalysisOptions {
     let mut o = AnalysisOptions::default();
     // Raw user-unit captures, converted in finalize.
     let mut head_tol_user: Option<f64> = None;
@@ -367,14 +370,14 @@ pub fn parse_options(lines: &[TokenLine], diagnostics: &mut Vec<Diagnostic>) -> 
         let Some(key_tok) = line.tokens.first() else {
             continue;
         };
-        let Some(value) = line.tokens.get(1).map(String::as_str) else {
+        let Some(value) = line.tokens.get(1).copied() else {
             continue; // a keyword with no value configures nothing
         };
         let Some(ki) = match_keyword(OPTION_WORDS, key_tok) else {
             diagnostics.push(err(
                 line.line,
                 DiagnosticKind::UnknownOption {
-                    token: key_tok.clone(),
+                    token: key_tok.to_string(),
                 },
             ));
             continue;
@@ -384,7 +387,7 @@ pub fn parse_options(lines: &[TokenLine], diagnostics: &mut Vec<Diagnostic>) -> 
             diagnostics.push(err(
                 line.line,
                 DiagnosticKind::PrefixMatched {
-                    token: key_tok.clone(),
+                    token: key_tok.to_string(),
                     matched: keyword,
                 },
             ));
@@ -942,14 +945,14 @@ fn set_day_of_year(
 mod tests {
     use super::*;
 
-    fn lines(text: &str) -> Vec<TokenLine> {
+    fn lines(text: &str) -> Vec<TokenLine<'_>> {
         text.lines()
             .enumerate()
             .filter(|(_, l)| !l.trim().is_empty())
             .map(|(i, l)| TokenLine {
                 line: i + 1,
-                tokens: l.split_whitespace().map(str::to_string).collect(),
-                raw: l.trim_end().to_string(),
+                tokens: l.split_whitespace().collect(),
+                raw: l.trim_end(),
             })
             .collect()
     }

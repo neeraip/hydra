@@ -81,7 +81,7 @@ fn convert_point(kind: CurveKind, cv: &UnitConverter, x: f64, y: f64) -> (f64, f
 
 /// Parse a `[CURVES]` section.
 pub(crate) fn parse_curves(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     ids: &HashMap<String, usize>,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
@@ -100,21 +100,21 @@ pub(crate) fn parse_curves(
         let mut k = 1;
         if curves[idx].is_none() {
             // First line for this curve: the type.
-            let Some(m) = match_keyword(CURVE_TYPES, &t[1]) else {
-                diags.push(bad(l, &t[1]));
+            let Some(m) = match_keyword(CURVE_TYPES, t[1]) else {
+                diags.push(bad(l, t[1]));
                 continue;
             };
             if !t[1].eq_ignore_ascii_case(CURVE_TYPES[m]) {
                 diags.push(err(
                     l,
                     DiagnosticKind::PrefixMatched {
-                        token: t[1].clone(),
+                        token: t[1].to_string(),
                         matched: CURVE_TYPES[m],
                     },
                 ));
             }
             curves[idx] = Some(Curve {
-                id: t[0].clone(),
+                id: t[0].to_string(),
                 kind: CURVE_KINDS[m],
                 points: Vec::new(),
             });
@@ -128,7 +128,7 @@ pub(crate) fn parse_curves(
                 break;
             }
             let (Ok(x), Ok(y)) = (t[k].finite_f64(), t[k + 1].finite_f64()) else {
-                diags.push(bad(l, &t[k]));
+                diags.push(bad(l, t[k]));
                 break;
             };
             let (x, y) = convert_point(curve.kind, cv, x, y);
@@ -157,7 +157,7 @@ pub(crate) fn parse_curves(
 /// state machine: a date token (recognised by parsing as one) anchors every
 /// later time until the next date; times are decimal hours or clock strings.
 pub(crate) fn parse_timeseries(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     ids: &HashMap<String, usize>,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<TimeSeries> {
@@ -175,23 +175,25 @@ pub(crate) fn parse_timeseries(
         };
         if t[1].eq_ignore_ascii_case("FILE") {
             series[idx] = Some(TimeSeries {
-                id: t[0].clone(),
-                source: TimeSeriesSource::External { file: t[2].clone() },
+                id: t[0].to_string(),
+                source: TimeSeriesSource::External {
+                    file: t[2].to_string(),
+                },
             });
             continue;
         }
         let entry = series[idx].get_or_insert_with(|| TimeSeries {
-            id: t[0].clone(),
+            id: t[0].to_string(),
             source: TimeSeriesSource::Points(Vec::new()),
         });
         let TimeSeriesSource::Points(points) = &mut entry.source else {
-            diags.push(bad(l, &t[1]));
+            diags.push(bad(l, t[1]));
             continue;
         };
         let mut k = 1;
         while k < t.len() {
             // Optional date.
-            if let Some(d) = super::options::parse_date_token(&t[k]) {
+            if let Some(d) = super::options::parse_date_token(t[k]) {
                 last_date[idx] = Some(d);
                 k += 1;
             }
@@ -253,7 +255,7 @@ const PATTERN_KINDS: &[PatternKind] = &[
 /// factors accumulating across lines, capped at 24 as the predecessor caps
 /// them.
 pub(crate) fn parse_patterns(
-    lines: &[TokenLine],
+    lines: &[TokenLine<'_>],
     ids: &HashMap<String, usize>,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<TimePattern> {
@@ -270,21 +272,21 @@ pub(crate) fn parse_patterns(
         };
         let mut k = 1;
         if pats[idx].is_none() {
-            let Some(m) = match_keyword(PATTERN_TYPES, &t[1]) else {
-                diags.push(bad(l, &t[1]));
+            let Some(m) = match_keyword(PATTERN_TYPES, t[1]) else {
+                diags.push(bad(l, t[1]));
                 continue;
             };
             if !t[1].eq_ignore_ascii_case(PATTERN_TYPES[m]) {
                 diags.push(err(
                     l,
                     DiagnosticKind::PrefixMatched {
-                        token: t[1].clone(),
+                        token: t[1].to_string(),
                         matched: PATTERN_TYPES[m],
                     },
                 ));
             }
             pats[idx] = Some(TimePattern {
-                id: t[0].clone(),
+                id: t[0].to_string(),
                 kind: PATTERN_KINDS[m],
                 factors: Vec::new(),
             });
@@ -293,7 +295,7 @@ pub(crate) fn parse_patterns(
         let pat = pats[idx].as_mut().expect("just ensured");
         while k < t.len() && pat.factors.len() < 24 {
             let Ok(v) = t[k].finite_f64() else {
-                diags.push(bad(l, &t[k]));
+                diags.push(bad(l, t[k]));
                 break;
             };
             pat.factors.push(v);
