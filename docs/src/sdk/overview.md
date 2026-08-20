@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-hydra-sdk = "12"
+hydra-sdk = "13"
 ```
 
 It re-exports every type needed to parse networks, run simulations, query results, run post-simulation analytics, and generate reports, with all internal dependency versions pre-pinned.
