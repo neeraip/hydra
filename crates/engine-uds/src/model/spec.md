@@ -268,6 +268,20 @@ Physical constants take their exact standard values:
 >
 > *Source: `consts.h:38–39`; the second value at `inlet.c:1666` and `:1749`.*
 
+> **CORRESPONDENCE:** the unit basis also decides which comparisons at exact
+> equality hold, and the answers differ. The predecessor converts every
+> declared length to feet on read, so a derived length tested against a
+> declared one puts two numbers against each other that reached the test by
+> different arithmetic. A crest at 0.54 m under a 3.21 m opening meets a
+> declared maximum depth of 3.75 m exactly in metres, and clears it by
+> 1.8 × 10⁻¹⁵ ft once both sides are divided by 0.3048 — so the predecessor
+> raises the depth and warns (§14.7) where this engine finds them equal and
+> does neither. Half a femtometre changes nothing measurable, and the
+> predecessor's own report prints the depth unmoved; the difference shows
+> only in a diff of the two engines' warnings. This is the general case for
+> a declared length meeting a derived one, and the answer taken here is the
+> one the model's own unit gives.
+
 A constant that embeds a unit system — a coefficient differing between US
 customary and SI forms of the same relation — is identified as such where it
 appears, rather than presented as dimensionless.

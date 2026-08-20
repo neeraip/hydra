@@ -1343,6 +1343,55 @@ C2  CIRCULAR  1.5  0  0  0
     }
 
     #[test]
+    fn a_crown_exactly_at_the_declared_depth_does_not_raise_it() {
+        // The boundary of the raising test, and the one place the two
+        // engines answer differently: the predecessor works in feet, so
+        // dividing both sides by 0.3048 leaves the crown a femtometre
+        // clear and it raises and warns. In the model's own unit they are
+        // equal, and equal is not greater.
+        //
+        // `>` against `>=` in `raise_crown` is an equivalent mutation and
+        // no test can catch it: at equality the assignment writes the
+        // value already there, and the warning asks whether the depth
+        // moved. What this pins is that the depth does not move and
+        // nothing is reported — which is the behaviour that differs.
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[JUNCTIONS]
+J1  100  3.75
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[WEIRS]
+W1  J1  O1  TRANSVERSE  0.54  1.77  NO  0  0  NO
+
+[XSECTIONS]
+W1  RECT_OPEN  3.21  4  0  0
+";
+        let (net, v) = validated(inp);
+        let VertexKind::Junction { max_depth, .. } = net.vertices[0].kind else {
+            panic!()
+        };
+        assert!(
+            (max_depth - 3.75).abs() < 1e-12,
+            "depth moved to {max_depth}"
+        );
+        assert!(!has(&v, "J1", |k| matches!(
+            k,
+            ValidationKind::MaxDepthRaised { .. }
+        )));
+    }
+
+    #[test]
     fn a_divider_is_raised_to_its_crown_like_any_other_vertex() {
         // The predecessor exempts storage without a surcharge allowance
         // and nothing else, so a divider is raised. It was skipped here
