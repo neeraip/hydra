@@ -1970,7 +1970,13 @@ impl Router {
                 _ => self.sett_cur[si] = target,
             }
         }
-        self.worst_counts[trial.worst_vertex] += 1;
+        // A model with no drainage network has no vertex to blame. The
+        // predecessor runs those — its rain-format and single-LID test
+        // models are subcatchments and nothing else — and this indexed
+        // vertex zero of an empty tally and brought the process down.
+        if let Some(c) = self.worst_counts.get_mut(trial.worst_vertex) {
+            *c += 1;
+        }
         // §11.2: numerical-performance statistics span the whole run,
         // unlike the per-object ones below.
         if !clock_capped {
@@ -3829,6 +3835,49 @@ mod tests {
     use super::*;
     use crate::io::objects::parse_network;
     use crate::io::validate::validate;
+
+    /// A model with no drainage network routes nothing, and says so by
+    /// finishing.
+    ///
+    /// The defect: `accept` blamed a worst vertex on every step and
+    /// counted it, and a network with no vertices has none — the tally was
+    /// empty and vertex zero indexed off the end of it, bringing the
+    /// process down with a panic rather than an error. Two of the
+    /// predecessor's own regression models are exactly this shape,
+    /// subcatchments and nothing else, and the predecessor runs both.
+    #[test]
+    fn a_model_with_no_drainage_network_still_finishes() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  10
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+S1  G1  S1  1.0  50  100  0.5  0
+
+[SUBAREAS]
+S1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3  0.5  4  7  0
+
+[TIMESERIES]
+TS1  0:00  10
+TS1  1:00  0
+";
+        let (_, mut r) = build(inp);
+        assert_eq!(r.verts.len(), 0, "the fixture grew a vertex");
+        let lat: Vec<f64> = Vec::new();
+        // The step that used to panic. Several of them.
+        r.advance(600.0, &move |_t, l: &mut [f64]| {
+            l.iter_mut().for_each(|x| *x = 0.0)
+        });
+        assert!(r.report.accepted > 0, "no step was taken at all");
+        assert_eq!(lat.len(), 0);
+    }
 
     /// The reported minimum step is a step the scheme chose.
     ///
