@@ -40,7 +40,10 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         return EXIT_INPUT;
     }
 
-    let text = String::from_utf8_lossy(bytes).into_owned();
+    // Borrowed where the bytes are already valid UTF-8, which is every
+    // model anyone actually has: `into_owned` copied the whole file for
+    // nothing, and a model file can be tens of megabytes.
+    let text = String::from_utf8_lossy(bytes);
 
     // Survey the model's auxiliary-file declarations before opening. Parse
     // problems are deliberately ignored here — the open below re-parses and
@@ -171,6 +174,13 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         }
     }
 
+    // Everything still wanted from the survey above is a handful of file
+    // names, so the model it was read from goes now rather than sitting
+    // beside the one the open is about to build. Two parsed networks of a
+    // large model is tens of megabytes for no reason.
+    let iface = net.interface_files.clone();
+    drop(net);
+
     // ── Open: parse, validate, build ──────────────────────────────────────────
     let opened = match &rain_iface {
         Some(bytes) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
@@ -218,7 +228,6 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     // USE refuses the open, a SAVE opens with a per-role notice. This used to
     // be restated here, and differently again in the demo, which left every
     // other consumer of the engine with silence.
-    let iface = &net.interface_files;
     if let Some(name) = &iface.hotstart_use {
         let path = match resolve_aux_path(&args.model, name) {
             Ok(p) => p,
