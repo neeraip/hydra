@@ -28,7 +28,11 @@ surcharge branch, which §6.2 retired.
 ### 5.2 Analytic Families
 
 Where the geometry has a closed form, the engine evaluates it — no tables,
-no fitted seeds, no iteration caps. Rectangular, triangular, trapezoidal,
+no fitted approximations, no iteration caps. This governs what the geometry
+*is*: every area, radius and width named here is the exact value of the
+relation, never an interpolate of it. It says nothing about where an
+iteration may start, which §5.7 settles separately and on other grounds.
+Rectangular, triangular, trapezoidal,
 parabolic, and power sections are elementary. The circle is evaluated through
 the filled angle $\theta$:
 
@@ -219,6 +223,37 @@ $K_i^{\,\prime} = K_i\big(\tfrac{5}{3}A_i'/A_i - \tfrac{2}{3}P_i'/P_i\big)$
 the effective radius through $K$: $\Psi = A R^{2/3} = n_C K$). Piecewise
 kinks where the water line crosses a station are what the bracket
 safeguard is for.
+
+**Where such an iteration starts is free.** A solve that maintains a bracket
+and terminates on the stated tolerance answers with the root whatever
+estimate it began from: the seed is not a term in the result, and no path
+through the solve can return it. An implementation may therefore start from
+an asymptotic expansion, from a precomputed inverse of the same relation, or
+from the answer the same section gave a moment earlier, and choose between
+them on cost alone. This is exactly the property the predecessor's searches
+lack — theirs carry iteration budgets whose exhaustion returns the seed,
+which makes the seed's accuracy part of the answer's — and it is why §5.2's
+rejection of fitted approximations does not reach here. §5.2 governs the
+geometry; a seed governs only how quickly the solve finds it.
+
+The circle's two relations admit a seed that costs nothing to hold, because
+both are *similar in the diameter*. Substituting the §5.2 forms and
+collecting every appearance of $D$ on the right,
+
+$$3\ln(\theta - \sin\theta) - \ln\sin\tfrac{\theta}{2} = s_{c},
+\qquad s_{c} = \ln\frac{Q^{2}}{g} - 3\ln\frac{D^{2}}{8} + \ln D,$$
+
+$$\tfrac{5}{3}\ln(\theta - \sin\theta) - \tfrac{2}{3}\ln\theta = s_{n},
+\qquad s_{n} = \ln\Psi - \tfrac{5}{3}\ln\frac{D^{2}}{8}
++ \tfrac{2}{3}\ln\frac{D}{2},$$
+
+where $s_{c}$ and $s_{n}$ are the normalised critical-depth and
+normal-depth demands. The left sides contain no $D$ at all: one inverse per
+relation serves every circular section in the network at every diameter, and
+the two are properties of the circle rather than of any model. A seed drawn
+from them is still only a seed — the bracket is maintained and the tolerance
+unchanged — so the answer is the same root the asymptotic seed reaches, found
+in fewer steps.
 
 > **CORRESPONDENCE:** the predecessor's characteristic-depth searches carry
 > fixed iteration budgets whose exhaustion returns the initial estimate — a

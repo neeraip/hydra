@@ -2007,6 +2007,176 @@ fn newton_bracketed(eval: &dyn Fn(f64) -> (f64, f64), mut lo: f64, mut hi: f64) 
 /// agree within the stated depth tolerance.
 /// `theta_hi` is the top of the monotone range: a hair under $2\pi$ for
 /// critical depth, the section-factor peak's angle for normal depth.
+/// Below this angle $\theta - \sin\theta$ loses its leading digits to
+/// cancellation and its series does not (§5.7).
+const CHAR_SMALL: f64 = 0.13;
+
+/// The dry end of both characteristic brackets: $\theta \approx
+/// 8\times10^{-7}$, a depth of $10^{-13}D$ — dry beyond anything
+/// downstream reads.
+const CHAR_U_LO: f64 = -14.0;
+
+/// Nodes in each of the circle's two seed tables (§5.7).
+///
+/// Set by measuring the seed against the exact inverse, not by taste. At
+/// this size the critical-depth seed lands within $1.5\times10^{-7}$ of
+/// the root in $\ln\theta$ and the normal-depth seed within $10^{-10}$,
+/// which puts the first Newton correction below the stated depth
+/// tolerance for every diameter a sewer takes — so the solve evaluates
+/// once and stops. Halving it costs an iteration back; doubling it buys
+/// digits a tolerance of a micron cannot see.
+const SEED_NODES: usize = 1024;
+
+/// The inverse of one of the circle's normalised characteristic relations
+/// (§5.7), held once for the whole program.
+///
+/// The relations are similar in the diameter — §5.7 collects it out — so
+/// one table serves every circular section in a network at every size.
+/// Each holds $\ln\theta$ against $v = \sqrt{s_{hi} - s}$ rather than
+/// against the normalised demand $s$ directly, because the normal-depth
+/// relation turns over at $\Psi_{max}$: its inverse has a square-root
+/// branch point there and is not interpolable in $s$ at all. Measured,
+/// 2048 nodes in $s$ still left that seed $2.6\times10^{-2}$ out, where
+/// 256 nodes in $v$ reach $5\times10^{-8}$. The critical-depth relation
+/// has no turning point and shares the parameterisation, which costs it
+/// nothing.
+struct SeedTable {
+    /// Node spacing in $v$.
+    h: f64,
+    /// The top of the range, where $v = 0$.
+    s_hi: f64,
+    /// $\ln\theta$ at each node, with its derivative in $v$ beside it:
+    /// the interpolation is cubic Hermite, which is what carries the
+    /// error down far enough to stop after one evaluation.
+    u: Vec<f64>,
+    du_dv: Vec<f64>,
+}
+
+/// $\theta - \sin\theta$, the circle's area factor.
+///
+/// The same series cut as the solve's own: below a thirteenth of a radian
+/// the difference cancels and $\theta^3/6$ does not.
+fn char_area_factor(theta: f64) -> f64 {
+    if theta < CHAR_SMALL {
+        let t2 = theta * theta;
+        theta * t2 / 6.0 * (1.0 - t2 / 20.0 * (1.0 - t2 / 42.0))
+    } else {
+        theta - theta.sin()
+    }
+}
+
+impl SeedTable {
+    /// One relation's normalised left side, $k_A\ln(\theta-\sin\theta) -
+    /// k_D\ln(\text{denominator}/D)$, and its derivative in $u = \ln\theta$.
+    fn residual(u: f64, ka: f64, kd: f64, den_is_width: bool) -> (f64, f64) {
+        let theta = u.exp();
+        let (sh, ch) = (theta / 2.0).sin_cos();
+        let a_t = char_area_factor(theta);
+        let g = ka * a_t.ln() - kd * if den_is_width { sh.ln() } else { u };
+        let dg = theta
+            * (ka * (2.0 * sh * sh) / a_t
+                - kd * if den_is_width {
+                    ch / (2.0 * sh)
+                } else {
+                    1.0 / theta
+                });
+        (g, dg)
+    }
+
+    /// Build the inverse for one relation. Bisection throughout: this runs
+    /// once per program, and a bracketed halving cannot land anywhere but
+    /// the root.
+    fn build(ka: f64, kd: f64, den_is_width: bool) -> Self {
+        let g = |u: f64| Self::residual(u, ka, kd, den_is_width).0;
+        // The top of the monotone range. The critical relation climbs to
+        // the crown; the normal one turns over at Ψ_max and stops there.
+        let u_top = if den_is_width {
+            (2.0 * std::f64::consts::PI - 1e-9).ln()
+        } else {
+            let (mut lo, mut hi) = (CHAR_U_LO, (2.0 * std::f64::consts::PI).ln());
+            for _ in 0..200 {
+                let m = 0.5 * (lo + hi);
+                if Self::residual(m, ka, kd, den_is_width).1 > 0.0 {
+                    lo = m;
+                } else {
+                    hi = m;
+                }
+            }
+            0.5 * (lo + hi)
+        };
+        let s_hi = g(u_top);
+        let v_max = (s_hi - g(CHAR_U_LO)).sqrt();
+        let h = v_max / (SEED_NODES - 1) as f64;
+        let mut u = Vec::with_capacity(SEED_NODES);
+        let mut du_dv = Vec::with_capacity(SEED_NODES);
+        for i in 0..SEED_NODES {
+            let v = i as f64 * h;
+            if i == 0 {
+                u.push(u_top);
+                // At a turning point $s_{hi} - s \to C(u-u_{top})^2$, so
+                // $du/dv \to -1/\sqrt{C}$ — finite, where $-2v/g'$ is 0/0.
+                du_dv.push(if den_is_width {
+                    0.0
+                } else {
+                    let e = 1e-4;
+                    -((e * e) / (s_hi - g(u_top - e))).sqrt()
+                });
+                continue;
+            }
+            let s = s_hi - v * v;
+            let (mut lo, mut hi) = (CHAR_U_LO, u_top);
+            for _ in 0..200 {
+                let m = 0.5 * (lo + hi);
+                if g(m) < s {
+                    lo = m;
+                } else {
+                    hi = m;
+                }
+            }
+            let root = 0.5 * (lo + hi);
+            u.push(root);
+            du_dv.push(-2.0 * v / Self::residual(root, ka, kd, den_is_width).1);
+        }
+        Self { h, s_hi, u, du_dv }
+    }
+
+    /// $\ln\theta$ for a normalised demand `s`, to seed the solve.
+    ///
+    /// Out-of-range demands answer at the nearest end. A demand above the
+    /// range means a section that cannot carry it, which both callers
+    /// have already tested for; a demand below it is drier than the
+    /// bracket's own floor.
+    fn seed(&self, s: f64) -> f64 {
+        let v = (self.s_hi - s).max(0.0).sqrt();
+        let x = v / self.h;
+        let i = (x as usize).min(SEED_NODES - 2);
+        let t = x - i as f64;
+        if t > 1.0 {
+            // Drier than the last node: the relation is affine here, so
+            // the end tangent is the answer.
+            let n = SEED_NODES - 1;
+            return self.u[n] + (x - n as f64) * self.h * self.du_dv[n];
+        }
+        let (t2, t3) = (t * t, t * t * t);
+        (2.0 * t3 - 3.0 * t2 + 1.0) * self.u[i]
+            + (t3 - 2.0 * t2 + t) * self.h * self.du_dv[i]
+            + (-2.0 * t3 + 3.0 * t2) * self.u[i + 1]
+            + (t3 - t2) * self.h * self.du_dv[i + 1]
+    }
+}
+
+/// The critical-depth relation's inverse, built once.
+fn crit_seed_table() -> &'static SeedTable {
+    static T: std::sync::OnceLock<SeedTable> = std::sync::OnceLock::new();
+    T.get_or_init(|| SeedTable::build(3.0, 1.0, true))
+}
+
+/// The normal-depth relation's inverse, built once.
+fn normal_seed_table() -> &'static SeedTable {
+    static T: std::sync::OnceLock<SeedTable> = std::sync::OnceLock::new();
+    T.get_or_init(|| SeedTable::build(5.0 / 3.0, 2.0 / 3.0, false))
+}
+
 fn circle_char_solve(
     d: f64,
     ka: f64,
@@ -2016,16 +2186,21 @@ fn circle_char_solve(
     theta_hi: f64,
 ) -> f64 {
     let y_of = |theta: f64| d / 2.0 * (1.0 - (theta / 2.0).cos());
-    // θ ≈ 8×10⁻⁷ is a depth of ~10⁻¹³·d — dry beyond anything downstream
-    // reads; a root below the bracket answers as that trickle.
-    let mut u_lo = -14.0_f64;
+    // A root below the bracket answers as that trickle.
+    let mut u_lo = CHAR_U_LO;
     let mut u_hi = theta_hi.ln();
-    // Dry-end asymptote: A → d²θ³/48 and both denominators → dθ/2, so
-    // G(u) ≈ (3k_A − k_D)·u + c₀ − ln t. Solving that seeds the iteration
-    // within about one unit of the root for any physical depth.
     let ln_d_half = (d / 2.0).ln();
-    let c0 = ka * (d * d / 48.0).ln() - kd * ln_d_half;
-    let mut u = ((target_ln - c0) / (3.0 * ka - kd)).clamp(u_lo, u_hi);
+    // §5.7: the relation is similar in the diameter. Collecting every
+    // appearance of D on the right leaves a left side in θ alone, so the
+    // demand normalises to a number the shared inverse can be read at.
+    let ln_area_scale = ka * (d * d / 8.0).ln();
+    let table = if den_is_width {
+        crit_seed_table()
+    } else {
+        normal_seed_table()
+    };
+    let s_norm = target_ln - ln_area_scale + kd * if den_is_width { d.ln() } else { ln_d_half };
+    let mut u = table.seed(s_norm).clamp(u_lo, u_hi);
     let mut y_prev = f64::NAN;
     for _ in 0..60 {
         let theta = u.exp();
@@ -2039,8 +2214,7 @@ fn circle_char_solve(
         // either difference.
         let (sh, ch) = (theta / 2.0).sin_cos();
         let one_minus_c = 2.0 * sh * sh;
-        const SMALL: f64 = 0.13;
-        let a_t = if theta < SMALL {
+        let a_t = if theta < CHAR_SMALL {
             let t2 = theta * theta;
             theta * t2 / 6.0 * (1.0 - t2 / 20.0 * (1.0 - t2 / 42.0))
         } else {
@@ -2076,6 +2250,18 @@ fn circle_char_solve(
         } else {
             f64::NAN
         };
+        // §5.7: stop on the correction, measured where the tolerance is
+        // stated. dy/du = Dθsin(θ/2)/4, so the step in u converts to a
+        // step in depth, and a Newton correction that small bounds what
+        // is left of the error by its own square. This is a stronger
+        // statement than two iterates agreeing — which says they agree,
+        // not that either is near the root — and it is what lets a seed
+        // good to 10⁻⁷ answer after one evaluation instead of three.
+        // The seed is never *returned*: it is returned only once the
+        // residual measured at it proves it already within tolerance.
+        if u_next.is_finite() && (u_next - u).abs() * d * sh * theta / 4.0 <= 0.5 * INVERT_TOL {
+            return y_of(u_next.clamp(u_lo, u_hi).exp());
+        }
         if !(u_next > u_lo && u_next < u_hi) {
             u_next = 0.5 * (u_lo + u_hi);
         }
@@ -2183,6 +2369,72 @@ fn interp(ys: &[f64], ws: &[f64], y: f64) -> f64 {
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+
+    /// The seed tables (§5.7) land where their sizing claims they do.
+    ///
+    /// `SEED_NODES` was chosen against these numbers, and the solve's
+    /// single-evaluation stop depends on them: a seed an order worse
+    /// costs an iteration back, silently. Nothing else measures the
+    /// interpolation, so it is measured here against the relation's own
+    /// bisected root.
+    #[test]
+    fn the_seed_tables_land_within_the_bound_they_claim() {
+        for (table, ka, kd, width, bound) in [
+            (crit_seed_table(), 3.0, 1.0, true, 2.0e-7),
+            (normal_seed_table(), 5.0 / 3.0, 2.0 / 3.0, false, 1.0e-9),
+        ] {
+            let g = |u: f64| SeedTable::residual(u, ka, kd, width).0;
+            let s_lo = g(CHAR_U_LO);
+            let u_top = table.u[0];
+            let mut worst = 0.0_f64;
+            for k in 0..4_000 {
+                let s = s_lo + (table.s_hi - s_lo) * (k as f64 + 0.5) / 4_000.0;
+                let (mut lo, mut hi) = (CHAR_U_LO, u_top);
+                for _ in 0..100 {
+                    let m = 0.5 * (lo + hi);
+                    if g(m) < s {
+                        lo = m;
+                    } else {
+                        hi = m;
+                    }
+                }
+                worst = worst.max((table.seed(s) - 0.5 * (lo + hi)).abs());
+            }
+            assert!(worst <= bound, "width={width}: seed off by {worst:e}");
+        }
+    }
+
+    /// The circle's solves normalise the diameter out (§5.7), so the one
+    /// shared inverse has to answer at any size.
+    ///
+    /// The first cut of that normalisation returned `ln(theta)` where the
+    /// depth expression wanted `theta`, which at one diameter looks like
+    /// a plausible depth. Sweeping the diameter is what makes a mistake
+    /// in the collected-out terms visible.
+    #[test]
+    fn the_characteristic_solves_hold_over_every_diameter() {
+        for d in [0.1_f64, 0.25, 0.6, 1.2, 3.0, 8.0] {
+            let s = build(XsectShape::Circular, [d, 0.0, 0.0, 0.0]);
+            let (_, psi_max) = s.psi_max();
+            for frac in [1e-5, 0.01, 0.2, 0.6, 0.9, 0.99] {
+                let yn = s.normal_depth(frac * psi_max).expect("below the peak");
+                assert!(
+                    (s.psi(yn) - frac * psi_max).abs() <= 1e-6 * psi_max.max(1.0),
+                    "d={d} normal frac={frac}: y={yn}"
+                );
+                let q = frac * 0.4 * d * d * (GRAVITY * d).sqrt();
+                let yc = s.critical_depth(q);
+                if yc < s.y_full() {
+                    let got = s.area(yc).powi(3) / s.top_width(yc).max(1e-30);
+                    let want = q * q / GRAVITY;
+                    assert!(
+                        (got - want).abs() <= 1e-6 * want,
+                        "d={d} critical frac={frac}: y={yc}, {got} vs {want}"
+                    );
+                }
+            }
+        }
+    }
 
     fn build(shape: XsectShape, geom: [f64; 4]) -> Section {
         build_section(shape, geom, 1.0, None).unwrap().section
