@@ -848,6 +848,21 @@ the gage's declaration, exactly as for a supplied series (§3.1 of the
 hydrology specification). A malformed line is a parse error naming its line
 number, never skipped.
 
+**Hour 24 is the following midnight.** A reading stamped hour 24 and minute
+0 is the midnight that *ends* the named day, which is 00:00 of the day
+after it. The convention comes from the published station records, whose
+days run 01:00 through 24:00 rather than 00:00 through 23:00, and files
+exported from them carry it into user-prepared records. Seventeen of the
+predecessor's own regression models are unreadable without it.
+
+No other hour above 23 is accepted. The predecessor encodes any hour as a
+fraction of a day and adds it, so it reads 25 or 99 as silently as it reads
+24, rolling into whatever day the arithmetic lands on. That is not a
+convention and there is no record layout in which it means anything, so
+here it stays a parse error naming its line: a seven-field line with an
+hour of 99 is a file whose columns are not what the reader thinks, and
+reading it as four days later hides that.
+
 #### 14.12.1 Archival station records
 
 The predecessor also reads the layouts national weather services publish.

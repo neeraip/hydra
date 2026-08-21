@@ -59,7 +59,15 @@ pub fn parse_rain_file(text: &str) -> Result<Vec<RainReading>, String> {
         if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
             return Err(bad(&format!("{}-{month}-{day} is not a date", year)));
         }
-        if hour > 23 || minute > 59 {
+        // §14.12: hour 24 at minute 0 is the midnight that *ends* the
+        // named day, which is 00:00 of the day after it. The published
+        // station records number their days 01:00 through 24:00, and
+        // exports carry the convention into user-prepared files.
+        // Anything else above 23 stays an error: the predecessor encodes
+        // any hour as a fraction of a day and adds it, so it reads 99 as
+        // silently as 24, and a seven-field line with an hour of 99 is a
+        // file whose columns are not what the reader thinks.
+        if minute > 59 || hour > 24 || (hour == 24 && minute != 0) {
             return Err(bad(&format!("{hour}:{minute:02} is not a clock time")));
         }
         let value = t[6]
@@ -67,10 +75,21 @@ pub fn parse_rain_file(text: &str) -> Result<Vec<RainReading>, String> {
             .ok()
             .filter(|v| v.is_finite())
             .ok_or_else(|| bad(&format!("value {:?} is not a number", t[6])))?;
+        let (date, seconds) = if hour == 24 {
+            let next = crate::simulation::time::civil_from_days(
+                crate::simulation::time::days_from_civil(Date { year, month, day }) + 1,
+            );
+            (next, 0.0)
+        } else {
+            (
+                Date { year, month, day },
+                f64::from(hour) * 3600.0 + f64::from(minute) * 60.0,
+            )
+        };
         readings.push(RainReading {
             station: t[0].to_string(),
-            date: Date { year, month, day },
-            seconds: f64::from(hour) * 3600.0 + f64::from(minute) * 60.0,
+            date,
+            seconds,
             value,
         });
     }
@@ -80,6 +99,50 @@ pub fn parse_rain_file(text: &str) -> Result<Vec<RainReading>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §14.12: hour 24 is the midnight that ends the day.
+    ///
+    /// The published station records number their days 01:00 through
+    /// 24:00, and exports carry it into user-prepared files. Refusing it
+    /// made seventeen of the predecessor's own regression models
+    /// unreadable — every model in its stormwater-control suite, each
+    /// stopped on the one line in a multi-year record that happened to
+    /// land on a month end.
+    #[test]
+    fn hour_twenty_four_is_the_next_days_midnight() {
+        let text = "\
+sta1 2004 3 29 24 0 0.19
+sta1 2004 3 30 1 0 0.19
+";
+        let r = parse_rain_file(text).expect("hour 24 refused");
+        assert_eq!(r.len(), 2);
+        // Rolled to the following day at zero seconds, not held at the
+        // 29th with 86400 s on the clock.
+        assert_eq!(r[0].date.day, 30);
+        assert_eq!(r[0].date.month, 3);
+        assert_eq!(r[0].seconds, 0.0);
+        // An hour apart from the reading after it, as the file intends.
+        assert_eq!(r[1].date.day, 30);
+        assert_eq!(r[1].seconds, 3600.0);
+
+        // Across a month end, and across a year end.
+        let r = parse_rain_file("s 2004 2 29 24 0 1.0\ns 2004 12 31 24 0 2.0\n")
+            .expect("rollover refused");
+        assert_eq!(
+            (r[0].date.year, r[0].date.month, r[0].date.day),
+            (2004, 3, 1)
+        );
+        assert_eq!(
+            (r[1].date.year, r[1].date.month, r[1].date.day),
+            (2005, 1, 1)
+        );
+
+        // And nothing else above 23 is accepted: 24:30 is not a time, and
+        // an hour of 99 is a file whose columns are not what we think.
+        assert!(parse_rain_file("s 2004 3 29 24 30 0.1\n").is_err());
+        assert!(parse_rain_file("s 2004 3 29 25 0 0.1\n").is_err());
+        assert!(parse_rain_file("s 2004 3 29 99 0 0.1\n").is_err());
+    }
 
     #[test]
     fn readings_parse_with_stations_interleaved() {
@@ -114,7 +177,9 @@ sta1 2012 6 29 0 2 0.25
         let err = parse_rain_file("\n\nsta1 2012 13 29 0 1 0.5\n").unwrap_err();
         assert!(err.contains("line 3"), "{err}");
 
-        let err = parse_rain_file("sta1 2012 6 29 24 0 0.5\n").unwrap_err();
+        // 24:00 is a record convention, not a malformed line (§14.12);
+        // 25:00 is neither.
+        let err = parse_rain_file("sta1 2012 6 29 25 0 0.5\n").unwrap_err();
         assert!(err.contains("clock time"), "{err}");
 
         let err = parse_rain_file("sta1 2012 6 29 0 1 wet\n").unwrap_err();
@@ -567,15 +632,31 @@ fn archive_day(date: Date, seconds: f64) -> f64 {
 mod station_format_tests {
     use super::*;
 
-    /// The clock's own boundaries: the last valid instant of a day is
-    /// read, and the first invalid one is refused.
+    /// The clock's own boundaries, and the one hour that is not a clock
+    /// reading at all.
+    ///
+    /// This test used to refuse 24:00 alongside 23:60, on the reasoning
+    /// that neither is a time a clock shows. True of a clock and false of
+    /// these files: the published station records number their days 01:00
+    /// through 24:00, so 24:00 is how an export writes the midnight that
+    /// ends a day (§14.12). Refusing it made seventeen of the
+    /// predecessor's own regression models unreadable. Note that
+    /// `archive_day` immediately above has always carried an offset past
+    /// midnight into the next date; only this path disagreed.
     #[test]
-    fn the_last_instant_of_a_day_is_a_time_and_the_next_is_not() {
+    fn the_last_instant_of_a_day_is_a_time_and_so_is_the_one_that_ends_it() {
         let line = |h: u32, m: u32| format!("STA01  2020  1  1  {h}  {m}  0.10\n");
         let last = parse_rain_file(&line(23, 59)).expect("23:59 is a time");
         assert_eq!(1, last.len());
-        assert!(parse_rain_file(&line(24, 0)).is_err(), "24:00 is not");
+        // The day's closing midnight, read as the next day opening.
+        let end = parse_rain_file(&line(24, 0)).expect("24:00 is a record convention");
+        assert_eq!(end[0].date.day, 2);
+        assert_eq!(end[0].seconds, 0.0);
+        // Still not times: a sixtieth minute, and an hour past the
+        // convention's own end.
         assert!(parse_rain_file(&line(23, 60)).is_err(), "23:60 is not");
+        assert!(parse_rain_file(&line(24, 1)).is_err(), "24:01 is not");
+        assert!(parse_rain_file(&line(25, 0)).is_err(), "25:00 is not");
     }
 
     /// A reading's minutes reach its instant. Every fixture here reads on
