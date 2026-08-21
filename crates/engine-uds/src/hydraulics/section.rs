@@ -689,7 +689,12 @@ fn circle_theta(d: f64, y: f64) -> f64 {
     2.0 * c.acos()
 }
 
-fn circle_area(d: f64, y: f64) -> f64 {
+/// Area, chord and filled angle at one depth, from a single inverse cosine.
+///
+/// The three travel together because they are one construction. Asking for
+/// them apart takes the angle twice: the area needs it, the perimeter is
+/// it, and the chord is the sine the area already recovered.
+fn circle_geom(d: f64, y: f64) -> (f64, f64, f64) {
     // $\sin\theta = 2\sin(\theta/2)\cos(\theta/2)$, and both halves are
     // already to hand without trigonometry: the chord is $d\sin(\theta/2)$
     // and the cosine is the very argument the angle was taken from. So the
@@ -697,6 +702,7 @@ fn circle_area(d: f64, y: f64) -> f64 {
     // segment's area is an inverse-trigonometric quantity — and no sine.
     let c = (1.0 - 2.0 * y / d).clamp(-1.0, 1.0);
     let t = 2.0 * c.acos();
+    let w = circle_width(d, y);
     // Both forms of $\theta - \sin\theta$ cancel as $\theta \to 0$, where
     // the difference falls away to $\theta^3/6$. The identity cancels
     // harder, because the chord reaches it by a rounding of its own
@@ -712,9 +718,13 @@ fn circle_area(d: f64, y: f64) -> f64 {
     let sin_t = if t < CANCELS {
         t.sin()
     } else {
-        2.0 * (circle_width(d, y) / d) * c
+        2.0 * (w / d) * c
     };
-    d * d / 8.0 * (t - sin_t)
+    (d * d / 8.0 * (t - sin_t), w, t)
+}
+
+fn circle_area(d: f64, y: f64) -> f64 {
+    circle_geom(d, y).0
 }
 
 /// The chord of a circle of diameter `d` at depth `y`.
@@ -1672,8 +1682,8 @@ impl Section {
         let y = y.clamp(0.0, self.y_full);
         match &self.kind {
             Kind::Circle { d } => {
-                let t = circle_theta(*d, y);
-                (circle_area(*d, y), circle_width(*d, y), d * t / 2.0)
+                let (a, w, t) = circle_geom(*d, y);
+                (a, w, d * t / 2.0)
             }
             Kind::FilledCircle {
                 d,
@@ -1682,12 +1692,8 @@ impl Section {
                 p_bot,
                 w_bot,
             } => {
-                let t = circle_theta(*d, y + y_bot);
-                (
-                    circle_area(*d, y + y_bot) - a_bot,
-                    circle_width(*d, y + y_bot),
-                    d * t / 2.0 - p_bot + w_bot,
-                )
+                let (a, w, t) = circle_geom(*d, y + y_bot);
+                (a - a_bot, w, d * t / 2.0 - p_bot + w_bot)
             }
             Kind::Transect(t) => t.sweep_geom(y),
             // A shape curve walked once. Falling through to the three
