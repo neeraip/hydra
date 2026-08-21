@@ -103,7 +103,6 @@ struct WdsRun {
 
 struct UdsRun {
     sim: hydra_engine_uds::simulation::Simulation,
-    sink: Option<Box<dyn WriteSeek>>,
     done: bool,
 }
 
@@ -148,11 +147,7 @@ impl EngineSession {
 
     /// Wrap an opened uds session.
     pub fn from_uds(sim: hydra_engine_uds::simulation::Simulation) -> Self {
-        Self::Uds(Box::new(UdsRunOpaque(UdsRun {
-            sim,
-            sink: None,
-            done: false,
-        })))
+        Self::Uds(Box::new(UdsRunOpaque(UdsRun { sim, done: false })))
     }
 
     /// Total simulated duration (s).
@@ -202,10 +197,7 @@ impl EngineSession {
                 run.stream = Some(stream);
                 Ok(())
             }
-            Self::Uds(r) => {
-                r.0.sink = Some(sink);
-                Ok(())
-            }
+            Self::Uds(r) => r.0.sim.begin_results(Box::new(sink)),
         }
     }
 
@@ -240,14 +232,7 @@ impl EngineSession {
                 }
                 Ok(())
             }
-            Self::Uds(r) => {
-                let run = &mut r.0;
-                if let Some(mut sink) = run.sink.take() {
-                    run.sim.write_out(&mut sink)?;
-                    sink.flush()?;
-                }
-                Ok(())
-            }
+            Self::Uds(r) => r.0.sim.finish_results(),
         }
     }
 

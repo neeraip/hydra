@@ -420,6 +420,16 @@ pub struct Simulation {
     vol_rdii: f64,
     /// Recorded reporting boundaries.
     pub snapshots: Vec<Snapshot>,
+    /// The §14.9 results file, written as the run produces it.
+    ///
+    /// Attached by [`Self::begin_results`] and closed by
+    /// [`Self::finish_results`]; absent when the caller wants no results
+    /// file. Not state: a resumed run attaches its own sink, and the
+    /// bytes already written are in the file the caller holds.
+    out: Option<crate::io::out_writer::OutStream<Box<dyn std::io::Write + Send>>>,
+    /// The first write failure the stream met, held until the caller
+    /// closes it. A step is not the place to fail on a results file.
+    out_error: Option<std::io::Error>,
     /// Run-time notices, in time order.
     pub notices: Vec<RuntimeNotice>,
 }
@@ -752,6 +762,8 @@ impl Simulation {
                 hydro_mass_now: Vec::new(),
                 next_rule_t: 0.0,
                 snapshots: Vec::new(),
+                out: None,
+                out_error: None,
                 notices,
                 net,
             },
@@ -1842,6 +1854,18 @@ impl Simulation {
 
         while self.next_report <= self.router.time() + 1e-9 {
             let snap = self.record_snapshot(self.next_report);
+            // Streamed here rather than gathered and written at the end:
+            // an instant is complete the moment it is recorded, and a run
+            // long enough to matter cannot hold them all (§14.9).
+            if let Some(out) = self.out.as_mut() {
+                // A results file that cannot be written is the caller's
+                // to hear about; the run itself is unaffected, so the
+                // error is carried to `finish_results` rather than
+                // stopping the simulation mid-step.
+                if let Err(e) = out.append(&snap) {
+                    self.out_error.get_or_insert(e);
+                }
+            }
             self.snapshots.push(snap);
             // §11.2: the reported maximum is the maximum over these
             // instants alone, which is what a reader finds in the
@@ -2672,6 +2696,11 @@ impl Simulation {
             vertex_by_id: _,
             link_by_id: _,
             climate_records: _,
+            // Output in flight, and not state: a resumed run attaches
+            // its own sink, and what has already been written is in the
+            // file the caller holds, not in the checkpoint.
+            out: _,
+            out_error: _,
             // Supplied by the caller, who must supply them again: their
             // contents are not copied here, only fingerprinted.
             iface_in: _,
@@ -3470,6 +3499,49 @@ impl Simulation {
             },
             w,
         )
+    }
+
+    /// Stream the §14.9 results to `sink` as the run produces them.
+    ///
+    /// The alternative is [`Self::write_out`], which writes the whole run
+    /// at the end from the gathered instants. Streaming exists because
+    /// that set is the largest thing a long run owns.
+    ///
+    /// Attach before stepping: the header records where the first
+    /// reporting instant falls, so instants already produced would be
+    /// missing from a file opened late.
+    pub fn begin_results(&mut self, sink: Box<dyn std::io::Write + Send>) -> std::io::Result<()> {
+        // The header backdates from the run's *first* instant, which on a
+        // run resumed from a checkpoint (§12.3) is one the checkpoint
+        // restored rather than the next one falling due. Those restored
+        // instants are written straight away, so a resumed run still
+        // writes the whole run's results and not merely the tail.
+        let first = self.snapshots.first().map_or(self.next_report, |s| s.t);
+        let mut out = crate::io::out_writer::OutStream::begin(
+            sink,
+            &self.net,
+            self.start_epoch,
+            self.report_step,
+            first,
+        )?;
+        for snap in &self.snapshots {
+            out.append(snap)?;
+        }
+        self.out = Some(out);
+        Ok(())
+    }
+
+    /// Close a streamed results file, reporting the first write failure
+    /// the run met if there was one. A no-op without one attached.
+    pub fn finish_results(&mut self) -> std::io::Result<()> {
+        if let Some(e) = self.out_error.take() {
+            self.out = None;
+            return Err(e);
+        }
+        match self.out.take() {
+            Some(out) => out.finish().map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     /// Write the §14.9 binary results to `w`; the caller owns where the
