@@ -1690,6 +1690,33 @@ impl Section {
                 )
             }
             Kind::Transect(t) => t.sweep_geom(y),
+            // A shape curve walked once. Falling through to the three
+            // separate calls asked `custom_segment` where the surface
+            // stood three times over, and the width it settled on is the
+            // one the edge already carries.
+            Kind::Custom {
+                ys,
+                ws,
+                area_at,
+                perim_at,
+            } => match custom_segment(ys, y) {
+                0 => (0.0, ws[0], ws[0]),
+                m if m >= ys.len() => (
+                    *area_at.last().unwrap_or(&0.0),
+                    *ws.last().unwrap_or(&0.0),
+                    *perim_at.last().unwrap_or(&0.0),
+                ),
+                m => {
+                    let (y1, w1) = custom_edge(ys, ws, m, y);
+                    let dy = y1 - ys[m - 1];
+                    let dx = (w1 - ws[m - 1]) / 2.0;
+                    (
+                        area_at[m - 1] + 0.5 * (ws[m - 1] + w1) * (y1 - ys[m - 1]),
+                        w1,
+                        perim_at[m - 1] + 2.0 * (dy * dy + dx * dx).sqrt(),
+                    )
+                }
+            },
             _ => (self.area(y), self.top_width(y), self.perimeter_open(y)),
         }
     }
@@ -2313,10 +2340,16 @@ fn custom_segment(ys: &[f64], y: f64) -> usize {
 fn custom_edge(ys: &[f64], ws: &[f64], i: usize, y: f64) -> (f64, f64) {
     let y1 = ys[i].min(y);
     if y1 == ys[i] {
-        (y1, ws[i - 1] + (ws[i] - ws[i - 1]))
-    } else {
-        (y1, interp(ys, ws, y1))
+        return (y1, ws[i - 1] + (ws[i] - ws[i - 1]));
     }
+    // Segment `i` is the one `interp` would have found — `custom_segment`
+    // returns the first point at or above the surface, and that is what
+    // `interp` stops at — so re-entering it here would scan the curve
+    // from the bottom a second time to reach a segment already in hand.
+    // The expression is `interp`'s own, which is what keeps the two
+    // agreeing in the last bit.
+    let f = (y1 - ys[i - 1]) / (ys[i] - ys[i - 1]);
+    (y1, ws[i - 1] + f * (ws[i] - ws[i - 1]))
 }
 
 /// $x^{2/3}$, Manning's exponent.
