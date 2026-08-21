@@ -354,6 +354,49 @@ The hydraulic radius holds at its full-pipe value because the slot is
 storage, not conveyance: friction in a surcharged pipe is that of the full
 pipe.
 
+**The same reasoning governs the area, and it governs it twice over.** A
+surcharged section has two areas that are not the same number, and every
+quantity that reads one has to be clear about which it means:
+
+$$\tilde A(y) = A_{full} + w_{slot}(y - y_{full}) \quad\text{(stored)},
+\qquad \hat A(y) = \min\!\big(\tilde A(y),\, A_{full}\big)
+\quad\text{(conveying)}.$$
+
+**Continuity reads the stored area** $\tilde A$: the water standing in a slot
+is real water, it occupies volume, and §11's ledger must find it. **The
+momentum equation of §6.3 reads the conveying area** $\hat A$ — in its
+pressure term $gA\,\partial H/\partial x$, in both inertial terms, and in
+the velocity $v = Q/A$ from which the friction slope is built. A slot
+conveys nothing: it is a device for letting a free-surface formulation
+describe a pressurised pipe, and a pipe under 8 m of head still has the
+cross-section it was laid with.
+
+Reading the stored area in the pressure term makes a surcharged conduit
+carry more flow than its head gradient can drive, by exactly the ratio
+$\tilde A/A_{full}$. The error grows with surcharge depth and always
+signs the same way, so peaks settle low. On a 0.9 m pipe under 8 m of
+surcharge at the default celerity the excess is near 3 %, and the head a
+steady flow needs falls about 4 % short of the Manning value that the same
+$\tilde R = R_{full}$ two paragraphs above prescribes — the two halves of
+the same section disagreeing with each other. The error is always the same
+sign, so surcharged peaks settle low.
+
+> **CORRESPONDENCE:** the predecessor's default branch reaches the same
+> place by a blunter route: before forming any momentum term it clamps both
+> end depths to the full depth, so its flow area is $A_{full}$ by
+> construction and it reproduces the closed form exactly. Its *optional*
+> slot mode does not clamp, and its slot is an empirical curve far wider
+> than a celerity-derived one — 1 % of the maximum width above
+> $1.78\,y_{full}$, where the celerity form gives about a third of that on
+> a 0.9 m pipe — so it commits this error and commits it harder. Measured
+> on a 1000 ft, 0.9 m conduit surcharged 8 m and carrying a steady
+> 1.42 m³/s, against a closed-form Manning drop of 13.30 ft: the
+> predecessor's default 13.301 ft, its slot mode 11.557 ft. Conveying the
+> conveying area is not a concession to the predecessor's slot; it is a
+> correction the predecessor's slot also needs.
+>
+> *Source: `dwflow.c:125–129`, clamping `y1` and `y2` to `yFull` when the method is not `SLOT`; `getArea()` and `getSlotWidth()` at `:609` and `:575`, which add $w_{slot}(y-y_{full})$ to the area when it is.*
+
 **Accounting.** Water stored in slots is real stored volume to the continuity
 accounts of §11, reported within channel storage; it is bounded by the
 celerity choice and vanishes as $c \to \infty$.

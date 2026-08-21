@@ -281,6 +281,26 @@ impl SlotGeom {
         self.sec.area(y_full) + self.band_full + self.w_slot * (y - y_full)
     }
 
+    /// The area that carries flow (§6.2), from the area that holds water.
+    ///
+    /// Takes the stored area rather than the depth because every caller
+    /// has already built it, and wants the two side by side.
+    ///
+    /// Above the crown they are different numbers: the slot's own area is
+    /// storage, and a pipe under eight metres of head still has the
+    /// cross-section it was laid with. Reading the stored area in the
+    /// momentum equation lets a surcharged conduit carry more flow than
+    /// its head gradient can drive, by exactly the ratio of the two, and
+    /// the error signs the same way every time. It is the same reasoning
+    /// that holds the hydraulic radius at its full-pipe value one method
+    /// above, applied to the other half of the section.
+    fn conveying(&self, stored: f64) -> f64 {
+        if self.w_slot == 0.0 {
+            return stored;
+        }
+        stored.min(self.sec.a_full())
+    }
+
     /// Area, hydraulic radius and top width together (§6.3).
     ///
     /// The momentum update wants all three at the same depth and used to
@@ -3191,10 +3211,22 @@ impl Router {
             }
         }
 
-        let (a1, r1, w1) = sec.area_radius_width(y1);
-        let a2 = sec.area(y2);
+        // §6.2: two areas, and they are not the same number above the
+        // crown. `*_stored` is what the section holds and what continuity
+        // must find; the bare names are what conveys, and every momentum
+        // term below reads those.
+        let (a1_stored, r1, w1) = sec.area_radius_width(y1);
+        let a2_stored = sec.area(y2);
         let y_mid = 0.5 * (y1 + y2);
-        let (a_mid, r_mid, w_mid) = sec.area_radius_width(y_mid);
+        let (a_mid_stored, r_mid, w_mid) = sec.area_radius_width(y_mid);
+        let (a1, a2, a_mid) = (
+            sec.conveying(a1_stored),
+            sec.conveying(a2_stored),
+            sec.conveying(a_mid_stored),
+        );
+        // The previous step's mid area enters the local-acceleration term
+        // beside this one, so it has to be the same kind of area.
+        let a_old = sec.conveying(a_old);
         let is_full = y1 >= y_full && y2 >= y_full;
 
         // Dry channels carry no flow this trial (§6.6); a channel closed
@@ -3206,7 +3238,7 @@ impl Router {
             || a_mid <= DRY
             || !self.chan_open[ci]
         {
-            return (0.0, 0.5 * (a1 + a2), s1, s2, 0.0, 0.0);
+            return (0.0, 0.5 * (a1_stored + a2_stored), s1, s2, 0.0, 0.0);
         }
 
         // Velocity, capped (§6.3).
@@ -3295,7 +3327,9 @@ impl Router {
                 seep = c.seepage * w * c.length;
             }
             loss_rate = evap + seep;
-            let cap = a_mid * c.length / dt;
+            // The volume actually standing in the channel bounds what
+            // can be taken out of it, so this reads the stored area.
+            let cap = a_mid_stored * c.length / dt;
             if loss_rate > cap {
                 let f = cap / loss_rate;
                 evap *= f;
@@ -3345,7 +3379,7 @@ impl Router {
 
         (
             q_new * c.barrels,
-            a_mid,
+            a_mid_stored,
             s1,
             s2,
             loss_rate * c.barrels,
@@ -3877,6 +3911,73 @@ TS1  1:00  0
         });
         assert!(r.report.accepted > 0, "no step was taken at all");
         assert_eq!(lat.len(), 0);
+    }
+
+    /// A pipe surcharged at both ends carries Manning's flow, to the
+    /// digit.
+    ///
+    /// This is the first assertion here that checks the §6.3 momentum
+    /// assembly against arithmetic rather than against itself. A closed
+    /// conduit full along its whole length under steady flow has one
+    /// answer, $\Delta H = S_f L$ with $S_f$ from the full-pipe radius,
+    /// and no boundary or transition to blur it: both ends are held under
+    /// the crown by construction, the upstream by inflow and the
+    /// downstream by a fixed tailwater.
+    ///
+    /// The defect it exists for: §6.2's slot area was being read by the
+    /// momentum equation, which let a surcharged conduit carry more flow
+    /// than its head gradient could drive, by the ratio of the stored area
+    /// to the conveying one. On this fixture that was 4 %. Every other
+    /// surcharge assertion in this file passed against it, including
+    /// `surcharge_rises_smoothly_through_the_slot`, which cannot be
+    /// tightened past 15 % because its downstream end is a free outfall
+    /// and carries a boundary effect of its own. A loose test on a
+    /// blurred case is not a check on the exact one.
+    #[test]
+    fn a_pipe_full_end_to_end_loses_exactly_mannings_head() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.4  20
+
+[OUTFALLS]
+O1  100.0  FIXED  104.0  NO
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.15;
+        r.advance(14_400.0, &inflow_at(0, q_in));
+
+        let c = &r.chans[0];
+        let a_full = c.geom.sec.a_full();
+        let r_full = c.geom.sec.r_full();
+        // Both ends under the crown, which is what makes the answer exact.
+        assert!(r.y[0] > 3.0, "upstream not surcharged: {}", r.y[0]);
+        assert!(r.y[1] > 3.0, "tailwater not surcharged: {}", r.y[1]);
+        // And the flow it settled at is the flow put in.
+        assert!(
+            (r.q[0] - q_in).abs() < 0.01 * q_in,
+            "conveyed {} against {q_in}",
+            r.q[0]
+        );
+
+        let v = r.q[0] / a_full;
+        let sf = c.n * c.n * v * v / super::super::section::four_thirds(r_full);
+        let want = sf * c.length;
+        let got = (100.4 + r.y[0]) - (100.0 + r.y[1]);
+        assert!(
+            (got - want).abs() < 0.01 * want,
+            "head drop {got} against Manning's {want} ({:.2}% out)",
+            100.0 * (got - want) / want
+        );
     }
 
     /// The reported minimum step is a step the scheme chose.
