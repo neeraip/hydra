@@ -135,11 +135,16 @@ test-scripts:
 bench:
     cargo bench -p hydra-engine-wds
 
-# Regenerate the performance-page numbers: build the release CLI, then time
-# full end-to-end runs across the bundled fixture networks (Markdown table).
+# Set HYDRA_UDS_CORPUS to a directory of .inp files to time real drainage
+# models as well as the generated ones.
+# Regenerate the performance-page numbers for both engines (Markdown tables)
 bench-report:
     cargo build --release -p hydra-cli
     python3 scripts/benchmark.py
+
+# Write the generated drainage benchmark models without timing them
+bench-models:
+    python3 scripts/make_uds_benchmark.py
 
 # cargo-llvm-cov is installed by `just setup-tools`.
 # Generate an HTML test-coverage report (target/llvm-cov/html/index.html).
