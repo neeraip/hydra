@@ -918,7 +918,17 @@ impl Surface {
             }
 
             if let ParcelOutlet::Parcel(target) = p.outlet {
-                runon_to_parcel[target] += total;
+                // §3.2: a parcel is never its own upstream. Feeding it its
+                // own runoff makes a loop that the one-step delay hides:
+                // the water returns, runs off again, and sums like a
+                // geometric series the surface's losses barely damp. On
+                // the predecessor's porous pavement test that turned four
+                // inches of rain into four hundred and forty-eight, with
+                // continuity closing throughout because the phantom
+                // run-on and the phantom runoff cancelled.
+                if target != pi {
+                    runon_to_parcel[target] += total;
+                }
             }
             p.sub[2].alpha = saved_alpha;
             p.sub[2].dstore = saved_dstore;

@@ -113,12 +113,34 @@ share a prorated $\alpha$ over their combined area — under the
 to $d_s$ handled analytically before integration engages. Parcel runoff is
 the area-weighted sum. Run-on from upstream parcels and outfall returns
 spreads over the non-measure area only, one step delayed per hop, applied
-like additional rainfall on the receiver; a fraction of impervious runoff
+like additional rainfall on the receiver — **a parcel is never its own
+upstream**: one naming itself as its outlet sends its runoff out of the
+parcel system rather than back onto its own surface; a fraction of impervious runoff
 may re-route onto the pervious sub-area or (exclusively) the reverse; and
 $n = 0$ bypasses routing entirely — ponded water above depression storage
 converts to runoff each step — permitting runoff-coefficient emulation.
 The width parameter is the calibration handle and carries the predecessor's
 meaning exactly.
+
+The self-outlet rule needs stating because the delay makes the alternative
+look convergent rather than obviously circular. Each hop costs a step, so
+a parcel feeding itself sees its runoff return as run-on, become runoff
+again, and sum like a geometric series whose ratio is set by whatever the
+surface loses per pass. On a parcel that is wholly impervious and wholly
+covered by a control measure, the losses per pass are nearly nothing and
+the series barely converges: measured on the predecessor's own porous
+pavement test, four inches of rain reported as four hundred and
+forty-eight, in a run whose continuity still closed to a quarter of a
+percent because the phantom run-on and the phantom runoff balanced each
+other exactly. A mass balance cannot see water that is conserved while it
+circulates.
+
+> **CORRESPONDENCE:** the predecessor excludes self-routing in both places
+> it would matter — it adds run-on to another parcel only where the target
+> is not the source, and it counts a self-routing parcel's outflow as
+> system runoff rather than as a transfer. This engine follows it exactly.
+>
+> *Source: `subcatch.c:540–543`, guarded `k != j`; `:742`, whose outflow test passes a self-routing parcel through.*
 
 ### 3.3 Infiltration
 

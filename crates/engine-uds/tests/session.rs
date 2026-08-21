@@ -287,6 +287,69 @@ RAIN  2:00  0
     )
 }
 
+/// A parcel naming itself as its outlet does not water itself.
+///
+/// The defect: run-on was delivered to the named target without checking
+/// it was not the source, and the one-step delay hid the loop — the water
+/// returned, ran off again, and summed like a geometric series the
+/// surface barely damped. On the predecessor's own porous-pavement test,
+/// four inches of rain came out as four hundred and forty-eight.
+///
+/// What makes it worth a test of its own is that the ledger could not see
+/// it. Continuity closed to a quarter of a percent throughout, because
+/// the phantom run-on and the phantom runoff cancelled each other exactly.
+/// So the assertion here is not on the balance but on the bound: runoff
+/// from a parcel with no external inflow cannot exceed the rain that fell
+/// on it.
+#[test]
+fn a_parcel_that_outlets_to_itself_does_not_water_itself() {
+    // 25 mm/h for two hours on 2 ha, fully impervious so the losses that
+    // would damp a loop are as small as they get.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  S1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  1:00  25.0
+RAIN  2:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let surf = sim.ledgers().surface.expect("surface ledger");
+    // 25 mm/h over 2 h on 2 ha. Nothing else feeds this parcel, so the
+    // rain is the whole of the surface's inflow side. Under the loop the
+    // phantom run-on joined it and this read a hundred times over.
+    let rain_vol = 0.025 * 2.0 * 20_000.0;
+    assert!(
+        (surf.inflow - rain_vol).abs() < 0.02 * rain_vol,
+        "surface inflow {} against the {rain_vol} m3 of rain that fell",
+        surf.inflow
+    );
+    // And the balance still closes, which it also did while looping.
+    assert!(surf.error_percent.abs() < 1.0, "{}", surf.error_percent);
+}
+
 #[test]
 fn an_impervious_parcel_converts_rain_to_runoff() {
     // Fully impervious: everything that falls beyond depression storage
