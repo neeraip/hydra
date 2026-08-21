@@ -1914,6 +1914,28 @@ impl Section {
                     circle_char_solve(*d, 3.0, 1.0, true, target.ln(), theta_hi).min(self.y_full)
                 }
             }
+            Kind::Custom {
+                ys,
+                ws,
+                area_at,
+                perim_at,
+            } => {
+                // §5.7: $A^3/W$ in logarithms, off the same walk.
+                if self.crit_full < target {
+                    self.y_full
+                } else {
+                    let target_ln = target.ln();
+                    newton_bracketed(
+                        &|y| {
+                            let (a, w, _, dw, _) = custom_sweep(ys, ws, area_at, perim_at, y);
+                            let (a, w) = (a.max(1e-300), w.max(1e-30));
+                            (3.0 * a.ln() - w.ln() - target_ln, 3.0 * (w / a) - dw / w)
+                        },
+                        0.0,
+                        self.y_full,
+                    )
+                }
+            }
             Kind::Transect(t) => {
                 // §5.7: Newton on depth, the derivatives from the same
                 // survey walk as the values.
@@ -1981,6 +2003,32 @@ impl Section {
                         let s = t.sweep_d(y);
                         let k = (t.n_channel * s.k).max(1e-300);
                         (k.ln() - target_ln, s.dk / s.k.max(1e-300))
+                    },
+                    0.0,
+                    self.y_at_psi_max,
+                )
+                .min(self.y_at_psi_max),
+            );
+        }
+        if let Kind::Custom {
+            ys,
+            ws,
+            area_at,
+            perim_at,
+        } = &self.kind
+        {
+            // §5.7: $\Psi = A^{5/3}/P^{2/3}$, so in logarithms the
+            // derivative is the two slopes the walk already returns.
+            let target_ln = target_psi.ln();
+            return Some(
+                newton_bracketed(
+                    &|y| {
+                        let (a, w, per, _, dp) = custom_sweep(ys, ws, area_at, perim_at, y);
+                        let (a, per) = (a.max(1e-300), per.max(1e-300));
+                        (
+                            (5.0 / 3.0) * a.ln() - (2.0 / 3.0) * per.ln() - target_ln,
+                            (5.0 / 3.0) * (w / a) - (2.0 / 3.0) * (dp / per),
+                        )
                     },
                     0.0,
                     self.y_at_psi_max,
@@ -2311,6 +2359,59 @@ fn circle_char_solve(
 fn segment_area(r: f64, y: f64) -> f64 {
     let t = 2.0 * ((1.0 - y / r).clamp(-1.0, 1.0)).acos();
     r * r / 2.0 * (t - t.sin())
+}
+
+/// A shape curve's geometry and its slopes at one depth (§5.7).
+///
+/// Returns area, width, wetted perimeter, and the derivatives of the last
+/// two in depth. The derivatives cost nothing the walk was not already
+/// paying: $\mathrm{d}A/\mathrm{d}y$ *is* the width, and the segment the
+/// surface stands in has one slope, so the width and the two slants grow
+/// at rates the same two curve points already give.
+///
+/// This exists for the same reason `sweep_d` exists for the transect: a
+/// bracketed solve on depth is 21 halvings to a micron, where a Newton
+/// step off the same walk is five. It is the walk that costs, not the
+/// arithmetic on it.
+fn custom_sweep(
+    ys: &[f64],
+    ws: &[f64],
+    area_at: &[f64],
+    perim_at: &[f64],
+    y: f64,
+) -> (f64, f64, f64, f64, f64) {
+    match custom_segment(ys, y) {
+        0 => (0.0, ws[0], ws[0], 0.0, 0.0),
+        m if m >= ys.len() => (
+            *area_at.last().unwrap_or(&0.0),
+            *ws.last().unwrap_or(&0.0),
+            *perim_at.last().unwrap_or(&0.0),
+            0.0,
+            0.0,
+        ),
+        m => {
+            let (y1, w1) = custom_edge(ys, ws, m, y);
+            let dy = y1 - ys[m - 1];
+            let dx = (w1 - ws[m - 1]) / 2.0;
+            let span = ys[m] - ys[m - 1];
+            // The segment's own slope, which both derivatives are built
+            // from: a horizontal step is a vertical wall and adds nothing
+            // to the width, and the slant is the hypotenuse of the two.
+            let dw = if span > 0.0 {
+                (ws[m] - ws[m - 1]) / span
+            } else {
+                0.0
+            };
+            let half = dw / 2.0;
+            (
+                area_at[m - 1] + 0.5 * (ws[m - 1] + w1) * (y1 - ys[m - 1]),
+                w1,
+                perim_at[m - 1] + 2.0 * (dy * dy + dx * dx).sqrt(),
+                dw,
+                2.0 * (1.0 + half * half).sqrt(),
+            )
+        }
+    }
 }
 
 /// The top edge of custom-shape segment `i` when the water stands at `y`:
@@ -2829,6 +2930,127 @@ mod tests {
             let (y1, w1) = custom_edge(ys, ws, i, mid);
             assert_eq!(y1, mid);
             assert_eq!(w1, interp(ys, ws, mid));
+        }
+    }
+
+    /// The shape curve's two slopes are the slopes of its two values.
+    ///
+    /// Tested here rather than through the solves that use them, because
+    /// the solves cannot see a wrong one: `newton_bracketed` keeps a
+    /// bracket, so a derivative with the wrong sign still converges, just
+    /// by halving instead of by stepping. Flipping the sign of
+    /// $\mathrm{d}W/\mathrm{d}y$ in the critical-depth residual changed
+    /// no result anywhere and no test noticed. A derivative that is only
+    /// ever used as a hint has to be checked as a derivative.
+    #[test]
+    fn a_shape_curves_slopes_are_the_slopes_of_its_values() {
+        let points = [(0.0, 0.4), (0.3, 0.4), (0.8, 1.4), (1.0, 0.2)];
+        let s = build_section(XsectShape::Custom, [2.0, 0.0, 0.0, 0.0], 1.0, Some(&points))
+            .unwrap()
+            .section;
+        let Kind::Custom {
+            ys,
+            ws,
+            area_at,
+            perim_at,
+        } = &s.kind
+        else {
+            panic!("not a shape curve");
+        };
+
+        let h = 1e-6;
+        // Probe inside each segment, away from the corners where the
+        // slopes step and a central difference straddles two of them.
+        let mut probes = Vec::new();
+        for w in ys.windows(2) {
+            for f in [0.25, 0.5, 0.75] {
+                probes.push(w[0] + f * (w[1] - w[0]));
+            }
+        }
+        assert!(probes.len() >= 9, "curve too short to probe");
+        for y in probes {
+            let (_, w, per, dw, dp) = custom_sweep(ys, ws, area_at, perim_at, y);
+            let up = custom_sweep(ys, ws, area_at, perim_at, y + h);
+            let down = custom_sweep(ys, ws, area_at, perim_at, y - h);
+            // dA/dy is the width, which is the whole reason the area
+            // integrates the width.
+            let da = (up.0 - down.0) / (2.0 * h);
+            assert!(
+                (da - w).abs() < 1e-4 * w.max(1.0),
+                "dA/dy at {y}: {da} vs {w}"
+            );
+            let dw_num = (up.1 - down.1) / (2.0 * h);
+            assert!(
+                (dw_num - dw).abs() < 1e-4 * dw.abs().max(1.0),
+                "dW/dy at {y}: {dw_num} vs {dw}"
+            );
+            let dp_num = (up.2 - down.2) / (2.0 * h);
+            assert!(
+                (dp_num - dp).abs() < 1e-4 * dp.abs().max(1.0),
+                "dP/dy at {y}: {dp_num} vs {dp}"
+            );
+            let _ = per;
+        }
+    }
+
+    /// A shape curve's §5.7 solves answer what bisection answers.
+    ///
+    /// Both used to *be* bisection on this section: 21 halvings to a
+    /// micron with a full walk of the curve at each, where a Newton step
+    /// off the same walk takes five. That was 10 % of a Bellinge run,
+    /// which has 63 shape-curve conduits among a thousand.
+    ///
+    /// Swapping a root-finder is exactly the change that looks free and is
+    /// not, because the derivative is hand-written and a sign or a factor
+    /// in it still converges — to the wrong root, or to the right one
+    /// slowly enough that nothing notices. So the reference here is the
+    /// relation itself, halved to exhaustion, over a curve with a vertical
+    /// wall, a flare and a closing lid so the slopes it is built from take
+    /// every value they can.
+    #[test]
+    fn a_shape_curve_solves_where_bisection_would() {
+        // Vertical wall to 0.3, flaring to 0.8, closing back in to the lid.
+        let points = [(0.0, 0.4), (0.3, 0.4), (0.8, 1.4), (1.0, 0.2)];
+        let s = build_section(XsectShape::Custom, [2.0, 0.0, 0.0, 0.0], 1.0, Some(&points))
+            .unwrap()
+            .section;
+
+        let halve = |f: &dyn Fn(f64) -> f64, hi: f64, target: f64| {
+            let (mut a, mut b) = (0.0, hi);
+            for _ in 0..100 {
+                let m = 0.5 * (a + b);
+                if f(m) < target {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            0.5 * (a + b)
+        };
+
+        let (y_peak, psi_max) = s.psi_max();
+        for frac in [1e-5, 1e-3, 0.05, 0.3, 0.7, 0.95, 0.999] {
+            let t = frac * psi_max;
+            let got = s.normal_depth(t).expect("below the peak");
+            let want = halve(&|y| s.psi(y), y_peak, t);
+            assert!(
+                (got - want).abs() < 2e-6,
+                "normal frac={frac}: {got} vs {want}"
+            );
+        }
+        // Above the section factor's peak there is no normal depth at all.
+        assert!(s.normal_depth(psi_max * 1.01).is_none());
+
+        for q in [1e-4, 0.05, 0.3, 1.0, 3.0] {
+            let got = s.critical_depth(q);
+            let target = q * q / GRAVITY;
+            let f = |y: f64| s.area(y).powi(3) / s.top_width(y).max(1e-30);
+            if f(s.y_full()) < target {
+                assert_eq!(got, s.y_full(), "q={q} should cap at full");
+                continue;
+            }
+            let want = halve(&f, s.y_full(), target);
+            assert!((got - want).abs() < 2e-6, "critical q={q}: {got} vs {want}");
         }
     }
 
