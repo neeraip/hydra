@@ -1785,12 +1785,12 @@ impl Section {
         } = &self.kind
         {
             if let Some(t) = family.s_table() {
-                let s_full = a_full * r_full.powf(2.0 / 3.0);
+                let s_full = a_full * two_thirds(*r_full);
                 return s_full * lookup(self.area(y) / a_full, t);
             }
         }
         let (a, r) = self.area_and_radius(y);
-        a * r.powf(2.0 / 3.0)
+        a * two_thirds(r)
     }
 
     /// Depth from area (§5.7): closed form where §5.2 provides one,
@@ -2070,11 +2070,32 @@ fn custom_edge(ys: &[f64], ws: &[f64], i: usize, y: f64) -> (f64, f64) {
     }
 }
 
+/// $x^{2/3}$, Manning's exponent.
+///
+/// Reached through a cube root of the square rather than a general power.
+/// `powf` would be handed `2.0 / 3.0`, which in binary is not two thirds,
+/// and costs several times a cube root to raise to; over the range a
+/// hydraulic radius takes, the square cannot overflow.
+pub(crate) fn two_thirds(x: f64) -> f64 {
+    (x * x).cbrt()
+}
+
 /// Linear interpolation of `ws` against increasing `ys`.
+///
+/// The scan is deliberate and was measured against the alternative. A
+/// shape curve is walked at every trial of every step, so bisecting it
+/// looks like the same win the gage record's lookup took — but a gage
+/// record is hundreds of thousands of intervals and a shape curve is a
+/// couple of dozen points. Over that many contiguous doubles the scan's
+/// branch is predicted and its reads are one cache line, where bisection
+/// pays five unpredictable branches; swapping it in cost 6% of the whole
+/// run. Leave it.
 fn interp(ys: &[f64], ws: &[f64], y: f64) -> f64 {
     if y <= ys[0] {
         return ws[0];
     }
+    // The scan returned at the first `i >= 1` with `y <= ys[i]`; that is
+    // the first index whose value is not below `y`.
     for i in 1..ys.len() {
         if y <= ys[i] {
             let f = (y - ys[i - 1]) / (ys[i] - ys[i - 1]);

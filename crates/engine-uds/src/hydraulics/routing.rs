@@ -1280,7 +1280,7 @@ impl Router {
             st.full_depth = c.geom.sec.y_full();
             st.full_flow = c.barrels
                 * c.geom.sec.a_full()
-                * c.geom.sec.r_full().powf(2.0 / 3.0)
+                * super::section::two_thirds(c.geom.sec.r_full())
                 * c.slope.sqrt()
                 / c.n;
         }
@@ -1660,7 +1660,7 @@ impl Router {
             let y_full = c.geom.sec.y_full();
             let a = c.geom.sec.area(y_full);
             let r = c.geom.sec.hyd_radius(y_full);
-            let q_full = a * r.powf(2.0 / 3.0) * c.slope.sqrt() / c.n * c.barrels;
+            let q_full = a * super::section::two_thirds(r) * c.slope.sqrt() / c.n * c.barrels;
             (q_full, y_full, c.length, c.slope)
         })
     }
@@ -3535,7 +3535,7 @@ impl Router {
             check = fr >= 1.0;
         }
         if check {
-            let q_norm = c.slope.sqrt() / c.n * a1 * r1.powf(2.0 / 3.0);
+            let q_norm = c.slope.sqrt() / c.n * a1 * super::section::two_thirds(r1);
             if q_norm < q {
                 return q_norm;
             }
