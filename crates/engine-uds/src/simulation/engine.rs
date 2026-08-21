@@ -3360,6 +3360,15 @@ impl Simulation {
     /// Write the routing interface outflow file (§14.8): outlet
     /// vertices' inflows and concentrations per reporting period.
     pub fn write_routing_outflows(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        // A run that disclaimed checkpointing kept no instants (§12.3),
+        // so there is nothing here to write. An empty file would be a
+        // wrong answer rather than a failure, which is worse.
+        if !self.retain_snapshots {
+            return Err(std::io::Error::other(
+                "this run was opened without checkpointing, so the reporting instants \
+                 this file is built from were not kept",
+            ));
+        }
         crate::io::iface::write_routing_file(
             &self.net,
             &self.snapshots,
@@ -3584,6 +3593,15 @@ impl Simulation {
     /// Write the §14.9 binary results to `w`; the caller owns where the
     /// bytes go (§12.2).
     pub fn write_out(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        // A run that disclaimed checkpointing kept no instants (§12.3),
+        // so there is nothing here to write. An empty file would be a
+        // wrong answer rather than a failure, which is worse.
+        if !self.retain_snapshots {
+            return Err(std::io::Error::other(
+                "this run was opened without checkpointing, so the reporting instants \
+                 this file is built from were not kept",
+            ));
+        }
         crate::io::out_writer::write_out(
             &self.net,
             &self.snapshots,
