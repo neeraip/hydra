@@ -518,6 +518,39 @@ The first criterion certifies the iterates have settled; the second certifies
 that the state they settled at conserves mass. Iteration runs a minimum of 2
 and a maximum of `max_trials` (default 8) passes.
 
+**Settled vertices, and the channels between them.** Criterion 1 is written
+per vertex, so it answers a per-vertex question before it answers the
+network's: a vertex whose head moved by no more than $\varepsilon_H$ across
+an iterate has settled, whatever the rest of the network did that iterate.
+A channel whose two end vertices have both settled is therefore about to be
+re-evaluated for a change in its own inputs that criterion 1 has already
+ruled negligible. From the second iterate onward it may instead keep the
+flow, mid-section area, end surface-area contributions and loss rates it
+last computed. Outfall vertices sit outside criterion 1 (§6.4) and so never
+settle: a channel with an outfall end is always re-evaluated.
+
+The skip is bounded by the criterion that licenses it. A kept flow is stale
+by at most the flow's own sensitivity to $\varepsilon_H$ of head movement,
+and a vertex that this staleness disturbs fails criterion 1 on the next
+iterate, which unsettles its channels again. Both criteria are then applied
+to the resulting state exactly as before: the gate is not widened, only the
+work of arriving at it. The consequence is that a converged state may
+differ from the one full re-evaluation reaches, by an amount the
+convergence tolerance already accepts as settled. That is a real difference
+in the results, not a rounding one, and it is the price of the mechanism.
+
+Kept contributions enter the vertex accumulations in the same fixed order
+as computed ones, so the phase remains order-independent and
+bit-reproducible under any parallelism (§6.4.1).
+
+> **CORRESPONDENCE:** the predecessor does the same, and this engine adopts
+> it rather than deviating: a link whose two end nodes have both converged
+> is marked bypassed and skipped for the remainder of the step. The
+> mechanism is sound and is most of why a large quiescent network costs the
+> predecessor so little per iterate.
+>
+> *Source: `dynwave.c:340` setting `Link[i].bypassed`, and `:392` skipping the conduit-flow call for it.*
+
 The $\varepsilon_H$ term in $\varepsilon_Q$ is what keeps the two criteria
 consistent with each other. Criterion 1 accepts iterates whose heads still
 move by up to $\varepsilon_H$, so mass closure finer than

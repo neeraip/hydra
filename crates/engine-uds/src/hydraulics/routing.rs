@@ -834,6 +834,32 @@ struct Trial {
     stor_seep: Vec<f64>,
     worst_vertex: usize,
     err: f64,
+    /// Channel evaluations the §6.4 keep rule saved this trial.
+    ///
+    /// Read only by the test that holds the rule's wiring honest, and
+    /// deliberately so: inverting the rule changes no result the gate will
+    /// accept, so the work saved is the only observable it has. It stays
+    /// off the performance report because that is checkpointed, and a
+    /// diagnostic is not worth a format revision.
+    #[allow(dead_code)]
+    kept: u32,
+}
+
+/// Whether a channel may keep its last contribution this iterate (§6.4).
+///
+/// Both its end vertices must have settled — moved by no more than the
+/// head tolerance across the previous iterate — and there must *be* a
+/// previous iterate to have kept anything from. Outfalls sit outside
+/// criterion 1 and never settle, so a channel with an outfall end always
+/// recomputes.
+///
+/// This is a named function because it is the whole of the decision, and
+/// a decision with a name is one a reader can check. Both halves matter
+/// independently: keeping on the first iterate would hand the accumulators
+/// a cache that holds nothing, and keeping when one end is still moving
+/// would freeze a channel against the very head change it should follow.
+fn may_keep(step: u32, settled: &[bool], from: usize, to: usize) -> bool {
+    step > 0 && settled[from] && settled[to]
 }
 
 impl Router {
@@ -2264,6 +2290,13 @@ impl Router {
         // has run the full budget.
         let mut iterations = self.max_trials;
         let mut net_new = vec![0.0; nv];
+        // §6.4: what each channel last computed, so a channel between two
+        // settled vertices can keep it instead of building it again, and
+        // which vertices have settled by criterion 1. Nothing is settled
+        // before the first iterate has produced a head change to measure.
+        let mut chan_last = vec![(0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64); nc];
+        let mut settled = vec![false; nv];
+        let mut kept = 0_u32;
         let mut chan_evap = vec![0.0; nc];
         let mut chan_seep = vec![0.0; nc];
         let mut flood = vec![0.0; nv];
@@ -2325,7 +2358,15 @@ impl Router {
             chan_evap.iter_mut().for_each(|e| *e = 0.0);
             chan_seep.iter_mut().for_each(|e| *e = 0.0);
             for ci in 0..nc {
-                let (qn, a_mid, s1, s2, loss, evap) = self.channel_flow(ci, &y, q[ci], dt, step);
+                let (from, to) = (self.chans[ci].from, self.chans[ci].to);
+                let (qn, a_mid, s1, s2, loss, evap) = if may_keep(step, &settled, from, to) {
+                    kept += 1;
+                    chan_last[ci]
+                } else {
+                    let out = self.channel_flow(ci, &y, q[ci], dt, step);
+                    chan_last[ci] = out;
+                    out
+                };
                 chan_evap[ci] = evap;
                 chan_seep[ci] = (loss - evap).max(0.0);
                 q_next[ci] = qn;
@@ -2425,6 +2466,8 @@ impl Router {
                         // outfalls sit outside the §6.4 head criterion.
                         let y_new = self.outfall_depth(vi, b, &q);
                         y[vi] = y_new;
+                        // §6.4: outside criterion 1, so never settled.
+                        settled[vi] = false;
                     }
                     _ => {
                         let mut area = surf[vi];
@@ -2461,7 +2504,9 @@ impl Router {
                             flood[vi] = (y_raw - cap).max(0.0) * area / dt;
                             y_new = cap;
                         }
-                        max_dy = max_dy.max((y_new - y[vi]).abs());
+                        let dy = (y_new - y[vi]).abs();
+                        max_dy = max_dy.max(dy);
+                        settled[vi] = dy <= self.head_tol;
                         y[vi] = y_new;
                         // Continuity residual for criterion 2 (§6.4). The
                         // same area feeds the allowance's ε_H term, so the
@@ -2517,6 +2562,7 @@ impl Router {
             stor_seep,
             worst_vertex: worst,
             err,
+            kept,
         }
     }
 
@@ -3768,6 +3814,65 @@ mod tests {
     use super::*;
     use crate::io::objects::parse_network;
     use crate::io::validate::validate;
+
+    /// §6.4's keep rule, on its own.
+    ///
+    /// Both halves are pinned separately because each fails silently:
+    /// keeping on the first iterate reads a cache holding nothing, and
+    /// keeping while one end is still moving freezes a channel against the
+    /// head change it exists to follow.
+    #[test]
+    fn a_channel_keeps_only_between_two_settled_vertices() {
+        let both = [true, true];
+        let one = [true, false];
+        let neither = [false, false];
+        // Nothing to keep before the first iterate has produced anything.
+        assert!(!may_keep(0, &both, 0, 1));
+        // And nothing kept while either end is still moving.
+        assert!(!may_keep(1, &one, 0, 1));
+        assert!(!may_keep(1, &one, 1, 0));
+        assert!(!may_keep(1, &neither, 0, 1));
+        // Both settled, past the first iterate: keep.
+        assert!(may_keep(1, &both, 0, 1));
+        assert!(may_keep(7, &both, 0, 1));
+        // A channel looping back on one vertex follows the same rule.
+        assert!(may_keep(1, &one, 0, 0));
+        assert!(!may_keep(1, &one, 1, 1));
+    }
+
+    /// The keep rule wired up: a settled network keeps, a moving one does not.
+    ///
+    /// This is the half the rule's own test cannot reach, and it took some
+    /// finding. Inverting the settled flag — keeping a channel exactly when
+    /// its ends are *still moving* — changes no result anywhere: §6.4's gate
+    /// is applied to the whole assembled state either way, so both variants
+    /// converge to something it certifies, and every behavioural assertion
+    /// in this file passed against the inversion. What the inversion
+    /// destroys is the work saved, so that is what is asserted here. It is
+    /// also the reassuring half of the finding: the mechanism cannot move a
+    /// result past the tolerance that licensed it.
+    #[test]
+    fn the_keep_rule_saves_work_only_where_the_network_has_settled() {
+        let (_, mut r) = build(CHAIN);
+        let mut lat = vec![0.0; r.verts.len()];
+        lat[0] = 1.0;
+        // From rest with the inflow just switched on, nothing has settled
+        // and every channel is built from scratch.
+        assert_eq!(r.run_trial(10.0, &lat).kept, 0);
+
+        // Run the same inflow out to steady state.
+        for k in 1..=120 {
+            r.advance(f64::from(k) * 10.0, &inflow_at(0, 1.0));
+        }
+        // The heads now hold still, both ends of both channels settle, and
+        // the trial stops rebuilding them.
+        let quiet = r.run_trial(10.0, &lat);
+        assert!(
+            quiet.kept > 0,
+            "settled network still rebuilt every channel ({} iterations)",
+            quiet.iterations
+        );
+    }
 
     pub(super) fn build(input: &str) -> (Network, Router) {
         let (mut net, diags) = parse_network(input);
