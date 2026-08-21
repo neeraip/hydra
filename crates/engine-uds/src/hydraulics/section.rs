@@ -1996,20 +1996,37 @@ fn circle_char_solve(
     // Dry-end asymptote: A → d²θ³/48 and both denominators → dθ/2, so
     // G(u) ≈ (3k_A − k_D)·u + c₀ − ln t. Solving that seeds the iteration
     // within about one unit of the root for any physical depth.
-    let c0 = ka * (d * d / 48.0).ln() - kd * (d / 2.0).ln();
+    let ln_d_half = (d / 2.0).ln();
+    let c0 = ka * (d * d / 48.0).ln() - kd * ln_d_half;
     let mut u = ((target_ln - c0) / (3.0 * ka - kd)).clamp(u_lo, u_hi);
     let mut y_prev = f64::NAN;
     for _ in 0..60 {
         let theta = u.exp();
-        let (s, c) = theta.sin_cos();
+        // One half-angle sine and cosine carry the whole iteration.
+        // $\sin\theta = 2\sin(\theta/2)\cos(\theta/2)$ and
+        // $1 - \cos\theta = 2\sin^2(\theta/2)$, and the second of those
+        // is the better form as well as the cheaper one: subtracting a
+        // cosine from one cancels where this does not. Below a
+        // thirteenth of a radian $\theta - \sin\theta$ falls away to
+        // $\theta^3/6$, and its series is more accurate there than
+        // either difference.
         let (sh, ch) = (theta / 2.0).sin_cos();
-        let a_t = theta - s;
-        let den = if den_is_width {
-            d * sh
+        let one_minus_c = 2.0 * sh * sh;
+        const SMALL: f64 = 0.13;
+        let a_t = if theta < SMALL {
+            let t2 = theta * theta;
+            theta * t2 / 6.0 * (1.0 - t2 / 20.0 * (1.0 - t2 / 42.0))
         } else {
-            d * theta / 2.0
+            theta - 2.0 * sh * ch
         };
-        let g = ka * (d * d / 8.0 * a_t).ln() - kd * den.ln() - target_ln;
+        // $\ln(d\theta/2) = \ln(d/2) + u$, since $\theta = e^u$: the
+        // perimeter's logarithm is free.
+        let ln_den = if den_is_width {
+            (d * sh).ln()
+        } else {
+            ln_d_half + u
+        };
+        let g = ka * (d * d / 8.0 * a_t).ln() - kd * ln_den - target_ln;
         if g < 0.0 {
             u_lo = u;
         } else {
@@ -2020,7 +2037,7 @@ fn circle_char_solve(
             return y;
         }
         y_prev = y;
-        let dg_dtheta = ka * (1.0 - c) / a_t
+        let dg_dtheta = ka * one_minus_c / a_t
             - kd * if den_is_width {
                 ch / (2.0 * sh)
             } else {

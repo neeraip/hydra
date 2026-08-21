@@ -3321,13 +3321,21 @@ impl Router {
         }
         let wet1 = y1 > DRY;
         let wet2 = y2 > DRY;
+        // Both characteristic depths are capped at the crown - normal
+        // depth at the section factor's peak, which for a closed section
+        // is below it, and critical depth at full depth outright - so an
+        // end already at the crown cannot be under either. Testing that
+        // first is worth doing because §5.7's inversions are the most
+        // expensive thing in a step and a surcharged network asks for
+        // them at every trial of every channel.
+        let crown = c.geom.sec.y_full();
         if wet1 && wet2 {
-            if q < 0.0 && z1 > 0.0 {
+            if q < 0.0 && z1 > 0.0 && y1 < crown {
                 let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 if y1 < yn.min(yc) {
                     return FlowClass::UpCritical;
                 }
-            } else if q >= 0.0 && z2 > 0.0 {
+            } else if q >= 0.0 && z2 > 0.0 && y2 < crown {
                 let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 if y2 < yn.min(yc) {
                     return FlowClass::DownCritical;
