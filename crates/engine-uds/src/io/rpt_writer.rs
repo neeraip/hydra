@@ -869,13 +869,18 @@ fn write_step_summary(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> 
             inp.net.options.routing_step,
         ),
     );
+    // Against the steps the bands actually hold, not every accepted step:
+    // a step the clock cut short to land on a reporting instant is left
+    // out of the distribution (§11.2), so dividing by `accepted` would
+    // stop the percentages summing to a hundred.
+    let sized = p.dt_bands.iter().sum::<u64>().max(1);
     for k in 0..5 {
         writeln!(
             w,
             "  {:>10.3} - {:>6.3} sec      : {:>8.2} %",
             edges[k],
             edges[k + 1],
-            100.0 * p.dt_bands[k] as f64 / accepted as f64
+            100.0 * p.dt_bands[k] as f64 / sized as f64
         )?;
     }
     Ok(())

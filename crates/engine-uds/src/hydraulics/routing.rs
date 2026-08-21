@@ -1807,7 +1807,12 @@ impl Router {
     /// held for the step. Rule evaluation (§9) sits between calls.
     pub fn step_once(&mut self, t_end: f64, lat: &[f64]) {
         self.update_pump_latches();
-        let mut dt = self.seed_step().min(t_end - self.t);
+        let seeded = self.seed_step();
+        // §11.2: a step cut short to land exactly on a reporting instant
+        // is the clock's size, not the scheme's, and does not belong in
+        // the statistics that describe the scheme's choices.
+        let clock_capped = t_end - self.t < seeded;
+        let mut dt = seeded.min(t_end - self.t);
         loop {
             let trial = self.run_trial(dt, lat);
             let at_floor = dt <= self.dt_floor + 1e-12;
@@ -1818,7 +1823,7 @@ impl Router {
                         .degraded
                         .push((self.t + dt, self.ids[trial.worst_vertex].clone()));
                 }
-                self.accept(dt, trial, lat);
+                self.accept(dt, trial, lat, clock_capped);
                 break;
             }
             self.report.rejected += 1;
@@ -1881,7 +1886,7 @@ impl Router {
         dt.max(self.dt_floor)
     }
 
-    fn accept(&mut self, dt: f64, trial: Trial, lat: &[f64]) {
+    fn accept(&mut self, dt: f64, trial: Trial, lat: &[f64], clock_capped: bool) {
         // Ledger.
         for (vi, l) in lat.iter().enumerate() {
             // §11.1: signed sources place by their sign.
@@ -1968,18 +1973,22 @@ impl Router {
         self.worst_counts[trial.worst_vertex] += 1;
         // §11.2: numerical-performance statistics span the whole run,
         // unlike the per-object ones below.
-        self.report.dt_min = if self.report.dt_min == 0.0 {
-            dt
-        } else {
-            self.report.dt_min.min(dt)
-        };
-        self.report.dt_max = self.report.dt_max.max(dt);
+        if !clock_capped {
+            self.report.dt_min = if self.report.dt_min == 0.0 {
+                dt
+            } else {
+                self.report.dt_min.min(dt)
+            };
+            self.report.dt_max = self.report.dt_max.max(dt);
+        }
         self.report.elapsed += dt;
         self.report.iterations += u64::from(trial.iterations);
         if !trial.converged {
             self.report.nonconverged += 1;
         }
-        self.report.dt_bands[step_band(dt, self.dt_user, self.dt_floor)] += 1;
+        if !clock_capped {
+            self.report.dt_bands[step_band(dt, self.dt_user, self.dt_floor)] += 1;
+        }
         // §11.2: per-object statistics, gated on the report start.
         if self.t >= self.stats_start {
             self.accumulate_stats(dt, lat);
@@ -2249,6 +2258,12 @@ impl Router {
                 st.max_flow = q;
                 st.t_max_flow = t;
             }
+            // §11.2: the denominator of every fraction reported against
+            // this link. The channel loop above accumulates its own; a
+            // structure reached this far without one, so the pump
+            // summary's utilisation divided by the guard against zero
+            // and printed the run's on-time scaled by 10^14.
+            st.obs_time += dt;
             let Some((dh, off)) = pump else {
                 continue;
             };
@@ -3815,6 +3830,48 @@ mod tests {
     use crate::io::objects::parse_network;
     use crate::io::validate::validate;
 
+    /// The reported minimum step is a step the scheme chose.
+    ///
+    /// The defect: the router truncates its step to land exactly on the
+    /// caller's instant, so every reporting instant produced a runt step
+    /// of whatever was left — sometimes nanoseconds. That runt went into
+    /// the same statistic as the scheme's own choices, and `Minimum Time
+    /// Step` printed 0.00 on every model that had ever reported anything,
+    /// while the floor it never actually breached was 0.20. Two questions
+    /// through one value: how small did the stepping go, and how small was
+    /// the last slice of a reporting interval.
+    #[test]
+    fn the_minimum_step_ignores_one_the_clock_cut_short() {
+        let (_, mut r) = build(CHAIN);
+        let floor = r.dt_floor;
+        // Land exactly on an instant, then ask for a sliver more — which
+        // is what a reporting loop does whenever its steps happen to
+        // arrive just short of the next instant. The sliver is a whole
+        // step of 1 ms, three hundred times under the floor.
+        r.advance(100.0, &inflow_at(0, 0.4));
+        let before = r.report.accepted;
+        r.advance(100.001, &inflow_at(0, 0.4));
+        assert_eq!(
+            r.report.accepted,
+            before + 1,
+            "the sliver was not taken as its own step"
+        );
+        assert!(
+            r.report.dt_min >= floor - 1e-12,
+            "reported minimum {} below the floor {floor}",
+            r.report.dt_min
+        );
+        // And the distribution holds only the steps it describes, so its
+        // bands still account for all of them.
+        let banded: u64 = r.report.dt_bands.iter().sum();
+        assert!(banded > 0);
+        assert!(
+            banded <= r.report.accepted,
+            "banded {banded} of {} accepted",
+            r.report.accepted
+        );
+    }
+
     /// §6.4's keep rule, on its own.
     ///
     /// Both halves are pinned separately because each fails silently:
@@ -4405,6 +4462,65 @@ OUT1  J1  O1  0  FUNCTIONAL/DEPTH  0.1  1.5  NO
             "depth {} vs {y_expect}",
             r.y[0]
         );
+    }
+
+    /// Every link the report divides by has an observed time, structures
+    /// included.
+    ///
+    /// The defect: `obs_time` was accumulated in the channel statistics
+    /// loop only, so it stayed zero for every pump, orifice, weir and
+    /// outlet. The Pumping Summary guards its divide with
+    /// `obs_time.max(1e-12)`, which turned that zero into a printed
+    /// utilisation of the run's on-time scaled by 10^14 — 3486202701832911360
+    /// percent on a real model, in a column a reader would otherwise
+    /// trust. A guard against dividing by zero is not a substitute for the
+    /// denominator existing.
+    #[test]
+    fn a_structure_records_the_time_its_percentages_divide_by() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[STORAGE]
+SU1  100.0  3  0  FUNCTIONAL  0  0  20
+
+[JUNCTIONS]
+J2  103.0  2
+
+[OUTFALLS]
+O1  102.5  FREE
+
+[PUMPS]
+P1  SU1  J2  PC  ON  0  0
+
+[CONDUITS]
+C1  J2  O1  50  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[CURVES]
+PC  PUMP4  0  0  2  0.2
+";
+        let (_, mut r) = build(inp);
+        r.advance(3600.0, &inflow_at(0, 0.05));
+        let link = r.structs[0].link;
+        let st = r.link_stats[link];
+        assert!(st.obs_time > 0.0, "the pump observed no time at all");
+        // It is the run, not some fraction of it a partial loop reached.
+        assert!(
+            (st.obs_time - 3600.0).abs() < 1.0,
+            "observed {} s of a 3600 s run",
+            st.obs_time
+        );
+        // Which makes the utilisation a percentage rather than a scale factor.
+        let utilisation = 100.0 * st.on_time / st.obs_time;
+        assert!(
+            (0.0..=100.0).contains(&utilisation),
+            "utilisation {utilisation}"
+        );
+        assert!(utilisation > 1.0, "pump ran but reports {utilisation}%");
     }
 
     #[test]
