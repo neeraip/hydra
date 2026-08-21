@@ -1193,3 +1193,71 @@ fn an_injection_survives_a_checkpoint_round_trip() {
         .expect("checkpoint again");
     assert!(once == twice, "the two checkpoints differ");
 }
+
+/// §12.3 makes a checkpoint carry the results produced so far, so a run
+/// that may be asked for one keeps every reporting instant. A run that
+/// will not be asked keeps none, which is the difference between holding
+/// a fortnight of results in memory and holding none of them.
+#[test]
+fn a_run_that_disclaims_checkpointing_still_writes_the_same_results() {
+    let bytes = |may_checkpoint: bool| {
+        let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+        let sink: Vec<u8> = Vec::new();
+        let held = std::sync::Arc::new(std::sync::Mutex::new(sink));
+        struct Shared(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("lock").extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        sim.begin_results(Box::new(Shared(held.clone())), may_checkpoint)
+            .expect("attach");
+        sim.run();
+        sim.finish_results().expect("finish");
+        let out = held.lock().expect("lock").clone();
+        (out, sim)
+    };
+    let (kept, retaining) = bytes(true);
+    let (dropped, streaming) = bytes(false);
+    assert!(!kept.is_empty(), "the retaining run wrote nothing");
+    assert_eq!(
+        kept, dropped,
+        "the results file must not depend on whether a checkpoint was possible"
+    );
+    // The saving is the point: one run holds the instants, the other does
+    // not, and the file is the same either way.
+    assert!(
+        !retaining.snapshots.is_empty(),
+        "a checkpointable run must keep what a checkpoint carries"
+    );
+    assert!(
+        streaming.snapshots.is_empty(),
+        "a run that disclaimed checkpointing kept instants anyway"
+    );
+}
+
+#[test]
+fn checkpointing_a_run_that_disclaimed_it_is_refused() {
+    // The alternative is a checkpoint written from an empty buffer, which
+    // restores a run that then writes only the instants after it. Losing
+    // results quietly is worse than refusing.
+    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    sim.begin_results(Box::new(std::io::sink()), false)
+        .expect("attach");
+    for _ in 0..40 {
+        if !sim.step() {
+            break;
+        }
+    }
+    let mut buf = Vec::new();
+    let err = sim.save_checkpoint(&mut buf).expect_err("must refuse");
+    assert!(
+        err.contains("checkpoint"),
+        "the refusal should say what was not kept: {err}"
+    );
+    assert!(buf.is_empty(), "a refused checkpoint must write nothing");
+}

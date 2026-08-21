@@ -430,6 +430,15 @@ pub struct Simulation {
     /// The first write failure the stream met, held until the caller
     /// closes it. A step is not the place to fail on a results file.
     out_error: Option<std::io::Error>,
+    /// Whether reporting instants are kept after being written.
+    ///
+    /// §12.3 makes a checkpoint carry the results so far, so a run that
+    /// may be asked for one has to keep them; that set is the largest
+    /// thing a long run owns. A run that will not be asked keeps none,
+    /// and pays nothing for a guarantee it never uses. Kept regardless
+    /// when the model saves a routing outflow file, which is written from
+    /// the same instants at the end (§14.8).
+    retain_snapshots: bool,
     /// Run-time notices, in time order.
     pub notices: Vec<RuntimeNotice>,
 }
@@ -764,6 +773,7 @@ impl Simulation {
                 snapshots: Vec::new(),
                 out: None,
                 out_error: None,
+                retain_snapshots: true,
                 notices,
                 net,
             },
@@ -1866,7 +1876,9 @@ impl Simulation {
                     self.out_error.get_or_insert(e);
                 }
             }
-            self.snapshots.push(snap);
+            if self.retain_snapshots {
+                self.snapshots.push(snap);
+            }
             // §11.2: the reported maximum is the maximum over these
             // instants alone, which is what a reader finds in the
             // results file.
@@ -2672,6 +2684,18 @@ impl Simulation {
     /// would continue plausibly and wrongly, which is the one outcome a
     /// checkpoint must not have.
     pub fn save_checkpoint(&self, w: &mut impl std::io::Write) -> Result<(), String> {
+        // §12.3: a checkpoint carries the results so far, so that a run
+        // restored from it writes the whole run's results. A session that
+        // said it would not be checkpointed kept none of them, and a
+        // checkpoint written from what is left would silently lose every
+        // instant before this one.
+        if !self.retain_snapshots {
+            return Err(
+                "this run was opened without checkpointing, so the reporting \
+                        instants a checkpoint carries were not kept"
+                    .into(),
+            );
+        }
         use crate::simulation::checkpoint as cp;
         // Exhaustive on purpose, and the last type here to become so.
         // Every other state type the checkpoint touches is read through a
@@ -2701,6 +2725,7 @@ impl Simulation {
             // file the caller holds, not in the checkpoint.
             out: _,
             out_error: _,
+            retain_snapshots: _,
             // Supplied by the caller, who must supply them again: their
             // contents are not copied here, only fingerprinted.
             iface_in: _,
@@ -3510,7 +3535,11 @@ impl Simulation {
     /// Attach before stepping: the header records where the first
     /// reporting instant falls, so instants already produced would be
     /// missing from a file opened late.
-    pub fn begin_results(&mut self, sink: Box<dyn std::io::Write + Send>) -> std::io::Result<()> {
+    pub fn begin_results(
+        &mut self,
+        sink: Box<dyn std::io::Write + Send>,
+        may_checkpoint: bool,
+    ) -> std::io::Result<()> {
         // The header backdates from the run's *first* instant, which on a
         // run resumed from a checkpoint (§12.3) is one the checkpoint
         // restored rather than the next one falling due. Those restored
@@ -3528,6 +3557,14 @@ impl Simulation {
             out.append(snap)?;
         }
         self.out = Some(out);
+        // A routing outflow file is written from the same instants once
+        // the run ends (§14.8), so a model that saves one keeps them
+        // whatever the caller says about checkpoints.
+        let saves_outflows = self.net.interface_files.outflows.is_some();
+        self.retain_snapshots = may_checkpoint || saves_outflows;
+        if !self.retain_snapshots {
+            self.snapshots = Vec::new();
+        }
         Ok(())
     }
 

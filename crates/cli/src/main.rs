@@ -404,7 +404,10 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         let report_path = args.summary.as_deref().unwrap_or("");
         let attach = std::fs::File::create(out_path).and_then(|f| {
             es.begin_results(
+                // The distribution engine holds nothing a checkpoint
+                // would want; the answer costs it nothing either way.
                 Box::new(std::io::BufWriter::new(f)),
+                hydra::engines::MayCheckpoint::No,
                 input_path,
                 report_path,
             )

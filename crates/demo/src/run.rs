@@ -138,7 +138,14 @@ impl Run {
         let results = if req.capture_results {
             let sink = SharedSink::new();
             session
-                .begin_results(Box::new(sink.clone()), req.model_name, "")
+                // The browser has nowhere to put a checkpoint and no
+                // way to ask for one.
+                .begin_results(
+                    Box::new(sink.clone()),
+                    hydra::engines::MayCheckpoint::No,
+                    req.model_name,
+                    "",
+                )
                 .map_err(|e| {
                     Failure::one(EXIT_IO, Diagnostic::error("io/output", e.to_string()))
                 })?;

@@ -371,8 +371,16 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     let mut es = hydra::engines::EngineSession::from_uds(sim);
 
     if let Some(out_path) = args.results.as_deref() {
-        let attach = std::fs::File::create(out_path)
-            .and_then(|f| es.begin_results(Box::new(std::io::BufWriter::new(f)), &args.model, ""));
+        let attach = std::fs::File::create(out_path).and_then(|f| {
+            // The run keeps what a checkpoint carries only when one
+            // was asked for: `--checkpoint` is the whole question.
+            let may = if args.checkpoint.is_some() {
+                hydra::engines::MayCheckpoint::Yes
+            } else {
+                hydra::engines::MayCheckpoint::No
+            };
+            es.begin_results(Box::new(std::io::BufWriter::new(f)), may, &args.model, "")
+        });
         if let Err(e) = attach {
             emit_error("io/output", &format!("{out_path}: {e}"), None, None);
             return EXIT_IO;

@@ -33,6 +33,25 @@ use hydra_engine_wds::io::WritableSimulation as _;
 pub trait WriteSeek: Write + Seek + Send {}
 impl<T: Write + Seek + Send> WriteSeek for T {}
 
+/// Whether a run may be asked for a checkpoint.
+///
+/// Stated by the caller when results are attached, because it decides how
+/// much of the run an engine has to keep in memory and no default is
+/// safe in both directions. A checkpoint carries the results produced so
+/// far, so that a run restored from one writes the whole run's results
+/// rather than the tail; an engine that may be asked for one therefore
+/// holds every reporting instant, which on a long run is the largest
+/// thing it owns. Saying [`MayCheckpoint::No`] gives that up in exchange
+/// for the memory, and asking for a checkpoint anyway is an error rather
+/// than a checkpoint missing most of its results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MayCheckpoint {
+    /// The run may be checkpointed; keep what one would carry.
+    Yes,
+    /// It will not be; keep nothing the results file already holds.
+    No,
+}
+
 /// Where a run currently is, reported by [`EngineSession::advance`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Progress {
@@ -180,6 +199,7 @@ impl EngineSession {
     pub fn begin_results(
         &mut self,
         sink: Box<dyn WriteSeek>,
+        may_checkpoint: MayCheckpoint,
         input_name: &str,
         report_name: &str,
     ) -> std::io::Result<()> {
@@ -197,7 +217,10 @@ impl EngineSession {
                 run.stream = Some(stream);
                 Ok(())
             }
-            Self::Uds(r) => r.0.sim.begin_results(Box::new(sink)),
+            Self::Uds(r) => {
+                r.0.sim
+                    .begin_results(Box::new(sink), may_checkpoint == MayCheckpoint::Yes)
+            }
         }
     }
 

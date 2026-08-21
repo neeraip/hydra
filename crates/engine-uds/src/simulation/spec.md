@@ -464,6 +464,17 @@ therefore also carries:
 The last of those is what makes a checkpoint large: a restored run must be
 able to write the whole run's results, not the part after the checkpoint.
 
+**A run states whether it may be checkpointed**, because that guarantee is
+the largest thing a run holds and most runs never use it. A session that
+may be asked keeps every reporting instant, as above. One that will not be
+asked keeps none: its results are written to the results file as they are
+produced, and asking it for a checkpoint afterwards is refused rather than
+answered with a checkpoint missing everything before the request. The
+results file is identical either way — the choice decides what is held in
+memory, never what is written. A model that saves a routing outflow file
+keeps them regardless, since that file is built from the same instants
+when the run ends (§14.8).
+
 **Format.** The stamp `HYDRA-UDS-CHECKPOINT`, a 32-bit version, then a
 fingerprint of the model the checkpoint came from, then the state. Every
 quantity is a 64-bit float, in the engine's own units: a checkpoint that

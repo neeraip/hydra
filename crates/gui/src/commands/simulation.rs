@@ -427,16 +427,20 @@ where
             }
         }
         match std::fs::File::create(p) {
-            Ok(file) => match es.begin_results(Box::new(file), "", "") {
-                Ok(()) => streamed = true,
-                Err(e) => {
-                    tracing::warn!(
-                        path = %p.display(),
-                        error = %e,
-                        "could not start results stream; run will not be persisted"
-                    );
+            // The queue checkpoints a run it may pause, so the engine
+            // keeps what one carries (§12.3).
+            Ok(file) => {
+                match es.begin_results(Box::new(file), hydra::engines::MayCheckpoint::Yes, "", "") {
+                    Ok(()) => streamed = true,
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %p.display(),
+                            error = %e,
+                            "could not start results stream; run will not be persisted"
+                        );
+                    }
                 }
-            },
+            }
             Err(e) => {
                 tracing::warn!(
                     path = %p.display(),
