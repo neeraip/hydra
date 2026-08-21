@@ -152,9 +152,20 @@ enum Kind {
     },
     /// Piecewise-linear width against depth (§5.5), already scaled to
     /// metres and closed at the top.
+    ///
+    /// `area_at` and `perim_at` are the running area and wetted perimeter
+    /// at each curve point, accumulated once at build in the order a walk
+    /// up the section takes them. Without them an area is a walk over
+    /// every segment below the water, and §6's trials ask for one at each
+    /// iteration of each channel; with them the walk is the segment the
+    /// surface stands in and nothing below it. The sums are the same
+    /// additions in the same order, so the answer is unchanged to the
+    /// bit.
     Custom {
         ys: Vec<f64>,
         ws: Vec<f64>,
+        area_at: Vec<f64>,
+        perim_at: Vec<f64>,
     },
     /// A surveyed transect (§5.6), evaluated directly from its geometry.
     Transect(TransectGeom),
@@ -1205,7 +1216,23 @@ fn build_custom(y_full: f64, points: &[(f64, f64)]) -> Result<Kind, BuildError> 
     if ws.iter().all(|w| *w <= 0.0) {
         return Err(BuildError::BadGeometry("shape curve encloses no area"));
     }
-    Ok(Kind::Custom { ys, ws })
+    // The prefix sums, taken exactly as the walks below accumulate them.
+    let mut area_at = vec![0.0; ys.len()];
+    let mut perim_at = vec![0.0; ys.len()];
+    perim_at[0] = ws[0];
+    for i in 1..ys.len() {
+        let w1 = ws[i - 1] + (ws[i] - ws[i - 1]);
+        let dy = ys[i] - ys[i - 1];
+        let dx = (w1 - ws[i - 1]) / 2.0;
+        area_at[i] = area_at[i - 1] + 0.5 * (ws[i - 1] + w1) * dy;
+        perim_at[i] = perim_at[i - 1] + 2.0 * (dy * dy + dx * dx).sqrt();
+    }
+    Ok(Kind::Custom {
+        ys,
+        ws,
+        area_at,
+        perim_at,
+    })
 }
 
 impl Section {
@@ -1270,7 +1297,7 @@ impl Section {
                 (y.max(0.0), s.top_width(y.max(0.0)))
             }
             Kind::ModBasket { y_bot, .. } => (y_full - y_bot, s.top_width(y_full - y_bot)),
-            Kind::Custom { ys, ws } => {
+            Kind::Custom { ys, ws, .. } => {
                 let (mut yb, mut wb) = (0.0, 0.0);
                 for (y, w) in ys.iter().zip(ws) {
                     if *w > wb {
@@ -1444,17 +1471,16 @@ impl Section {
                 }
             }
             Kind::Transect(t) => t.sweep_geom(y).0,
-            Kind::Custom { ys, ws } => {
-                let mut area = 0.0;
-                for i in 1..ys.len() {
-                    if y <= ys[i - 1] {
-                        break;
-                    }
-                    let (y1, w1) = custom_edge(ys, ws, i, y);
-                    area += 0.5 * (ws[i - 1] + w1) * (y1 - ys[i - 1]);
+            Kind::Custom {
+                ys, ws, area_at, ..
+            } => match custom_segment(ys, y) {
+                0 => 0.0,
+                m if m >= ys.len() => *area_at.last().unwrap_or(&0.0),
+                m => {
+                    let (y1, w1) = custom_edge(ys, ws, m, y);
+                    area_at[m - 1] + 0.5 * (ws[m - 1] + w1) * (y1 - ys[m - 1])
                 }
-                area
-            }
+            },
         }
     }
 
@@ -1504,7 +1530,7 @@ impl Section {
                 w_max * lookup(y / self.y_full, family.w_table())
             }
             Kind::Transect(t) => t.sweep_geom(y).1,
-            Kind::Custom { ys, ws } => interp(ys, ws, y),
+            Kind::Custom { ys, ws, .. } => interp(ys, ws, y),
         }
     }
 
@@ -1614,19 +1640,20 @@ impl Section {
                 }
             }
             Kind::Transect(t) => t.sweep_geom(y).2,
-            Kind::Custom { ys, ws } => {
+            Kind::Custom {
+                ys, ws, perim_at, ..
+            } => {
                 // Bottom width plus the two side slants.
-                let mut p = ws[0];
-                for i in 1..ys.len() {
-                    if y <= ys[i - 1] {
-                        break;
+                match custom_segment(ys, y) {
+                    0 => ws[0],
+                    m if m >= ys.len() => *perim_at.last().unwrap_or(&0.0),
+                    m => {
+                        let (y1, w1) = custom_edge(ys, ws, m, y);
+                        let dy = y1 - ys[m - 1];
+                        let dx = (w1 - ws[m - 1]) / 2.0;
+                        perim_at[m - 1] + 2.0 * (dy * dy + dx * dx).sqrt()
                     }
-                    let (y1, w1) = custom_edge(ys, ws, i, y);
-                    let dy = y1 - ys[i - 1];
-                    let dx = (w1 - ws[i - 1]) / 2.0;
-                    p += 2.0 * (dy * dy + dx * dx).sqrt();
                 }
-                p
             }
         }
     }
@@ -2078,6 +2105,25 @@ fn segment_area(r: f64, y: f64) -> f64 {
 /// last; searching at every segment instead made the walk quadratic in the
 /// curve's length, which a hundred-point shape curve pays for whenever the
 /// water stands high in the section.
+/// The segment the surface stands in: the last `i` the walk up the section
+/// would have visited.
+///
+/// That walk ran `i` upward while `ys[i - 1] < y`, so this is the count of
+/// points below the surface. Zero means the water is at or under the
+/// section's lowest point and no segment is wet; `ys.len()` means it
+/// covers them all, and the prefix sums hold the answer outright.
+fn custom_segment(ys: &[f64], y: f64) -> usize {
+    // Scanned, not bisected. A shape curve is a couple of dozen
+    // contiguous doubles, where a predicted branch over one cache line
+    // beats five unpredictable ones; bisecting here cost 4% of the run,
+    // the same way it did in `interp`.
+    let mut m = 0;
+    while m < ys.len() && ys[m] < y {
+        m += 1;
+    }
+    m
+}
+
 fn custom_edge(ys: &[f64], ws: &[f64], i: usize, y: f64) -> (f64, f64) {
     let y1 = ys[i].min(y);
     if y1 == ys[i] {
@@ -2429,7 +2475,7 @@ mod tests {
         let s = build_section(XsectShape::Custom, [1.0, 0.0, 0.0, 0.0], 1.0, Some(&points))
             .unwrap()
             .section;
-        let Kind::Custom { ys, ws } = &s.kind else {
+        let Kind::Custom { ys, ws, .. } = &s.kind else {
             panic!("expected a custom section");
         };
         assert!(ys.len() > 10, "curve should be long enough to matter");
