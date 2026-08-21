@@ -2143,6 +2143,17 @@ pub(crate) fn two_thirds(x: f64) -> f64 {
     (x * x).cbrt()
 }
 
+/// $x^{4/3}$, the exponent under Manning's friction slope.
+///
+/// $x\sqrt[3]{x}$, for the same reason [`two_thirds`] takes a cube root:
+/// `powf` would be handed a constant that is not four thirds in binary,
+/// and a general power costs several times a cube root and a multiply.
+/// This one is evaluated for every channel of every trial of every step,
+/// which made it the single hottest `pow` in the routing loop.
+pub(crate) fn four_thirds(x: f64) -> f64 {
+    x * x.cbrt()
+}
+
 /// Linear interpolation of `ws` against increasing `ys`.
 ///
 /// The scan is deliberate and was measured against the alternative. A
@@ -2175,6 +2186,39 @@ mod tests {
 
     fn build(shape: XsectShape, geom: [f64; 4]) -> Section {
         build_section(shape, geom, 1.0, None).unwrap().section
+    }
+
+    #[test]
+    fn mannings_exponents_are_the_exponents_they_claim() {
+        // Both are written as roots to avoid a general power, so the
+        // exponent no longer appears anywhere a reader can check it. Pin
+        // it on values whose answers are exact in binary: 8^(2/3) = 4 and
+        // 8^(4/3) = 16. A transposed root or a slipped exponent fails
+        // here rather than as a drift in a friction slope.
+        assert_eq!(two_thirds(8.0), 4.0);
+        assert_eq!(four_thirds(8.0), 16.0);
+        assert_eq!(two_thirds(1.0), 1.0);
+        assert_eq!(four_thirds(1.0), 1.0);
+        assert_eq!(four_thirds(0.0), 0.0);
+
+        // And that the substitution is a rounding-level one across the
+        // range a hydraulic radius takes. It is not bit-identical to
+        // `powf`, which is why this bound is stated: the routing loop
+        // amplifies the last bit, so the size of the change is the claim
+        // being made.
+        let mut r = 1.0e-4;
+        while r < 20.0 {
+            for (got, want) in [
+                (two_thirds(r), r.powf(2.0 / 3.0)),
+                (four_thirds(r), r.powf(4.0 / 3.0)),
+            ] {
+                assert!(
+                    (got - want).abs() <= 4.0e-15 * want,
+                    "r = {r}: {got} vs {want}"
+                );
+            }
+            r *= 1.03;
+        }
     }
 
     #[test]

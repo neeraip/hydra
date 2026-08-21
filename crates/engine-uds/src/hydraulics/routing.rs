@@ -3181,11 +3181,11 @@ impl Router {
         // Momentum terms (§6.3); a full force main substitutes its
         // pressurised relation (§7.7).
         let dq_friction = if is_full {
-            c.friction
-                .pressurised_dq(v, r_mid, dt)
-                .unwrap_or_else(|| dt * GRAVITY * c.n * c.n / r_wtd.powf(4.0 / 3.0) * v.abs())
+            c.friction.pressurised_dq(v, r_mid, dt).unwrap_or_else(|| {
+                dt * GRAVITY * c.n * c.n / super::section::four_thirds(r_wtd) * v.abs()
+            })
         } else {
-            dt * GRAVITY * c.n * c.n / r_wtd.powf(4.0 / 3.0) * v.abs()
+            dt * GRAVITY * c.n * c.n / super::section::four_thirds(r_wtd) * v.abs()
         };
         let dq_pressure = dt * GRAVITY * a_wtd * (h2 - h1) / c.length;
         let (mut dq_in1, mut dq_in2) = (0.0, 0.0);
