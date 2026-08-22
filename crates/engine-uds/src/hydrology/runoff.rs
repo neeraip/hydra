@@ -920,8 +920,10 @@ impl Surface {
             p.qstep.v_out2 += total;
             self.runoff_out += p.qstep.v_out2;
             // §11.2 per-parcel totals (precipitation booked above).
+            // Infiltration includes the control measures' native
+            // exfiltration, as the reported rate does (§3.4).
             p.totals.runon += p.qstep.runon_vol;
-            p.totals.infil += p.qstep.v_infil;
+            p.totals.infil += p.qstep.v_infil + lid_exfil * dt;
             p.totals.runoff += p.qstep.v_out2;
             p.totals.peak_runoff = p.totals.peak_runoff.max(p.qstep.v_out2 / dt);
             p.qstep.ponded_end = p.sub.iter().map(|s| s.depth * s.area).sum();

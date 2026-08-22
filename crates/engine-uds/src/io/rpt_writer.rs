@@ -590,12 +590,14 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
             line(w, "Initial LID Storage", &[rv.big(init), dep(init)])?;
         }
         line(w, "Total Precipitation", &[rv.big(rain), dep(rain)])?;
-        if runon > 0.0 {
-            line(w, "Upstream Runon", &[rv.big(runon), dep(runon)])?;
-        }
         line(w, "Evaporation Loss", &[rv.big(evap), dep(evap)])?;
         line(w, "Infiltration Loss", &[rv.big(infil), dep(infil)])?;
-        line(w, "Surface Runoff", &[rv.big(runoff), dep(runoff)])?;
+        // §14.9: inter-parcel transfers are internal to the surface
+        // compartment, so the printed row is net of run-on — water the
+        // surface delivered to the drainage network, the predecessor's
+        // meaning for this row.
+        let net_runoff = (runoff - runon).max(0.0);
+        line(w, "Surface Runoff", &[rv.big(net_runoff), dep(net_runoff)])?;
         if plowed > 0.0 {
             line(w, "Snow Removed", &[rv.big(plowed), dep(plowed)])?;
         }

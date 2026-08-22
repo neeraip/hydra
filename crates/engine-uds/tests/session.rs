@@ -2729,6 +2729,194 @@ RES  TSS  EMC  50  0  0  0
     assert!((v - 0.1).abs() < 0.02, "wet-weather volume {v} ha-m");
 }
 
+/// §11.2: the parcel's reported infiltration includes its control
+/// measures' native exfiltration, as the instantaneous rate does. The
+/// parcel here is fully impervious, so every drop that infiltrates does
+/// it through the trench: a summary column that skipped the units would
+/// read zero against a ledger that says otherwise.
+#[test]
+fn a_parcels_infil_total_carries_its_units_exfiltration() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      12:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  O1  1  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0  0  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[LID_CONTROLS]
+IT  IT
+IT  SURFACE  6  0.0  0.1  1.0  5
+IT  STORAGE  36  0.75  10  0
+IT  DRAIN    0  0.5  0  0
+
+[LID_USAGE]
+S1  IT  1  500  10  0  50  0
+
+[OUTFALLS]
+O1  9.5  FREE
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  1:00  25.0
+RAIN  2:00  0
+";
+    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    let rpt = String::from_utf8(buf).expect("utf8");
+    let ledger_row = rpt
+        .lines()
+        .find(|l| l.contains("Infiltration Loss"))
+        .expect("ledger row");
+    let ledger_mm: f64 = ledger_row
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .parse()
+        .expect("depth");
+    let s_row = rpt
+        .lines()
+        .skip_while(|l| !l.contains("Subcatchment Runoff Summary"))
+        .find(|l| l.trim_start().starts_with("S1 "))
+        .expect("summary row");
+    let summary_mm: f64 = s_row
+        .split_whitespace()
+        .nth(4)
+        .unwrap()
+        .parse()
+        .expect("infil");
+    // One parcel, so the two are the same water. The trench is the only
+    // way into the ground here, so both must be well above zero.
+    assert!(
+        ledger_mm > 1.0,
+        "nothing exfiltrated: ledger {ledger_mm} mm"
+    );
+    assert!(
+        (summary_mm - ledger_mm).abs() < 0.05 * ledger_mm,
+        "summary infil {summary_mm} mm against ledger {ledger_mm} mm"
+    );
+}
+
+/// §14.9: water a parcel sheds onto another parcel is a transfer inside
+/// the surface compartment. The printed Surface Runoff row is net of
+/// run-on — what the surface delivered to the network — so a reader
+/// diffing this report against the predecessor's sees the same number
+/// for the same water. The gross books stay in the §11.1 ledger and the
+/// per-parcel summary.
+#[test]
+fn the_printed_runoff_row_is_net_of_transfers() {
+    // A drains onto B, both fully impervious with no depression storage,
+    // so nearly all of A's rain crosses B and reaches the outfall: the
+    // gross runoff is close to twice the net.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+A  G1  B   2  100  100  0.5  0
+B  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+A  0.012  0.1  0  0  25  OUTLET
+B  0.012  0.1  0  0  25  OUTLET
+
+[INFILTRATION]
+A  20  5  4  7  0
+B  20  5  4  7  0
+
+[JUNCTIONS]
+J1  10  4
+
+[OUTFALLS]
+O1  9.5  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.0  0  0  0
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  1:00  25.0
+RAIN  2:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    let rpt = String::from_utf8(buf).expect("utf8");
+    assert!(
+        !rpt.contains("Upstream Runon"),
+        "the predecessor's table has no run-on row"
+    );
+    let row = rpt
+        .lines()
+        .find(|l| l.contains("Surface Runoff"))
+        .expect("row");
+    let ha_m: f64 = row
+        .split_whitespace()
+        .rev()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .expect("volume");
+    // 50 mm on 4 ha is 2000 m3 of rain; the net delivery to the network
+    // is about one parcel-pair's worth, 0.2 ha-m, where the gross row
+    // read about twice that.
+    assert!(
+        (ha_m - 0.2).abs() < 0.02,
+        "net Surface Runoff row {ha_m} ha-m"
+    );
+    // The gross books survive where they belong: the per-parcel summary
+    // still shows A shedding its rain.
+    let a_row = rpt
+        .lines()
+        .skip_while(|l| !l.contains("Subcatchment Runoff Summary"))
+        .find(|l| l.trim_start().starts_with("A "))
+        .expect("A's summary row");
+    let a_runoff: f64 = a_row
+        .split_whitespace()
+        .nth(7)
+        .unwrap()
+        .parse()
+        .expect("depth");
+    assert!(
+        (a_runoff - 49.0).abs() < 3.0,
+        "A's own runoff depth {a_runoff} mm"
+    );
+}
+
 #[test]
 fn the_report_holds_the_predecessors_column_geometry() {
     // §14.9 makes the report a compatibility surface: tools parse it by

@@ -298,7 +298,12 @@ step size varies, so the two differ.
 and runoff depths over the run; runoff separated into its impervious and
 pervious shares; peak runoff rate; and the runoff coefficient, the ratio of
 total runoff to total supply (precipitation plus run-on), zero when supply
-is zero. Wash-off load per parcel and constituent.
+is zero. Wash-off load per parcel and constituent. The parcel's
+evaporation and infiltration each include its control measures' share —
+evapotranspiration and native exfiltration respectively — exactly as the
+reported instantaneous rates do (§3.4): a summary column and the rate it
+summarises must mean the same thing, and the predecessor's summary books
+both the same way.
 
 **Subsurface.** Per aquifer: infiltration, evapotranspiration, deep
 percolation and lateral-flow volumes, and time-weighted mean zone moisture

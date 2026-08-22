@@ -714,6 +714,16 @@ drawn from the §11.2 catalogue. Continuity blocks whose subject is absent
 from the model do not print; the runoff blocks require a surface, the
 quality blocks require a constituent.
 
+The runoff quantity block prints the predecessor's rows and the
+predecessor's meaning: water a parcel sheds onto another parcel is a
+transfer inside the surface compartment, so it appears in no system row —
+the Surface Runoff row is net of run-on, water the surface delivered to
+the drainage network. The internal §11.1 surface ledger stays gross (a
+transfer is an arrival on one side and a departure on the other, and the
+two cancel in the error), and the per-parcel summary keeps each parcel's
+own books, run-on included. A reader diffing this report against the
+predecessor's must never mistake bookkeeping for physics.
+
 **`[REPORT]` gates the body**, as it does in the predecessor. `DISABLED`
 suppresses everything the run produced, leaving the banner. `CONTINUITY`
 gates the four continuity balances, `FLOWSTATS` the diagnostics and the
