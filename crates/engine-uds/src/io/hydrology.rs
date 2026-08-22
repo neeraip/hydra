@@ -325,7 +325,7 @@ pub(crate) fn parse_infiltration(
         "CURVE_NUMBER",
     ];
     for line in lines {
-        let mut t = line.tokens.clone();
+        let mut t: Vec<&str> = line.tokens.to_vec();
         let l = line.line;
         if t.len() < 2 {
             diags.push(err(l, DiagnosticKind::MissingItems));

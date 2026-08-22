@@ -309,6 +309,76 @@ impl ObjectKind {
     }
 }
 
+/// How many tokens a line holds without touching the heap.
+///
+/// Four, because the bulk of a large model is its time series and every
+/// one of those lines is exactly four tokens: a name, a date or an
+/// elapsed time, a clock time, a value. A model's object sections run
+/// longer and spill, and there are thousands of those against millions of
+/// these.
+const INLINE_TOKENS: usize = 4;
+
+/// A line's tokens, without an allocation for the short lines that are
+/// almost all of a large model.
+///
+/// The measurement that produced this: on a 306 MB network of five
+/// million time-series records, a `Vec` per line cost 232 bytes of memory
+/// for every 60 bytes of text, and roughly a third of that was the
+/// allocator's overhead on five million tiny blocks rather than anything
+/// being stored.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Tokens<'a> {
+    #[default]
+    Empty,
+    Inline {
+        n: u8,
+        v: [&'a str; INLINE_TOKENS],
+    },
+    Spilled(Vec<&'a str>),
+}
+
+impl<'a> FromIterator<&'a str> for Tokens<'a> {
+    fn from_iter<I: IntoIterator<Item = &'a str>>(iter: I) -> Self {
+        let mut v = [""; INLINE_TOKENS];
+        let mut n = 0usize;
+        let mut it = iter.into_iter();
+        for slot in &mut v {
+            match it.next() {
+                Some(t) => {
+                    *slot = t;
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        let Some(extra) = it.next() else {
+            return if n == 0 {
+                Tokens::Empty
+            } else {
+                Tokens::Inline {
+                    n: u8::try_from(n).unwrap_or(0),
+                    v,
+                }
+            };
+        };
+        let mut all: Vec<&'a str> = v[..n].to_vec();
+        all.push(extra);
+        all.extend(it);
+        Tokens::Spilled(all)
+    }
+}
+
+impl<'a> std::ops::Deref for Tokens<'a> {
+    type Target = [&'a str];
+    fn deref(&self) -> &[&'a str] {
+        match self {
+            Tokens::Empty => &[],
+            Tokens::Inline { n, v } => &v[..*n as usize],
+            Tokens::Spilled(v) => v,
+        }
+    }
+}
+
 /// One tokenised data line retained for the parse pass.
 ///
 /// Both fields borrow the input rather than owning copies of it. A model's
@@ -323,7 +393,7 @@ pub struct TokenLine<'a> {
     /// 1-based input line number.
     pub line: usize,
     /// The line's tokens, comment stripped.
-    pub tokens: Vec<&'a str>,
+    pub tokens: Tokens<'a>,
     /// The line's content as written, comment stripped and end-trimmed —
     /// for the sections retained as text (`[CONTROLS]` clauses, display
     /// metadata); empty for every other section, which reads its lines
@@ -521,7 +591,7 @@ pub fn survey(input: &str) -> Survey<'_> {
         if let Some((_, lines)) = s.sections.last_mut() {
             lines.push(TokenLine {
                 line: line_no,
-                tokens,
+                tokens: tokens.into_iter().collect(),
                 raw: if section.keeps_raw_text() {
                     content.trim_end()
                 } else {
@@ -798,7 +868,7 @@ THEN PUMP P1 STATUS = ON
             .map(|(_, lines)| lines)
             .expect("junction section retained");
         assert_eq!(junctions.len(), 2);
-        assert_eq!(junctions[0].tokens, vec!["J1", "100.0", "3.0"]);
+        assert_eq!(&junctions[0].tokens[..], ["J1", "100.0", "3.0"]);
     }
 
     #[test]
