@@ -85,8 +85,12 @@ def model(trunk: int, laterals: int, hours: int) -> str:
     add("[STORAGE]")
     add(f"BASIN  {trunk_invert(trunk):.3f}  4.0  0  FUNCTIONAL  120  0  0  0  0.5")
     add("")
+    # One outfall per discharging structure. The predecessor refuses an
+    # outfall with more than one link, and a benchmark only one engine can
+    # run is not a benchmark.
     add("[OUTFALLS]")
-    add(f"OUT  {trunk_invert(trunk) - 1.5:.3f}  FREE  NO")
+    for tag in ("W", "O", "P"):
+        add(f"OUT_{tag}  {trunk_invert(trunk) - 1.5:.3f}  FREE  NO")
     add("")
 
     add("[CONDUITS]")
@@ -102,13 +106,13 @@ def model(trunk: int, laterals: int, hours: int) -> str:
     add("")
 
     add("[WEIRS]")
-    add("W_OVER  BASIN  OUT  TRANSVERSE  3.2  1.7  NO  0  0  NO")
+    add("W_OVER  BASIN  OUT_W  TRANSVERSE  3.2  1.7  NO  0  0  NO")
     add("")
     add("[ORIFICES]")
-    add("O_LOW  BASIN  OUT  BOTTOM  0  0.65  NO  0")
+    add("O_LOW  BASIN  OUT_O  BOTTOM  0  0.65  NO  0")
     add("")
     add("[PUMPS]")
-    add("P_LIFT  BASIN  OUT  PC1  OFF  0.6  0.2")
+    add("P_LIFT  BASIN  OUT_P  PC1  OFF  0.6  0.2")
     add("")
     add("[CURVES]")
     add("PC1  PUMP4  0.0  0.00")
@@ -199,7 +203,7 @@ def main() -> int:
         trunk, laterals, hours = SIZES[slug]
         path = out_dir / f"bench_{slug}.inp"
         path.write_text(model(trunk, laterals, hours))
-        nodes = trunk * (1 + laterals) + 2
+        nodes = trunk * (1 + laterals) + 4  # trunk + laterals + basin + 3 outfalls
         print(f"{path}  ({nodes:,} nodes, {trunk * laterals:,} parcels)", file=sys.stderr)
     return 0
 

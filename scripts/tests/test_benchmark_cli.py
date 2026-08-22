@@ -61,6 +61,36 @@ class TestBenchmarkCli(unittest.TestCase):
             "the CLI no longer takes a summary path",
         )
 
+    def test_the_drainage_benchmark_runs_in_the_predecessor_too(self) -> None:
+        # It did not, for its whole life. Every discharging structure at
+        # the basin pointed at one outfall, which the predecessor refuses
+        # ("more than 1 inlet link"), and it refuses by writing ERROR into
+        # its report and exiting zero. So a comparison harness that
+        # trusted the exit code timed a refusal against a real run and
+        # read it as a 400x win.
+        gen = (ROOT / "scripts" / "make_uds_benchmark.py").read_text()
+        for link in ("W_OVER", "O_LOW", "P_LIFT"):
+            m = re.search(rf'add\("{link}\s+\S+\s+(\S+)', gen)
+            self.assertIsNotNone(m, f"{link} missing from the generator")
+            self.assertTrue(
+                m.group(1).startswith("OUT_"),
+                f"{link} discharges to {m.group(1)}, which is shared",
+            )
+
+    def test_the_performance_baseline_names_models_that_exist(self) -> None:
+        # The baseline is only a gate while the models it names are the
+        # ones the generator writes.
+        import json
+
+        models = json.loads((ROOT / "tests" / "benchmarks" / "uds" / "models.json").read_text())
+        base = json.loads((ROOT / "tests" / "benchmarks" / "uds" / "baseline.json").read_text())
+        self.assertEqual(sorted(models), sorted(base), "baseline and model list disagree")
+        gen = (ROOT / "scripts" / "make_uds_benchmark.py").read_text()
+        sizes = set(re.findall(r'^\s*"(\w)": \(', gen, re.M))
+        for name in models:
+            self.assertIn(name.split("_")[-1], sizes, f"{name} is not a size the generator writes")
+            self.assertIn("hydra", base[name], f"{name} has no recorded time")
+
     def test_drainage_models_are_generated_not_vendored(self) -> None:
         # The drainage corpus is a generator plus a gitignore, because this
         # repository has no SWMM benchmark suite it can redistribute.

@@ -1,0 +1,5 @@
+{
+  "bench_s": "tests/benchmarks/uds/bench_s.inp",
+  "bench_m": "tests/benchmarks/uds/bench_m.inp",
+  "bench_l": "tests/benchmarks/uds/bench_l.inp"
+}

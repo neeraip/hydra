@@ -440,6 +440,26 @@ rebase-dependabot *flags:
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
+# Check the drainage engine has not got slower (needs a release build).
+#
+# Every performance win in `uds` came from finding work that should not
+# have been happening, and the same work can be reintroduced without any
+# test noticing: the results stay byte-identical and the run takes twice
+# as long. This compares against a recorded baseline and fails on a
+# doubling, not a drift. Not in `ci` — it wants a release build and a
+# quiet machine.
+#
+# Set HYDRA_SWMM to a build of the predecessor for the ratio column.
+perf-check:
+    python3 scripts/make_uds_benchmark.py
+    python3 scripts/perf_baseline.py check tests/benchmarks/uds/baseline.json
+
+# Re-record the baseline after a deliberate change. Read the diff.
+perf-record:
+    python3 scripts/make_uds_benchmark.py
+    python3 scripts/perf_baseline.py record tests/benchmarks/uds/models.json \
+        > tests/benchmarks/uds/baseline.json
+
 # Remove all build artifacts
 clean:
     cargo clean
