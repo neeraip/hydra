@@ -42,8 +42,31 @@ R = \frac{D}{4}\left(1 - \frac{\sin\theta}{\theta}\right), \qquad
 W = D\sin\frac{\theta}{2},$$
 
 where $D$ is the diameter, with $\theta(y)$ obtained in closed form and the
-inverse maps of §5.7 solved on these exact relations. The filled ellipse is
-evaluated analytically in the same manner. Closed rectangular, modified
+inverse maps of §5.7 solved on these exact relations.
+
+**The ellipse is the one shape here that has no closed form**, and saying
+so is more useful than implying otherwise. Its area and width are
+elementary, but its wetted perimeter is an incomplete elliptic integral of
+the second kind, which no elementary function expresses. Writing
+$y = b(1 - \cos t)$, the perimeter filled to depth $y$ is
+
+$$P(y) = 2\int_0^{t(y)} \sqrt{a^2\cos^2 t + b^2\sin^2 t}\,\mathrm{d}t,
+\qquad t(y) = \arccos\!\left(1 - \frac{y}{b}\right),$$
+
+with $a$ and $b$ the semi-axes. The engine evaluates that integral once
+per section, at build, accumulating it over a uniform grid in $t$, and
+reads the answer off that accumulation thereafter. The integrand is the
+derivative of what is being accumulated, so the interpolation carries the
+exact slope at both ends of every interval and its error falls as the
+fourth power of the spacing.
+
+This is a table, which §5.2 otherwise refuses. The distinction is that the
+tables it refuses stand in for closed forms that exist — the predecessor's
+51-point circle is an approximation of an inverse cosine. Here there is no
+closed form to prefer, so the only question is whether the quadrature runs
+once or on every evaluation. Running it on every evaluation is what the
+implementation did, and on a network with four elliptical conduits among a
+hundred it was most of the run. Closed rectangular, modified
 basket-handle, and the rectangular-triangular and rectangular-round compounds
 compose from the elementary pieces.
 

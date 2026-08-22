@@ -140,6 +140,11 @@ enum Kind {
         b: f64,
         area_scale: f64,
         r_scale: f64,
+        /// Arc length accumulated from the crown over a uniform grid in
+        /// the angle parameter (§5.2). The wetted perimeter has no closed
+        /// form, so the choice is between running the quadrature once and
+        /// running it on every evaluation.
+        arc: std::sync::Arc<[f64]>,
     },
     /// A tabulated family (§5.3): the tables are the shape, anchored by
     /// the family's full-flow constants or a catalogue row (§5.4).
@@ -979,11 +984,15 @@ pub fn build_section(
             // Arbitrary axes: the analytic ellipse at the axes the user
             // wrote — where the predecessor substitutes fixed-proportion
             // constants (§5.4 CORRESPONDENCE).
-            Kind::Ellipse {
-                a: p[1] * len / 2.0,
-                b: p[0] * len / 2.0,
-                area_scale: 1.0,
-                r_scale: 1.0,
+            {
+                let (a, b) = (p[1] * len / 2.0, p[0] * len / 2.0);
+                Kind::Ellipse {
+                    a,
+                    b,
+                    area_scale: 1.0,
+                    r_scale: 1.0,
+                    arc: ellipse_arc(a, b),
+                }
             }
         }
         XsectShape::Arch => {
@@ -1078,12 +1087,55 @@ fn catalogue_index(code: f64, n: usize) -> Option<usize> {
 /// A catalogue ellipse (§5.4): the analytic shape at the catalogue axes,
 /// scaled so the full-flow area and hydraulic radius land on the
 /// published values.
+/// Intervals in an ellipse's accumulated arc length (§5.2).
+///
+/// The interpolation carries the exact slope at both ends of every
+/// interval, because the integrand *is* the derivative of what is being
+/// accumulated, so the error falls as the fourth power of the spacing.
+/// At this count it is below a micron of perimeter on any conduit a sewer
+/// contains, which is four orders under the tolerance §5.7 converges
+/// depths to.
+const ELLIPSE_ARCS: usize = 128;
+
+/// Accumulate an ellipse's arc length from the crown, once per section.
+fn ellipse_arc(a: f64, b: f64) -> std::sync::Arc<[f64]> {
+    let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
+    let h = std::f64::consts::PI / ELLIPSE_ARCS as f64;
+    let mut out = Vec::with_capacity(ELLIPSE_ARCS + 1);
+    out.push(0.0);
+    let mut acc = 0.0;
+    for i in 0..ELLIPSE_ARCS {
+        let (t0, t1) = (i as f64 * h, (i + 1) as f64 * h);
+        // The same adaptive quadrature the evaluation used, now run once
+        // per interval instead of once per call.
+        acc += integrate(&f, t0, t1);
+        out.push(acc);
+    }
+    out.into()
+}
+
+/// The accumulated arc length at angle `t`, by cubic Hermite on the grid
+/// (§5.2). `f` is the integrand, which is the accumulation's own slope.
+fn ellipse_arc_at(arc: &[f64], a: f64, b: f64, t: f64) -> f64 {
+    let h = std::f64::consts::PI / ELLIPSE_ARCS as f64;
+    let x = (t / h).clamp(0.0, ELLIPSE_ARCS as f64);
+    let i = (x as usize).min(ELLIPSE_ARCS - 1);
+    let u = x - i as f64;
+    let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
+    let (m0, m1) = (f(i as f64 * h) * h, f((i + 1) as f64 * h) * h);
+    let (u2, u3) = (u * u, u * u * u);
+    (2.0 * u3 - 3.0 * u2 + 1.0) * arc[i]
+        + (u3 - 2.0 * u2 + u) * m0
+        + (-2.0 * u3 + 3.0 * u2) * arc[i + 1]
+        + (u3 - u2) * m1
+}
+
 fn build_coded_ellipse(height: f64, width: f64, a_cat: f64, r_cat: f64) -> Section {
     let (a, b) = (width / 2.0, height / 2.0);
     let area_scale = a_cat / (std::f64::consts::PI * a * b);
-    // Full perimeter of the analytic ellipse, for the radius anchor.
-    let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
-    let p_full = 2.0 * integrate(&f, 0.0, std::f64::consts::PI);
+    let arc = ellipse_arc(a, b);
+    // Full perimeter, for the radius anchor: the accumulation's last entry.
+    let p_full = 2.0 * arc[ELLIPSE_ARCS];
     let r_scale = r_cat * p_full / a_cat;
     Section::assemble(
         Kind::Ellipse {
@@ -1091,6 +1143,7 @@ fn build_coded_ellipse(height: f64, width: f64, a_cat: f64, r_cat: f64) -> Secti
             b,
             area_scale,
             r_scale,
+            arc,
         },
         height,
     )
@@ -1665,11 +1718,10 @@ impl Section {
                     w + 2.0 * y_spring + r * (theta - phi)
                 }
             }
-            Kind::Ellipse { a, b, .. } => {
-                // Arc length by quadrature on the angle parameter.
+            Kind::Ellipse { a, b, arc, .. } => {
+                // §5.2: the quadrature ran at build. This reads it.
                 let t_end = ((1.0 - y / b).clamp(-1.0, 1.0)).acos();
-                let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
-                2.0 * integrate(&f, 0.0, t_end)
+                2.0 * ellipse_arc_at(arc, *a, *b, t_end)
             }
             Kind::Tabulated { .. } => {
                 // The tables provide R directly (§5.3); perimeter is the
@@ -3094,6 +3146,59 @@ mod tests {
                         "slope at {x}: {num} against {d}"
                     );
                 }
+            }
+        }
+    }
+
+    /// The ellipse's accumulated arc length is the integral it replaces.
+    ///
+    /// Its wetted perimeter is an incomplete elliptic integral of the
+    /// second kind, so there is nothing exact to compare against — the
+    /// reference is the same adaptive quadrature the evaluation used to
+    /// run on every call, which on a network with four elliptical
+    /// conduits among a hundred was most of the run.
+    ///
+    /// The interpolation carries the integrand as its slope at both ends
+    /// of every interval, so it should agree far tighter than the depth
+    /// tolerance §5.7 works to. It is checked at the interval midpoints,
+    /// where a Hermite fit is at its worst, and across aspect ratios
+    /// because the integrand's curvature grows with the axis ratio.
+    #[test]
+    fn an_ellipses_accumulated_arc_is_the_integral_it_replaces() {
+        for (h, w) in [(1.0_f64, 1.0_f64), (1.0, 2.0), (2.0, 1.0), (0.6, 3.0)] {
+            let s = build(XsectShape::VertEllipse, [h, w, 0.0, 0.0]);
+            let Kind::Ellipse { a, b, arc, .. } = &s.kind else {
+                panic!("not an ellipse");
+            };
+            let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
+            let step = std::f64::consts::PI / ELLIPSE_ARCS as f64;
+            let mut worst = 0.0_f64;
+            for i in 0..ELLIPSE_ARCS {
+                // Midpoints, where the fit is furthest from a knot.
+                let t = (i as f64 + 0.5) * step;
+                let got = ellipse_arc_at(arc, *a, *b, t);
+                let want = integrate(&f, 0.0, t);
+                worst = worst.max((got - want).abs());
+            }
+            // A tenth of a micron per metre of axis. The reference is
+            // itself an adaptive quadrature with a tolerance of its own,
+            // so a tighter bound would be measuring that rather than
+            // this; and §5.7 converges depths to a micron, four orders
+            // above where these two part company.
+            assert!(
+                worst < 1e-7 * (a + b),
+                "h={h} w={w}: arc off by {worst} against axes {a}, {b}"
+            );
+            // And the depths the section is actually asked about.
+            for k in 1..40 {
+                let y = f64::from(k) / 40.0 * s.y_full();
+                let t_end = ((1.0 - y / b).clamp(-1.0, 1.0)).acos();
+                let want = 2.0 * integrate(&f, 0.0, t_end);
+                let got = s.perimeter_open(y);
+                assert!(
+                    (got - want).abs() < 1e-7 * want.max(1.0),
+                    "h={h} w={w} y={y}: perimeter {got} against {want}"
+                );
             }
         }
     }
