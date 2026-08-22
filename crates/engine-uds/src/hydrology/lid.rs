@@ -298,7 +298,13 @@ impl LidUnit {
             soil_ksat: soil.map_or(0.0, |x| x.k_sat),
             soil_kslope: soil.map_or(0.0, |x| x.k_slope),
             stor_thick: stor.map_or(0.0, |x| x.thickness),
-            stor_void: stor.map_or(0.0, |x| x.void_frac.max(1e-6)),
+            // §3.4: a barrel is an empty vessel — its layer's void ratio
+            // is read but not applied, so stored volume is stored depth.
+            stor_void: if matches!(kind, LidKind::RainBarrel) {
+                1.0
+            } else {
+                stor.map_or(0.0, |x| x.void_frac.max(1e-6))
+            },
             stor_ksat: stor.map_or(0.0, |x| x.k_sat),
             // Green roofs and rain barrels are sealed (§3.4); cover is
             // the barrel's rain exclusion, never a seal.
@@ -992,6 +998,91 @@ mod tests {
             report_file: None,
             drain_to: None::<ParcelOutlet>,
         }
+    }
+
+    fn barrel_control() -> LidControl {
+        LidControl {
+            id: "RB".into(),
+            kind: Some(LidKind::RainBarrel),
+            surface: None,
+            soil: None,
+            pavement: None,
+            // A void ratio on the storage line, as the predecessor's GUI
+            // writes by default. A barrel must ignore it.
+            storage: Some(LidStorage {
+                thickness: 1.2,
+                void_frac: 0.75 / 1.75,
+                k_sat: 0.0,
+                clog_factor: 0.0,
+                covered: false,
+            }),
+            drain: Some(LidDrain {
+                // q = C h^{1/2} with C chosen so drawdown spans hours.
+                coeff: 2.0e-4,
+                exponent: 0.5,
+                offset: 0.0,
+                delay: 0.0,
+                h_open: 0.0,
+                h_close: 0.0,
+                curve: None,
+            }),
+            drain_mat: None,
+            removals: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_full_barrel_drains_dry_on_the_closed_form_clock() {
+        // A barrel holding h0 over q = C sqrt(h) empties at exactly
+        // t = 2 sqrt(h0) / C: dh/dt = -C sqrt(h) has the closed form
+        // h(t) = (sqrt(h0) - C t / 2)^2, because a barrel is an empty
+        // vessel and stored volume is stored depth (§3.4). Scaling that
+        // clock by the storage layer's void fraction is the defect this
+        // pins: with the fixture's 0.75 void ratio the vessel would run
+        // dry at 0.43 of the true time.
+        let mut u = LidUnit::build(
+            &barrel_control(),
+            &LidUsage {
+                init_saturation: 1.0,
+                ..swale_usage()
+            },
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        let (h0, c) = (1.2_f64, 2.0e-4);
+        let t_dry = 2.0 * h0.sqrt() / c;
+        let dt = 10.0;
+        let mut t = 0.0;
+        // Mid-drawdown, the outflow matches the closed form's rate.
+        while t < 0.5 * t_dry {
+            u.step(&forcing(0.0), dt);
+            t += dt;
+        }
+        let q_want = c * (h0.sqrt() - c * t / 2.0);
+        assert!(
+            (u.drain_flow - q_want).abs() < 0.01 * q_want,
+            "drain {} vs closed form {q_want} at t {t}",
+            u.drain_flow
+        );
+        // And the vessel runs dry on the closed form's clock, not
+        // earlier: still draining at 90% of it, empty just past it.
+        while t < 0.9 * t_dry {
+            u.step(&forcing(0.0), dt);
+            t += dt;
+        }
+        assert!(u.drain_flow > 0.0, "dry too early at t {t}");
+        while t < 1.02 * t_dry {
+            u.step(&forcing(0.0), dt);
+            t += dt;
+        }
+        assert!(
+            u.drain_flow < 1e-3 * c * h0.sqrt(),
+            "still draining {} past the closed-form clock",
+            u.drain_flow
+        );
     }
 
     #[test]
