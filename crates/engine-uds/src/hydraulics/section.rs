@@ -604,6 +604,38 @@ impl TabFamily {
 /// The predecessor's table interpolation (§5.3): linear over equally
 /// spaced entries, with the quadratic refinement over the two lowest
 /// segments and a floor at zero.
+/// A uniform table's value and its slope at `x` (§5.3).
+///
+/// The slope is the slope of what `lookup` returns, quadratic patch over
+/// the first two intervals included. That is not fussiness: a Newton step
+/// whose derivative describes a different curve from its residual walks
+/// the wrong way, and near the invert — where the patch lives and where
+/// the section factor bends hardest — it walked far enough to leave a
+/// §5.7 solve stalled at seven times the root.
+fn lookup_d(x: f64, table: &[f64]) -> (f64, f64) {
+    let n = table.len();
+    let delta = 1.0 / (n as f64 - 1.0);
+    let i = (x / delta) as usize;
+    if i >= n - 1 {
+        return (table[n - 1], 0.0);
+    }
+    let x0 = i as f64 * delta;
+    let x1 = (i as f64 + 1.0) * delta;
+    let slope = (table[i + 1] - table[i]) / delta;
+    let mut y = table[i] + (x - x0) * slope;
+    let mut dy = slope;
+    if i < 2 {
+        let c = table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0;
+        let y2 = y + (x - x0) * (x - x1) / (delta * delta) * c;
+        // The same gate `lookup` applies, so the two describe one curve.
+        if y2 > 0.0 {
+            y = y2;
+            dy = slope + ((x - x1) + (x - x0)) / (delta * delta) * c;
+        }
+    }
+    (y.max(0.0), if y > 0.0 { dy } else { 0.0 })
+}
+
 fn lookup(x: f64, table: &[f64]) -> f64 {
     let n = table.len();
     let delta = 1.0 / (n as f64 - 1.0);
@@ -2036,6 +2068,35 @@ impl Section {
                 .min(self.y_at_psi_max),
             );
         }
+        if let Kind::Tabulated {
+            family,
+            a_full,
+            r_full,
+            ..
+        } = &self.kind
+        {
+            // §5.7: the family tabulates the section factor itself, so the
+            // relation is one table read and its slope, not twenty-one
+            // halvings each rebuilding the section. The table is indexed
+            // by normalised area, so the chain rule brings in the width.
+            if let Some(t) = family.s_table() {
+                let s_full = a_full * two_thirds(*r_full);
+                let target_ln = (target_psi / s_full).ln();
+                return Some(
+                    newton_bracketed(
+                        &|y| {
+                            let a = self.area(y);
+                            let (sv, sd) = lookup_d(a / a_full, t);
+                            let sv = sv.max(1e-300);
+                            (sv.ln() - target_ln, sd * self.top_width(y) / (a_full * sv))
+                        },
+                        0.0,
+                        self.y_at_psi_max,
+                    )
+                    .min(self.y_at_psi_max),
+                );
+            }
+        }
         Some(invert(&|y| self.psi(y), 0.0, self.y_at_psi_max, target_psi))
     }
 }
@@ -2990,6 +3051,109 @@ mod tests {
                 "dP/dy at {y}: {dp_num} vs {dp}"
             );
             let _ = per;
+        }
+    }
+
+    /// A table's slope is the slope of the value beside it, patch included.
+    ///
+    /// `lookup` fits a quadratic over the first two intervals. The first
+    /// version of `lookup_d` returned the plain linear slope there, so the
+    /// residual and the derivative described two different curves near the
+    /// invert and the §5.7 solve walked the wrong way.
+    ///
+    /// What that cost was speed, not correctness — §5.7's bracket absorbs
+    /// a wrong derivative and converges anyway, just by halving — which is
+    /// exactly why it is checked here rather than through a solve. The
+    /// same caveat applies to the chain-rule width in the normal-depth
+    /// arm: dropping it changes no result any test can see, and no test
+    /// here catches it.
+    #[test]
+    fn a_tables_slope_is_the_slope_of_its_value() {
+        for table in [
+            &tables::S_EGG[..],
+            &tables::S_HORSESHOE[..],
+            &tables::A_EGG[..],
+            &tables::W_EGG[..],
+        ] {
+            let h = 1e-7;
+            let n = table.len();
+            let delta = 1.0 / (n as f64 - 1.0);
+            // Probe inside each interval, including the two the patch
+            // covers, and away from the knots where the slope steps.
+            for i in 0..n - 1 {
+                for f in [0.3, 0.5, 0.7] {
+                    let x = (i as f64 + f) * delta;
+                    let (v, d) = lookup_d(x, table);
+                    assert!(
+                        (v - lookup(x, table)).abs() < 1e-12,
+                        "value disagrees with lookup at {x}"
+                    );
+                    let num = (lookup(x + h, table) - lookup(x - h, table)) / (2.0 * h);
+                    assert!(
+                        (num - d).abs() < 1e-3 * num.abs().max(1.0),
+                        "slope at {x}: {num} against {d}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A tabulated family's normal depth answers what bisection answers.
+    ///
+    /// The families define themselves by tables, and one of those tables
+    /// is the section factor, so §5.7's inversion is a table read and its
+    /// slope rather than twenty-one halvings each rebuilding the section.
+    /// Worth 8.5 % on a network built entirely of egg sections.
+    ///
+    /// The table is indexed by normalised *area*, not depth, so the
+    /// derivative carries a chain-rule factor of the width — the term most
+    /// likely to be dropped or misplaced, and the one a bracketed solve
+    /// would hide by converging anyway. The reference is the relation
+    /// halved to exhaustion over the monotone branch.
+    ///
+    /// Egg, horseshoe and basket-handle are covered here because their
+    /// section-factor tables differ in shape, including where each peaks.
+    ///
+    /// The probes start at a hundredth of the peak rather than at nothing,
+    /// because below roughly 3 % of full depth these tables are not
+    /// monotone: on the egg, the section factor rises to 2.2e-4 at
+    /// y = 0.02, falls to 5.2e-5 at y = 0.036, and rises again. A demand
+    /// in that band has two roots, and which one a solver returns is a
+    /// property of the solver rather than of the section. That is the
+    /// predecessor's tabulation meeting `lookup`'s quadratic patch over
+    /// its first two intervals, it predates this change, and at five
+    /// millimetres in a metre-and-a-half sewer nothing downstream can tell
+    /// the two apart. Asserting a single answer there would be asserting
+    /// which arbitrary root we happen to pick.
+    #[test]
+    fn a_tabulated_family_inverts_where_bisection_would() {
+        for shape in [
+            XsectShape::Egg,
+            XsectShape::Horseshoe,
+            XsectShape::BasketHandle,
+        ] {
+            let s = build(shape, [1.5, 0.0, 0.0, 0.0]);
+            let (y_peak, psi_max) = s.psi_max();
+            for frac in [1e-2, 0.05, 0.2, 0.5, 0.8, 0.95, 0.999] {
+                let t = frac * psi_max;
+                let got = s.normal_depth(t).expect("below the peak");
+                let (mut a, mut b) = (0.0, y_peak);
+                for _ in 0..100 {
+                    let m = 0.5 * (a + b);
+                    if s.psi(m) < t {
+                        a = m;
+                    } else {
+                        b = m;
+                    }
+                }
+                let want = 0.5 * (a + b);
+                assert!(
+                    (got - want).abs() < 2e-6,
+                    "{shape:?} frac={frac}: {got} vs {want}"
+                );
+            }
+            // Above the peak there is no normal depth in the section.
+            assert!(s.normal_depth(psi_max * 1.01).is_none());
         }
     }
 
