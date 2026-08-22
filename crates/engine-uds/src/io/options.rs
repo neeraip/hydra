@@ -483,7 +483,24 @@ pub fn parse_options(
             "VARIABLE_STEP" => {
                 set_number(&mut o.courant_factor, keyword, value, l, diagnostics, |v| {
                     (0.0..=2.0).contains(&v)
-                })
+                });
+                // The predecessor has no measure of integration error, so
+                // this keyword is the whole of its stepping and zero means
+                // its step never moves. Here it names the Courant term
+                // alone, and §6.5's error test still governs — which can
+                // cut the step severalfold below the one that was asked
+                // for. Two mechanisms, so two controls, and the one that
+                // is about to bind is not the one the model named.
+                if o.courant_factor == 0.0 && o.routing_err_tol > 0.0 {
+                    diagnostics.push(warn(
+                        l,
+                        DiagnosticKind::SubstitutedOption {
+                            keyword,
+                            requested: value.to_string(),
+                            used: "the Courant term is off, but the \u{a7}6.5 error                                    test still sizes the step; set the session's                                    routing error tolerance to zero for a step the                                    model alone decides",
+                        },
+                    ));
+                }
             }
             "ALLOW_PONDING" => set_bool(&mut o.allow_ponding, keyword, value, l, diagnostics),
             "IGNORE_RAINFALL" => set_bool(&mut o.ignore_rainfall, keyword, value, l, diagnostics),

@@ -1841,6 +1841,11 @@ impl Router {
         }
     }
 
+    /// Set the §6.5 error tolerance; zero disables the test.
+    pub fn set_error_tolerance(&mut self, tol: f64) {
+        self.err_tol = tol;
+    }
+
     /// Take what the routed outfalls have discharged since this was last
     /// called, as (parcel, volume) pairs (§3.2).
     pub fn take_route_returns(&mut self) -> Vec<(usize, f64)> {

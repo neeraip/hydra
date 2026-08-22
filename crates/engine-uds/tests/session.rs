@@ -287,6 +287,93 @@ RAIN  2:00  0
     )
 }
 
+/// A fixed step is reachable, and a model asking for one is told what
+/// else is sizing it (§6.5).
+///
+/// `VARIABLE_STEP 0` is the whole of the predecessor's stepping, because
+/// it has no measure of integration error. Here it names the Courant term
+/// alone, and the error test keeps cutting the step underneath it — three
+/// times over on one of the predecessor's own models, which ran in 2.5 s
+/// against its 1.0 s and in 0.8 s with the test off. That is a defensible
+/// trade and it was being made silently, through an option no caller
+/// could reach.
+#[test]
+fn a_fixed_step_is_reachable_and_the_error_test_says_it_is_there() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+FLOW_ROUTING  DYNWAVE
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      02:00
+ROUTING_STEP  10
+VARIABLE_STEP 0
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  5
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.6  0  0  0
+
+[TIMESERIES]
+RAIN  0:00  0
+RAIN  0:15  90
+RAIN  0:30  0
+";
+    // Asking for a fixed step is not silently overruled.
+    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    assert!(
+        diags.iter().any(|d| {
+            let m = d.to_string();
+            m.contains("VARIABLE_STEP") && m.contains("error")
+        }),
+        "no notice that the error test still sizes the step: {diags:?}"
+    );
+
+    // The tolerance is reachable, and refuses a value that would read as
+    // a demand for accuracy while accepting everything.
+    assert!(sim.set_routing_error_tolerance(Some(0.0)));
+    assert!(!sim.set_routing_error_tolerance(Some(-1.0)));
+    assert!(sim.set_routing_error_tolerance(None));
+
+    // With the test off the run holds the step the model asked for; with
+    // it on it does not, which is the whole point of saying so.
+    let steps = |tol: Option<f64>| {
+        let (mut s, _, _) = Simulation::open(inp).expect("open");
+        assert!(s.set_routing_error_tolerance(tol));
+        s.run();
+        s.report().accepted
+    };
+    let with = steps(None);
+    let without = steps(Some(0.0));
+    assert!(
+        without < with,
+        "error test off took {without} steps, on took {with}"
+    );
+}
+
 /// An outfall routed to a parcel delivers its discharge there (§3.2).
 ///
 /// The field was parsed from the model, stored, and written back out, and

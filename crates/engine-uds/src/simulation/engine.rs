@@ -952,6 +952,28 @@ impl Simulation {
         self.router.set_losses(li, inlet, outlet, average).is_some()
     }
 
+    /// Set the §6.5 per-step local head-error tolerance (m), or clear it
+    /// back to the model's.
+    ///
+    /// Zero disables the error test, leaving the step to the §6.5
+    /// constraint seeds alone — which is the stepping the predecessor
+    /// does, since it has no measure of integration error at all. It is
+    /// the only lever that reaches that behaviour, and without it a model
+    /// asking for a fixed step through `VARIABLE_STEP 0` could not get
+    /// one: that keyword names the Courant term, and the error test would
+    /// keep cutting the step underneath it.
+    ///
+    /// Refuses a negative tolerance, which would accept every trial while
+    /// reading as if it demanded accuracy.
+    pub fn set_routing_error_tolerance(&mut self, tol: Option<f64>) -> bool {
+        let value = tol.unwrap_or(self.net.options.routing_err_tol);
+        if value < 0.0 || !value.is_finite() {
+            return false;
+        }
+        self.router.set_error_tolerance(value);
+        true
+    }
+
     /// Cap the flow a channel carries (m³/s); `None` releases the cap
     /// back to the model's own, and zero is no cap (§12.4).
     pub fn set_flow_limit(&mut self, id: &str, q_limit: Option<f64>) -> bool {

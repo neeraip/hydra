@@ -114,6 +114,15 @@ as it does in the predecessor. `SURCHARGE_METHOD` in either value maps to
 the §6.2 closure. `INERTIAL_DAMPING` in any value maps to the §6.3 taper.
 `LENGTHENING_STEP` is accepted and ignored with a warning naming §6.5's
 retirement. `NORMAL_FLOW_LIMITED` maps directly (§6.6 keeps its semantics).
+`VARIABLE_STEP 0` sets the Courant factor to zero as it says, and carries a
+notice, because in the predecessor that keyword is the whole of the
+stepping and zero means a step that never moves. Here §6.5's error test is
+a separate mechanism with a separate control, and it goes on sizing the
+step underneath a model that asked for a fixed one — severalfold below it
+on a network that is working. Two mechanisms, so two controls, and the
+notice says which of them is about to bind and how to reach it. Setting
+the session's `routing_err_tol` to zero gives the step the model alone
+decides, which is the predecessor's stepping exactly.
 
 **Accepted and inert, as in the predecessor.** `SLOPE_WEIGHTING` and
 `COMPATIBILITY` parse and do nothing there and here.
