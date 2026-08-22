@@ -87,11 +87,16 @@ setup-layout-tests:
 # compiles fine and then panics at runtime. `just check-wasm` compiles, which
 # both of those survive.
 #
-# Uses the *system* Chrome (wasm-pack fetches a matching chromedriver
-# itself), unlike the layout tests, which drive Playwright's own download.
+# Uses the *system* Chrome, unlike the layout tests, which drive
+# Playwright's own download. Left to itself wasm-pack fetches the *newest*
+# chromedriver rather than one matching that Chrome, and a major-version
+# mismatch fails as `http status: 404` and a SIGKILL naming neither. So the
+# driver is resolved first — see scripts/wasm_chromedriver.py.
 # Run the engines in a real browser
 test-wasm:
-    wasm-pack test --headless --chrome crates/demo --test browser
+    wasm-pack test --headless --chrome \
+        --chromedriver "$(python3 scripts/wasm_chromedriver.py)" \
+        crates/demo --test browser
 
 # Ask which of this file's decisions no test would notice being changed.
 #
