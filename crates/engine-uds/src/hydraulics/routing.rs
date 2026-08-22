@@ -644,6 +644,12 @@ pub struct Router {
     ids: Vec<String>,
     // Options.
     dt_user: f64,
+    /// §3.2 outfall returns: (outfall vertex, receiving parcel), with the
+    /// volume each has discharged since the session last collected it.
+    /// Ungated, unlike the §11.2 statistics — this is water the hydrology
+    /// has to receive, not a number a report prints.
+    route_returns: Vec<(usize, usize)>,
+    route_return_vol: Vec<f64>,
     /// §6.5 step floor (s): `min_routing_step`, clamped by `step_floor`.
     dt_floor: f64,
     courant_factor: f64,
@@ -1274,6 +1280,19 @@ impl Router {
             structs,
             ids: net.vertices.iter().map(|v| v.id.clone()).collect(),
             dt_user: net.options.routing_step,
+            route_returns: net
+                .vertices
+                .iter()
+                .enumerate()
+                .filter_map(|(vi, v)| match &v.kind {
+                    VertexKind::Outfall {
+                        route_to_parcel: Some(p),
+                        ..
+                    } => Some((vi, *p)),
+                    _ => None,
+                })
+                .collect(),
+            route_return_vol: Vec::new(),
             dt_floor: step_floor(net.options.min_routing_step, net.options.routing_step),
             courant_factor: net.options.courant_factor,
             max_trials: net.options.max_trials.max(2),
@@ -1822,6 +1841,20 @@ impl Router {
         }
     }
 
+    /// Take what the routed outfalls have discharged since this was last
+    /// called, as (parcel, volume) pairs (§3.2).
+    pub fn take_route_returns(&mut self) -> Vec<(usize, f64)> {
+        let out = self
+            .route_returns
+            .iter()
+            .zip(self.route_return_vol.iter())
+            .filter(|(_, v)| **v > 0.0)
+            .map(|((_, p), v)| (*p, *v))
+            .collect();
+        self.route_return_vol.iter_mut().for_each(|v| *v = 0.0);
+        out
+    }
+
     /// Advance by exactly one accepted step toward `t_end`, under the
     /// §6.5 transaction rules, with `lat` the per-vertex lateral inflows
     /// held for the step. Rule evaluation (§9) sits between calls.
@@ -1969,6 +2002,11 @@ impl Router {
         self.sq = trial.sq;
         self.a_mid = trial.a_mid;
         self.net_flow = trial.net_flow;
+        // §3.2: what a routed outfall discharged this step is run-on the
+        // hydrology owes a parcel. Accumulated here rather than with the
+        // §11.2 statistics because those wait for the report start and
+        // this is water, not a number a report prints.
+
         self.report.losses += trial.loss_rate * dt;
         self.report.evaporation +=
             (trial.chan_evap.iter().sum::<f64>() + trial.stor_evap.iter().sum::<f64>()) * dt;
@@ -2014,6 +2052,16 @@ impl Router {
         }
         if !clock_capped {
             self.report.dt_bands[step_band(dt, self.dt_user, self.dt_floor)] += 1;
+        }
+        // §3.2: what a routed outfall discharged this step is run-on the
+        // hydrology owes a parcel. Accumulated here rather than with the
+        // §11.2 statistics because those wait for the report start and
+        // this is water.
+        if !self.route_returns.is_empty() {
+            self.route_return_vol.resize(self.route_returns.len(), 0.0);
+            for (k, (vi, _)) in self.route_returns.iter().enumerate() {
+                self.route_return_vol[k] += self.net_flow[*vi].max(0.0) * dt;
+            }
         }
         // §11.2: per-object statistics, gated on the report start.
         if self.t >= self.stats_start {
@@ -5118,6 +5166,13 @@ impl Router {
     pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         use crate::simulation::checkpoint::{put_b, put_f, put_fs, put_u};
         let Router {
+            // §3.2 outfall returns. The model builds the pairing, and the
+            // session empties the volume into the receiving parcel at the
+            // end of every period — so it is zero whenever a checkpoint
+            // can be taken, and what it held is already in the parcel's
+            // own pending run-on, which is carried.
+            route_returns: _,
+            route_return_vol: _,
             // Parameters: the model builds these.
             chans: _,
             verts: _,

@@ -1862,6 +1862,19 @@ impl Simulation {
             self.last_lat = vec![0.0; self.net.vertices.len()];
         }
 
+        // §3.2: hand what the routed outfalls discharged this period to
+        // the parcels that receive it. Collected here, at the end of the
+        // period and before anything can checkpoint, so the router never
+        // holds water the hydrology has not been told about.
+        let returns = self.router.take_route_returns();
+        if !returns.is_empty() {
+            if let Some(surface) = self.surface.as_mut() {
+                for (parcel, vol) in returns {
+                    surface.add_external_runon(parcel, vol);
+                }
+            }
+        }
+
         while self.next_report <= self.router.time() + 1e-9 {
             let snap = self.record_snapshot(self.next_report);
             // Streamed here rather than gathered and written at the end:

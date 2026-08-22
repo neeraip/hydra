@@ -287,6 +287,106 @@ RAIN  2:00  0
     )
 }
 
+/// An outfall routed to a parcel delivers its discharge there (§3.2).
+///
+/// The field was parsed from the model, stored, and written back out, and
+/// no solver code ever read it: a model routing an outfall onto a
+/// catchment ran without complaint and produced half the runoff, with no
+/// notice that a declared feature had been ignored. That is the worst
+/// shape a gap can take, because nothing in the output says it is one.
+///
+/// The receiving parcel drains through a *different* outfall on purpose.
+/// Routing an outfall back onto a parcel that drains to it is a loop the
+/// model is entitled to build, and the first draft of this test built one
+/// by accident: the water went round 72 times and the assertion that
+/// caught it was the one below bounding what returns by what fell.
+#[test]
+fn an_outfall_routed_to_a_parcel_returns_its_discharge() {
+    let inp = |route: &str| {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      06:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+S2  G1  J2  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+S2  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+S2  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+J2  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE  NO  {route}
+O2  100.0  FREE  NO
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+C2  J2  O2  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+C2  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  1:00  25.0
+RAIN  2:00  0
+"
+        )
+    };
+
+    let surface_of = |route: &str| {
+        let (mut sim, _, _) = Simulation::open(&inp(route)).expect("open");
+        sim.run();
+        sim.ledgers().surface.expect("surface ledger")
+    };
+    let plain = surface_of("");
+    let routed = surface_of("S2");
+
+    // Two parcels, so twice the rain of the single-parcel fixtures above.
+    let rain_vol = 2.0 * 0.025 * 2.0 * 20_000.0;
+    assert!(
+        (plain.inflow - rain_vol).abs() < 0.02 * rain_vol,
+        "unrouted surface inflow {} against {rain_vol}",
+        plain.inflow
+    );
+    // Routed, O1's discharge joins the surface's inflow side at S2.
+    // Against the feature unimplemented these two read the same.
+    assert!(
+        routed.inflow > plain.inflow * 1.2,
+        "routed surface inflow {} against unrouted {}",
+        routed.inflow,
+        plain.inflow
+    );
+    // And what comes back cannot exceed what half the catchment shed.
+    assert!(
+        routed.inflow - plain.inflow <= 0.55 * rain_vol,
+        "returned {} against the {rain_vol} that fell on both parcels",
+        routed.inflow - plain.inflow
+    );
+    assert!(routed.error_percent.abs() < 1.0, "{}", routed.error_percent);
+}
+
 /// A parcel naming itself as its outlet does not water itself.
 ///
 /// The defect: run-on was delivered to the named target without checking

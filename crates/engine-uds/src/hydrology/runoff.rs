@@ -557,6 +557,19 @@ impl Surface {
             .min_by(|a, b| a.total_cmp(b))
     }
 
+    /// Deliver run-on to a parcel from outside the surface system (§3.2).
+    ///
+    /// An outfall may return its discharge onto a parcel, which is the one
+    /// path by which routed water re-enters the hydrology. It arrives the
+    /// same way an upstream parcel's runoff does — one step delayed,
+    /// spread over the non-measure area — so it joins the same pending
+    /// volume rather than a second mechanism beside it.
+    pub fn add_external_runon(&mut self, parcel: usize, volume: f64) {
+        if let Some(p) = self.parcels.get_mut(parcel) {
+            p.runon_next_vol += volume;
+        }
+    }
+
     /// Advance every parcel one hydrology step: `epoch` is the absolute
     /// step-start instant, `evap` the potential surface evaporation
     /// (m/s), `dry_only` the §3.1 suppression switch, `rain_factor` the
