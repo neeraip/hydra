@@ -72,7 +72,22 @@ with $T_a$ and $T_r$ the 7-day running average temperature and daily range
 extraterrestrial radiation from latitude and day of year — an empirical fit
 whose constants embed its stated units. A dry-only switch suppresses
 land-surface evaporation during rainfall, leaving channel, storage, and
-subsurface evaporation untouched. **Wind speed** (monthly averages — default zero — or daily
+subsurface evaporation untouched. With the switch off, surface evaporation
+is a term of the §3.2 balance like any other and draws on the ponded depth
+as that depth evolves — including the rain arriving over the step.
+
+> **CORRESPONDENCE:** the predecessor caps a sub-area's surface
+> evaporation at the depth ponded when the step *began*, computing the
+> limit before it adds the step's precipitation, so rain falling in a step
+> cannot evaporate within it however long the step is. That is a property
+> of its discretisation rather than of a wetted surface, and this engine
+> does not carry it: evaporation competes with infiltration and outflow
+> for the same evolving depth. Measured on the predecessor's `user3`, a
+> constant 3 mm/day with the dry-only switch off: 0.676 acre-feet here
+> against 0.570 there, 19 % more. With the switch on the two agree to 3 %,
+> which is where the difference lives entirely.
+>
+> *Source: `subcatch.c:963–964`, `surfMoisture = subarea->depth / tStep` then `surfEvap = MIN(surfMoisture, evap)`, both before `subarea->inflow += precip` at `:970`.* **Wind speed** (monthly averages — default zero — or daily
 climate values) enters only the rain-melt relation. Days missing from a
 climate record inherit the most recent recorded values.
 
