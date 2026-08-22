@@ -1033,3 +1033,36 @@ exactly. On-grade capture is computed from the gutter-spread relation at the
 channel's longitudinal slope, as HEC-22 defines it; the method is inherently
 insensitive to backwater, which is a property of the standard, stated rather
 than obscured.
+
+### 7.9 Zero-Geometry Connectors
+
+A channel whose cross-section is the zero-geometry shape is a connector,
+not a channel: it has no geometry, no storage, and no head–discharge
+relation. It conveys the positive part of its upstream vertex's inflow,
+capped by any maximum-flow limit, and contributes nothing to vertex
+surface areas or head derivatives ($\partial Q / \partial H = 0$). It is
+evaluated in the structure phase (§6.4).
+
+**From a storage vertex a connector conveys nothing.** A storage vertex's
+outflow must be head-governed — passing its inflow through would bypass
+the vessel entirely — and with no geometry there is no head relation to
+govern it. The vessel therefore fills, loses water to its exfiltration
+and evaporation, and floods at capacity; the connector's flow is zero
+throughout. This is the meaning the configuration has in practice: the
+predecessor's stormwater-calculator exports attach a cistern to its
+outfall through a zero-geometry channel precisely so the vessel captures,
+seeps, and overflows, with the connector carrying nothing. Import
+notices the configuration (§14.7) rather than refusing it.
+
+> **CORRESPONDENCE:** the predecessor refuses this configuration under
+> dynamic wave (its error 134) and accepts it under kinematic wave, where
+> the storage outflow relation returns the connector's full-depth flow —
+> zero, for a section with no geometry. This engine routes every model
+> with the dynamic-wave solver (§14.1), so adopting the refusal would
+> reject kinematic models the predecessor runs; it adopts the kinematic
+> branch's zero-conveyance meaning instead, which is also the only
+> physically consistent one.
+>
+> *Source: `link.c:1004` (the dynamic-wave refusal), `node.c`
+> `storage_getOutflow` (full flow at or above the section's full depth),
+> `flowrout.c:768` (a zero-geometry section's flow area pinned to zero).*

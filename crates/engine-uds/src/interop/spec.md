@@ -250,7 +250,10 @@ user did not author:
 short enough to Courant-limit the run (§6.5); rules mixing `AND` and `OR`
 whose firing depends on the precedence correction (§9.1); a user-dimensioned
 ellipse cross-section, which the predecessor evaluated at fixed proportions
-regardless of the entered width (§5.4).
+regardless of the entered width (§5.4); a storage vertex draining through a
+zero-geometry channel, which conveys nothing (§7.9) — the vessel fills,
+seeps, and floods, and the notice names it so the author knows the
+connector is a plug rather than a pipe.
 
 > **CORRESPONDENCE:** the slot a pattern is written in carries no meaning in
 > either engine, and neither is the position wrong: every pattern applies

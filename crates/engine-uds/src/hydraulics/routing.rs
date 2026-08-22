@@ -395,7 +395,8 @@ enum StructKind {
         flap: bool,
     },
     /// A zero-geometry connector: passes its upstream vertex's inflow.
-    Dummy { q_limit: f64 },
+    /// From a storage vertex it is a plug and conveys nothing (§7.9).
+    Dummy { q_limit: f64, plugged: bool },
 }
 
 enum OutRating {
@@ -1124,7 +1125,17 @@ impl Router {
                     if !dummy {
                         continue;
                     }
-                    StructKind::Dummy { q_limit: *max_flow }
+                    // §7.9: a storage vertex's outflow must be
+                    // head-governed, and a connector has no head
+                    // relation to govern it, so it conveys nothing.
+                    let plugged = matches!(
+                        net.vertices[link.from].kind,
+                        crate::model::VertexKind::Storage { .. }
+                    );
+                    StructKind::Dummy {
+                        q_limit: *max_flow,
+                        plugged,
+                    }
                 }
                 LinkKind::Pump {
                     curve,
@@ -2445,6 +2456,15 @@ impl Router {
 
         for step in 0..self.max_trials {
             // ── Channel phase (∥): flows from the last iterate ─────────
+            //
+            // The ∥ mark means the spec permits running this loop's
+            // channel_flow calls concurrently: each reads only `y` and its
+            // own channel, and the per-vertex sums below are the join. It
+            // is ~a third of a large run's time, so threading it (rayon on
+            // this loop, sums reduced per-shard) is the next big win if one
+            // is ever needed. Deliberately not taken: the engines commit to
+            // no threads so the browser build stays possible, and parity
+            // with the predecessor is already reached without it.
             surf.iter_mut().for_each(|s| *s = 0.0);
             net_new.iter_mut().for_each(|s| *s = 0.0);
             let mut q_next = vec![0.0; nc];
@@ -2735,7 +2755,10 @@ impl Router {
         let h2v = self.verts[st.to].invert + y_vert[st.to];
 
         let (mut q, s1, s2) = match &st.kind {
-            StructKind::Dummy { q_limit } => {
+            StructKind::Dummy { q_limit, plugged } => {
+                if *plugged {
+                    return (0.0, 0.0, 0.0);
+                }
                 let mut q = pos_in[st.from];
                 if *q_limit > 0.0 {
                     q = q.min(*q_limit);
@@ -4875,6 +4898,58 @@ PC  PUMP2  0  0.2  3  0.2
         assert!(saw_on && saw_off_again, "no pump cycling");
         let led = &r.report;
         assert!((led.outflow - led.inflow).abs() < 0.1 * led.inflow);
+    }
+
+    #[test]
+    fn a_dummy_channel_from_storage_is_a_plug() {
+        // §7.9: from a storage vertex a zero-geometry connector conveys
+        // nothing. The vessel fills on its own storage curve and floods
+        // at capacity; nothing reaches the outfall through the plug.
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[STORAGE]
+SU1  100.0  2  0  FUNCTIONAL  0  0  100
+
+[OUTFALLS]
+O1  99.5  FREE
+
+[CONDUITS]
+D1  SU1  O1  100  0.013  0  0
+
+[XSECTIONS]
+D1  DUMMY  0  0  0  0
+";
+        let (_, mut r) = build(inp);
+        // 0.05 m3/s into a 100 m2 vessel 2 m deep: full at t = 4000 s.
+        let q_in = 0.05;
+        let mut t = 0.0;
+        while t < 3600.0 {
+            t += 30.0;
+            r.advance(t, &inflow_at(0, q_in));
+            assert_eq!(r.sq[0], 0.0, "the plug carried flow at t {t}");
+        }
+        // Filling on the storage curve, nothing has left or flooded.
+        let expect = q_in * t / 100.0;
+        assert!(
+            (r.y[0] - expect).abs() < 0.02 * expect,
+            "depth {} vs stored inflow {expect}",
+            r.y[0]
+        );
+        assert!(r.report.flooding == 0.0);
+        // Past capacity the vessel floods its net inflow and holds full.
+        while t < 8000.0 {
+            t += 30.0;
+            r.advance(t, &inflow_at(0, q_in));
+        }
+        assert!((r.y[0] - 2.0).abs() < 1e-6, "not full: {}", r.y[0]);
+        assert!(
+            r.report.flooding > 0.0,
+            "a full vessel behind a plug must flood"
+        );
+        assert_eq!(r.report.outflow, 0.0, "flow escaped through the plug");
     }
 
     #[test]

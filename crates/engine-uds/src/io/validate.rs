@@ -64,8 +64,6 @@ pub enum ValidationKind {
     BadSectionGeometry(&'static str),
     /// An orifice or weir whose section shape its form forbids.
     RegulatorShape,
-    /// A storage vertex draining through a zero-geometry channel.
-    StorageDummyOutflow,
     /// A non-positive channel length.
     BadLength,
     /// A non-positive channel roughness.
@@ -137,6 +135,11 @@ pub enum ValidationKind {
     /// (§6.5): its cost is small steps, visible rather than hidden in
     /// the retired lengthening transform.
     StubChannel,
+    /// A storage vertex draining through a zero-geometry channel, which
+    /// conveys nothing (§7.9): the vessel fills, seeps, and floods, and
+    /// the notice says so rather than leaving the author to think the
+    /// connector is a pipe.
+    StorageDummyOutflow,
     /// A rule mixing `AND` and `OR` premises: firing may depend on the
     /// §9.1 precedence correction.
     RuleMixesAndOr,
@@ -175,6 +178,7 @@ impl ValidationKind {
                 | ValidationKind::GageIntervalFinerThanSeries
                 | ValidationKind::UserDimensionedEllipse
                 | ValidationKind::StubChannel
+                | ValidationKind::StorageDummyOutflow
                 | ValidationKind::RuleMixesAndOr
                 | ValidationKind::DwfPatternDiscarded
                 | ValidationKind::TidalCurveClockIndexed
@@ -233,7 +237,10 @@ impl std::fmt::Display for ValidationKind {
                 write!(f, "section shape not accepted for this regulator form")
             }
             ValidationKind::StorageDummyOutflow => {
-                write!(f, "storage node drains through a zero-geometry channel")
+                write!(
+                    f,
+                    "storage node drains through a zero-geometry channel, which conveys nothing: the node fills, seeps, and floods at capacity"
+                )
             }
             ValidationKind::BadLength => write!(f, "non-positive length"),
             ValidationKind::BadRoughness => write!(f, "non-positive roughness"),
@@ -1933,6 +1940,47 @@ GUT1  CB1  SEW
         assert!(has(&v, "SEW1", |k| matches!(
             k,
             ValidationKind::InletPlacementRemoved
+        )));
+    }
+
+    #[test]
+    fn a_storage_vertex_behind_a_plug_is_noticed_not_refused() {
+        // §7.9 / §14.7: the stormwater-calculator class attaches a
+        // cistern to its outfall through a zero-geometry channel that
+        // conveys nothing. The predecessor's dynamic-wave branch refuses
+        // this; this engine notices it and runs the model.
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[STORAGE]
+SU1  0  4  0  FUNCTIONAL  0  0  277
+
+[OUTFALLS]
+O1  0  FREE
+
+[CONDUITS]
+D1  SU1  O1  400  0.01  0  0
+
+[XSECTIONS]
+D1  DUMMY  0  0  0  0
+";
+        let (_, v) = validated(inp);
+        let finding = v
+            .iter()
+            .find(|d| matches!(d.kind, ValidationKind::StorageDummyOutflow))
+            .expect("the configuration is noticed");
+        assert!(!finding.kind.is_error(), "noticed, never refused");
+        // And on a junction the same channel is an ordinary pass-through,
+        // with nothing to notice.
+        let inp2 = inp.replace(
+            "[STORAGE]\nSU1  0  4  0  FUNCTIONAL  0  0  277",
+            "[JUNCTIONS]\nSU1  0  4",
+        );
+        let (_, v2) = validated(&inp2);
+        assert!(!has(&v2, "SU1", |k| matches!(
+            k,
+            ValidationKind::StorageDummyOutflow
         )));
     }
 
