@@ -48,7 +48,15 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     // Survey the model's auxiliary-file declarations before opening. Parse
     // problems are deliberately ignored here — the open below re-parses and
     // reports them properly.
-    let (net, _) = parse_network(&text);
+    //
+    // Only the four sections the survey reads are handed to it. Parsing
+    // the whole model to reach a handful of file names costs what parsing
+    // the whole model costs, and it is paid twice: on a 306 MB model whose
+    // time series run to five million records, the survey's tokens alone
+    // were half a gigabyte, held beside the ones the real open was about
+    // to build.
+    let survey_text = survey_sections(&text);
+    let (net, _) = parse_network(&survey_text);
 
     let climate_records = match &net.climate.temperature {
         Some(TemperatureSource::File { name, units, .. }) => {
@@ -531,6 +539,31 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
 /// Resolve an auxiliary file named by the model, relative to the model
 /// file's directory. Needs a local model path: a model fetched over HTTP
 /// has no directory to resolve against.
+/// The sections the auxiliary-file survey reads, verbatim, and no others.
+///
+/// Section headers are `[NAME]` at the start of a line, case-insensitively,
+/// which is the predecessor's own rule. Anything before the first header
+/// is kept: a model may open with a title or comments, and dropping them
+/// would change line numbers in a diagnostic the survey never emits but a
+/// reader might still compare against.
+fn survey_sections(text: &str) -> String {
+    const WANTED: [&str; 4] = ["[OPTIONS]", "[TEMPERATURE]", "[FILES]", "[RAINGAGES]"];
+    let mut out = String::new();
+    let mut keep = true;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            let head = t.to_ascii_uppercase();
+            keep = WANTED.iter().any(|w| head.starts_with(w));
+        }
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn resolve_aux_path(model: &str, name: &str) -> Result<PathBuf, i32> {
     if model.starts_with("http://") || model.starts_with("https://") {
         emit_error(
@@ -594,6 +627,55 @@ fn emit_warning(code: &str, message: &str, object_id: Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The survey reads four sections, and is given four sections.
+    ///
+    /// It used to be handed the whole model to reach a handful of file
+    /// names, and pay for parsing it — twice, since the real open parses
+    /// again. On a 306 MB model whose time series run to five million
+    /// records that was 233 MB of peak memory for nothing.
+    #[test]
+    fn the_survey_gets_the_sections_it_reads_and_no_others() {
+        let inp = "\
+[TITLE]
+a model
+
+[OPTIONS]
+FLOW_UNITS  CMS
+
+[RAINGAGES]
+G1  INTENSITY  0:05  1.0  FILE  \"rain.dat\"  STA1  IN
+
+[TIMESERIES]
+TS1  0:00  1
+TS1  0:05  2
+
+[FILES]
+USE RAINFALL  cache.rff
+
+[COORDINATES]
+J1  0  0
+";
+        let out = survey_sections(inp);
+        for kept in [
+            "[OPTIONS]",
+            "[RAINGAGES]",
+            "[FILES]",
+            "rain.dat",
+            "cache.rff",
+        ] {
+            assert!(out.contains(kept), "dropped {kept}:\n{out}");
+        }
+        // The bulk sections are what this exists to leave behind.
+        for dropped in ["[TIMESERIES]", "TS1", "[COORDINATES]"] {
+            assert!(!out.contains(dropped), "kept {dropped}:\n{out}");
+        }
+        // Headers are matched case-insensitively, as the predecessor does.
+        assert!(survey_sections("[options]\nFLOW_UNITS  CMS\n").contains("FLOW_UNITS"));
+        // And a section the survey does not read cannot smuggle lines in
+        // by sharing a prefix.
+        assert!(!survey_sections("[FILESYSTEM]\nx  y\n").contains("x  y"));
+    }
 
     #[test]
     fn aux_paths_resolve_beside_the_model() {
