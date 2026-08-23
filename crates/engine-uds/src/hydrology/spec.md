@@ -301,10 +301,18 @@ its media pass water.
 hydrology step — an update that is mass-conserving by construction, every
 flux clipped to the volume actually present, with the rate-sampling error
 governed by the wet-step bound of §10.1. The swale, whose geometry varies
-with depth, advances by the iterated trapezoidal method — depth updated
-with equally weighted start- and end-of-step rates, iterated to a 1 mm
-depth tolerance with at most twenty passes, the final pass accepted as-is
-if the tolerance is still unmet. This is a deliberate, recorded exception
+with depth, advances by the iterated trapezoidal method on its **stored
+volume** — equally weighted start- and end-of-step rates, both evaluated
+under the step's own forcing, iterated to a 1 mm depth tolerance with at
+most twenty passes, the final pass accepted as-is if the tolerance is
+still unmet. The booked fluxes are the same equally weighted averages the
+volume advance uses, so the unit's balance closes identically at any step
+— booking one instant's rates against an averaged advance leaks the
+half-difference every step, which is a ledger error that grows with the
+step, not a discretisation error that shrinks with it. A volume clamped
+at empty scales the drawing fluxes to the water actually present, and at
+the berm the surplus of the averaged net inflow spills onward. This is a
+deliberate, recorded exception
 to blanket §3.5 integration: the cascade's clipped fluxes are discontinuous in state, where
 the embedded-pair integrator presumes smoothness, and the balance form is
 exact for the rates given.

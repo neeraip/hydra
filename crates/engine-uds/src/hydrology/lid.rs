@@ -67,7 +67,6 @@ pub struct LidUnit {
     swale_infil: Option<InfilState>,
     /// The swale's converged depth rate from the previous step (m/s),
     /// the trapezoid's start weight.
-    swale_f_old: f64,
     // State.
     d1: f64,
     theta2: f64,
@@ -353,7 +352,6 @@ impl LidUnit {
             head_unit: if us_units { 0.0254 } else { 0.001 },
             swale,
             swale_infil,
-            swale_f_old: 0.0,
             d1,
             theta2,
             d3,
@@ -515,10 +513,12 @@ impl LidUnit {
     }
 
     /// Vegetative swale: a trapezoidal channel whose ponded geometry
-    /// varies with depth, advanced by the iterated trapezoidal method —
-    /// equally weighted start- and end-of-step rates, a 1 mm depth
-    /// tolerance, at most twenty passes, the final pass accepted as-is
-    /// (§3.4).
+    /// varies with depth, advanced by the iterated trapezoidal method on
+    /// its stored volume — equally weighted start- and end-of-step rates
+    /// under this step's forcing, a 1 mm depth tolerance, at most twenty
+    /// passes, the final pass accepted as-is. The booked fluxes are the
+    /// same averages the advance uses, so the balance closes identically
+    /// at any step (§3.4).
     fn step_swale(
         &mut self,
         inflow: f64,
@@ -538,17 +538,28 @@ impl LidUnit {
             Some(st) => st.step(dt, inflow, self.d1, fac),
             None => native_infil,
         };
-        // Flux rate on depth (m/s) plus the outflow components (m³/s) at
-        // a trial depth.
         let void = self.surf_void;
         let alpha = self.surf_alpha;
-        let rates = move |d: f64| -> (f64, f64, f64, f64) {
+        // Stored volume (m³) at a depth, and the depth holding a volume:
+        // V = L·void·d·(b + s·d), inverted by the quadratic.
+        let vol_of = |d: f64| g.len * void * d * (g.bot + g.slope * d);
+        let depth_of = |v: f64| -> f64 {
+            let c = (v / (g.len * void)).max(0.0);
+            if g.slope <= 0.0 {
+                c / g.bot
+            } else {
+                let disc = g.bot * g.bot + 4.0 * g.slope * c;
+                (disc.sqrt() - g.bot) / (2.0 * g.slope)
+            }
+        };
+        // Draw components (m³/s) at a trial depth: evaporation capped by
+        // the water present, exfiltration, Manning outflow.
+        let rates = |d: f64| -> (f64, f64, f64) {
             let depth = d.min(berm);
             let surf_width = g.bot + 2.0 * g.slope * depth;
             let surf_area = g.len * surf_width;
             let flow_area = depth * (g.bot + g.slope * depth) * void;
             let volume = g.len * flow_area;
-            let q_in = inflow * unit_area;
             let q_evap = (evap * surf_area).min(volume / dt);
             let q_exfil = f_infil * surf_area;
             let mut q_out = 0.0;
@@ -557,33 +568,52 @@ impl LidUnit {
                 let r = flow_area / wetted;
                 q_out = alpha * flow_area * r.powf(2.0 / 3.0);
             }
-            let mut dvdt = q_in - q_evap - q_exfil - q_out;
-            // At the berm, any net positive inflow spills onward.
-            if depth >= berm && dvdt > 0.0 {
-                q_out += dvdt;
-                dvdt = 0.0;
-            }
-            (dvdt / surf_area, q_exfil, q_out, q_evap)
+            (q_evap, q_exfil, q_out)
         };
+        let q_in = inflow * unit_area;
         let d_old = self.d1;
-        let f_old = self.swale_f_old;
+        let v_old = vol_of(d_old);
+        let v_max = vol_of(berm);
+        let r0 = rates(d_old);
         let mut d = d_old;
-        let mut out = (0.0, 0.0, 0.0, 0.0);
+        let mut r1 = r0;
         for _ in 0..20 {
-            out = rates(d);
-            let d_new = (d_old + 0.5 * (f_old + out.0) * dt).clamp(0.0, berm);
+            r1 = rates(d);
+            let net = q_in - 0.5 * ((r0.0 + r1.0) + (r0.1 + r1.1) + (r0.2 + r1.2));
+            let d_new = depth_of((v_old + net * dt).clamp(0.0, v_max));
             let done = (d_new - d).abs() <= 1e-3;
             d = d_new;
             if done {
                 break;
             }
         }
-        self.swale_f_old = out.0;
-        self.d1 = d;
-        self.overflow = out.2 / unit_area;
-        self.exfiltration = out.1 / unit_area;
+        // Booked fluxes: the averages the advance used, adjusted only
+        // where the clamp bit — draws scaled to the water present at
+        // empty, the surplus spilling onward at the berm — so that
+        // q_in·dt − booked·dt is the volume change, identically.
+        let (mut q_evap, mut q_exfil, mut q_out) = (
+            0.5 * (r0.0 + r1.0),
+            0.5 * (r0.1 + r1.1),
+            0.5 * (r0.2 + r1.2),
+        );
+        let v_raw = v_old + (q_in - q_evap - q_exfil - q_out) * dt;
+        let v_new = v_raw.clamp(0.0, v_max);
+        if v_raw < 0.0 {
+            let draw = q_evap + q_exfil + q_out;
+            if draw > 0.0 {
+                let scale = ((v_old / dt + q_in) / draw).max(0.0);
+                q_evap *= scale;
+                q_exfil *= scale;
+                q_out *= scale;
+            }
+        } else if v_raw > v_max {
+            q_out += (v_raw - v_max) / dt;
+        }
+        self.d1 = depth_of(v_new);
+        self.overflow = q_out / unit_area;
+        self.exfiltration = q_exfil / unit_area;
         self.drain_flow = 0.0;
-        self.evap_used = out.3 / unit_area;
+        self.evap_used = q_evap / unit_area;
     }
 
     /// The swale's current ponded depth (m), for tests.
@@ -853,7 +883,6 @@ impl LidUnit {
             head_unit: _,
             swale: _,
             swale_infil,
-            swale_f_old,
             d1,
             theta2,
             d3,
@@ -877,7 +906,6 @@ impl LidUnit {
         if let Some(s) = swale_infil {
             s.checkpoint_put(w)?;
         }
-        put_f(w, *swale_f_old)?;
         put_f(w, *d1)?;
         put_f(w, *theta2)?;
         put_f(w, *d3)?;
@@ -917,7 +945,6 @@ impl LidUnit {
         } else if self.swale_infil.is_some() {
             return Err("this model infiltrates where the checkpoint does not".into());
         }
-        self.swale_f_old = r.f()?;
         self.d1 = r.f()?;
         self.theta2 = r.f()?;
         self.d3 = r.f()?;
@@ -1082,6 +1109,53 @@ mod tests {
             u.drain_flow < 1e-3 * c * h0.sqrt(),
             "still draining {} past the closed-form clock",
             u.drain_flow
+        );
+    }
+
+    #[test]
+    fn a_swales_booked_fluxes_are_its_volume_change() {
+        // §3.4: the booked fluxes are the same averages the volume
+        // advance uses, so inflow minus bookings equals the volume
+        // change identically at ANY step — even one so coarse the
+        // Manning outflow swings across it. Booking one instant's rates
+        // against an averaged advance leaked the half-difference every
+        // step: 5.6% of a storm at a five-minute step.
+        let mut u = LidUnit::build(
+            &swale_control(),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        let g = u.swale.expect("geometry");
+        let unit_area = g.len * g.top;
+        let vol = |u: &LidUnit| {
+            let d = u.d1;
+            g.len * d * (g.bot + g.slope * d)
+        };
+        let dt = 300.0;
+        let mut booked = 0.0;
+        let mut inflow_total = 0.0;
+        let v0 = vol(&u);
+        // A storm pulse, a recession, then a refill: the rates swing
+        // hard between steps, which is what the leak fed on.
+        for step in 0..60 {
+            let q = match step {
+                0..=11 => 4.0e-5,
+                12..=35 => 0.0,
+                _ => 1.5e-5,
+            };
+            u.step(&forcing(q), dt);
+            inflow_total += q * unit_area * dt;
+            booked += (u.overflow + u.exfiltration + u.evap_used) * unit_area * dt;
+        }
+        let dv = vol(&u) - v0;
+        let residual = inflow_total - booked - dv;
+        assert!(
+            residual.abs() < 1e-9 * inflow_total.max(1.0),
+            "the swale leaked {residual} m3 of {inflow_total} m3 in"
         );
     }
 
