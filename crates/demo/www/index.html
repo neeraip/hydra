@@ -9,27 +9,16 @@
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
-    <!-- Absolute links so the same nav works on Pages, on a local dev
-         server, and inside the offline single-file build. -->
+    <!-- The demo is an app surface, not a page of the marketing site:
+         no section nav, just the wordmark as the way back. The absolute
+         link works on Pages, on a local dev server, and inside the
+         offline single-file build. -->
     <nav class="hydra-nav">
       <div class="hydra-nav-inner">
-        <input class="hydra-nav-toggle" type="checkbox" id="hydra-nav-toggle" aria-hidden="true" />
         <a class="hydra-wordmark" href="https://neeraip.github.io/hydra/">
           <span class="hydra-glyph" aria-hidden="true"></span><span class="hydra-sep" aria-hidden="true"></span>
           Hydra
         </a>
-        <label class="hydra-nav-burger" for="hydra-nav-toggle" aria-label="Menu">
-          <svg class="open-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-          <svg class="close-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-        </label>
-        <div class="hydra-nav-links">
-          <a href="https://neeraip.github.io/hydra/#why">Why simulate</a>
-          <a href="https://neeraip.github.io/hydra/#engines">Engines</a>
-          <a href="https://neeraip.github.io/hydra/#toolchain">Toolchain</a>
-          <a href="https://neeraip.github.io/hydra/#features">Features</a>
-          <a href="https://neeraip.github.io/hydra/#faq">FAQ</a>
-          <a class="hydra-cta" href="https://neeraip.github.io/hydra/#download">Download</a>
-        </div>
       </div>
     </nav>
 
@@ -106,25 +95,6 @@
         to try Hydra, and run large models natively.
       </p>
     </footer>
-
-    <script>
-      // Close the mobile drawer when a navigation choice is made.
-      const navToggle = document.getElementById("hydra-nav-toggle");
-      document.querySelectorAll(".hydra-nav-links a").forEach((a) =>
-        a.addEventListener("click", () => {
-          navToggle.checked = false;
-          navToggle.dispatchEvent(new Event("change"));
-        }),
-      );
-
-      // Mirror the checkbox drawer's state for assistive tech.
-      const burger = document.querySelector(".hydra-nav-burger");
-      burger.setAttribute("role", "button");
-      burger.setAttribute("aria-expanded", "false");
-      navToggle.addEventListener("change", () =>
-        burger.setAttribute("aria-expanded", String(navToggle.checked)),
-      );
-    </script>
 
     <!-- The demo first, as a classic script: classic scripts run before
          deferred module ones, so `startHydraDemo` is defined by the time the
