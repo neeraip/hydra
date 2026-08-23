@@ -434,6 +434,23 @@ pub fn get_period_results(
 /// dirty cache is treated exactly like a non-matching target.
 /// The uds counterpart of [`network_for_target`]: the cached parse when the
 /// state holds exactly this target, otherwise a fresh parse from disk.
+/// One parse, however many panes ask. At project open the editor,
+/// tables, and results panes all request the network before the editor
+/// state is populated, and each request parsed the model from disk: on
+/// the largest real model that was several concurrent 800 MB parses
+/// stacked into a 6.7 GB spike. Fresh parses serialise on this lock,
+/// the editor state is re-checked once it is held (it usually filled
+/// while waiting), and the last parse is kept, keyed to the file's
+/// modification time so an on-disk change can never serve a stale
+/// network. The editor's own load shares the same flight
+/// ([`shared_uds_parse`]).
+type ParseCache = Option<(
+    (String, Option<String>),
+    std::time::SystemTime,
+    std::sync::Arc<hydra::uds::model::Network>,
+)>;
+static FRESH_PARSE: std::sync::Mutex<ParseCache> = std::sync::Mutex::new(None);
+
 pub(crate) fn uds_network_for_target(
     app_data: &std::path::Path,
     state: &NetworkState,
@@ -455,13 +472,73 @@ pub(crate) fn uds_network_for_target(
         }
     }
     let model_path = model_path_for(app_data, project_id, scenario_id);
+
+    let mut cache = FRESH_PARSE.lock().map_err(|e| e.to_string())?;
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::LoadedUds {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id,
+            ..
+        } = &*guard
+        {
+            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+                return Ok(network.clone());
+            }
+        }
+    }
+    let mtime = std::fs::metadata(&model_path)
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("Cannot read model: {e}"))?;
+    let key = (project_id.to_string(), scenario_id.map(str::to_string));
+    if let Some((k, t, net)) = cache.as_ref() {
+        if *k == key && *t == mtime {
+            return Ok(net.clone());
+        }
+    }
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let text = String::from_utf8_lossy(&raw);
     let (network, diags) = hydra::uds::io::objects::parse_network(&text);
     if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
         return Err(format!("Cannot read model: {first}"));
     }
-    Ok(std::sync::Arc::new(network))
+    let network = std::sync::Arc::new(network);
+    *cache = Some((key, mtime, network.clone()));
+    Ok(network)
+}
+
+/// The editor's side of the same single flight: the project-open path
+/// has the model text in hand and needs the parsed network for its own
+/// state. Under the same lock, an unchanged on-disk model reuses the
+/// pane commands' parse, and a fresh parse is left for them — one
+/// parsed network per model, however the open storm interleaves.
+pub(crate) fn shared_uds_parse(
+    app_data: &std::path::Path,
+    project_id: &str,
+    scenario_id: Option<&str>,
+    text: &str,
+) -> Result<std::sync::Arc<hydra::uds::model::Network>, String> {
+    let model_path = model_path_for(app_data, project_id, scenario_id);
+    let mtime = std::fs::metadata(&model_path)
+        .and_then(|m| m.modified())
+        .ok();
+    let key = (project_id.to_string(), scenario_id.map(str::to_string));
+    let mut cache = FRESH_PARSE.lock().map_err(|e| e.to_string())?;
+    if let (Some(mtime), Some((k, t, net))) = (mtime, cache.as_ref()) {
+        if *k == key && *t == mtime {
+            return Ok(net.clone());
+        }
+    }
+    let (network, diags) = hydra::uds::io::objects::parse_network(text);
+    if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+        return Err(format!("Cannot open this model: {first}"));
+    }
+    let network = std::sync::Arc::new(network);
+    if let Some(mtime) = mtime {
+        *cache = Some((key, mtime, network.clone()));
+    }
+    Ok(network)
 }
 
 pub(crate) fn network_for_target(
@@ -928,6 +1005,50 @@ pub async fn export_results_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One parse, however many panes ask (the project-open storm): the
+    /// second request for an unchanged on-disk model gets the same
+    /// network, not a fresh parse. Arc identity is the proof — a
+    /// re-parse cannot produce the same allocation.
+    #[test]
+    fn concurrent_pane_requests_share_one_parse() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_data = dir.path();
+        let base = crate::meta::bundle::base_dir(app_data, "p1");
+        std::fs::create_dir_all(&base).expect("mkdir");
+        std::fs::write(
+            crate::meta::bundle::base_model_path(app_data, "p1"),
+            "[OPTIONS]\nFLOW_UNITS  CFS\n\n[JUNCTIONS]\nJ1  100  3\n\n[OUTFALLS]\nO1  95  FREE\n\n[CONDUITS]\nC1  J1  O1  100  0.013  0  0\n\n[XSECTIONS]\nC1  CIRCULAR  1  0  0  0\n",
+        )
+        .expect("write");
+        let state = NetworkState(parking_lot::Mutex::new(NetworkStateInner::Empty));
+        let a = uds_network_for_target(app_data, &state, "p1", None).expect("first");
+        let b = uds_network_for_target(app_data, &state, "p1", None).expect("second");
+        assert!(
+            std::sync::Arc::ptr_eq(&a, &b),
+            "the second request re-parsed instead of sharing the parse"
+        );
+        // An on-disk change must not serve the stale network.
+        let path = crate::meta::bundle::base_model_path(app_data, "p1");
+        let text = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(&path, text.replace("J1  100  3", "J1  101  3")).expect("rewrite");
+        let mtime = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        let f = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open");
+        f.set_modified(mtime).expect("touch");
+        let c = uds_network_for_target(app_data, &state, "p1", None).expect("third");
+        assert!(
+            !std::sync::Arc::ptr_eq(&a, &c),
+            "an edited model served the stale cached network"
+        );
+        assert_eq!(c.vertices[0].invert, {
+            // 101 ft in metres.
+            101.0 * 0.3048
+        });
+    }
+
     use crate::commands::simulation::run_sim_loops;
     use crate::commands::test_fixtures::{loaded_sim, loaded_state, TEST_INP};
 

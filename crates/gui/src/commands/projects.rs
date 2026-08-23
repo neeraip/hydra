@@ -2456,10 +2456,16 @@ pub fn load_project_network(
     match engine.as_str() {
         "uds" => {
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            let (network, diags) = hydra::uds::io::objects::parse_network(&text);
-            if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
-                return Err(format!("Cannot open this model: {first}"));
-            }
+            drop(bytes);
+            // The pane commands racing this open share the same parse
+            // (results::shared_uds_parse): one parsed network per model,
+            // however the open storm interleaves.
+            let network = super::results::shared_uds_parse(
+                &app_data,
+                &project_id,
+                scenario_id.as_deref(),
+                &text,
+            )?;
             let view = super::uds_view::build_view(&network);
             // Same outline for the home page as the distribution path draws,
             // from the viewer's own geometry rather than a network DTO.
@@ -2468,7 +2474,7 @@ pub fn load_project_network(
             *state.0.lock() = NetworkStateInner::LoadedUds {
                 dirty: false,
                 raw_text: text,
-                network: std::sync::Arc::new(network),
+                network,
                 // Project-owned: aux files live on disk in base/aux/.
                 aux_files: Vec::new(),
                 owner_project_id: Some(project_id.clone()),
