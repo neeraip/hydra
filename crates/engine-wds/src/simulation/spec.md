@@ -93,9 +93,23 @@ where $Q_{\text{net}}$ is the net inflow (positive = filling, m³/s) and $V$, $V
 
 **Units**: premise threshold values are stored in the internal unit system (see data model spec §3), with two exceptions kept in their on-disk units: `TIME`/`CLOCKTIME` thresholds are seconds, and `FILLTIME`/`DRAINTIME` thresholds are **hours** — they are stored exactly as written in the input (which keeps input round-trips lossless), and the evaluator produces an hours-valued left-hand side as defined above so the comparison is hours-to-hours. All other thresholds are converted to internal units at load time so that premise evaluation operates with no per-evaluation conversion.
 
-**Logical combination**: consecutive premises within a rule are joined by `AND` or `OR`. `AND` binds more tightly than `OR`. A rule's overall truth value is the evaluation of this expression.
+**Logical combination**: consecutive premises within a rule are joined by `AND` or `OR`, evaluated **left to right with a single accumulated boolean** — `acc = acc AND next` or `acc = acc OR next` — exactly as EPANET evaluates them. There is no operator precedence: "A OR B AND C" is (A OR B) AND C.
 
-> **DEVIATION from EPANET:** EPANET does not apply operator precedence. It evaluates premises left-to-right with a single accumulated boolean: an `OR` clause is consulted only when the accumulated result is false, and a false result reaching an `AND` clause rejects the rule outright — so later `OR` alternatives are never consulted. For "A AND B OR C" with A false, EPANET yields false without consulting C, whereas Hydra evaluates (A AND B) OR C and lets C decide. Hydra keeps true precedence because it makes the rule text mean what it reads, while EPANET's behaviour is an accumulator artifact undocumented in its manual. Ported models that mix `AND` and `OR` within a single rule should be checked for intent.
+> **CORRESPONDENCE:** this engine once applied true precedence here, on the
+> argument that the rule text should mean what it reads, and recorded the
+> difference as a deviation. Real models overturned that: the published
+> Micropolis network writes its night schedule as `IF CLOCKTIME >= 8 PM /
+> OR CLOCKTIME < 6 AM / AND TANK LEVEL BELOW …`, meaning (night) AND
+> (level band) — the accumulator's reading. Under true precedence the
+> first premise alone fired the rule all night regardless of level, and
+> the schedule ran wrong. A rule written for the predecessor means what
+> the predecessor does with it, which is the file-meaning rule this
+> engine's charter makes the sole compatibility constraint. Authors who
+> want explicit grouping should split rules; a rule mixing `AND` and `OR`
+> is inherently precedence-sensitive in every EPANET-compatible engine.
+>
+> *Source: `rules.c` `evalpremises` — a single running result, `OR`
+> consulted only when it is false.*
 
 #### 4.2.3 Action Application and Conflict Resolution
 

@@ -19,8 +19,10 @@ const KW_PER_W: f64 = 1.0e-3;
 /// conjunctive clauses. Each premise's `connective` is the operator that
 /// *precedes* it — `None` for the first premise, then `And`/`Or` taken from the
 /// keyword that begins each subsequent premise line (matching the parser and
-/// INP writer). An `Or` closes the running conjunctive clause and opens a new
-/// one; `And` (or the first premise) extends the current clause.
+/// INP writer). Premises combine left to right with a single accumulated
+/// boolean and no operator precedence — the predecessor's evaluation, so
+/// "A OR B AND C" is (A OR B) AND C (§4.2.2). Micropolis's night schedule
+/// is written exactly that way and means exactly that.
 pub(crate) fn evaluate_premises(
     premises: &[Premise],
     network: &Network,
@@ -32,26 +34,15 @@ pub(crate) fn evaluate_premises(
         return false;
     }
 
-    let mut or_result = false;
-    let mut clause = true;
-
+    let mut acc = true;
     for premise in premises {
         let truth = eval_single_premise(premise, network, node_states, link_states, t);
-
         match premise.connective {
-            Some(LogicOp::Or) => {
-                // `Or` ends the current clause and starts a fresh one.
-                or_result = or_result || clause;
-                clause = truth;
-            }
-            // `And`, or the first premise (`None`), extends the current clause.
-            Some(LogicOp::And) | None => {
-                clause = clause && truth;
-            }
+            Some(LogicOp::Or) => acc = acc || truth,
+            Some(LogicOp::And) | None => acc = acc && truth,
         }
     }
-
-    or_result || clause
+    acc
 }
 
 fn eval_single_premise(
@@ -276,6 +267,52 @@ mod tests {
             ..NodeState::default()
         }];
         evaluate_premises(&[premise], &network, &node_states, &[], 0.0)
+    }
+
+    /// §4.2.2: premises combine left to right with one accumulated
+    /// boolean and no precedence, as the predecessor combines them. The
+    /// discriminating case is "A OR B AND C" with A true and C false:
+    /// grouped precedence reads A OR (B AND C) and fires on A alone —
+    /// which is exactly how Micropolis's night rules ran all night
+    /// regardless of tank level. The accumulator reads (A OR B) AND C
+    /// and lets C veto.
+    #[test]
+    fn premises_combine_as_the_predecessors_accumulator() {
+        let network = tank_network();
+        let states = vec![NodeState::default()];
+        // Premises on SYSTEM TIME at t = 100: truth is chosen per premise.
+        let clock = |truth: bool, conn: Option<LogicOp>| Premise {
+            object: PremiseObject::Clock,
+            attribute: PremiseAttribute::Time,
+            operator: if truth {
+                PremiseOperator::Gt
+            } else {
+                PremiseOperator::Lt
+            },
+            value: 50.0,
+            connective: conn,
+        };
+        let eval =
+            |premises: &[Premise]| evaluate_premises(premises, &network, &states, &[], 100.0);
+        // A(true) OR B(false) AND C(false) => (T or F) and F => false.
+        assert!(!eval(&[
+            clock(true, None),
+            clock(false, Some(LogicOp::Or)),
+            clock(false, Some(LogicOp::And)),
+        ]));
+        // A(false) OR B(true) AND C(true) => (F or T) and T => true.
+        assert!(eval(&[
+            clock(false, None),
+            clock(true, Some(LogicOp::Or)),
+            clock(true, Some(LogicOp::And)),
+        ]));
+        // A(false) AND B(true) OR C(true) => (F and T) or T => true, the
+        // case where both readings happen to agree.
+        assert!(eval(&[
+            clock(false, None),
+            clock(true, Some(LogicOp::And)),
+            clock(true, Some(LogicOp::Or)),
+        ]));
     }
 
     /// FILLTIME compares in HOURS (§4.2.2): a tank 1.8 m³ from full filling at

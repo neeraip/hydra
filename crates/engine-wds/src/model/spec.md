@@ -335,7 +335,10 @@ A rule is evaluated at each rule time step (which subdivides the hydraulic step)
 
 **Premise value units**: `TIME` and `CLOCKTIME` thresholds are stored in seconds. `FILLTIME` and `DRAINTIME` thresholds are stored in **hours** — the EPANET convention for these attributes — and are *not* converted at the input boundary; the rule evaluator converts the tank's computed fill/drain time into hours before comparison (see [simulation spec](../simulation/spec.md) §4.2.2). All other premise thresholds are converted to internal SI units at load time (§3).
 
-Consecutive premises are joined by `AND` or `OR`. `AND` binds more tightly than `OR` (standard precedence).
+Consecutive premises are joined by `AND` or `OR`, combined left to right
+with a single accumulated boolean and no operator precedence — the
+predecessor's evaluation, which is what a rule written for it means (see
+[simulation spec](../simulation/spec.md) §4.2.2).
 
 **Action**: `(link_index, attribute, value)` where `attribute` is `STATUS` or `SETTING`.
 
