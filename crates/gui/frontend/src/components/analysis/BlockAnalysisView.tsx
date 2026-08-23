@@ -27,6 +27,7 @@ import {
   categoriesOf,
   layoutSpans,
 } from "./fragments";
+import { onOverviewCategory, runInstants, runStampsLabel } from "./runStamps";
 
 /** How long an edit may keep changing before the blocks refetch. Criteria
  * sliders emit per-tick; re-producing every block per tick would contend
@@ -41,7 +42,7 @@ export function BlockAnalysisView({
   criteria?: unknown;
 }) {
   const { activeProjectId, activeScenarioId } = useAppState();
-  const { resultGeneration } = useSimulation();
+  const { resultGeneration, resultMeta } = useSimulation();
   // Tagged block values arrive already re-expressed in the reader's
   // resolved system (report spec §4.0), so this view renders what it is
   // given, and flipping the preference refetches.
@@ -108,6 +109,9 @@ export function BlockAnalysisView({
       ? (blocks ?? [])
       : (blocks ?? []).filter((b) => b.category === activeCategory);
   const spans = layoutSpans(visible.map((b) => b.fragment));
+  // When the run behind these results happened — app-authored metadata,
+  // shown once on the overview tab beside the engine's own summary.
+  const stamps = runInstants(resultMeta);
 
   return (
     <div
@@ -179,6 +183,19 @@ export function BlockAnalysisView({
         </div>
       ) : (
         <div className="analysis-scroll">
+          {stamps &&
+            blocks.length > 0 &&
+            onOverviewCategory(activeCategory, categories) && (
+              <div
+                style={{
+                  padding: "14px 18px 0",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
+                {runStampsLabel(stamps.started, stamps.finished)}
+              </div>
+            )}
           {/* One or two columns (app.css, container query); each block
               claims a cell or the whole row by its fragment's shape,
               paired so no row is left ragged (`layoutSpans`) —

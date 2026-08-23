@@ -169,6 +169,14 @@ pub(crate) struct RunMeta {
     /// can catch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_digest: Option<String>,
+    /// Wall-clock instant the run started, milliseconds since the Unix
+    /// epoch. Absent for results written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    /// Wall-clock instant the run finished and its results were published,
+    /// milliseconds since the Unix epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
 }
 
 /// Read the `run.json` beside `results_path`, or `None` when absent or
@@ -404,6 +412,9 @@ where
         pre_run_warnings,
     } = run;
     let wall_start = std::time::Instant::now();
+    // The wall-clock twin of `wall_start`: `Instant` measures the run,
+    // `now_ms` timestamps it for the metadata written beside the results.
+    let started_at_ms = crate::meta::now_ms();
     let mut hyd_steps: u32 = 0;
     // Never write `out_path` directly: stream to `<name>.tmp` and promote it
     // only on success so a failed/cancelled run can never leave a truncated
@@ -584,6 +595,8 @@ where
                     final_path,
                     Some(&RunMeta {
                         network_digest: network_digest.map(crate::commands::results::digest_hex),
+                        started_at_ms: Some(started_at_ms),
+                        finished_at_ms: Some(crate::meta::now_ms()),
                     }),
                 );
             }
@@ -653,6 +666,20 @@ pub(crate) fn run_loop_outcome(run_err: &Option<RunLoopError>) -> &'static str {
 mod tests {
     use super::*;
     use crate::commands::test_fixtures::loaded_sim;
+
+    // ── run metadata ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_pre_timestamp_run_json_still_parses_with_unknown_instants() {
+        // run.json is versionless and grows by addition: a file written
+        // before the wall-clock fields existed must read as "unknown", not
+        // fail, or old results would lose their digest too.
+        let meta: RunMeta =
+            serde_json::from_slice(br#"{"networkDigest":"0000000000000abc"}"#).unwrap();
+        assert_eq!(meta.network_digest.as_deref(), Some("0000000000000abc"));
+        assert_eq!(meta.started_at_ms, None);
+        assert_eq!(meta.finished_at_ms, None);
+    }
 
     // ── run-target lock ───────────────────────────────────────────────────
 

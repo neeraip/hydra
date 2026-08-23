@@ -171,6 +171,15 @@ pub struct ResultMetaDto {
     /// topology match as unknown and apply no staleness gating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_digest: Option<String>,
+    /// Wall-clock start of the run that produced these results, milliseconds
+    /// since the Unix epoch — from `run.json` beside the results. Absent for
+    /// results written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    /// Wall-clock instant the run finished and published these results,
+    /// on the same terms as `started_at_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
     /// Engine-described variable catalog with per-run ranges. Every engine
     /// publishes one (§6), and both serve it here — it is what lets a
     /// single legend render either engine's results.
@@ -303,11 +312,14 @@ pub fn load_result_meta(
                 .map(|i| (i as f64 + 1.0) * step)
                 .collect();
             let generic = super::uds_results::generic_meta(&out_path, &meta)?;
+            let run = crate::commands::simulation::read_run_meta(&out_path);
             return Ok(Some(ResultMetaDto {
                 times,
                 has_period_data: true,
                 quality_mode: "none".to_string(),
                 network_digest: None,
+                started_at_ms: run.as_ref().and_then(|r| r.started_at_ms),
+                finished_at_ms: run.as_ref().and_then(|r| r.finished_at_ms),
                 // The wds-shaped fixed ranges stay empty; the canvas reads
                 // the per-variable ranges from `generic` instead.
                 ranges: ResultRangesDto::default(),
@@ -325,6 +337,7 @@ pub fn load_result_meta(
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let times = meta.snapshot_times();
     let ranges = hydra::io::out_reader::scan_ranges(&out_path, &meta, RANGE_SCAN_MAX_SAMPLES)?;
+    let run_meta = crate::commands::simulation::read_run_meta(&out_path);
     let quality_mode = match meta.quality_flag {
         1 => "chemical",
         2 => "age",
@@ -339,8 +352,9 @@ pub fn load_result_meta(
         // format and carries none of Hydra's fields (model spec §4.4.1).
         // Absent is "unknown", which the frontend treats as no staleness
         // gating rather than as stale.
-        network_digest: crate::commands::simulation::read_run_meta(&out_path)
-            .and_then(|run| run.network_digest),
+        network_digest: run_meta.as_ref().and_then(|run| run.network_digest.clone()),
+        started_at_ms: run_meta.as_ref().and_then(|run| run.started_at_ms),
+        finished_at_ms: run_meta.as_ref().and_then(|run| run.finished_at_ms),
         generic: Some(wds_generic_meta(&ranges)),
         // wds serves the fixed arrays; only its catalog is generic.
         generic_periods: false,
@@ -1121,6 +1135,8 @@ mod tests {
             has_period_data: true,
             quality_mode: "none".into(),
             network_digest: None,
+            started_at_ms: None,
+            finished_at_ms: None,
             generic: Some(wds_generic_meta(&ranges)),
             generic_periods: false,
             ranges: ResultRangesDto::default(),
@@ -1373,6 +1389,8 @@ Duration  0
             has_period_data: true,
             quality_mode: "none".into(),
             network_digest: d,
+            started_at_ms: None,
+            finished_at_ms: None,
             generic: None,
             generic_periods: false,
             ranges: ResultRangesDto {
@@ -1400,6 +1418,36 @@ Duration  0
     }
 
     #[test]
+    fn result_meta_dto_run_instants_wire_contract() {
+        // Results predating run.json's wall-clock fields serve with the
+        // fields absent, never as zero — the frontend omits the stamps line
+        // rather than showing 1970.
+        let dto = |t: Option<u64>| ResultMetaDto {
+            times: vec![],
+            has_period_data: true,
+            quality_mode: "none".into(),
+            network_digest: None,
+            started_at_ms: t,
+            finished_at_ms: t.map(|v| v + 1),
+            generic: None,
+            generic_periods: false,
+            ranges: ResultRangesDto::default(),
+        };
+        let json = serde_json::to_string(&dto(None)).unwrap();
+        assert!(!json.contains("startedAtMs"), "got: {json}");
+        assert!(!json.contains("finishedAtMs"), "got: {json}");
+        let json = serde_json::to_string(&dto(Some(1_756_000_000_000))).unwrap();
+        assert!(
+            json.contains("\"startedAtMs\":1756000000000"),
+            "got: {json}"
+        );
+        assert!(
+            json.contains("\"finishedAtMs\":1756000000001"),
+            "got: {json}"
+        );
+    }
+
+    #[test]
     fn a_run_records_its_digest_beside_the_results_not_inside_them() {
         // End-to-end through the streaming run path: `results.out` stays
         // EPANET's format with nothing of Hydra's in it (model spec §4.4.1),
@@ -1418,6 +1466,19 @@ Duration  0
         let run = crate::commands::simulation::read_run_meta(&out)
             .expect("a completed run writes run.json");
         assert_eq!(run.network_digest, Some(digest_hex(expected)));
+
+        // The same file carries the run's wall-clock instants, ordered and
+        // recent: the Results page shows when the run happened from these.
+        let started = run.started_at_ms.expect("a completed run stamps its start");
+        let finished = run
+            .finished_at_ms
+            .expect("a completed run stamps its finish");
+        assert!(
+            started <= finished,
+            "start {started} after finish {finished}"
+        );
+        let now = crate::meta::now_ms();
+        assert!(finished <= now && now - finished < 60_000, "stale stamp");
     }
 
     // ── get_element_series / element_series_from_out ──────────────────────

@@ -278,6 +278,14 @@ pub fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Current epoch milliseconds — for wire fields that carry `_ms` instants.
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Return the file/directory modification time as epoch seconds, or `None` on error.
 pub fn mtime_secs(path: &Path) -> Option<i64> {
     std::fs::metadata(path)

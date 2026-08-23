@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * What the tab bar offers and what each tab shows. The categories are
@@ -12,9 +12,16 @@ import { describe, expect, it, vi } from "vitest";
  * so the two app hooks are mocked rather than provided.
  */
 
+// Mutable so the run-stamps tests can vary what the metadata carries;
+// hoisted because the mock factory runs before module bodies do.
+const sim = vi.hoisted(() => ({
+  resultGeneration: 0,
+  resultMeta: null as { startedAtMs?: number; finishedAtMs?: number } | null,
+}));
+
 vi.mock("../../AppContext", () => ({
   useAppState: () => ({ activeProjectId: "p1", activeScenarioId: null }),
-  useSimulation: () => ({ resultGeneration: 0 }),
+  useSimulation: () => sim,
 }));
 
 vi.mock("../../hooks/ipc", () => ({ tryInvokeOr: vi.fn() }));
@@ -39,6 +46,10 @@ const TWO_TABS = [
   block("wds.run-summary", "Run Summary", "Summary"),
   block("wds.service-compliance", "Pressure Adequacy", "Compliance"),
 ];
+
+beforeEach(() => {
+  sim.resultMeta = null;
+});
 
 describe("BlockAnalysisView tabs", () => {
   it("offers one tab per category and starts on the first", async () => {
@@ -72,5 +83,44 @@ describe("BlockAnalysisView tabs", () => {
       await screen.findByText("Run a simulation to see results here."),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Summary" })).toBeNull();
+  });
+});
+
+describe("BlockAnalysisView run stamps", () => {
+  // Local noon instants: the label renders in the environment's locale,
+  // so the assertions match on the stable "Ran …" prefix.
+  const STAMPED = {
+    startedAtMs: new Date(2026, 7, 23, 12, 0, 0).getTime(),
+    finishedAtMs: new Date(2026, 7, 23, 12, 0, 30).getTime(),
+  };
+
+  it("shows when the run happened, on the overview tab only", async () => {
+    sim.resultMeta = STAMPED;
+    serve(TWO_TABS);
+    render(<BlockAnalysisView />);
+    expect(await screen.findByText(/^Ran /)).toBeTruthy();
+
+    // The stamps describe the whole run, not a category: they sit beside
+    // the engine's own summary and nowhere else.
+    fireEvent.click(screen.getByRole("button", { name: "Compliance" }));
+    expect(screen.queryByText(/^Ran /)).toBeNull();
+  });
+
+  it("stays silent for results that predate the stamps", async () => {
+    sim.resultMeta = {};
+    serve(TWO_TABS);
+    render(<BlockAnalysisView />);
+    expect(await screen.findByText("Run Summary body")).toBeTruthy();
+    expect(screen.queryByText(/^Ran /)).toBeNull();
+  });
+
+  it("stays silent when there are no blocks to describe", async () => {
+    sim.resultMeta = STAMPED;
+    serve([]);
+    render(<BlockAnalysisView />);
+    expect(
+      await screen.findByText("Run a simulation to see results here."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/^Ran /)).toBeNull();
   });
 });

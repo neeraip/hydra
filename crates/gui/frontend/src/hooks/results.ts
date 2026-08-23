@@ -263,6 +263,14 @@ export interface ResultMeta {
    */
   networkDigest?: string | null;
   /**
+   * Wall-clock start of the run that produced these results, milliseconds
+   * since the Unix epoch — from the app's `run.json` beside the results.
+   * Absent for results written before the stamp existed.
+   */
+  startedAtMs?: number | null;
+  /** Wall-clock finish of the same run, on the same terms. */
+  finishedAtMs?: number | null;
+  /**
    * Present for engines whose results flow through the generic
    * variable-keyed payload (uds). When set, `get_period_results` returns
    * the generic layout and `decodeGenericPeriodValues` is the decoder;
