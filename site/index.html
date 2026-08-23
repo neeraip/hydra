@@ -312,8 +312,8 @@
           </article>
         </div>
 
-        <!-- Wireframe placeholders, clearly labelled. Swap each .shot-body
-             for an <img> when real captures exist; keep the frame. -->
+        <!-- Real captures, staged with `just screenshots` and served as
+             WebP from shots/ (the canvas at 2x for the big frame). -->
         <div class="anchor" id="app">
           <h3 class="sub-h">The desktop app, up close</h3>
           <p class="sub-lede">
@@ -321,100 +321,37 @@
             background queue, and play results back over the network.
           </p>
           <figure class="shot big">
-          <div class="shot-bar">
-            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-            <span class="shot-title">Hydra</span>
+            <div class="shot-bar">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="shot-title">Hydra</span>
+            </div>
+            <img src="shots/canvas.webp" width="2400" height="1505" loading="lazy"
+                 alt="The canvas view: a drainage network in plan, mid playback, with depth and velocity legends, an element list on the left, and the selected subcatchment's properties and time series on the right." />
+            <figcaption>The canvas: the network in plan, results played back in time.</figcaption>
+          </figure>
+          <div class="shot-row">
+            <figure class="shot">
+              <img src="shots/editor.webp" width="1728" height="1084" loading="lazy"
+                   alt="The editor view: conduits in a table with length, roughness and cross-section columns, and every element kind listed in a sidebar." />
+              <figcaption>The editor: every element in tables built for bulk edits.</figcaption>
+            </figure>
+            <figure class="shot">
+              <img src="shots/results.webp" width="1728" height="1084" loading="lazy"
+                   alt="The results view: tables of node extremes, link extremes, a flooding summary and an outfall summary." />
+              <figcaption>Results: node and link extremes, flooding and outfall summaries.</figcaption>
+            </figure>
+            <figure class="shot">
+              <img src="shots/report.webp" width="1728" height="1084" loading="lazy"
+                   alt="The report builder: a reorderable list of sections beside a PDF preview showing a run summary, a system balance and a flow chart." />
+              <figcaption>The report builder: charts and tables from saved templates.</figcaption>
+            </figure>
+            <figure class="shot">
+              <img src="shots/run-queue.webp" width="1728" height="1084" loading="lazy"
+                   alt="The projects list with the task monitor open: a large model solving at 69 percent with two more runs queued behind it." />
+              <figcaption>The run queue: simulations solve in the background while you work.</figcaption>
+            </figure>
           </div>
-          <div class="shot-body">
-            <svg viewBox="0 0 900 460" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
-              <g class="wire">
-                <rect x="16" y="16" width="180" height="428" rx="6" />
-                <rect x="28" y="32" width="120" height="10" rx="4" />
-                <rect x="28" y="56" width="156" height="8" rx="4" />
-                <rect x="28" y="74" width="156" height="8" rx="4" />
-                <rect x="28" y="92" width="156" height="8" rx="4" />
-                <rect x="28" y="110" width="156" height="8" rx="4" />
-                <rect x="704" y="16" width="180" height="240" rx="6" />
-                <rect x="716" y="32" width="120" height="10" rx="4" />
-                <rect x="716" y="56" width="156" height="8" rx="4" />
-                <rect x="716" y="74" width="156" height="8" rx="4" />
-                <rect x="716" y="92" width="100" height="8" rx="4" />
-                <rect x="216" y="408" width="468" height="36" rx="6" />
-              </g>
-              <g class="wire-net">
-                <path d="M250 320 L340 220 L470 260 L560 160 L660 220" />
-                <path d="M340 220 L400 120 L560 160" />
-                <path d="M250 320 L400 360 L560 340 L660 220" />
-                <path d="M470 260 L400 360" />
-                <circle cx="250" cy="320" r="7" />
-                <circle cx="340" cy="220" r="7" />
-                <circle cx="470" cy="260" r="7" />
-                <circle cx="560" cy="160" r="7" />
-                <circle cx="660" cy="220" r="7" />
-                <circle cx="400" cy="120" r="7" />
-                <circle cx="400" cy="360" r="7" />
-                <circle cx="560" cy="340" r="7" />
-              </g>
-            </svg>
-            <span class="shot-soon">Screenshot coming soon</span>
-          </div>
-          <figcaption>The canvas: the network over a basemap, results played back in time.</figcaption>
-        </figure>
-        <div class="shot-row">
-          <figure class="shot">
-            <div class="shot-body small">
-              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
-                <g class="wire">
-                  <rect x="14" y="14" width="372" height="24" rx="5" />
-                  <rect x="14" y="48" width="372" height="18" rx="4" />
-                  <rect x="14" y="72" width="372" height="18" rx="4" />
-                  <rect x="14" y="96" width="372" height="18" rx="4" />
-                  <rect x="14" y="120" width="372" height="18" rx="4" />
-                  <rect x="14" y="144" width="372" height="18" rx="4" />
-                  <rect x="14" y="168" width="372" height="18" rx="4" />
-                </g>
-              </svg>
-              <span class="shot-soon">Screenshot coming soon</span>
-            </div>
-            <figcaption>The editor: every element in tables built for bulk edits.</figcaption>
-          </figure>
-          <figure class="shot">
-            <div class="shot-body small">
-              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
-                <g class="wire">
-                  <rect x="14" y="14" width="200" height="10" rx="4" />
-                  <rect x="14" y="36" width="372" height="8" rx="4" />
-                  <rect x="14" y="54" width="372" height="8" rx="4" />
-                  <rect x="14" y="72" width="280" height="8" rx="4" />
-                  <rect x="24" y="110" width="30" height="76" rx="3" />
-                  <rect x="64" y="130" width="30" height="56" rx="3" />
-                  <rect x="104" y="96" width="30" height="90" rx="3" />
-                  <rect x="144" y="120" width="30" height="66" rx="3" />
-                  <rect x="184" y="104" width="30" height="82" rx="3" />
-                  <rect x="240" y="96" width="146" height="90" rx="5" />
-                </g>
-              </svg>
-              <span class="shot-soon">Screenshot coming soon</span>
-            </div>
-            <figcaption>The report builder: charts and tables from saved templates.</figcaption>
-          </figure>
-          <figure class="shot">
-            <div class="shot-body small">
-              <svg viewBox="0 0 400 200" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
-                <g class="wire">
-                  <rect x="14" y="14" width="240" height="12" rx="4" />
-                  <rect x="14" y="40" width="372" height="30" rx="5" />
-                  <rect x="14" y="78" width="372" height="30" rx="5" />
-                  <rect x="14" y="116" width="372" height="30" rx="5" />
-                  <rect x="14" y="154" width="230" height="30" rx="5" />
-                </g>
-              </svg>
-              <span class="shot-soon">Screenshot coming soon</span>
-            </div>
-            <figcaption>Scenarios: variants of one model, queued and compared.</figcaption>
-          </figure>
         </div>
-</div>
 
         <!-- The SDK quick start from crates/sdk/README.md, abridged. -->
         <div class="code-split">
@@ -482,34 +419,56 @@
         </div>
 
         <div class="anchor" id="performance">
-          <h3 class="sub-h">Benchmarks, coming soon</h3>
+          <h3 class="sub-h">Measured against the engines they replace</h3>
           <p class="sub-lede">
-            Speed is a design goal: Rust, a sparse solver, and a release
-            build tuned for it. Published numbers deserve a benchmark with
-            real standing, so we are not claiming any here yet.
+            Each engine is benchmarked against its predecessor on published
+            networks: release builds of both, the same machine, best of
+            three runs. Where results still differ, the difference is
+            documented in the specification with its cause. Nothing is
+            unexplained, for either engine.
           </p>
+          <p class="perf-row-label">Drainage, against SWMM 5.2.4</p>
           <div class="perf-grid">
-          <div class="perf-card tbd" aria-hidden="true">
-            <span class="skel skel-n"></span>
-            <span class="skel skel-a"></span>
-            <span class="skel skel-b"></span>
+          <div class="perf-card">
+            <span class="perf-time">1.00&times;</span>
+            <strong>SWMM's runtime on Bellinge</strong>
+            <span class="perf-d">Published 1,020-node drainage network, 7 h storm</span>
           </div>
-          <div class="perf-card tbd" aria-hidden="true">
-            <span class="skel skel-n"></span>
-            <span class="skel skel-a"></span>
-            <span class="skel skel-b"></span>
+          <div class="perf-card">
+            <span class="perf-time">34% faster</span>
+            <strong>on a 4,394-node system, 48 h</strong>
+            <span class="perf-d">Dynamic wave; 4,373 of 4,394 node depths within 5 cm</span>
           </div>
-          <div class="perf-card tbd" aria-hidden="true">
-            <span class="skel skel-n"></span>
-            <span class="skel skel-a"></span>
-            <span class="skel skel-b"></span>
+          <div class="perf-card">
+            <span class="perf-time">0</span>
+            <strong>unexplained differences</strong>
+            <span class="perf-d">Every corpus delta fixed, or documented with its cause</span>
           </div>
-          <span class="tbd-pill">Benchmarks coming soon</span>
+        </div>
+          <p class="perf-row-label">Water distribution, against EPANET</p>
+          <div class="perf-grid">
+          <div class="perf-card">
+            <span class="perf-time">95.4%</span>
+            <strong>of 2.6M node pressures match</strong>
+            <span class="perf-d">Within 0.1, across 11 published research networks</span>
+          </div>
+          <div class="perf-card">
+            <span class="perf-time">1.0&ndash;1.2&times;</span>
+            <strong>EPANET's runtime on the set</strong>
+            <span class="perf-d">Balerma, BWSN, D-Town, Exeter, Kentucky, NY Tunnels</span>
+          </div>
+          <div class="perf-card">
+            <span class="perf-time">2nd order</span>
+            <strong>tank integration, with an error bound</strong>
+            <span class="perf-d">The one runtime trade; EPANET's own scheme is a flag away</span>
+          </div>
         </div>
         <p class="note">
-          Until then, measure it yourself: the repo ships a reproducible
-          harness (<code>just bench-report</code>) that times full runs on
-          your own machine.
+          Method, full tables, and how to reproduce them on your own
+          machine are in the
+          <a class="ext" href="docs/reference/performance.html" target="_blank" rel="noopener">performance reference</a>.
+          A tracked baseline gates every change on both runtime and peak
+          memory, so these numbers cannot quietly rot.
         </p>
         </div>
       </section>

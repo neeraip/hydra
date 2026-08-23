@@ -601,7 +601,7 @@ h2 {
 }
 
 
-/* ── Screenshot placeholders ─────────────────────────────────────────── */
+/* ── Screenshots ─────────────────────────────────────────────────────── */
 
 .shot {
   margin: 0;
@@ -634,51 +634,10 @@ h2 {
   color: var(--dim);
 }
 
-.shot-body {
-  position: relative;
-  aspect-ratio: 900 / 460;
-}
-
-.shot-body.small {
-  aspect-ratio: 2 / 1;
-}
-
-.shot-body svg {
-  position: absolute;
-  inset: 0;
+.shot img {
+  display: block;
   width: 100%;
-  height: 100%;
-}
-
-.wire rect {
-  fill: rgba(255, 255, 255, 0.045);
-}
-
-.wire-net path {
-  fill: none;
-  stroke: rgba(110, 170, 240, 0.4);
-  stroke-width: 2;
-}
-
-.wire-net circle {
-  fill: #101722;
-  stroke: rgba(110, 170, 240, 0.55);
-  stroke-width: 2;
-}
-
-.shot-soon {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  padding: 6px 14px;
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--dim);
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  background: rgba(11, 14, 20, 0.8);
-  white-space: nowrap;
+  height: auto;
 }
 
 .shot figcaption {
@@ -691,8 +650,14 @@ h2 {
 .shot-row {
   margin-top: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .shot-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Compatibility ───────────────────────────────────────────────────── */
@@ -779,56 +744,20 @@ h2 {
   position: relative;
 }
 
+.perf-row-label {
+  margin: 26px 0 -16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
 .perf-card {
   padding: 22px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-panel);
-}
-
-/* Placeholder cards, in the same language as the screenshot frames:
-   dashed, skeletal, and labelled once. */
-.perf-card.tbd {
-  border-style: dashed;
-  background: transparent;
-}
-
-.skel {
-  display: block;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.skel-n {
-  width: 55%;
-  height: 42px;
-}
-
-.skel-a {
-  margin-top: 12px;
-  width: 40%;
-  height: 12px;
-}
-
-.skel-b {
-  margin-top: 8px;
-  width: 75%;
-  height: 10px;
-}
-
-.tbd-pill {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  padding: 6px 14px;
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--dim);
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  background: rgba(11, 14, 20, 0.85);
-  white-space: nowrap;
 }
 
 .perf-time {
@@ -893,9 +822,8 @@ h2 {
 
 /* On a phone, a column of separate card boxes reads as repetition. The
    inventory grids (features, use cases, toolchain, downloads) become one
-   panel of divided rows; the engine cards and the screenshot figures
-   keep their card weight, and the benchmark placeholders shrink to one
-   skeleton, because three identical empty boxes say nothing once. */
+   panel of divided rows; the engine cards, the benchmark cards and the
+   screenshot figures keep their card weight. */
 @media (max-width: 640px) {
   .feature-grid,
   #toolchain .cards.four,
@@ -941,9 +869,6 @@ h2 {
     display: inline-block;
   }
 
-  .perf-card.tbd:nth-of-type(n + 2) {
-    display: none;
-  }
 }
 
 /* ── Download ────────────────────────────────────────────────────────── */
