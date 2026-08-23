@@ -106,6 +106,14 @@ struct RunArgs {
     #[arg(long, value_name = "PATH")]
     checkpoint: Option<String>,
 
+    /// Tank-level integration error tolerance in metres (water models
+    /// only). The default 0.001 drives the second-order tank integrator
+    /// and its per-step error control; 0 restores EPANET's first-order
+    /// tank stepping, which runs faster on control-heavy networks and
+    /// carries no error bound.
+    #[arg(long, value_name = "METRES")]
+    tank_tolerance: Option<f64>,
+
     /// Path of a checkpoint to resume from, in place of starting the model
     /// at its beginning. The model and every auxiliary file must be the
     /// ones the checkpoint was taken from.
@@ -333,6 +341,16 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         Err(code) => return code,
     };
     if engine.key == "uds" {
+        if args.tank_tolerance.is_some() {
+            emit_error(
+                "input/arguments",
+                "--tank-tolerance applies to water models; the drainage engine's \
+                 stepping is governed by its own routing options",
+                None,
+                None,
+            );
+            return EXIT_INPUT;
+        }
         return uds_cmd::run(args, cli, bytes);
     }
     // §12.3 is the drainage engine's contract. Saying so beats writing no
@@ -351,7 +369,25 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
     }
 
     let network = match io::parse(&bytes) {
-        Ok(n) => n,
+        Ok(mut n) => {
+            // §5.3: the tank-level error tolerance is a session option
+            // with no INP spelling (the file format is EPANET's); the
+            // flag is how a command line reaches it. Negative values
+            // are refused rather than clamped.
+            if let Some(tol) = args.tank_tolerance {
+                if !tol.is_finite() || tol < 0.0 {
+                    emit_error(
+                        "input/arguments",
+                        "--tank-tolerance must be zero or a positive number of metres",
+                        None,
+                        None,
+                    );
+                    return EXIT_INPUT;
+                }
+                n.options.level_err_tol = tol;
+            }
+            n
+        }
         Err(io::ParseError::NotSimulable(errs)) => {
             for e in &errs {
                 emit_error("validation/network", &e.to_string(), None, None);
@@ -828,6 +864,16 @@ mod tests {
             Command::Run(a) => a,
             other => panic!("expected run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tank_tolerance_parses_and_reaches_the_session_option() {
+        let cli = parse(&["hydra", "run", "net1.inp", "--tank-tolerance", "0"]);
+        assert_eq!(run_args(&cli).tank_tolerance, Some(0.0));
+        let cli = parse(&["hydra", "run", "net1.inp", "--tank-tolerance", "0.002"]);
+        assert_eq!(run_args(&cli).tank_tolerance, Some(0.002));
+        let cli = parse(&["hydra", "run", "net1.inp"]);
+        assert_eq!(run_args(&cli).tank_tolerance, None);
     }
 
     #[test]
