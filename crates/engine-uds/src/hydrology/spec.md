@@ -247,7 +247,15 @@ exfiltration zero, drainage by Manning flow on the surface slope, and a mat
 with no roughness passing percolation straight through rather than sealing);
 infiltration trenches (no soil layer, one end-limited surface-to-storage
 flux); permeable pavement (a clog-reduced permeability intake in place of
-Green–Ampt, optional soil layer); rain barrels (pure storage, sealed, no
+Green–Ampt, optional soil layer, and a **water-bearing pavement course**:
+the layer stores water in its voids — thickness × void fraction ×
+pervious paver fraction — with the same permeability limiting both its
+intake and its percolation, so when the layer beneath is the bottleneck
+water backs up into the pavement before the surface ponds, and a course
+above a bottleneck buffers a storm instead of shedding it; its
+evapotranspiration sits between the surface's and the soil's in the
+top-down cascade, and the underdrain's stacked head passes through a
+full pavement to reach the ponded surface); rain barrels (pure storage, sealed, no
 evaporation; a barrel is an empty vessel, so its storage layer's void
 ratio is read but not applied — stored volume is stored depth, and a
 barrel holding $h_0$ of head over a drain $q = C h^{1/2}$ drains dry in

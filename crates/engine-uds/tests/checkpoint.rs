@@ -559,6 +559,28 @@ P1  IT  1  500  10  0  50  0  trench.txt
     restores_identically(&model, 0.25);
 }
 
+/// A pavement course mid-storm holds water in its voids (§3.4), which
+/// is state a checkpoint must carry: a restored course that came back
+/// empty would shed the tail of the storm its twin buffers.
+#[test]
+fn a_restored_pavement_course_keeps_its_water() {
+    let model = parcel_model(
+        "
+[LID_CONTROLS]
+PP  PP
+PP  SURFACE  2  0.0  0.1  1.0  5
+PP  PAVEMENT  6  0.25  0  100  0
+PP  STORAGE  1  0.5  0.01  0
+PP  DRAIN    0  0.5  0  0
+
+[LID_USAGE]
+P1  PP  1  500  10  0  50  0
+",
+        "",
+    );
+    restores_identically(&model, 0.25);
+}
+
 /// The checkpoint instants above must be ones where the surface holds
 /// something, or the two tests prove nothing.
 #[test]

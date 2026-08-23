@@ -43,6 +43,7 @@ pub struct LidUnit {
     /// rainfall from the barrel's intake and nothing else (§3.4).
     covered: bool,
     /// Pavement pervious-paver fraction; scales sub-surface ET (§3.4).
+    pave_void: f64,
     pave_perv_frac: f64,
     drain: Option<DrainParams>,
     mat_thick: f64,
@@ -69,6 +70,8 @@ pub struct LidUnit {
     /// the trapezoid's start weight.
     // State.
     d1: f64,
+    /// Water depth in the pavement course's voids (m; §3.4).
+    d_pave: f64,
     theta2: f64,
     d3: f64,
     drain_open: bool,
@@ -84,6 +87,7 @@ pub struct LidUnit {
     /// This step's surface intake and soil percolation (m/s), for the
     /// §14.8.4 record; zero for kinds without those fluxes.
     surf_infil_step: f64,
+    pave_perc_step: f64,
     soil_perc_step: f64,
     /// This step's unit inflow (m/s), captured for the same record.
     last_inflow: f64,
@@ -285,7 +289,7 @@ impl LidUnit {
         }
         let area = f64::from(usage.count) * usage.area;
         let s = ctl.surface.as_ref();
-        let (mut d1, mut theta2, mut d3) = (0.0, 0.0, 0.0);
+        let (mut d1, mut d_pave, mut theta2, mut d3) = (0.0, 0.0, 0.0, 0.0);
         let soil = ctl.soil.as_ref();
         let stor = ctl.storage.as_ref();
         // Initial saturation pre-fills soil and storage (§3.4).
@@ -296,6 +300,9 @@ impl LidUnit {
             }
             if let Some(st) = stor {
                 d3 = usage.init_saturation * st.thickness;
+            }
+            if let Some(pv) = ctl.pavement.as_ref() {
+                d_pave = usage.init_saturation * pv.thickness;
             }
         } else if let Some(so) = soil {
             theta2 = so.wilting_point;
@@ -342,6 +349,11 @@ impl LidUnit {
             // the barrel's rain exclusion, never a seal.
             sealed: matches!(kind, LidKind::GreenRoof | LidKind::RainBarrel),
             covered: stor.is_some_and(|x| x.covered),
+            // §3.4: the course stores water in its voids over the
+            // pervious paver share of its plan area.
+            pave_void: ctl.pavement.as_ref().map_or(0.0, |x| {
+                (x.void_frac * (1.0 - x.imperv_frac).max(0.0)).max(1e-6)
+            }),
             pave_perv_frac: ctl
                 .pavement
                 .as_ref()
@@ -386,6 +398,7 @@ impl LidUnit {
             swale,
             swale_infil,
             d1,
+            d_pave,
             theta2,
             d3,
             drain_open: false,
@@ -396,6 +409,7 @@ impl LidUnit {
             total_inflow: 0.0,
             balance: LidBalance::default(),
             surf_infil_step: 0.0,
+            pave_perc_step: 0.0,
             soil_perc_step: 0.0,
             last_inflow: 0.0,
             next_regen: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
@@ -454,7 +468,10 @@ impl LidUnit {
             }
             _ => self.d1 * self.surf_void,
         };
-        surface + self.theta2 * self.soil_thick + self.d3 * self.stor_void
+        surface
+            + self.d_pave * self.pave_void
+            + self.theta2 * self.soil_thick
+            + self.d3 * self.stor_void
     }
 
     /// Advance one hydrology step under the shared parcel forcing.
@@ -462,6 +479,7 @@ impl LidUnit {
     pub fn step(&mut self, f: &LidForcing, dt: f64) {
         self.evap_used = 0.0;
         self.surf_infil_step = 0.0;
+        self.pave_perc_step = 0.0;
         self.soil_perc_step = 0.0;
         self.last_inflow = f.inflow;
         match self.kind {
@@ -694,12 +712,14 @@ impl LidUnit {
         // ── Nominal fluxes, then the cascade's clips in order ───────────
         // Surface intake: modified Green–Ampt on the soil parameters, the
         // pavement's clog-reduced permeability, or the storage limit.
+        let paved = self.pave_thick > 0.0;
         let avail = inflow + self.d1 * self.surf_void / dt;
-        let mut f1 = if self.pave_thick > 0.0 {
-            // Clog-reduced permeability: conductivity falls linearly to
-            // zero as the treated-volume account approaches the clogging
-            // capacity; a regeneration boundary discounts the account
-            // first (§3.4).
+        // Clog-reduced permeability: conductivity falls linearly to zero
+        // as the treated-volume account approaches the clogging capacity;
+        // a regeneration boundary discounts the account first. It governs
+        // the pervious paver share of the plan area, on both of the
+        // course's faces (§3.4).
+        let k_pave = if paved {
             let mut k = self.pave_ksat;
             if self.pave_clog > 0.0 {
                 if self.regen_days > 0.0 && forcing.elapsed_days >= self.next_regen {
@@ -708,7 +728,12 @@ impl LidUnit {
                 }
                 k *= 1.0 - (self.vol_treated / self.pave_clog).min(1.0);
             }
-            k
+            k * self.pave_perv_frac
+        } else {
+            0.0
+        };
+        let mut f1 = if paved {
+            k_pave
         } else if has_soil {
             // §3.4: surface-to-soil intake is modified Green–Ampt on the
             // soil layer's parameters; saturated soil passes K₂S.
@@ -733,21 +758,35 @@ impl LidUnit {
         // §3.4: the predecessor's suppression rules — sub-surface ET
         // scales by the pervious paver fraction under pavement, and a
         // green roof's mat still evaporates.
-        let perv = if self.pave_thick > 0.0 {
-            self.pave_perv_frac
+        let perv = if paved { self.pave_perv_frac } else { 1.0 };
+        // §3.4: the pavement course evaporates between the surface and
+        // the soil in the top-down cascade.
+        let ep = if paved {
+            ((evap - e1) * perv)
+                .min(self.d_pave * self.pave_void / dt)
+                .max(0.0)
         } else {
-            1.0
+            0.0
         };
         let mut e2 = 0.0;
         if has_soil {
-            e2 = ((evap - e1) * perv)
+            e2 = ((evap - e1) * perv - ep)
                 .min((self.theta2 - self.soil_wp).max(0.0) * self.soil_thick / dt)
                 .max(0.0);
         }
-        let e3 = ((evap - e1 - e2) * perv)
+        let e3 = ((evap - e1) * perv - ep - e2)
             .min(self.d3 * stor_void / dt)
             .max(0.0);
 
+        // §3.4: the course percolates at its own permeability, clipped
+        // by the water it holds plus this step's intake.
+        let mut fp = if paved {
+            k_pave
+                .min(self.d_pave * self.pave_void / dt + f1 - ep)
+                .max(0.0)
+        } else {
+            f1
+        };
         // Soil percolation, clipped by drainable water.
         let mut f2 = if has_soil {
             if self.theta2 > self.soil_fc {
@@ -757,7 +796,7 @@ impl LidUnit {
                 0.0
             }
         } else {
-            f1
+            fp
         };
 
         // A green-roof mat with no roughness passes percolation through;
@@ -789,10 +828,9 @@ impl LidUnit {
 
         // Underdrain, clipped by standing volume, with hysteresis. The
         // head is the storage depth; only once storage is full does it
-        // stack upward through the saturated-excess soil fraction and,
-        // with the soil fully saturated, the ponded surface (§3.4). The
-        // pavement layer holds no water in this template, so a pavement
-        // above saturated soil caps the stack instead of extending it.
+        // stack upward through the saturated-excess soil fraction, a
+        // full pavement course, and, with everything above saturated,
+        // the ponded surface (§3.4).
         let mut q3 = 0.0;
         if has_stor {
             if let Some(d) = &self.drain {
@@ -800,7 +838,21 @@ impl LidUnit {
                 if self.d3 >= stor_thick && has_soil && self.theta2 > self.soil_fc {
                     head += (self.theta2 - self.soil_fc) / (self.soil_por - self.soil_fc)
                         * self.soil_thick;
-                    if self.theta2 >= self.soil_por && self.pave_thick <= 0.0 {
+                    if self.theta2 >= self.soil_por {
+                        // §3.4: the stack passes through a full pavement
+                        // course to reach the ponded surface.
+                        if paved {
+                            head += self.d_pave;
+                            if self.d_pave >= self.pave_thick {
+                                head += self.d1;
+                            }
+                        } else {
+                            head += self.d1;
+                        }
+                    }
+                } else if self.d3 >= stor_thick && !has_soil && paved {
+                    head += self.d_pave;
+                    if self.d_pave >= self.pave_thick {
                         head += self.d1;
                     }
                 }
@@ -833,8 +885,19 @@ impl LidUnit {
             f2 = f2.min((stor_thick - self.d3).max(0.0) * stor_void / dt + f3 + q3);
         }
 
-        // Intake re-capped last by soil voids plus soil outflow.
-        if has_soil {
+        // Intake re-capped last by soil voids plus soil outflow; a paved
+        // course takes those caps on its lower face and offers the
+        // surface its own freeboard plus outflow, which is what lets it
+        // buffer a storm the layer beneath cannot pass (§3.4).
+        if paved {
+            if has_soil {
+                fp =
+                    fp.min((self.soil_por - self.theta2).max(0.0) * self.soil_thick / dt + f2 + e2);
+            } else if has_stor {
+                fp = fp.min((stor_thick - self.d3).max(0.0) * stor_void / dt + f3 + q3);
+            }
+            f1 = f1.min((self.pave_thick - self.d_pave).max(0.0) * self.pave_void / dt + fp + ep);
+        } else if has_soil {
             f1 = f1.min((self.soil_por - self.theta2).max(0.0) * self.soil_thick / dt + f2 + e2);
         } else if has_stor {
             f1 = f1.min((stor_thick - self.d3).max(0.0) * stor_void / dt + f3 + q3);
@@ -856,22 +919,27 @@ impl LidUnit {
             };
             self.d1 -= over * dt / self.surf_void;
         }
+        if paved {
+            self.d_pave =
+                (self.d_pave + (f1 - ep - fp) * dt / self.pave_void).clamp(0.0, self.pave_thick);
+        }
         if has_soil {
             self.theta2 =
-                (self.theta2 + (f1 - e2 - f2) * dt / self.soil_thick).clamp(0.0, self.soil_por);
+                (self.theta2 + (fp - e2 - f2) * dt / self.soil_thick).clamp(0.0, self.soil_por);
         }
         if has_stor {
-            let inflow3 = if has_soil { f2 } else { f1 };
+            let inflow3 = if has_soil { f2 } else { fp };
             self.d3 = (self.d3 + (inflow3 - e3 - f3 - q3) * dt / stor_void).clamp(0.0, stor_thick);
         } else if !has_soil {
-            f3 = f1;
+            f3 = fp;
         }
         self.overflow = over;
         self.drain_flow = q3;
         self.exfiltration = f3;
-        self.evap_used = e1 + e2 + e3;
+        self.evap_used = e1 + ep + e2 + e3;
         // §14.8.4: the record's internal fluxes.
         self.surf_infil_step = f1;
+        self.pave_perc_step = fp;
         self.soil_perc_step = if has_soil { f2 } else { 0.0 };
     }
 
@@ -890,15 +958,13 @@ impl LidUnit {
             } else {
                 self.surf_infil_step
             },
-            // A pavement layer holds no water: its percolation is the
-            // intake it passes through, its level zero.
-            pave_perc: if paved { self.surf_infil_step } else { 0.0 },
+            pave_perc: if paved { self.pave_perc_step } else { 0.0 },
             soil_perc: self.soil_perc_step,
             stor_exfil: if swale { 0.0 } else { self.exfiltration },
             surf_outflow: self.overflow,
             drain: self.drain_flow,
             surf_level: self.d1,
-            pave_level: 0.0,
+            pave_level: self.d_pave,
             soil_moisture: self.theta2,
             stor_level: self.d3,
         }
@@ -974,6 +1040,7 @@ impl LidUnit {
             stor_ksat: _,
             sealed: _,
             covered: _,
+            pave_void: _,
             pave_perv_frac: _,
             drain: _,
             mat_thick: _,
@@ -987,12 +1054,14 @@ impl LidUnit {
             swale: _,
             swale_infil,
             d1,
+            d_pave,
             theta2,
             d3,
             drain_open,
             drain_delay_left,
             balance,
             surf_infil_step: _,
+            pave_perc_step: _,
             soil_perc_step: _,
             last_inflow: _,
             vol_treated,
@@ -1014,6 +1083,7 @@ impl LidUnit {
             s.checkpoint_put(w)?;
         }
         put_f(w, *d1)?;
+        put_f(w, *d_pave)?;
         put_f(w, *theta2)?;
         put_f(w, *d3)?;
         put_b(w, *drain_open)?;
@@ -1059,6 +1129,7 @@ impl LidUnit {
             return Err("this model infiltrates where the checkpoint does not".into());
         }
         self.d1 = r.f()?;
+        self.d_pave = r.f()?;
         self.theta2 = r.f()?;
         self.d3 = r.f()?;
         self.drain_open = r.b()?;
@@ -1260,6 +1331,90 @@ mod tests {
         }
         assert_eq!(bare.drain_flow, 0.0);
         assert!(bare.overflow > 0.0);
+    }
+
+    fn buffered_pavement_control() -> LidControl {
+        LidControl {
+            id: "PP".into(),
+            kind: Some(LidKind::PermeablePavement),
+            surface: Some(LidSurface {
+                thickness: 0.05,
+                void_frac: 1.0,
+                roughness: 0.1,
+                slope: 0.01,
+                side_slope: 0.0,
+            }),
+            soil: None,
+            // A permeable course over a storage bed whose exfiltration
+            // is the bottleneck.
+            pavement: Some(LidPavement {
+                thickness: 0.15,
+                void_frac: 0.25,
+                imperv_frac: 0.0,
+                k_sat: 1.0e-4,
+                clog_factor: 0.0,
+                regen_days: 0.0,
+                regen_degree: 0.0,
+            }),
+            // A bed small enough to fill: 10 mm of capacity against a
+            // 36 mm pulse, draining at a trickle.
+            storage: Some(LidStorage {
+                thickness: 0.02,
+                void_frac: 0.5,
+                k_sat: 2.0e-6,
+                clog_factor: 0.0,
+                covered: false,
+            }),
+            drain: None,
+            drain_mat: None,
+            removals: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_pavement_course_buffers_what_its_bed_cannot_pass() {
+        // §3.4: the course stores water in its voids, so when the
+        // storage bed beneath is the bottleneck a storm backs up into
+        // the pavement before the surface ponds. Without the buffer the
+        // template shed 8% of the standard porous-pavement test's
+        // inflow off the top while the predecessor shed none.
+        let mut u = LidUnit::build(
+            &buffered_pavement_control(),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        // A pulse below the permeability but far above the bed's
+        // exfiltration: it must land in the pavement, not run off.
+        let q = 2.0e-5;
+        let mut shed = 0.0;
+        let mut inflow = 0.0;
+        for _ in 0..30 {
+            u.step(&forcing(q), 60.0);
+            shed += u.overflow * 60.0;
+            inflow += q * 60.0;
+        }
+        let rec = u.step_record();
+        assert!(
+            rec.pave_level > 0.05,
+            "the course holds {} m against a bottlenecked bed",
+            rec.pave_level
+        );
+        assert!(
+            shed < 0.02 * inflow,
+            "the surface shed {shed} m of {inflow} m while the course had voids"
+        );
+        // And the unit's own books close over the episode.
+        let out = u.balance.evap + u.balance.infil + u.balance.surface + u.balance.drain;
+        let held = u.stored_depth() - u.balance.initial;
+        assert!(
+            (u.balance.inflow - out - held).abs() < 1e-9 * u.balance.inflow,
+            "the unit leaked: in {} out {out} held {held}",
+            u.balance.inflow
+        );
     }
 
     fn barrel_control() -> LidControl {
