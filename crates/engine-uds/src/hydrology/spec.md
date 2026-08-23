@@ -264,7 +264,14 @@ much dry time; and a **covered** storage layer excludes direct rainfall
 from the barrel's intake and nothing else — cover is the predecessor's
 rain-barrel-only flag, never an exfiltration or evaporation seal);
 rooftop disconnection (a lone surface layer whose gutter-capacity drain
-pre-empts overflow); and vegetative swales (trapezoidal depth-varying
+pre-empts overflow — the drain line's coefficient is the gutter's
+capacity, a plain rate in the file's rain-rate unit with the exponent
+ignored, and a zero or absent coefficient is a gutter with no capacity,
+everything shed going onward as surface outflow; a roof ponds on its
+full plan area, so the surface line's vegetation fraction is read but
+not applied — a template's 25 % vegetation would otherwise turn a 6 in
+storage depth into 4.5 in of held water on a surface that has no
+vegetation); and vegetative swales (trapezoidal depth-varying
 geometry, balance written on volume, widths floored at 0.1524 m with the
 side slope recomputed to keep the section consistent).
 

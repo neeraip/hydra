@@ -286,7 +286,13 @@ impl LidUnit {
             to_pervious: usage.to_pervious,
             drain_to: usage.drain_to,
             surf_berm: s.map_or(0.0, |x| x.thickness),
-            surf_void: s.map_or(1.0, |x| x.void_frac.max(1e-6)),
+            // §3.4: a roof ponds on its full plan area — the surface
+            // line's vegetation fraction is read but not applied.
+            surf_void: if matches!(kind, LidKind::RooftopDisconnection) {
+                1.0
+            } else {
+                s.map_or(1.0, |x| x.void_frac.max(1e-6))
+            },
             surf_alpha,
             pave_thick: ctl.pavement.as_ref().map_or(0.0, |x| x.thickness),
             pave_ksat: ctl.pavement.as_ref().map_or(0.0, |x| x.k_sat),
@@ -454,10 +460,14 @@ impl LidUnit {
             };
             self.d1 -= over * dt / self.surf_void;
         }
-        let cap =
-            self.drain
-                .as_ref()
-                .map_or(f64::MAX, |d| if d.coeff > 0.0 { d.coeff } else { f64::MAX });
+        // §3.4: the drain coefficient is the gutter's capacity, a plain
+        // rate with the power law's depth factor undone; zero or absent
+        // is a gutter with no capacity, everything shed going onward as
+        // surface outflow.
+        let cap = self
+            .drain
+            .as_ref()
+            .map_or(0.0, |d| d.coeff * self.head_unit.powf(d.exponent));
         let drained = over.min(cap);
         self.drain_flow = drained;
         self.overflow = over - drained;
@@ -1025,6 +1035,122 @@ mod tests {
             report_file: None,
             drain_to: None::<ParcelOutlet>,
         }
+    }
+
+    fn roof_control(veg: f64, drain: Option<LidDrain>) -> LidControl {
+        LidControl {
+            id: "RD".into(),
+            kind: Some(LidKind::RooftopDisconnection),
+            surface: Some(LidSurface {
+                thickness: 0.15,
+                void_frac: 1.0 - veg,
+                roughness: 0.1,
+                slope: 0.01,
+                side_slope: 0.0,
+            }),
+            soil: None,
+            pavement: None,
+            storage: None,
+            drain,
+            drain_mat: None,
+            removals: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_roof_ponds_on_its_full_plan_area() {
+        // §3.4: the surface line's vegetation fraction is read but not
+        // applied to a roof. Two roofs differing only in that template
+        // value must shed identically, and each ends holding its full
+        // storage depth of water.
+        let step_out = |veg: f64| {
+            let mut u = LidUnit::build(
+                &roof_control(veg, None),
+                &swale_usage(),
+                None,
+                InfiltrationModel::Horton,
+                &[],
+                false,
+            )
+            .expect("build");
+            let mut shed = 0.0;
+            for step in 0..120 {
+                let q = if step < 30 { 2.0e-4 } else { 0.0 };
+                u.step(&forcing(q), 60.0);
+                shed += (u.overflow + u.drain_flow) * 60.0;
+            }
+            (shed, u.d1)
+        };
+        let (shed_bare, held_bare) = step_out(0.0);
+        let (shed_veg, held_veg) = step_out(0.25);
+        assert!(shed_bare > 0.0, "the pulse never overtopped the storage");
+        assert_eq!(
+            shed_veg, shed_bare,
+            "a template vegetation fraction changed what a roof shed"
+        );
+        assert_eq!(held_veg, held_bare);
+        // What stays behind is the full storage depth of water, plus
+        // the polynomial tail of the Manning recession still draining.
+        assert!(
+            held_bare >= 0.15 && held_bare - 0.15 < 5.0e-3,
+            "roof holds {held_bare} m against its 0.15 m storage"
+        );
+    }
+
+    #[test]
+    fn a_roofs_gutter_capacity_is_a_plain_rate() {
+        // §3.4: the drain coefficient is the gutter's capacity with the
+        // power law's depth factor undone, and zero is a gutter with no
+        // capacity: everything shed goes onward as surface outflow.
+        let head_unit = 0.001_f64; // SI build below.
+        let cap = 1.0e-6;
+        let drain = LidDrain {
+            coeff: cap / head_unit.powf(0.5),
+            exponent: 0.5,
+            offset: 0.0,
+            delay: 0.0,
+            h_open: 0.0,
+            h_close: 0.0,
+            curve: None,
+        };
+        let mut u = LidUnit::build(
+            &roof_control(0.0, Some(drain)),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        // Flood the roof so it sheds far above the gutter's capacity.
+        for _ in 0..60 {
+            u.step(&forcing(2.0e-4), 60.0);
+        }
+        assert!(
+            (u.drain_flow - cap).abs() < 1e-3 * cap,
+            "gutter carries {} against its capacity {cap}",
+            u.drain_flow
+        );
+        assert!(
+            u.overflow > 10.0 * cap,
+            "the excess must spill as surface outflow, got {}",
+            u.overflow
+        );
+        // And with no drain line at all, nothing is gutter flow.
+        let mut bare = LidUnit::build(
+            &roof_control(0.0, None),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        for _ in 0..60 {
+            bare.step(&forcing(2.0e-4), 60.0);
+        }
+        assert_eq!(bare.drain_flow, 0.0);
+        assert!(bare.overflow > 0.0);
     }
 
     fn barrel_control() -> LidControl {
