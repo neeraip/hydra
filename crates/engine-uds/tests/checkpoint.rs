@@ -525,6 +525,27 @@ fn a_restored_surface_continues_through_the_recession() {
     restores_identically(&parcel_model("", ""), 0.42);
 }
 
+/// A control measure mid-storm holds layer state and a running §11.2
+/// balance, and the §14.9 performance table prints from that balance:
+/// a restored run that lost it would print a different table.
+#[test]
+fn a_restored_control_measure_keeps_its_balance() {
+    let model = parcel_model(
+        "
+[LID_CONTROLS]
+IT  IT
+IT  SURFACE  6  0.0  0.1  1.0  5
+IT  STORAGE  36  0.75  10  0
+IT  DRAIN    0  0.5  0  0
+
+[LID_USAGE]
+P1  IT  1  500  10  0  50  0
+",
+        "",
+    );
+    restores_identically(&model, 0.25);
+}
+
 /// The checkpoint instants above must be ones where the surface holds
 /// something, or the two tests prove nothing.
 #[test]

@@ -79,6 +79,8 @@ pub struct LidUnit {
     /// Cumulative unit inflow depth (m) against the storage clogging
     /// account — never discounted.
     total_inflow: f64,
+    /// §11.2 per-unit water-balance totals.
+    pub balance: LidBalance,
     /// The next regeneration boundary (elapsed days).
     next_regen: f64,
     /// §3.4 surface-to-soil intake: a modified Green–Ampt state on the
@@ -205,6 +207,25 @@ pub struct LidForcing {
     pub elapsed_days: f64,
 }
 
+/// §11.2 per-unit water-balance totals, each a depth over the unit's
+/// own footprint (m). The §14.9 performance table is defined against
+/// these plus the live stored depth.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LidBalance {
+    /// Captured runoff plus direct rainfall.
+    pub inflow: f64,
+    /// Evapotranspiration.
+    pub evap: f64,
+    /// Native infiltration out of the unit.
+    pub infil: f64,
+    /// Surface outflow.
+    pub surface: f64,
+    /// Drain outflow.
+    pub drain: f64,
+    /// Stored water when the run began.
+    pub initial: f64,
+}
+
 impl LidUnit {
     /// Build a deployed unit from its design and usage records. A
     /// vegetative swale also clones the hosting parcel's infiltration
@@ -278,7 +299,7 @@ impl LidUnit {
             Some(sf) if sf.roughness > 0.0 && sf.slope > 0.0 => sf.slope.sqrt() / sf.roughness,
             _ => 0.0,
         };
-        Ok(LidUnit {
+        let mut unit = LidUnit {
             kind,
             area,
             from_imperv: usage.from_impervious,
@@ -367,6 +388,7 @@ impl LidUnit {
             drain_delay_left: ctl.drain.as_ref().map_or(0.0, |d| d.delay),
             vol_treated: 0.0,
             total_inflow: 0.0,
+            balance: LidBalance::default(),
             next_regen: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
             // §3.4: the intake state is modified Green–Ampt on the soil
             // layer's parameters, its deficit shrunk by initial
@@ -399,7 +421,10 @@ impl LidUnit {
             } else {
                 0.0
             },
-        })
+        };
+        // §11.2: the balance opens on the water the unit began holding.
+        unit.balance.initial = unit.stored_depth();
+        Ok(unit)
     }
 
     /// The drain-load removal fraction for constituent `ci` (§8.1).
@@ -439,6 +464,12 @@ impl LidUnit {
         // after the step so this step's rates saw the old totals (§3.4).
         self.vol_treated += f.inflow * dt;
         self.total_inflow += f.inflow * dt;
+        // §11.2: the unit's own running balance.
+        self.balance.inflow += f.inflow * dt;
+        self.balance.evap += self.evap_used * dt;
+        self.balance.infil += self.exfiltration * dt;
+        self.balance.surface += self.overflow * dt;
+        self.balance.drain += self.drain_flow * dt;
     }
 
     /// Rooftop disconnection: a lone surface whose gutter-capacity drain
@@ -898,6 +929,7 @@ impl LidUnit {
             d3,
             drain_open,
             drain_delay_left,
+            balance,
             vol_treated,
             total_inflow,
             next_regen,
@@ -921,6 +953,12 @@ impl LidUnit {
         put_f(w, *d3)?;
         put_b(w, *drain_open)?;
         put_f(w, *drain_delay_left)?;
+        put_f(w, balance.inflow)?;
+        put_f(w, balance.evap)?;
+        put_f(w, balance.infil)?;
+        put_f(w, balance.surface)?;
+        put_f(w, balance.drain)?;
+        put_f(w, balance.initial)?;
         put_f(w, *vol_treated)?;
         put_f(w, *total_inflow)?;
         put_f(w, *next_regen)?;
@@ -960,6 +998,12 @@ impl LidUnit {
         self.d3 = r.f()?;
         self.drain_open = r.b()?;
         self.drain_delay_left = r.f()?;
+        self.balance.inflow = r.f()?;
+        self.balance.evap = r.f()?;
+        self.balance.infil = r.f()?;
+        self.balance.surface = r.f()?;
+        self.balance.drain = r.f()?;
+        self.balance.initial = r.f()?;
         self.vol_treated = r.f()?;
         self.total_inflow = r.f()?;
         self.next_regen = r.f()?;

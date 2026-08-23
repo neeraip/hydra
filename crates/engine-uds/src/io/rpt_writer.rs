@@ -388,6 +388,10 @@ pub struct ReportInputs<'a> {
     pub link_loads: Option<Vec<Vec<f64>>>,
     /// The top worst-error vertices: (id, accepted-step count).
     pub worst: Vec<(String, u64)>,
+    /// §11.2 control-measure balances: (parcel id, control id,
+    /// [inflow, evap, infil, surface, drain, initial, final] as depths
+    /// over the unit's footprint (m), balance error %).
+    pub lid_performance: Vec<(String, String, [f64; 7], f64)>,
 }
 
 /// Write the §14.9 text report.
@@ -943,6 +947,42 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 rv.mgal(t.runoff),
                 rv.q(t.peak_runoff),
                 coeff
+            )?;
+        }
+    }
+
+    // ── Control-measure performance ─────────────────────────────────────
+    if !inp.lid_performance.is_empty() {
+        heading(w, "LID Performance Summary")?;
+        writeln!(w, "  ")?;
+        rule(w, 116)?;
+        writeln!(
+            w,
+            "                                         Total      Evap     Infil   Surface    Drain    Initial     Final  Continuity"
+        )?;
+        writeln!(
+            w,
+            "                                        Inflow      Loss      Loss   Outflow   Outflow   Storage   Storage       Error"
+        )?;
+        let d = rv.depth_unit();
+        writeln!(
+            w,
+            "  {:<16}  {:<16}{d:>10}{d:>10}{d:>10}{d:>10}{d:>10}{d:>10}{d:>10}{:>12}",
+            "Subcatchment", "LID Control", "%"
+        )?;
+        rule(w, 116)?;
+        for (parcel, control, v, err) in &inp.lid_performance {
+            writeln!(
+                w,
+                "  {parcel:<16}  {control:<16}{:>10.2}{:>10.2}{:>10.2}{:>10.2}{:>10.2}{:>10.2}{:>10.2}  {:>10.2}",
+                rv.depth(v[0]),
+                rv.depth(v[1]),
+                rv.depth(v[2]),
+                rv.depth(v[3]),
+                rv.depth(v[4]),
+                rv.depth(v[5]),
+                rv.depth(v[6]),
+                err
             )?;
         }
     }

@@ -305,6 +305,14 @@ reported instantaneous rates do (§3.4): a summary column and the rate it
 summarises must mean the same thing, and the predecessor's summary books
 both the same way.
 
+**Control measures.** Per deployed unit: total inflow (captured runoff
+plus direct rainfall), evapotranspiration, native infiltration, surface
+outflow, drain outflow, and initial and final stored water, each a depth
+over the unit's own footprint. §14.9's performance table is defined
+against these seven and prints the unit's own balance error from them —
+the initial storage and inflow against everything else — so a unit that
+leaks is visible on its own row rather than diluted into the parcel.
+
 **Subsurface.** Per aquifer: infiltration, evapotranspiration, deep
 percolation and lateral-flow volumes, and time-weighted mean zone moisture
 and water-table elevation.

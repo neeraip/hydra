@@ -2713,6 +2713,9 @@ RES  TSS  EMC  50  0  0  0
     ] {
         assert!(rpt.contains(needle), "report missing '{needle}':\n{rpt}");
     }
+    // §14.9: the performance table prints only when a control measure is
+    // deployed, and this model has none.
+    assert!(!rpt.contains("LID Performance Summary"));
     // The wet-weather inflow line carries a real volume: 1000 m³ of rain
     // mostly delivered, printed in hectare-metres for a CMS file.
     let line = rpt
@@ -2813,6 +2816,97 @@ RAIN  2:00  0
     assert!(
         (summary_mm - ledger_mm).abs() < 0.05 * ledger_mm,
         "summary infil {summary_mm} mm against ledger {ledger_mm} mm"
+    );
+}
+
+/// §14.9: one row per deployed unit, the §11.2 balance as depths over
+/// the unit's footprint, closing on its own error column. The trench is
+/// this parcel's only path into the ground, so its Infil column must
+/// carry what the system ledger carries.
+#[test]
+fn the_performance_table_prints_each_units_closing_balance() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      12:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  O1  1  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0  0  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[LID_CONTROLS]
+IT  IT
+IT  SURFACE  6  0.0  0.1  1.0  5
+IT  STORAGE  36  0.75  10  0
+IT  DRAIN    0  0.5  0  0
+
+[LID_USAGE]
+S1  IT  1  500  10  0  50  0
+
+[OUTFALLS]
+O1  9.5  FREE
+
+[TIMESERIES]
+RAIN  0:00  25.0
+RAIN  1:00  25.0
+RAIN  2:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    let rpt = String::from_utf8(buf).expect("utf8");
+    let row = rpt
+        .lines()
+        .skip_while(|l| !l.contains("LID Performance Summary"))
+        .find(|l| l.trim_start().starts_with("S1 "))
+        .expect("the unit's row");
+    let v: Vec<f64> = row
+        .split_whitespace()
+        .skip(2)
+        .map(|x| x.parse().expect("number"))
+        .collect();
+    let [inflow, _evap, infil, _surf, _drain, _init, _fin, err] = v[..] else {
+        panic!("row shape: {row}");
+    };
+    assert!(
+        inflow > 10.0,
+        "the trench captured a real depth: {inflow} mm"
+    );
+    assert!(err.abs() < 0.1, "the unit's own balance closes: {err}%");
+    // One parcel, fully impervious outside the trench: the unit's infil
+    // is the system's infiltration.
+    let ledger_row = rpt
+        .lines()
+        .find(|l| l.contains("Infiltration Loss"))
+        .expect("ledger");
+    let ledger_mm: f64 = ledger_row
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .parse()
+        .expect("depth");
+    // The unit's column is over its 500 m2 footprint; the ledger's is
+    // over the 1 ha parcel.
+    let infil_over_parcel = infil * 500.0 / 10_000.0;
+    assert!(
+        (infil_over_parcel - ledger_mm).abs() < 0.05 * ledger_mm,
+        "unit infil {infil_over_parcel} mm over the parcel against ledger {ledger_mm} mm"
     );
 }
 

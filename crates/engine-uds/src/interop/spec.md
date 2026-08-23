@@ -707,10 +707,15 @@ quantity and quality continuity balances; the flow routing and quality
 routing continuity balances; the highest continuity errors, time-step
 critical elements, flow instability indexes, and non-converging vertices;
 the routing time-step summary; then the per-object summary tables —
-subcatchment runoff, subcatchment washoff, node depth, node inflow, node
+subcatchment runoff, control-measure performance, subcatchment washoff,
+node depth, node inflow, node
 surcharge, node flooding, storage volume, outfall loading, link flow, flow
 classification, conduit surcharge, pumping, and link pollutant load — each
-drawn from the §11.2 catalogue. Continuity blocks whose subject is absent
+drawn from the §11.2 catalogue. The control-measure performance table
+prints one row per deployed unit — the §11.2 balance as depths over the
+unit's footprint in the report's depth unit, and the unit's own balance
+error, 100 when the unit never saw water, the predecessor's convention —
+and prints only when a control measure is deployed. Continuity blocks whose subject is absent
 from the model do not print; the runoff blocks require a surface, the
 quality blocks require a constituent.
 

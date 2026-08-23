@@ -3545,6 +3545,40 @@ impl Simulation {
                 .collect(),
             None => Vec::new(),
         };
+        // §14.9: pair each unit's balance with its parcel and control
+        // names. Units were pushed per parcel in usage order, so a
+        // per-parcel queue of control ids walks in the same order.
+        let lid_performance = match &self.surface {
+            Some(sf) => {
+                let mut queues: Vec<std::collections::VecDeque<usize>> =
+                    vec![std::collections::VecDeque::new(); self.net.parcels.len()];
+                for us in &self.net.lid_usage {
+                    queues[us.parcel].push_back(us.control);
+                }
+                sf.lid_balances()
+                    .into_iter()
+                    .map(|(pi, b, held)| {
+                        let ci = queues[pi].pop_front().unwrap_or(0);
+                        let err_in = b.initial + b.inflow;
+                        let out = held + b.evap + b.infil + b.surface + b.drain;
+                        let err = if err_in > 0.0 {
+                            100.0 * (err_in - out) / err_in
+                        } else {
+                            100.0
+                        };
+                        (
+                            self.net.parcels[pi].id.clone(),
+                            self.net.lid_controls[ci].id.clone(),
+                            [
+                                b.inflow, b.evap, b.infil, b.surface, b.drain, b.initial, held,
+                            ],
+                            err,
+                        )
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
         crate::io::rpt_writer::write_rpt(
             &crate::io::rpt_writer::ReportInputs {
                 net: &self.net,
@@ -3565,6 +3599,7 @@ impl Simulation {
                 outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
                 link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
                 worst,
+                lid_performance,
             },
             w,
         )

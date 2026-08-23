@@ -1048,6 +1048,20 @@ impl Surface {
     }
 
     /// §11.2 running totals for parcel `pi`.
+    /// §11.2 per-unit control-measure balances with the live stored
+    /// depth, in parcel-major deployment order: (parcel index, balance,
+    /// stored depth m). Deployment order within a parcel is the order
+    /// the usages were declared, which is the order units were pushed.
+    pub fn lid_balances(&self) -> Vec<(usize, super::lid::LidBalance, f64)> {
+        let mut out = Vec::new();
+        for (pi, p) in self.parcels.iter().enumerate() {
+            for u in &p.lids {
+                out.push((pi, u.balance, u.stored_depth()));
+            }
+        }
+        out
+    }
+
     pub fn parcel_totals(&self, pi: usize) -> ParcelTotals {
         self.parcels[pi].totals
     }
