@@ -1,22 +1,22 @@
 {
   "bench_s": {
-    "hydra": 0.092,
+    "hydra": 0.089,
     "hydra_rss_mb": 10.5,
-    "swmm": 0.12,
+    "swmm": 0.115,
     "swmm_rss_mb": 2.8,
     "model": "tests/benchmarks/uds/bench_s.inp"
   },
   "bench_m": {
-    "hydra": 0.6,
+    "hydra": 0.57,
     "hydra_rss_mb": 12.7,
-    "swmm": 0.661,
+    "swmm": 0.619,
     "swmm_rss_mb": 3.8,
     "model": "tests/benchmarks/uds/bench_m.inp"
   },
   "bench_l": {
-    "hydra": 3.187,
-    "hydra_rss_mb": 18.6,
-    "swmm": 2.285,
+    "hydra": 3.0,
+    "hydra_rss_mb": 18.4,
+    "swmm": 2.148,
     "swmm_rss_mb": 6.5,
     "model": "tests/benchmarks/uds/bench_l.inp"
   }

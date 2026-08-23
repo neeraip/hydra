@@ -36,6 +36,11 @@ SWMM = os.environ.get(
 )
 # A run may be this much slower than its baseline before it is a failure.
 TOLERANCE = 1.25
+# And this much larger. Memory regresses the same way speed does: the
+# results stay byte-identical while the run quietly holds what it should
+# not, and nothing else notices. Peak RSS is steadier than wall clock,
+# so the band is tighter.
+RSS_TOLERANCE = 1.15
 
 
 def peak_rss_kb(cmd, cwd, timeout):
@@ -115,7 +120,8 @@ def main():
 
     base = json.loads(pathlib.Path(args.path).read_text())
     bad = []
-    print(f"{'model':22}{'baseline':>10}{'now':>10}{'change':>10}{'ratio now':>11}")
+    print(f"{'model':22}{'baseline':>10}{'now':>10}{'change':>10}"
+          f"{'rss base':>10}{'rss now':>10}{'ratio now':>11}")
     for name, b in base.items():
         r = run(str(ROOT / b["model"]), args.repeat, args.timeout)
         if r is None:
@@ -123,11 +129,18 @@ def main():
             bad.append((name, "did not run"))
             continue
         change = r["hydra"] / b["hydra"]
-        flag = "  SLOWER" if change > TOLERANCE else ""
+        rss_change = (r["hydra_rss_mb"] / b["hydra_rss_mb"]
+                      if b.get("hydra_rss_mb") and r.get("hydra_rss_mb") else 1.0)
+        flag = ("  SLOWER" if change > TOLERANCE
+                else "  LARGER" if rss_change > RSS_TOLERANCE else "")
         ratio = f"{r['hydra'] / r['swmm']:10.2f}x" if "swmm" in r else f"{'-':>11}"
-        print(f"{name:22}{b['hydra']:10.3f}{r['hydra']:10.3f}{change:9.2f}x{ratio}{flag}")
+        print(f"{name:22}{b['hydra']:10.3f}{r['hydra']:10.3f}{change:9.2f}x"
+              f"{b.get('hydra_rss_mb', 0):9.1f}M{r.get('hydra_rss_mb', 0):9.1f}M"
+              f"{ratio}{flag}")
         if change > TOLERANCE:
             bad.append((name, f"{change:.2f}x slower than baseline"))
+        elif rss_change > RSS_TOLERANCE:
+            bad.append((name, f"{rss_change:.2f}x more memory than baseline"))
     if bad:
         print(f"\n{len(bad)} regressed:", file=sys.stderr)
         for n, why in bad:
