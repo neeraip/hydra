@@ -131,6 +131,8 @@ struct Outputs {
     report: Vec<u8>,
     notices: Vec<String>,
     ledgers: Vec<String>,
+    /// The §14.8.4 control-measure report files, one per declaring unit.
+    lid_reports: Vec<Vec<u8>>,
 }
 
 fn every_output(sim: &Simulation) -> Outputs {
@@ -148,6 +150,13 @@ fn every_output(sim: &Simulation) -> Outputs {
             .map(|n| format!("{}: {}", n.t, n.message))
             .collect(),
         ledgers: vec![format!("{:?}", led.network), format!("{:?}", led.surface)],
+        lid_reports: (0..sim.lid_report_files().len())
+            .map(|i| {
+                let mut buf = Vec::new();
+                sim.write_lid_report(i, &mut buf).expect("lid report");
+                buf
+            })
+            .collect(),
     }
 }
 
@@ -509,6 +518,10 @@ fn restores_identically(model: &str, fraction: f64) {
     );
     assert_eq!(want.ledgers, got.ledgers, "the ledgers diverged");
     assert_eq!(want.notices, got.notices, "the notices diverged");
+    assert!(
+        want.lid_reports == got.lid_reports,
+        "a control-measure report file diverged"
+    );
 }
 
 /// The surface, checkpointed mid-storm: ponded depths and the Horton
@@ -539,7 +552,7 @@ IT  STORAGE  36  0.75  10  0
 IT  DRAIN    0  0.5  0  0
 
 [LID_USAGE]
-P1  IT  1  500  10  0  50  0
+P1  IT  1  500  10  0  50  0  trench.txt
 ",
         "",
     );

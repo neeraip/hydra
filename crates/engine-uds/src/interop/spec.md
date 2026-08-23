@@ -621,6 +621,39 @@ gage's readings turned out to occupy. This engine knows every reading
 before it writes anything, so it computes the ranges first and writes the
 file once. The bytes are the same.
 
+#### 14.8.4 Control-measure report files
+
+A deployment line (`[LID_USAGE]`) may name a report file, and each
+declaring unit gets one: a tab-separated text file recording the unit's
+internal water movement at every hydrology step, the one view of a
+control measure finer than the §14.9 performance table's totals. The
+engine gathers the records and writes the file's bytes on request; the
+caller supplies the destination, as for every §14.8 file. The gathered
+records are collected output and ride the checkpoint (§12.3).
+
+**Layout** is the predecessor's exactly, tab-separated: the stamp line
+`SWMM5 LID Report File`, the project title, the unit's identity, two
+header rows, a units row, and a rule; then one row per hydrology step —
+a `month/day/year hour:minute:second` stamp, elapsed hours, eight flux
+columns in the file's rain-rate unit (total inflow, total
+evapotranspiration, surface infiltration, pavement percolation, soil
+percolation, storage exfiltration, surface outflow, drain outflow), and
+four state columns (surface, pavement and storage levels in the
+rain-depth unit; soil moisture as a content fraction).
+
+**Dry compression**, the predecessor's: a row is dry when inflow,
+surface outflow, drain outflow, storage exfiltration and
+evapotranspiration are all below the 0.001 in/hr minimum-runoff
+threshold. The first dry row after a wet one is written, later dry rows
+are withheld, and the last withheld row is written when the unit rewets,
+so a dry spell appears as its two end rows.
+
+**Column semantics** follow the §3.4 template. A pavement layer holds no
+water, so its level prints zero and its percolation prints the surface
+intake it passes through. A swale's ground loss is its surface
+infiltration and its storage exfiltration is zero. A barrel has storage
+alone: its fluxes beyond inflow and drain print zero.
+
 ### 14.9 Output
 
 **The binary results file** is written to the predecessor's layout: magic

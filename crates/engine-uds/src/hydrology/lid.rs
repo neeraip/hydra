@@ -81,6 +81,12 @@ pub struct LidUnit {
     total_inflow: f64,
     /// §11.2 per-unit water-balance totals.
     pub balance: LidBalance,
+    /// This step's surface intake and soil percolation (m/s), for the
+    /// §14.8.4 record; zero for kinds without those fluxes.
+    surf_infil_step: f64,
+    soil_perc_step: f64,
+    /// This step's unit inflow (m/s), captured for the same record.
+    last_inflow: f64,
     /// The next regeneration boundary (elapsed days).
     next_regen: f64,
     /// §3.4 surface-to-soil intake: a modified Green–Ampt state on the
@@ -389,6 +395,9 @@ impl LidUnit {
             vol_treated: 0.0,
             total_inflow: 0.0,
             balance: LidBalance::default(),
+            surf_infil_step: 0.0,
+            soil_perc_step: 0.0,
+            last_inflow: 0.0,
             next_regen: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
             // §3.4: the intake state is modified Green–Ampt on the soil
             // layer's parameters, its deficit shrunk by initial
@@ -452,6 +461,9 @@ impl LidUnit {
     /// Outflow rates land in `overflow`, `drain_flow`, `exfiltration`.
     pub fn step(&mut self, f: &LidForcing, dt: f64) {
         self.evap_used = 0.0;
+        self.surf_infil_step = 0.0;
+        self.soil_perc_step = 0.0;
+        self.last_inflow = f.inflow;
         match self.kind {
             LidKind::RooftopDisconnection => self.step_rooftop(f.inflow, f.evap, dt),
             LidKind::RainBarrel => self.step_rain_barrel(f.inflow, f.rain, dt),
@@ -858,7 +870,57 @@ impl LidUnit {
         self.drain_flow = q3;
         self.exfiltration = f3;
         self.evap_used = e1 + e2 + e3;
+        // §14.8.4: the record's internal fluxes.
+        self.surf_infil_step = f1;
+        self.soil_perc_step = if has_soil { f2 } else { 0.0 };
     }
+
+    /// The §14.8.4 per-step record: this step's fluxes (m/s) and the
+    /// current layer states, mapped per the template's column semantics.
+    pub fn step_record(&self) -> LidStepRecord {
+        let paved = self.pave_thick > 0.0;
+        let swale = matches!(self.kind, LidKind::VegetativeSwale);
+        LidStepRecord {
+            inflow: self.last_inflow,
+            evap: self.evap_used,
+            // A swale's ground loss is its surface infiltration; its
+            // storage exfiltration is zero.
+            surf_infil: if swale {
+                self.exfiltration
+            } else {
+                self.surf_infil_step
+            },
+            // A pavement layer holds no water: its percolation is the
+            // intake it passes through, its level zero.
+            pave_perc: if paved { self.surf_infil_step } else { 0.0 },
+            soil_perc: self.soil_perc_step,
+            stor_exfil: if swale { 0.0 } else { self.exfiltration },
+            surf_outflow: self.overflow,
+            drain: self.drain_flow,
+            surf_level: self.d1,
+            pave_level: 0.0,
+            soil_moisture: self.theta2,
+            stor_level: self.d3,
+        }
+    }
+}
+
+/// One §14.8.4 report-file row: fluxes in m/s, levels in m, soil
+/// moisture as a content fraction.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LidStepRecord {
+    pub inflow: f64,
+    pub evap: f64,
+    pub surf_infil: f64,
+    pub pave_perc: f64,
+    pub soil_perc: f64,
+    pub stor_exfil: f64,
+    pub surf_outflow: f64,
+    pub drain: f64,
+    pub surf_level: f64,
+    pub pave_level: f64,
+    pub soil_moisture: f64,
+    pub stor_level: f64,
 }
 
 /// Linear interpolation on the multiplier curve, ends held (§14.6).
@@ -930,6 +992,9 @@ impl LidUnit {
             drain_open,
             drain_delay_left,
             balance,
+            surf_infil_step: _,
+            soil_perc_step: _,
+            last_inflow: _,
             vol_treated,
             total_inflow,
             next_regen,

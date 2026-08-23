@@ -2819,6 +2819,96 @@ RAIN  2:00  0
     );
 }
 
+/// §14.8.4: a usage line naming a report file gets the predecessor's
+/// tab-separated record of the unit's steps, dry spells compressed to
+/// their two end rows.
+#[test]
+fn a_declared_unit_report_records_the_steps_and_skips_the_dry_spell() {
+    let inp = "\
+[TITLE]
+Report file fixture
+
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      12:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+DRY_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  O1  1  100  2000  2  0
+
+[SUBAREAS]
+S1  0.012  0.1  0  0  25  OUTLET
+
+[INFILTRATION]
+S1  1.2  0.1  2  7  0
+
+[LID_CONTROLS]
+RB  RB
+RB  STORAGE  36  0.75  0  0
+RB  DRAIN    12  0.5  0  0
+
+[LID_USAGE]
+S1  RB  10  50  10  0  25  0  barrel.txt
+
+[OUTFALLS]
+O1  9.5  FREE
+
+[TIMESERIES]
+RAIN  0:00  1.0
+RAIN  1:00  1.0
+RAIN  2:00  0
+";
+    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    let files = sim.lid_report_files();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0], ("barrel.txt".into(), "S1".into(), "RB".into()));
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_lid_report(0, &mut buf).expect("write");
+    let txt = String::from_utf8(buf).expect("utf8");
+    assert!(txt.starts_with("SWMM5 LID Report File"));
+    assert!(txt.contains("LID Unit: RB in Subcatchment S1"));
+    let rows: Vec<&str> = txt.lines().filter(|l| l.starts_with(" 06/")).collect();
+    // The run is 144 five-minute steps; the barrel wets, drains dry, and
+    // the dry tail must compress to its boundary rows.
+    assert!(!rows.is_empty(), "no data rows:\n{txt}");
+    assert!(
+        rows.len() < 100,
+        "{} rows for a run whose tail is dry",
+        rows.len()
+    );
+    // A wet row carries the drain flow in in/hr, in the drain column.
+    let wet = rows
+        .iter()
+        .find(|r| {
+            r.split('\t')
+                .nth(9)
+                .and_then(|c| c.trim().parse::<f64>().ok())
+                .is_some_and(|v| v > 0.01)
+        })
+        .expect("a draining row");
+    // And the predecessor's column geometry holds, its squeezed surface
+    // runoff column included: tab cells of 20, then 9s with the eighth
+    // numeric cell 8 wide.
+    let widths: Vec<usize> = wet.split('\t').map(str::len).collect();
+    assert_eq!(
+        widths,
+        vec![20, 9, 9, 9, 9, 9, 9, 9, 8, 9, 9, 9, 9, 9],
+        "row geometry: {wet}"
+    );
+}
+
 /// §14.9: one row per deployed unit, the §11.2 balance as depths over
 /// the unit's footprint, closing on its own error column. The trench is
 /// this parcel's only path into the ground, so its Infil column must

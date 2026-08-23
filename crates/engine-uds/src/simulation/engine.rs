@@ -441,7 +441,19 @@ pub struct Simulation {
     retain_snapshots: bool,
     /// Run-time notices, in time order.
     pub notices: Vec<RuntimeNotice>,
+    /// §14.8.4 control-measure report records: one entry per usage line
+    /// naming a report file. Collected output; rides the checkpoint like
+    /// the interface records above.
+    lid_rpt: Vec<LidRptStream>,
 }
+
+/// One §14.8.4 report stream: the declaring usage line, the unit's
+/// parcel-major index, and the rows collected so far (elapsed s, record).
+struct LidRptStream(
+    usize,
+    usize,
+    Vec<(f64, crate::hydrology::lid::LidStepRecord)>,
+);
 
 impl Simulation {
     /// Load a model from its input text: parse, validate (§14.7 mutations
@@ -775,6 +787,19 @@ impl Simulation {
                 out_error: None,
                 retain_snapshots: true,
                 notices,
+                // §14.8.4: which units record, in parcel-major deployment
+                // order — a per-parcel running count converts usage order
+                // to that order.
+                lid_rpt: {
+                    let mut order: Vec<usize> = (0..net.lid_usage.len()).collect();
+                    order.sort_by_key(|&i| net.lid_usage[i].parcel);
+                    order
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, &ui)| net.lid_usage[ui].report_file.is_some())
+                        .map(|(pm, &ui)| LidRptStream(ui, pm, Vec::new()))
+                        .collect()
+                },
                 net,
             },
             diags,
@@ -1320,6 +1345,17 @@ impl Simulation {
                 &infil_caps,
                 &patterns,
             );
+            // §14.8.4: record each declaring unit's step, stamped at the
+            // step's end like the predecessor's runoff clock.
+            if !self.lid_rpt.is_empty() {
+                let recs = surface.lid_step_records();
+                let at = t_now + dt;
+                for LidRptStream(_, pm, rows) in &mut self.lid_rpt {
+                    if let Some(rec) = recs.get(*pm) {
+                        rows.push((at, *rec));
+                    }
+                }
+            }
             // §4.1: each aquifer advances on the same clock, reading the
             // routed stage lagged one step (§10.1), its discharge joining
             // the vertex laterals.
@@ -2794,6 +2830,7 @@ impl Simulation {
             climate_state,
             rdii_out,
             runoff_out,
+            lid_rpt,
             supplied,
             runoff_in,
             runoff_exhausted,
@@ -2941,6 +2978,33 @@ impl Simulation {
                     cp::put_f(w, v).map_err(io)?;
                 }
                 cp::put_fs(w, &rec.washoff).map_err(io)?;
+            }
+        }
+        // §14.8.4: the control-measure report records collected so far.
+        // The capture list itself is rebuilt from the model at open, so
+        // only the rows travel, keyed by usage index.
+        cp::put_u(w, lid_rpt.len() as u64).map_err(io)?;
+        for LidRptStream(ui, _, rows) in lid_rpt {
+            cp::put_u(w, *ui as u64).map_err(io)?;
+            cp::put_u(w, rows.len() as u64).map_err(io)?;
+            for (at, rec) in rows {
+                cp::put_f(w, *at).map_err(io)?;
+                for v in [
+                    rec.inflow,
+                    rec.evap,
+                    rec.surf_infil,
+                    rec.pave_perc,
+                    rec.soil_perc,
+                    rec.stor_exfil,
+                    rec.surf_outflow,
+                    rec.drain,
+                    rec.surf_level,
+                    rec.pave_level,
+                    rec.soil_moisture,
+                    rec.stor_level,
+                ] {
+                    cp::put_f(w, v).map_err(io)?;
+                }
             }
         }
         // §12.3: which interface files this run was given, and how far it
@@ -3184,6 +3248,49 @@ impl Simulation {
         } else if n > 0 {
             return Err("checkpoint collected a runoff file this run does not write".into());
         }
+        // §14.8.4: the report records land back on the capture list the
+        // model rebuilt, matched by usage index; the fingerprint already
+        // guaranteed the same model, so a mismatch is a broken file.
+        let n = r.u()? as usize;
+        if n != self.lid_rpt.len() {
+            return Err(format!(
+                "checkpoint carries {n} control-measure report streams and \
+                 the model declares {}",
+                self.lid_rpt.len()
+            ));
+        }
+        for i in 0..n {
+            let ui = r.u()? as usize;
+            if ui != self.lid_rpt[i].0 {
+                return Err("checkpoint control-measure report streams disagree \
+                     with the model's declarations"
+                    .into());
+            }
+            let rows = r.u()? as usize;
+            let mut v = Vec::with_capacity(rows.min(1 << 20));
+            for _ in 0..rows {
+                let at = r.f()?;
+                let mut rec = crate::hydrology::lid::LidStepRecord::default();
+                for slot in [
+                    &mut rec.inflow,
+                    &mut rec.evap,
+                    &mut rec.surf_infil,
+                    &mut rec.pave_perc,
+                    &mut rec.soil_perc,
+                    &mut rec.stor_exfil,
+                    &mut rec.surf_outflow,
+                    &mut rec.drain,
+                    &mut rec.surf_level,
+                    &mut rec.pave_level,
+                    &mut rec.soil_moisture,
+                    &mut rec.stor_level,
+                ] {
+                    *slot = r.f()?;
+                }
+                v.push((at, rec));
+            }
+            self.lid_rpt[i].2 = v;
+        }
         let n = r.u()? as usize;
         let mut want: Vec<(String, u64)> = Vec::with_capacity(n.min(8));
         for _ in 0..n {
@@ -3411,6 +3518,135 @@ impl Simulation {
             self.report_step,
             w,
         )
+    }
+
+    /// The §14.8.4 report files this model declares, in declaration
+    /// order: (declared file name, parcel id, control id). The engine
+    /// gathers the records; the caller supplies each destination and
+    /// calls [`Self::write_lid_report`] with the same index.
+    pub fn lid_report_files(&self) -> Vec<(String, String, String)> {
+        self.lid_rpt
+            .iter()
+            .map(|LidRptStream(ui, _, _)| {
+                let u = &self.net.lid_usage[*ui];
+                (
+                    u.report_file.clone().unwrap_or_default(),
+                    self.net.parcels[u.parcel].id.clone(),
+                    self.net.lid_controls[u.control].id.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Write the `i`-th declared §14.8.4 control-measure report file:
+    /// the predecessor's stamp, headers and tab-separated rows, with its
+    /// dry-period compression — a dry spell prints as its two end rows.
+    pub fn write_lid_report(&self, i: usize, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        let Some(LidRptStream(ui, _, rows)) = self.lid_rpt.get(i) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("no control-measure report stream {i}"),
+            ));
+        };
+        let usage = &self.net.lid_usage[*ui];
+        let us = self.net.options.flow_units.is_us();
+        // Rates print in the file's rain-rate unit, levels in its
+        // rain-depth unit (§14.8.4).
+        let (rate, depth) = if us {
+            (3600.0 / 0.0254, 1.0 / 0.0254)
+        } else {
+            (3.6e6, 1000.0)
+        };
+        writeln!(w, "SWMM5 LID Report File")?;
+        write!(w, "\nProject:  ")?;
+        if let Some(t) = self.net.title.first() {
+            write!(w, "{t}")?;
+        }
+        write!(
+            w,
+            "\nLID Unit: {} in Subcatchment {}\n",
+            self.net.lid_controls[usage.control].id, self.net.parcels[usage.parcel].id
+        )?;
+        write!(
+            w,
+            "\n                    \t  Elapsed\t    Total\t    Total\t  Surface\t Pavement\t     Soil\t  Storage\t  Surface\t    Drain\t  Surface\t Pavement\t     Soil\t  Storage"
+        )?;
+        write!(
+            w,
+            "\n                    \t     Time\t   Inflow\t     Evap\t    Infil\t     Perc\t     Perc\t    Exfil\t   Runoff\t  OutFlow\t    Level\t    Level\t Moisture\t    Level"
+        )?;
+        let (ru, du) = if us {
+            ("in/hr", "inches")
+        } else {
+            ("mm/hr", "mm")
+        };
+        write!(w, "\nDate        Time    \t    Hours")?;
+        for _ in 0..8 {
+            write!(w, "\t{ru:>9}")?;
+        }
+        write!(w, "\t{du:>9}\t{du:>9}\t  Content\t{du:>9}")?;
+        write!(w, "\n----------- --------")?;
+        for _ in 0..13 {
+            write!(w, "\t ---------")?;
+        }
+        // §14.8.4 dry compression, the predecessor's: a run opens dry,
+        // the first dry row after a wet one prints, later ones are held,
+        // and the held row prints when the unit rewets.
+        const DRY: f64 = 7.055_6e-9; // 0.001 in/hr, m/s
+        let mut was_dry: u32 = 1;
+        let mut held = String::new();
+        for (at, rec) in rows {
+            let epoch = self.start_epoch + at;
+            let d = crate::simulation::time::civil_from_days((epoch / 86_400.0).floor() as i64);
+            let sec = (epoch - (epoch / 86_400.0).floor() * 86_400.0).round() as i64;
+            let stamp = format!(
+                "{:02}/{:02}/{:04} {:02}:{:02}:{:02}",
+                d.month,
+                d.day,
+                d.year,
+                sec / 3600,
+                (sec / 60) % 60,
+                sec % 60
+            );
+            let line = format!(
+                // The missing space before the drain column is the
+                // predecessor's own string-concatenation quirk, kept
+                // because the format is its bytes (§14.8.4).
+                "\n{stamp:>20}\t {:8.3}\t {:8.3}\t {:8.4}\t {:8.3}\t {:8.3}\t {:8.3}\t {:8.3}\t{:8.3}\t {:8.3}\t {:8.3}\t {:8.3}\t {:8.3}\t {:8.3}",
+                at / 3600.0,
+                rec.inflow * rate,
+                rec.evap * rate,
+                rec.surf_infil * rate,
+                rec.pave_perc * rate,
+                rec.soil_perc * rate,
+                rec.stor_exfil * rate,
+                rec.surf_outflow * rate,
+                rec.drain * rate,
+                rec.surf_level * depth,
+                rec.pave_level * depth,
+                rec.soil_moisture,
+                rec.stor_level * depth
+            );
+            let dry = rec.inflow < DRY
+                && rec.surf_outflow < DRY
+                && rec.drain < DRY
+                && rec.stor_exfil < DRY
+                && rec.evap < DRY;
+            if dry {
+                if was_dry == 0 {
+                    w.write_all(line.as_bytes())?;
+                }
+                was_dry += 1;
+            } else {
+                if was_dry > 1 {
+                    w.write_all(held.as_bytes())?;
+                }
+                w.write_all(line.as_bytes())?;
+                was_dry = 0;
+            }
+            held = line;
+        }
+        writeln!(w)
     }
 
     /// Write the §14.9 text report to `w`, drawing on the §11 ledgers,

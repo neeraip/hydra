@@ -1062,6 +1062,15 @@ impl Surface {
         out
     }
 
+    /// The §14.8.4 per-step records, in the same parcel-major deployment
+    /// order as [`Self::lid_balances`].
+    pub fn lid_step_records(&self) -> Vec<super::lid::LidStepRecord> {
+        self.parcels
+            .iter()
+            .flat_map(|p| p.lids.iter().map(super::lid::LidUnit::step_record))
+            .collect()
+    }
+
     pub fn parcel_totals(&self, pi: usize) -> ParcelTotals {
         self.parcels[pi].totals
     }

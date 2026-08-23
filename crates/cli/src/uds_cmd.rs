@@ -463,6 +463,26 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             return EXIT_IO;
         }
     }
+    // §14.8.4: each usage line naming a report file gets one, written
+    // beside the model like every auxiliary file.
+    for (i, (name, parcel, control)) in sim.lid_report_files().iter().enumerate() {
+        let path = match resolve_aux_path(&args.model, name) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        if let Err(e) = create_and_write(&path, |w| sim.write_lid_report(i, w)) {
+            emit_error(
+                "io/interface",
+                &format!(
+                    "control-measure report file {} ({control} in {parcel}): {e}",
+                    path.display()
+                ),
+                None,
+                None,
+            );
+            return EXIT_IO;
+        }
+    }
     // §12.3: the checkpoint is written from the finished run, so a script
     // that resumes from it continues where this one stopped.
     if let Some(name) = args.checkpoint.as_deref() {
