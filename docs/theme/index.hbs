@@ -17,7 +17,7 @@
 
         <meta name="description" content="{{ description }}">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff">
+        <meta name="theme-color" content="#0b0e14">
 
         {{#if favicon_svg}}
         <link rel="icon" href="{{ resource "favicon.svg" }}">
@@ -95,10 +95,14 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
-            let theme;
-            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
-            if (theme === null || theme === undefined) { theme = default_theme; }
+            // One committed look: the book pins a single palette and hides
+            // the theme picker (hydra-book.css), so a theme remembered in
+            // localStorage from when the picker existed must not override
+            // it — the hydra skin re-points only that palette's variables,
+            // and any other stored choice renders the stock book instead.
+            // The stored key is also cleared so book.js can never reapply it.
+            const theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            try { localStorage.removeItem('mdbook-theme'); } catch(e) { }
             const html = document.documentElement;
             html.classList.remove('{{ default_theme }}')
             html.classList.add(theme);
