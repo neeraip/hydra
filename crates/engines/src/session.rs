@@ -224,6 +224,18 @@ impl EngineSession {
         }
     }
 
+    /// State that this run will never be asked for a checkpoint, so it
+    /// need not keep the reporting instants a checkpoint carries. For a
+    /// run with a results sink, [`Self::begin_results`] makes the same
+    /// statement; call this for a run without one. A no-op for engines
+    /// without checkpointing.
+    pub fn forgo_checkpoint(&mut self) {
+        match self {
+            Self::Wds(_) => {}
+            Self::Uds(r) => r.0.sim.forgo_checkpoint(),
+        }
+    }
+
     /// Advance the run by one step and report where it is.
     pub fn advance(&mut self) -> Result<Progress, AdvanceError> {
         match self {

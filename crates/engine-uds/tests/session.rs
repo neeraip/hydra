@@ -2819,6 +2819,29 @@ RAIN  2:00  0
     );
 }
 
+/// §12.3: a run that states it will never be asked for a checkpoint
+/// keeps no reporting instants, and asking afterwards is refused rather
+/// than answered with a checkpoint missing everything.
+#[test]
+fn a_run_that_forgoes_checkpoints_keeps_no_instants() {
+    let inp = runoff_model(100.0, 25.0, "HORTON");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.forgo_checkpoint();
+    sim.run();
+    assert!(
+        sim.snapshots.is_empty(),
+        "{} instants held for a guarantee nothing will use",
+        sim.snapshots.len()
+    );
+    let mut buf = Vec::new();
+    assert!(sim.save_checkpoint(&mut buf).is_err(), "refused (§12.3)");
+    // The report is unharmed: it draws on the statistics, not the
+    // instants.
+    let mut rpt = Vec::new();
+    sim.write_report(&mut rpt).expect("report");
+    assert!(String::from_utf8_lossy(&rpt).contains("Runoff Quantity Continuity"));
+}
+
 /// §14.8.4: a usage line naming a report file gets the predecessor's
 /// tab-separated record of the unit's steps, dry spells compressed to
 /// their two end rows.

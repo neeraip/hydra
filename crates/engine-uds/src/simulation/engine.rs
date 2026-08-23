@@ -3850,6 +3850,24 @@ impl Simulation {
     /// Attach before stepping: the header records where the first
     /// reporting instant falls, so instants already produced would be
     /// missing from a file opened late.
+    /// State that this run will never be asked for a checkpoint (§12.3).
+    ///
+    /// A session keeps every reporting instant so a checkpoint can carry
+    /// the whole run's results — the largest thing a long run holds. A
+    /// run with a results sink states its intent through
+    /// [`Self::begin_results`]; this is the same statement for a run
+    /// without one, which otherwise pays for the guarantee forever. A
+    /// model that saves a routing outflow file keeps its instants
+    /// regardless, since that file is written from them at the end
+    /// (§14.8). Asking for a checkpoint afterwards is refused.
+    pub fn forgo_checkpoint(&mut self) {
+        let saves_outflows = self.net.interface_files.outflows.is_some();
+        self.retain_snapshots = saves_outflows;
+        if !self.retain_snapshots {
+            self.snapshots = Vec::new();
+        }
+    }
+
     pub fn begin_results(
         &mut self,
         sink: Box<dyn std::io::Write + Send>,

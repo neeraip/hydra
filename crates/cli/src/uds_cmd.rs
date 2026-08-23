@@ -392,6 +392,15 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
     // the auxiliary-file handling around them is uds-specific CLI work.
     let mut es = hydra::engines::EngineSession::from_uds(sim);
 
+    // §12.3: a run keeps every reporting instant only for a checkpoint
+    // that may be asked for. With neither a results file (whose attach
+    // states the intent) nor `--checkpoint`, say so up front — on the
+    // largest real model the instants are hundreds of megabytes held
+    // for a guarantee nothing will use.
+    if args.results.is_none() && args.checkpoint.is_none() {
+        es.forgo_checkpoint();
+    }
+
     if let Some(out_path) = args.results.as_deref() {
         let attach = std::fs::File::create(out_path).and_then(|f| {
             // The run keeps what a checkpoint carries only when one
