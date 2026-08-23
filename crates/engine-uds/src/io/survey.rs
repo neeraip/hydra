@@ -419,8 +419,46 @@ pub struct Survey<'a> {
     pub event_count: usize,
     /// Data lines grouped by section, in file order, for the parse pass.
     pub sections: Vec<(Section, Vec<TokenLine<'a>>)>,
+    /// Bulk-section bodies retained as text rather than tokens, in file
+    /// order: (section, body slice, first line number). A five-million
+    /// line `[TIMESERIES]` costs 96 bytes of token per 60 bytes of text
+    /// when retained the ordinary way — half a gigabyte held for the
+    /// whole parse. These sections re-tokenise lazily at parse time
+    /// instead ([`bulk_lines`]), trading one extra scan of their text
+    /// for not holding both forms at once.
+    pub bulk: Vec<(Section, &'a str, usize)>,
     /// Every diagnostic, exhaustively.
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Whether a section's lines are retained as text and re-tokenised
+/// lazily at parse time rather than held tokenised.
+fn is_bulk(section: Section) -> bool {
+    matches!(section, Section::TimeSeries)
+}
+
+/// Lazily tokenise one bulk occurrence's body, yielding the same
+/// [`TokenLine`]s the eager path would have retained: over-long and
+/// token-free lines skipped exactly as the survey skipped them, with
+/// their diagnostics already reported by the survey and not repeated.
+pub fn bulk_lines<'a>(
+    body: &'a str,
+    first_line: usize,
+) -> impl Iterator<Item = TokenLine<'a>> + 'a {
+    body.lines().enumerate().filter_map(move |(i, raw)| {
+        if check_line_length(raw).is_err() {
+            return None;
+        }
+        let (tokens, _) = tokenize(effective_content(raw));
+        if tokens.is_empty() {
+            return None;
+        }
+        Some(TokenLine {
+            line: first_line + i,
+            tokens: tokens.into_iter().collect(),
+            raw: "",
+        })
+    })
 }
 
 impl Survey<'_> {
@@ -521,15 +559,33 @@ pub fn survey(input: &str) -> Survey<'_> {
     // A pending unrecognised-header diagnostic accumulating its discard
     // count until the next recognised header or end of input.
     let mut pending_unrecognised: Option<(usize, String, usize)> = None;
+    // An open bulk occurrence: (section, body start byte, body end byte,
+    // first line number). Closed by any header line or the end of input.
+    let base = input.as_ptr() as usize;
+    let mut bulk_open: Option<(Section, usize, usize, usize)> = None;
 
     for (idx, raw) in input.lines().enumerate() {
         let line_no = idx + 1;
+        // Every non-header line of a bulk section lands in its slice —
+        // blank, over-long and comment lines included, since the lazy
+        // scan skips them exactly as this pass does.
+        let off = raw.as_ptr() as usize - base;
+        let in_bulk = current.is_some_and(is_bulk);
+        let extend = |bulk_open: &mut Option<(Section, usize, usize, usize)>| {
+            if let Some(sec) = current.filter(|s| is_bulk(*s)) {
+                match bulk_open {
+                    Some((_, _, end, _)) => *end = off + raw.len(),
+                    None => *bulk_open = Some((sec, off, off + raw.len(), line_no)),
+                }
+            }
+        };
 
         if let Err(e) = check_line_length(raw) {
             s.diagnostics.push(Diagnostic {
                 line: line_no,
                 kind: DiagnosticKind::Lex(e),
             });
+            extend(&mut bulk_open);
             continue;
         }
         let content = effective_content(raw);
@@ -543,12 +599,16 @@ pub fn survey(input: &str) -> Survey<'_> {
             });
         }
         let Some(first) = tokens.first() else {
+            extend(&mut bulk_open);
             continue; // blank or comment-only
         };
 
         // ── Section header ───────────────────────────────────────────────
         if first.starts_with('[') {
             flush_unrecognised(&mut pending_unrecognised, &mut s);
+            if let Some((sec, st, en, fl)) = bulk_open.take() {
+                s.bulk.push((sec, &input[st..en], fl));
+            }
             match match_section(first) {
                 Some(m) => {
                     if !m.canonical {
@@ -561,7 +621,9 @@ pub fn survey(input: &str) -> Survey<'_> {
                         });
                     }
                     current = Some(m.section);
-                    s.sections.push((m.section, Vec::new()));
+                    if !is_bulk(m.section) {
+                        s.sections.push((m.section, Vec::new()));
+                    }
                 }
                 None => {
                     current = None;
@@ -588,6 +650,10 @@ pub fn survey(input: &str) -> Survey<'_> {
 
         register(&mut s, section, &tokens, line_no);
 
+        if in_bulk {
+            extend(&mut bulk_open);
+            continue;
+        }
         if let Some((_, lines)) = s.sections.last_mut() {
             lines.push(TokenLine {
                 line: line_no,
@@ -601,6 +667,9 @@ pub fn survey(input: &str) -> Survey<'_> {
         }
     }
     flush_unrecognised(&mut pending_unrecognised, &mut s);
+    if let Some((sec, st, en, fl)) = bulk_open.take() {
+        s.bulk.push((sec, &input[st..en], fl));
+    }
     s
 }
 

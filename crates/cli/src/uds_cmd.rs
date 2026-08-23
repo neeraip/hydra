@@ -23,7 +23,7 @@ use crate::{
 /// The uds session advances hydrology, routing, and water quality together,
 /// so progress is a single phase. `--results` writes the engine's
 /// predecessor-compatible binary `.out`; `--summary` its text report.
-pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
+pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
     // The wds engine offers a JSON report; this one does not yet. Refuse
     // up front rather than writing a text report under a .json name.
     if args
@@ -43,7 +43,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     // Borrowed where the bytes are already valid UTF-8, which is every
     // model anyone actually has: `into_owned` copied the whole file for
     // nothing, and a model file can be tens of megabytes.
-    let text = String::from_utf8_lossy(bytes);
+    let text = String::from_utf8_lossy(&bytes);
 
     // Survey the model's auxiliary-file declarations before opening. Parse
     // problems are deliberately ignored here — the open below re-parses and
@@ -221,6 +221,11 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             return EXIT_INPUT;
         }
     };
+    // The session owns everything it needs, so the model text goes now
+    // instead of riding the whole run: on the largest real model it is
+    // 320 MB the next four minutes have no use for.
+    drop(text);
+    drop(bytes);
 
     // Warning-class import and validation findings, before the run so they
     // are visible even if it is long.

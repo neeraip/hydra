@@ -66,8 +66,8 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 net.curves = super::tables::parse_curves(lines, ids, &cv, &mut diagnostics);
             }
             Section::TimeSeries => {
-                let ids = s.ids.get(&ObjectKind::TimeSeries).unwrap_or(&empty);
-                net.timeseries = super::tables::parse_timeseries(lines, ids, &mut diagnostics);
+                // Bulk section: retained as text, parsed below from the
+                // survey's slices rather than from token lines.
             }
             Section::Patterns => {
                 let ids = s.ids.get(&ObjectKind::TimePattern).unwrap_or(&empty);
@@ -75,6 +75,19 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
             }
             _ => {}
         }
+    }
+
+    // §14.3: bulk sections were retained as text; their occurrences
+    // re-tokenise lazily here, chained in file order so the date-anchor
+    // state machine sees the same stream the eager path saw.
+    {
+        let ids = s.ids.get(&ObjectKind::TimeSeries).unwrap_or(&empty);
+        let lines = s
+            .bulk
+            .iter()
+            .filter(|(sec, _, _)| *sec == Section::TimeSeries)
+            .flat_map(|(_, body, first)| super::survey::bulk_lines(body, *first));
+        net.timeseries = super::tables::parse_timeseries(lines, ids, &mut diagnostics);
     }
 
     // Surface compartment (§3): gages first, then parcels, then their

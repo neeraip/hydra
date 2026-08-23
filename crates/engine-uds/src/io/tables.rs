@@ -156,8 +156,8 @@ pub(crate) fn parse_curves(
 /// Parse a `[TIMESERIES]` section, per the predecessor's date/time/value
 /// state machine: a date token (recognised by parsing as one) anchors every
 /// later time until the next date; times are decimal hours or clock strings.
-pub(crate) fn parse_timeseries(
-    lines: &[TokenLine<'_>],
+pub(crate) fn parse_timeseries<'a>(
+    lines: impl Iterator<Item = TokenLine<'a>>,
     ids: &HashMap<String, usize>,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<TimeSeries> {
@@ -420,5 +420,59 @@ DWF          1.1 1.2 1.3 1.4 1.5 1.6
         assert_eq!(p.kind, PatternKind::Hourly);
         assert_eq!(p.factors.len(), 12);
         assert_eq!(p.factors[11], 1.6);
+    }
+
+    /// The bulk retention (§14.3 concatenation preserved): a second
+    /// `[TIMESERIES]` block chains after the first in file order, its
+    /// date anchor carrying across the section break exactly as it did
+    /// when the blocks were physically concatenated, and a bad line in
+    /// the second block reports its true file line.
+    #[test]
+    fn timeseries_blocks_chain_with_their_anchor_and_line_numbers() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[TIMESERIES]
+TS1  01/02/2020  0:00  1.0
+TS1  6:00  2.0
+
+[JUNCTIONS]
+J1  100  3
+
+[TIMESERIES]
+TS1  12:00  3.0
+TS1  bogus
+TS2  0:30  9.0
+";
+        let (net, diags) = parse_network(inp);
+        let points = |id: &str| -> Vec<crate::model::TimeSeriesPoint> {
+            match &net
+                .timeseries
+                .iter()
+                .find(|s| s.id == id)
+                .expect("series")
+                .source
+            {
+                TimeSeriesSource::Points(p) => p.clone(),
+                other => panic!("not inline: {other:?}"),
+            }
+        };
+        let ts1 = points("TS1");
+        assert_eq!(ts1.len(), 3);
+        // The third point still rides the first block's date anchor.
+        match ts1[2].time {
+            SeriesTime::Absolute { date, seconds } => {
+                assert_eq!((date.month, date.day), (1, 2));
+                assert_eq!(seconds, 12.0 * 3600.0);
+            }
+            other => panic!("anchor lost across the block break: {other:?}"),
+        }
+        // The bad line reports the file's own line number, 13.
+        assert!(
+            diags.iter().any(|d| d.line == 13),
+            "no diagnostic on line 13: {diags:?}"
+        );
+        assert_eq!(points("TS2").len(), 1);
     }
 }

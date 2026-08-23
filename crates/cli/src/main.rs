@@ -333,7 +333,7 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         Err(code) => return code,
     };
     if engine.key == "uds" {
-        return uds_cmd::run(args, cli, &bytes);
+        return uds_cmd::run(args, cli, bytes);
     }
     // §12.3 is the drainage engine's contract. Saying so beats writing no
     // file and letting a script believe it has one to resume from.
