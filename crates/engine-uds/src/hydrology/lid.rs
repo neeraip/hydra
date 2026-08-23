@@ -1417,6 +1417,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_vegetated_berm_overtops_after_its_void_of_water() {
+        // §3.4: the ponded surface stores water in its voids, so a
+        // vegetated berm overtops after berm x void of water — the free
+        // surface rises through the vegetation. The predecessor advances
+        // depth by the raw flux beside a volume counted through the
+        // void, which cannot both hold; this pins the volume-conserving
+        // reading. A bottlenecked bed forces the ponding.
+        let unit = |veg: f64| {
+            let mut c = buffered_pavement_control();
+            c.surface = Some(LidSurface {
+                thickness: 0.10,
+                void_frac: 1.0 - veg,
+                roughness: 0.1,
+                slope: 0.01,
+                side_slope: 0.0,
+            });
+            // Seal the course and the bed down to a trickle so the
+            // surface must pond.
+            c.pavement.as_mut().unwrap().k_sat = 1.0e-7;
+            let mut u = LidUnit::build(
+                &c,
+                &swale_usage(),
+                None,
+                InfiltrationModel::Horton,
+                &[],
+                false,
+            )
+            .expect("build");
+            // Feed just enough water to fill a bare berm exactly:
+            // 0.10 m over the inflow, minus the trickle that percolates.
+            let dt = 60.0;
+            let q = 1.0e-4_f64;
+            let steps = (0.10 / (q * dt)).ceil() as usize;
+            let mut shed = 0.0;
+            for _ in 0..steps {
+                u.step(&forcing(q), dt);
+                shed += u.overflow * dt;
+            }
+            // Let the Manning tail finish: what stands above the berm
+            // when the pulse ends still belongs to the shed.
+            for _ in 0..200 {
+                u.step(&forcing(0.0), dt);
+                shed += u.overflow * dt;
+            }
+            shed
+        };
+        let bare = unit(0.0);
+        let vegetated = unit(0.5);
+        // The bare berm holds nearly all of it; the half-vegetated berm
+        // holds half the water, so roughly the other half must shed.
+        assert!(bare < 0.01, "a bare berm shed {bare} m of 0.10 m in");
+        assert!(
+            vegetated > 0.03,
+            "a half-vegetated berm held water in space its vegetation occupies: shed {vegetated} m"
+        );
+    }
+
     fn barrel_control() -> LidControl {
         LidControl {
             id: "RB".into(),

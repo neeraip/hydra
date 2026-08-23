@@ -286,7 +286,12 @@ side slope recomputed to keep the section consistent).
 **Constitutive fluxes** echo §3.3 with measure-specific parameters:
 surface outflow above the berm is Manning flow at the §3.2 α — the
 unit's width over its area included, a widthless unit spilling its
-excess directly; surface-to-soil intake is modified Green–Ampt (with the stated pavement and
+excess directly. The ponded surface stores water in its voids: depth
+advances by net flux over the void fraction (one minus the vegetation
+volume fraction), so the free surface rises through the vegetation and
+a vegetated berm overtops after berm × void of water — the only
+advance under which stored volume, depth × void, conserves what
+flowed; surface-to-soil intake is modified Green–Ampt (with the stated pavement and
 swale exceptions, including the swale's dependence on the parent parcel's
 own infiltration model); soil percolation is the exponential
 $K_{2S}e^{-k_{slope}(\phi_2 - \theta_2)}$, zero below field capacity, on the
@@ -302,6 +307,22 @@ saturated, the ponded surface depth — plus hysteretic open/close
 thresholds on that same stacked head and an optional multiplier curve.
 Its coefficients are unit-dependent per §14.6, the multiplier curve read
 against the offset-relative head in the file's rain-depth unit.
+
+> **CORRESPONDENCE:** the predecessor counts the surface layer's stored
+> volume as depth × void yet advances the depth by the raw flux, so its
+> vegetation displaces bookkeeping volume and no water: a vegetated
+> berm holds its full height of water and sheds nothing a bare one
+> would not. The two definitions cannot both hold, and the transient
+> imbalance escapes its continuity check only because the pond later
+> drains down the column. This engine keeps the volume definition, so
+> on a vegetated surface over a bottlenecked column it sheds water the
+> predecessor stores in space its own vegetation occupies — the
+> standard porous-pavement fixture differs by exactly this, and zeroing
+> the vegetation makes the engines agree to every printed digit.
+>
+> *Source: `lidproc.c` `pavementFluxRates` — `SurfaceVolume =
+> surfaceDepth * voidFrac` beside `f[SURF]` undivided by the void; the
+> other templates repeat the pair.*
 
 **The limiter cascade is normative.** Each flux is clipped to what its
 source supplies before the layer beneath is asked what it accepts —
