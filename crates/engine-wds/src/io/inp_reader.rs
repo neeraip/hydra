@@ -2151,6 +2151,18 @@ fn parse_rules(
     let mut current_else: Vec<RuleAction> = Vec::new();
     let mut current_priority = 0.0;
     let mut in_rule = false;
+    // §2.8.2: a rule is read in phases, and a continuation line belongs
+    // to the clause it continues. An `AND` after THEN is another action,
+    // never a premise; misreading it turns "open A and B" into "open A
+    // only if B is already open", which deadlocks every multi-action
+    // schedule.
+    #[derive(Clone, Copy, PartialEq)]
+    enum RulePhase {
+        Premises,
+        Then,
+        Else,
+    }
+    let mut phase = RulePhase::Premises;
 
     for_each_line(lines, "RULES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -2172,21 +2184,48 @@ fn parse_rules(
                 }
                 current_priority = 0.0;
                 in_rule = true;
+                phase = RulePhase::Premises;
             }
-            "IF" | "AND" | "OR" => {
-                let connective = match kw.as_str() {
-                    "AND" => Some(LogicOp::And),
-                    "OR" => Some(LogicOp::Or),
-                    _ => None,
-                };
-                let premise = parse_rule_premise(&fields[1..], connective, node_map, link_map)?;
+            "IF" => {
+                phase = RulePhase::Premises;
+                let premise = parse_rule_premise(&fields[1..], None, node_map, link_map)?;
                 current_premises.push(premise);
             }
+            "AND" => match phase {
+                RulePhase::Premises => {
+                    let premise =
+                        parse_rule_premise(&fields[1..], Some(LogicOp::And), node_map, link_map)?;
+                    current_premises.push(premise);
+                }
+                RulePhase::Then => {
+                    current_then.push(parse_rule_action(&fields[1..], link_map)?);
+                }
+                RulePhase::Else => {
+                    current_else.push(parse_rule_action(&fields[1..], link_map)?);
+                }
+            },
+            "OR" => match phase {
+                RulePhase::Premises => {
+                    let premise =
+                        parse_rule_premise(&fields[1..], Some(LogicOp::Or), node_map, link_map)?;
+                    current_premises.push(premise);
+                }
+                // §2.8.2: `OR` is a premise connective only; EPANET
+                // rejects it after THEN/ELSE and so does this reader.
+                RulePhase::Then | RulePhase::Else => {
+                    return Err(ReadError::InvalidField {
+                        field: "RULES".into(),
+                        reason: "OR cannot join actions; only AND may follow THEN or ELSE".into(),
+                    });
+                }
+            },
             "THEN" => {
+                phase = RulePhase::Then;
                 let action = parse_rule_action(&fields[1..], link_map)?;
                 current_then.push(action);
             }
             "ELSE" => {
+                phase = RulePhase::Else;
                 let action = parse_rule_action(&fields[1..], link_map)?;
                 current_else.push(action);
             }
@@ -4798,6 +4837,21 @@ Headloss    H-W
         .into_bytes()
     }
 
+    /// Same, but with a tank, a pump, and a [RULES] section.
+    fn minimal_cms_with_rules(rules: &str) -> Vec<u8> {
+        format!(
+            "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+             [TANKS]\nT1    40    50    10    120    50    0\n\n\
+             [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\
+             P2    J1    T1    1000    300    100    0    Open\n\n\
+             [PUMPS]\nPU1    R1    J1    HEAD    PC1\n\n\
+             [CURVES]\nPC1    100    60\n\n\
+             [RULES]\n{rules}\n\
+             [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n"
+        )
+        .into_bytes()
+    }
+
     /// Same, but with extra [TIMES] lines.
     fn minimal_cms_with_times(times: &str) -> Vec<u8> {
         format!(
@@ -4806,6 +4860,32 @@ Headloss    H-W
              [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n\n[TIMES]\n{times}\n"
         )
         .into_bytes()
+    }
+
+    #[test]
+    fn multi_action_then_lines_are_actions_not_premises() {
+        // §2.8.2: an AND line after THEN continues the actions. Misread
+        // as a premise, "open A and B" becomes "open A only if B is
+        // already open" — micropolis's pump schedule deadlocked closed
+        // for ten days exactly this way.
+        let inp = minimal_cms_with_rules(
+            "RULE 1\nIF SYSTEM CLOCKTIME >= 6 AM\nAND TANK T1 LEVEL BELOW 97\nTHEN PUMP PU1 STATUS IS OPEN\nAND PIPE P1 STATUS IS CLOSED\nELSE PUMP PU1 STATUS IS CLOSED\nAND PIPE P1 STATUS IS OPEN\n",
+        );
+        let net = parse_inp(&inp).unwrap();
+        assert_eq!(net.rules.len(), 1);
+        let r = &net.rules[0];
+        assert_eq!(r.premises.len(), 2, "premises: {:?}", r.premises);
+        assert_eq!(r.then_actions.len(), 2, "then: {:?}", r.then_actions);
+        assert_eq!(r.else_actions.len(), 2, "else: {:?}", r.else_actions);
+    }
+
+    #[test]
+    fn or_cannot_join_actions() {
+        // §2.8.2: OR is a premise connective only, as it is for EPANET.
+        let inp = minimal_cms_with_rules(
+            "RULE 1\nIF SYSTEM CLOCKTIME >= 6 AM\nTHEN PUMP PU1 STATUS IS OPEN\nOR PIPE P1 STATUS IS CLOSED\n",
+        );
+        assert!(parse_inp(&inp).is_err());
     }
 
     #[test]

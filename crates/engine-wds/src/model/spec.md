@@ -339,6 +339,19 @@ Consecutive premises are joined by `AND` or `OR`. `AND` binds more tightly than 
 
 **Action**: `(link_index, attribute, value)` where `attribute` is `STATUS` or `SETTING`.
 
+**Continuation lines belong to the clause they continue.** A rule is read
+in phases: lines after `IF` are premises, lines after `THEN` are then
+actions, lines after `ELSE` are else actions. An `AND` line continues the
+current phase — after `THEN` or `ELSE` it is **another action**, never a
+premise. An `OR` line is only a premise connective; one appearing after
+`THEN` or `ELSE` is a parse error, as it is for EPANET. This is EPANET's
+own grammar (`rules.c` tracks the same three states), and the failure
+mode of ignoring it is silent and severe: `THEN PUMP A OPEN / AND PUMP B
+OPEN` misread as a premise turns the rule into "act on A only if B is
+already open" — every multi-action rule then requires its own outcome
+before it can fire, and a scheduled pump can deadlock closed for an
+entire simulation.
+
 **Conflict resolution**: when two rules fire at the same rule time step and their THEN/ELSE actions assign different values to the same link attribute, the rule with the **numerically higher priority value** wins.
 
 ### 2.9 Graph Topology Constraints
