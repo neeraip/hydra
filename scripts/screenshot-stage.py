@@ -55,7 +55,8 @@ VIEWS = ("overview", "canvas", "editor", "analysis", "report")
 
 # Section headers that identify an engine's file format. Shared headers
 # ([JUNCTIONS], [CURVES], [OPTIONS], ...) say nothing and are not listed.
-WDS_SECTIONS = {"PIPES", "RESERVOIRS", "TANKS", "EMITTERS", "PUMPS", "VALVES"}
+# [PUMPS] appears in both formats and identifies neither.
+WDS_SECTIONS = {"PIPES", "RESERVOIRS", "TANKS", "EMITTERS", "VALVES"}
 UDS_SECTIONS = {"SUBCATCHMENTS", "CONDUITS", "OUTFALLS", "RAINGAGES", "XSECTIONS", "DIVIDERS"}
 
 
