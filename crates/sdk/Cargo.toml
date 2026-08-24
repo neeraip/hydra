@@ -23,3 +23,11 @@ hydra-report = { path = "../report", version = "14.0.0" }
 [features]
 # Enables the PDF renderer in hydra::report (heavyweight: embeds Typst).
 report-pdf = ["hydra-report/pdf"]
+# Parallel drainage channel phase (uds spec 6.4), width from the model's
+# THREADS option; byte-identical results at any width. Opt-in, native
+# only (never enable for wasm targets), and not yet enabled by the
+# official apps: merely linking rayon under the fat-LTO release profile
+# costs a measured ~8% of serial routing, so the win (23% on a
+# 4,394-node model at width 4) is an integrator's trade to make until
+# that cost is understood.
+threads = ["hydra-engine-uds/threads"]

@@ -536,7 +536,10 @@ Within a trial step the scheme iterates to self-consistency:
    last iterate's heads. This phase is order-independent by construction and
    is the specification's parallel region; accumulation of channel flows
    into vertex sums is performed in a fixed order regardless of thread
-   count, so results are bit-reproducible under any parallelism.
+   count, so results are bit-reproducible under any parallelism. The
+   phase's width is the model's `THREADS` option (§14.4): an upper bound,
+   honoured where the execution environment offers concurrency and reduced
+   to one where it does not, with identical results at every width.
 2. **Structure phase**: pumps, orifices, weirs, outlets, and zero-length
    connectors compute their flows **against the last iterate's vertex state**.
    The phase is order-independent: no structure sees the running accumulation

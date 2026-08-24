@@ -655,6 +655,11 @@ pub struct Router {
     dt_floor: f64,
     courant_factor: f64,
     max_trials: u32,
+    /// The §6.4 worker pool: built once at `build` from the model's
+    /// THREADS option, present only when the feature is on and the model
+    /// asked for width. Absent = serial.
+    #[cfg(feature = "threads")]
+    pool: Option<rayon::ThreadPool>,
     head_tol: f64,
     min_surface_area: f64,
     continuity_tol: f64,
@@ -885,6 +890,26 @@ struct Trial {
 /// independently: keeping on the first iterate would hand the accumulators
 /// a cache that holds nothing, and keeping when one end is still moving
 /// would freeze a channel against the very head change it should follow.
+/// One channel's §6.4 result: flow, mid area, the two end surface-area
+/// contributions, loss, and the evaporation share of that loss.
+#[cfg(feature = "threads")]
+type ChanFlow = (f64, f64, f64, f64, f64, f64);
+
+/// The mutable half of the §6.4 join: every slot the per-channel pass
+/// writes, gathered so the split path's join has one body.
+#[cfg(feature = "threads")]
+struct ChanJoin<'a> {
+    chan_last: &'a mut [ChanFlow],
+    chan_evap: &'a mut [f64],
+    chan_seep: &'a mut [f64],
+    q_next: &'a mut [f64],
+    a_mid_new: &'a mut [f64],
+    surf: &'a mut [f64],
+    net_new: &'a mut [f64],
+    loss_total: &'a mut f64,
+    kept: &'a mut u32,
+}
+
 fn may_keep(step: u32, settled: &[bool], from: usize, to: usize) -> bool {
     step > 0 && settled[from] && settled[to]
 }
@@ -1307,6 +1332,27 @@ impl Router {
             dt_floor: step_floor(net.options.min_routing_step, net.options.routing_step),
             courant_factor: net.options.courant_factor,
             max_trials: net.options.max_trials.max(2),
+            // §6.4's width is an upper bound the environment may reduce,
+            // and the reduction here is measured, not cautious: each
+            // per-iterate dispatch costs on the order of the work a
+            // thousand channels do, so a worker handed fewer than that
+            // spends the step waking up (Bellinge, 1,044 channels, ran
+            // 93 s at width 4 against 81 s serial; Raytown, 4,371, ran
+            // 186 s against 228 s). A pool that cannot be built is not a
+            // reason to refuse the model: one width is always available.
+            #[cfg(feature = "threads")]
+            pool: {
+                const CHANNELS_PER_WORKER: usize = 1000;
+                let width = (net.options.threads.max(1) as usize).min(nc / CHANNELS_PER_WORKER);
+                if width >= 2 {
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(width)
+                        .build()
+                        .ok()
+                } else {
+                    None
+                }
+            },
             head_tol: net.options.head_tol,
             min_surface_area: net.options.min_surface_area,
             continuity_tol: net.options.continuity_tol,
@@ -2383,6 +2429,90 @@ impl Router {
 
     /// One §6.4 trial: iterate channel and vertex phases to
     /// self-consistency over the interval `dt`.
+    /// The split channel phase: map across the §6.4 pool, join in
+    /// channel order. Never inlined — its body inside `run_trial` cost
+    /// the serial loop its own inlining, a measured 8% of a large run.
+    #[cfg(feature = "threads")]
+    #[inline(never)]
+    fn channel_phase_pooled(
+        &self,
+        step: u32,
+        dt: f64,
+        y: &[f64],
+        q: &[f64],
+        settled: &[bool],
+        mut join: ChanJoin,
+    ) {
+        use rayon::prelude::*;
+        let nc = self.chans.len();
+        let outs: Vec<(ChanFlow, bool)> = {
+            let last: &[ChanFlow] = join.chan_last;
+            self.pool.as_ref().expect("checked by caller").install(|| {
+                (0..nc)
+                    .into_par_iter()
+                    .map(|ci| {
+                        let c = &self.chans[ci];
+                        if may_keep(step, settled, c.from, c.to) {
+                            (last[ci], true)
+                        } else {
+                            (self.channel_flow(ci, y, q[ci], dt, step), false)
+                        }
+                    })
+                    .collect()
+            })
+        };
+        for (ci, &(out, was_kept)) in outs.iter().enumerate() {
+            self.join_channel(&mut join, ci, out, was_kept);
+        }
+    }
+
+    /// One channel's §6.4 join: write its results into the per-channel
+    /// slots and accumulate into the per-vertex sums, in channel order —
+    /// the same order, and so the same floating point, as the fused
+    /// serial arm in `run_trial` (the byte-identity test binds them).
+    #[cfg(feature = "threads")]
+    #[inline(always)]
+    fn join_channel(&self, j: &mut ChanJoin, ci: usize, out: ChanFlow, was_kept: bool) {
+        let (qn, a_mid, s1, s2, loss, evap) = out;
+        if was_kept {
+            *j.kept += 1;
+        } else {
+            j.chan_last[ci] = out;
+        }
+        j.chan_evap[ci] = evap;
+        j.chan_seep[ci] = (loss - evap).max(0.0);
+        j.q_next[ci] = qn;
+        j.a_mid_new[ci] = a_mid;
+        let c = &self.chans[ci];
+        j.surf[c.from] += s1;
+        j.surf[c.to] += s2;
+        let qt = qn; // total flow (barrels folded inside)
+        j.net_new[c.from] -= qt;
+        j.net_new[c.to] += qt;
+        // Evaporation and seepage debit the end vertices, halved
+        // between them; outfalls do not share (§7.7).
+        if loss > 0.0 {
+            *j.loss_total += loss;
+            let out1 = matches!(self.verts[c.from].class, VertClass::Outfall(_));
+            let out2 = matches!(self.verts[c.to].class, VertClass::Outfall(_));
+            match (out1, out2) {
+                (false, false) => {
+                    j.net_new[c.from] -= loss / 2.0;
+                    j.net_new[c.to] -= loss / 2.0;
+                }
+                (false, true) => j.net_new[c.from] -= loss,
+                (true, false) => j.net_new[c.to] -= loss,
+                (true, true) => {}
+            }
+        }
+    }
+
+    /// Pinned standalone: with rayon in the LTO unit the inliner folded
+    /// this whole function into `step_once`, and the section math inside
+    /// lost its own inlining to the blown budget — a measured 8% of a
+    /// large run. Serial builds compiled it standalone unprompted; this
+    /// makes that the rule rather than the inliner's mood.
+    #[inline(never)]
     fn run_trial(&self, dt: f64, lat: &[f64]) -> Trial {
         let nv = self.verts.len();
         let nc = self.chans.len();
@@ -2454,57 +2584,100 @@ impl Router {
             stor_loss_sum += evap + seep;
         }
 
+        let use_pool = {
+            #[cfg(feature = "threads")]
+            {
+                self.pool.is_some()
+            }
+            #[cfg(not(feature = "threads"))]
+            {
+                false
+            }
+        };
         for step in 0..self.max_trials {
             // ── Channel phase (∥): flows from the last iterate ─────────
             //
-            // The ∥ mark means the spec permits running this loop's
-            // channel_flow calls concurrently: each reads only `y` and its
-            // own channel, and the per-vertex sums below are the join. It
-            // is ~a third of a large run's time, so threading it (rayon on
-            // this loop, sums reduced per-shard) is the next big win if one
-            // is ever needed. Deliberately not taken: the engines commit to
-            // no threads so the browser build stays possible, and parity
-            // with the predecessor is already reached without it.
+            // Split as §6.4 specifies. The map: every channel computes its
+            // update from the last iterate, reading only `y` and its own
+            // channel — order-independent, and run across the §6.4 worker
+            // pool when the `threads` feature built one (width from the
+            // model's THREADS option). The join: accumulation into the
+            // per-vertex sums stays below, serial and in channel order, so
+            // the floating-point result is the serial build's exactly, at
+            // any width.
             surf.iter_mut().for_each(|s| *s = 0.0);
             net_new.iter_mut().for_each(|s| *s = 0.0);
             let mut q_next = vec![0.0; nc];
             loss_total = 0.0;
             chan_evap.iter_mut().for_each(|e| *e = 0.0);
             chan_seep.iter_mut().for_each(|e| *e = 0.0);
-            for ci in 0..nc {
-                let (from, to) = (self.chans[ci].from, self.chans[ci].to);
-                let (qn, a_mid, s1, s2, loss, evap) = if may_keep(step, &settled, from, to) {
-                    kept += 1;
-                    chan_last[ci]
-                } else {
-                    let out = self.channel_flow(ci, &y, q[ci], dt, step);
-                    chan_last[ci] = out;
-                    out
-                };
-                chan_evap[ci] = evap;
-                chan_seep[ci] = (loss - evap).max(0.0);
-                q_next[ci] = qn;
-                a_mid_new[ci] = a_mid;
-                let c = &self.chans[ci];
-                surf[c.from] += s1;
-                surf[c.to] += s2;
-                let qt = qn; // total flow (barrels folded inside)
-                net_new[c.from] -= qt;
-                net_new[c.to] += qt;
-                // Evaporation and seepage debit the end vertices, halved
-                // between them; outfalls do not share (§7.7).
-                if loss > 0.0 {
-                    loss_total += loss;
-                    let out1 = matches!(self.verts[c.from].class, VertClass::Outfall(_));
-                    let out2 = matches!(self.verts[c.to].class, VertClass::Outfall(_));
-                    match (out1, out2) {
-                        (false, false) => {
-                            net_new[c.from] -= loss / 2.0;
-                            net_new[c.to] -= loss / 2.0;
+            if use_pool {
+                // The split path lives in its own never-inlined method:
+                // its body inside this function pushed the hot serial
+                // loop past the inliner's budget, a measured 8%. Only
+                // reachable when `build` engaged a pool; the
+                // byte-identity test (tests/threads.rs) holds it to the
+                // serial arm's exact bytes.
+                #[cfg(feature = "threads")]
+                self.channel_phase_pooled(
+                    step,
+                    dt,
+                    &y,
+                    &q,
+                    &settled,
+                    ChanJoin {
+                        chan_last: &mut chan_last,
+                        chan_evap: &mut chan_evap,
+                        chan_seep: &mut chan_seep,
+                        q_next: &mut q_next,
+                        a_mid_new: &mut a_mid_new,
+                        surf: &mut surf,
+                        net_new: &mut net_new,
+                        loss_total: &mut loss_total,
+                        kept: &mut kept,
+                    },
+                );
+            } else {
+                // The fused serial path, kept textually as it was before
+                // the split existed: routing a large run's inner loop
+                // through a borrow struct cost a measured 16%, so the two
+                // arms duplicate the join body and the byte-identity test
+                // is what keeps them the same computation.
+                for ci in 0..nc {
+                    let (from, to) = (self.chans[ci].from, self.chans[ci].to);
+                    let (qn, a_mid, s1, s2, loss, evap) = if may_keep(step, &settled, from, to) {
+                        kept += 1;
+                        chan_last[ci]
+                    } else {
+                        let out = self.channel_flow(ci, &y, q[ci], dt, step);
+                        chan_last[ci] = out;
+                        out
+                    };
+                    chan_evap[ci] = evap;
+                    chan_seep[ci] = (loss - evap).max(0.0);
+                    q_next[ci] = qn;
+                    a_mid_new[ci] = a_mid;
+                    let c = &self.chans[ci];
+                    surf[c.from] += s1;
+                    surf[c.to] += s2;
+                    let qt = qn; // total flow (barrels folded inside)
+                    net_new[c.from] -= qt;
+                    net_new[c.to] += qt;
+                    // Evaporation and seepage debit the end vertices, halved
+                    // between them; outfalls do not share (§7.7).
+                    if loss > 0.0 {
+                        loss_total += loss;
+                        let out1 = matches!(self.verts[c.from].class, VertClass::Outfall(_));
+                        let out2 = matches!(self.verts[c.to].class, VertClass::Outfall(_));
+                        match (out1, out2) {
+                            (false, false) => {
+                                net_new[c.from] -= loss / 2.0;
+                                net_new[c.to] -= loss / 2.0;
+                            }
+                            (false, true) => net_new[c.from] -= loss,
+                            (true, false) => net_new[c.to] -= loss,
+                            (true, true) => {}
                         }
-                        (false, true) => net_new[c.from] -= loss,
-                        (true, false) => net_new[c.to] -= loss,
-                        (true, true) => {}
                     }
                 }
             }
@@ -3245,6 +3418,10 @@ impl Router {
     /// heads. Returns (total flow, mid area per barrel, upstream and
     /// downstream surface-area contributions, total loss rate).
     #[allow(clippy::too_many_lines)]
+    /// Kept inlined into both the serial arm and the pooled map: with a
+    /// second call site the inliner outlined it, and the serial loop's
+    /// lost cross-inlining cost a measured 7% of a large run.
+    #[inline(always)]
     fn channel_flow(
         &self,
         ci: usize,
@@ -5262,6 +5439,9 @@ impl Router {
             dt_floor: _,
             courant_factor: _,
             max_trials: _,
+            // §6.4 worker pool: a parameter, rebuilt from the model.
+            #[cfg(feature = "threads")]
+                pool: _,
             head_tol: _,
             min_surface_area: _,
             continuity_tol: _,

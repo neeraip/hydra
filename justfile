@@ -47,6 +47,9 @@ setup-tools:
 # Run all tests with the same flags CI uses
 test:
     cargo test --workspace --all-targets --locked
+    # The 6.4 width contract only compiles with the feature on; without
+    # this line nothing in CI would ever run the threaded path.
+    cargo test -p hydra-engine-uds --features threads --test threads --locked
 
 # Run hydra-engine-wds tests only
 test-engine:
