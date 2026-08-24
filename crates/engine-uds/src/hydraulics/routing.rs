@@ -307,6 +307,10 @@ impl SlotGeom {
     /// ask for the area and radius, then the width, which on a circular
     /// section rebuilt the filled angle for a value the first call had
     /// already found.
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     fn area_radius_width(&self, y: f64) -> (f64, f64, f64) {
         let y_full = self.sec.y_full();
         if y >= y_full {
@@ -660,11 +664,7 @@ pub struct Router {
     /// asked for width. Absent = serial. The mutex serialises publishers,
     /// never workers, and is uncontended.
     #[cfg(feature = "threads")]
-    team: Option<std::sync::Mutex<super::team::Team>>,
-    /// The incidence the pooled trial gathers along; built exactly when
-    /// the team is (a parameter, like the team — never persisted).
-    #[cfg(feature = "threads")]
-    incid: Option<Incid>,
+    pool: Option<Box<Pool>>,
     head_tol: f64,
     min_surface_area: f64,
     continuity_tol: f64,
@@ -923,6 +923,17 @@ fn claim_span(cur: &std::sync::atomic::AtomicU64, n: usize, mut f: impl FnMut(us
 /// contributions, loss, and the evaporation share of that loss.
 #[cfg(feature = "threads")]
 type ChanFlow = (f64, f64, f64, f64, f64, f64);
+
+/// The §6.4 worker pool: the team and the incidence its gathers walk,
+/// built together exactly when the model's width and size justify one.
+/// Boxed behind one pointer so a feature build adds eight bytes to the
+/// router instead of restructuring its hot fields — the layout shift
+/// alone was a measured share of the feature-build cost.
+#[cfg(feature = "threads")]
+struct Pool {
+    team: std::sync::Mutex<super::team::Team>,
+    incid: Incid,
+}
 
 /// The network's incidence, vertex-major, for the pooled trial's §6.4
 /// gathers: which channels and structures touch each vertex, in
@@ -1414,6 +1425,23 @@ impl Router {
         let nv = verts.len();
         let nc = chans.len();
         let ns = structs.len();
+        // §6.4's width is an upper bound the environment may reduce.
+        // The floor here is per-worker work: the team's hot-spin
+        // dispatch costs far less than a sleeping pool's (which needed
+        // ~a thousand channels per worker to break even and still lost
+        // on a 1,044-channel network), but a worker with only a few
+        // dozen channels is still contention, not help.
+        #[cfg(feature = "threads")]
+        let pool = {
+            const CHANNELS_PER_WORKER: usize = 128;
+            let width = (net.options.threads.max(1) as usize).min(nc / CHANNELS_PER_WORKER);
+            super::team::Team::new(width).map(|team| {
+                Box::new(Pool {
+                    team: std::sync::Mutex::new(team),
+                    incid: Incid::build(&verts, &chans, &structs),
+                })
+            })
+        };
         let mut r = Router {
             chans,
             verts,
@@ -1436,20 +1464,8 @@ impl Router {
             dt_floor: step_floor(net.options.min_routing_step, net.options.routing_step),
             courant_factor: net.options.courant_factor,
             max_trials: net.options.max_trials.max(2),
-            // §6.4's width is an upper bound the environment may reduce.
-            // The floor here is per-worker work: the team's hot-spin
-            // dispatch costs far less than a sleeping pool's (which
-            // needed ~a thousand channels per worker to break even and
-            // still lost on a 1,044-channel network), but a worker with
-            // only a few dozen channels is still contention, not help.
             #[cfg(feature = "threads")]
-            team: {
-                const CHANNELS_PER_WORKER: usize = 128;
-                let width = (net.options.threads.max(1) as usize).min(nc / CHANNELS_PER_WORKER);
-                super::team::Team::new(width).map(std::sync::Mutex::new)
-            },
-            #[cfg(feature = "threads")]
-            incid: None,
+            pool,
             head_tol: net.options.head_tol,
             min_surface_area: net.options.min_surface_area,
             continuity_tol: net.options.continuity_tol,
@@ -1508,10 +1524,6 @@ impl Router {
             if let VertClass::Storage(g) = &r.verts[vi].class {
                 r.vertex_stats[vi].full_volume = g.volume(r.verts[vi].y_max);
             }
-        }
-        #[cfg(feature = "threads")]
-        if r.team.is_some() {
-            r.incid = Some(Incid::build(&r.verts, &r.chans, &r.structs));
         }
         r.seed_initial_state(net);
         r.report.initial_storage = (0..r.verts.len())
@@ -2120,7 +2132,8 @@ impl Router {
     fn courant_min(&self) -> f64 {
         let nc = self.chans.len();
         #[cfg(feature = "threads")]
-        if let Some(team) = &self.team {
+        if let Some(pool) = &self.pool {
+            let team = &pool.team;
             let mut mins: Vec<f64> = vec![f64::INFINITY; nc];
             {
                 let mins_ptr = super::team::SendPtr::new(mins.as_mut_ptr());
@@ -2293,8 +2306,13 @@ impl Router {
         // it. Same rows, same body methods, same values — the spec's
         // accumulation is per-row and order-free across objects.
         #[cfg(feature = "threads")]
-        if self.team.is_some() {
-            self.accumulate_stats_pooled(dt, lat);
+        if self.pool.is_some() {
+            // Taken out for the call and put back: the pooled pass
+            // borrows rows mutably while reading the pool, and moving
+            // the box (eight bytes) unties the two without unsafe.
+            let pool = self.pool.take().expect("just checked");
+            self.accumulate_stats_pooled(&pool, dt, lat);
+            self.pool = Some(pool);
             return;
         }
         let t = self.t;
@@ -2366,7 +2384,7 @@ impl Router {
     /// value is the serial arm's.
     #[cfg(feature = "threads")]
     #[inline(never)]
-    fn accumulate_stats_pooled(&mut self, dt: f64, lat: &[f64]) {
+    fn accumulate_stats_pooled(&mut self, pool: &Pool, dt: f64, lat: &[f64]) {
         use super::team::SendPtr;
         use std::sync::atomic::AtomicU64;
         let t = self.t;
@@ -2377,13 +2395,8 @@ impl Router {
         let mut lstats = std::mem::take(&mut self.link_stats);
         let mut prev_off = std::mem::take(&mut self.pump_prev_off);
         {
-            let incid = self.incid.as_ref().expect("built with the team");
-            let mut team = self
-                .team
-                .as_ref()
-                .expect("checked by caller")
-                .lock()
-                .expect("team poisoned");
+            let incid = &pool.incid;
+            let mut team = pool.team.lock().expect("team poisoned");
             let width = team.width();
 
             let mut q_in = vec![0.0; nv];
@@ -2512,6 +2525,12 @@ impl Router {
     /// One vertex's §11.2 row for one accepted step. The single body
     /// both arms call: per-row, reading the accepted state alone.
     #[allow(clippy::too_many_arguments)]
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn vertex_stat_row(
         &self,
         vi: usize,
@@ -2607,6 +2626,12 @@ impl Router {
 
     /// One channel's §11.2 row for one accepted step — the single body
     /// both arms call.
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn channel_stat_row(
         &self,
         ci: usize,
@@ -2693,6 +2718,12 @@ impl Router {
 
     /// One structure's §11.2 row for one accepted step — the single
     /// body both arms call.
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn struct_stat_row(&self, si: usize, t: f64, dt: f64, st: &mut LinkStats, prev_off: &mut bool) {
         let (from, to) = (self.structs[si].from, self.structs[si].to);
         let q = self.sq[si].abs();
@@ -2795,19 +2826,14 @@ impl Router {
     #[cfg(feature = "threads")]
     #[inline(never)]
     #[allow(clippy::too_many_lines)]
-    fn run_trial_pooled(&self, dt: f64, lat: &[f64]) -> Trial {
+    fn run_trial_pooled(&self, pool: &Pool, dt: f64, lat: &[f64]) -> Trial {
         use super::team::SendPtr;
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         let nv = self.verts.len();
         let nc = self.chans.len();
         let ns = self.structs.len();
-        let incid = self.incid.as_ref().expect("built with the team");
-        let mut team = self
-            .team
-            .as_ref()
-            .expect("checked by caller")
-            .lock()
-            .expect("team poisoned");
+        let incid = &pool.incid;
+        let mut team = pool.team.lock().expect("team poisoned");
         let width = team.width();
 
         let mut y = self.y.clone();
@@ -3230,8 +3256,8 @@ impl Router {
         // its inlining (the last split inside this function cost a
         // measured 8%). The byte-identity test binds the two arms.
         #[cfg(feature = "threads")]
-        if self.team.is_some() {
-            return self.run_trial_pooled(dt, lat);
+        if let Some(pool) = &self.pool {
+            return self.run_trial_pooled(pool, dt, lat);
         }
         let nv = self.verts.len();
         let nc = self.chans.len();
@@ -3531,6 +3557,10 @@ impl Router {
         }
     }
 
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     fn error_estimate(&self, dt: f64, y_new: &[f64]) -> (f64, usize) {
         // Zero until two steps have been accepted (§6.5): the estimate
         // spans the previous accepted state, the current one, and the
@@ -3602,6 +3632,12 @@ impl Router {
     /// One §7 structure's flow from the last iterate's state. Returns the
     /// flow and the equivalent-pipe surface-area contributions.
     #[allow(clippy::too_many_arguments)]
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn structure_flow(
         &self,
         si: usize,
@@ -3780,6 +3816,10 @@ impl Router {
     /// §7.2: Torricelli with the derived weir transition below the
     /// changeover, Villemonte submergence, and the Armco flap loss.
     #[allow(clippy::too_many_arguments)] // the §7.2 head assembly
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     fn orifice_flow(
         &self,
         st: &Structure,
@@ -3907,6 +3947,10 @@ impl Router {
     /// surcharges; contributes no surface area (an embankment stores
     /// nothing).
     #[allow(clippy::too_many_arguments)]
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     fn roadway_flow(
         &self,
         st: &Structure,
@@ -3937,6 +3981,10 @@ impl Router {
     /// §7.3: the weir families with end contractions, surcharge to the
     /// equivalent orifice, and Villemonte submergence.
     #[allow(clippy::too_many_arguments)]
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     fn weir_flow(
         &self,
         st: &Structure,
@@ -4414,6 +4462,12 @@ impl Router {
     /// never happened. It costs one classification per channel per
     /// accepted step against the several per trial the solver already
     /// pays.
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn classify_now(&self, ci: usize) -> (FlowClass, bool, bool) {
         let c = &self.chans[ci];
         let (z1, z2) = (c.z1(&self.verts), c.z2(&self.verts));
@@ -4458,6 +4512,12 @@ impl Router {
     /// contributions, the class-adjusted end depths, and any substituted
     /// end heads.
     #[allow(clippy::type_complexity)]
+    /// Pinned inlined for the same reason `channel_flow` is: with the
+    /// pooled arm as a second caller the inliner outlined it, and the
+    /// serial arm's loop lost the cross-inlining — a measured share of
+    /// the ~8% feature-build cost (symbol diff: `run_trial` shrank 9 KB
+    /// in feature builds while this appeared as its own symbol).
+    #[inline(always)]
     fn assemble_surface(
         &self,
         ci: usize,
@@ -4694,6 +4754,10 @@ fn culvert_unsubmerged(
 /// digitised English-unit tables, converted at the boundary, with
 /// submergence factors floored at their published minima by the tables'
 /// own clamped ends.
+/// Pinned inlined: outlined in feature builds once the pooled arm
+/// became a second (transitive) caller — the `channel_flow`
+/// displacement, one level further down.
+#[inline(always)]
 fn roadway_cd(h_up: f64, h_down: f64, road_width: f64, paved: bool) -> f64 {
     let lookup = |t: &[(f64, f64)], x: f64| -> f64 {
         if x <= t[0].0 {
@@ -6202,9 +6266,7 @@ impl Router {
             max_trials: _,
             // §6.4 worker team: a parameter, rebuilt from the model.
             #[cfg(feature = "threads")]
-                team: _,
-            #[cfg(feature = "threads")]
-                incid: _,
+                pool: _,
             head_tol: _,
             min_surface_area: _,
             continuity_tol: _,

@@ -1866,6 +1866,10 @@ impl Section {
     /// a circular section is most of a drainage model. The values are the
     /// ones the separate accessors give, to the last bit: this shares the
     /// arithmetic rather than approximating it.
+    /// Pinned inlined: outlined in feature builds once the pooled arm
+    /// became a second (transitive) caller, costing the serial loop its
+    /// cross-inlining — the same displacement `channel_flow` documents.
+    #[inline(always)]
     pub(crate) fn area_radius_width(&self, y: f64) -> (f64, f64, f64) {
         let yc = y.clamp(0.0, self.y_full);
         // The kinds `area_and_radius` answers without `geom` compute their
