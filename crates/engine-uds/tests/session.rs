@@ -5423,8 +5423,15 @@ fn a_cached_record_runs_as_the_record_it_cached() {
         (sa - sb).abs() <= sa * 1e-6,
         "precipitation volume: cached {sb}, computed {sa}"
     );
+    // The routing ledger gets a looser gate than the hydrology surfaces
+    // above: it integrates over the step sequence §6.5 chooses, and the
+    // error-informed growth factor is legitimately sensitive to the
+    // forcing's last bit — the cache's 32-bit depths steer marginally
+    // different (all tolerance-satisfying) steps, and the trapezoids
+    // land ~5e-5 apart. The rigid doubling this replaced agreed to 1e-6
+    // by accident of ignoring the estimate, not by being more right.
     assert!(
-        (la.network.inflow - lb.network.inflow).abs() <= la.network.inflow * 1e-6,
+        (la.network.inflow - lb.network.inflow).abs() <= la.network.inflow * 1e-4,
         "network inflow: cached {}, computed {}",
         lb.network.inflow,
         la.network.inflow

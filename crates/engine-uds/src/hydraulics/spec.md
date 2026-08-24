@@ -661,13 +661,28 @@ interval.
 
 $$\Delta t_{try} = \min\!\big(\Delta t_{user},\
   C_f \min_{channels}\frac{L}{\lvert U\rvert + \sqrt{g\tilde A/\tilde W}},\
-  \min_{vertices}\ \Delta t_{cr},\ 2\,\Delta t_{prev}\big)$$
+  \min_{vertices}\ \Delta t_{cr},\ \gamma\,\Delta t_{prev}\big)$$
 
 where $C_f$ is the Courant factor (default 0.75), $L$ is the channel's **true
 length**, $\Delta t_{cr}$ is the time for a vertex's head to change by a
 quarter of its crown height at its recent rate (outfalls, near-dry and
-above-crown vertices exempt), and the $2\Delta t_{prev}$ term caps growth at
-twice the previously accepted step. Channels with $Fr \le 0.01$, negligible
+above-crown vertices exempt), and $\gamma\,\Delta t_{prev}$ steers the step
+from the previously accepted one by the **error-informed growth factor**
+
+$$\gamma = \min\!\big(2,\ 0.9\,\sqrt{\texttt{routing\_err\_tol}/e_{prev}}\big),$$
+
+with $e_{prev}$ the previous accepted step's error estimate (below) and 0.9
+the safety factor; $\gamma = 2$ when the error test is disabled or the
+estimate was zero. This is the standard proportional step choice for an
+$O(\Delta t^2)$ estimate: the step settles where the estimate sits near
+$0.81\,$`routing_err_tol` instead of growing blindly until a rejection
+throws the growth away. An accepted step has $e_{prev} \le$
+`routing_err_tol`, so $\gamma \ge 0.9$: the factor may ease the step
+downward without a rejection, and never collapses it. Growing twice per
+accepted step and halving on rejection — the previous rule — sawtoothed
+against any persistent error source: on a combined network's dry-weather
+day it rejected 35% of all trials climbing to the same ceiling it had just
+been rejected at. Channels with $Fr \le 0.01$, negligible
 flow, or negligible area are exempt from the Courant term — and so are
 **closed channels flowing full**: their $\sqrt{g\tilde A/\tilde W}$ is the
 slot celerity $c$ itself, and resolving the slot wave is not the point of the
@@ -693,7 +708,8 @@ advancing in finite time.
 **Quiescent growth.** Sustained accuracy margin releases the Courant seed:
 after three consecutive accepted steps whose error estimates stayed below a
 quarter of `routing_err_tol`, $\Delta t_{try}$ may exceed the Courant term —
-never $\Delta t_{user}$, $\Delta t_{cr}$, or $2\Delta t_{prev}$ — and the
+never $\Delta t_{user}$, $\Delta t_{cr}$, or $\gamma\,\Delta t_{prev}$
+(quiet estimates put $\gamma$ at its cap of 2) — and the
 first rejection, or any estimate above that margin, reinstates it. The
 scheme is semi-implicit and iterated, so Courant numbers above 1 are
 usable where the dynamics are quiet; this is the mechanism §10.3 offers in
@@ -716,6 +732,32 @@ $10^{-3}$; 0 disables the error test, leaving the constraint-seeded stepping).
 A rejected trial halves; a trial at the floor is accepted unconditionally
 and, if its estimate or its convergence budget failed, carries the
 degraded-accuracy warning naming the worst vertex.
+
+**Chatter is measured, not resolved.** The second-difference measure models
+a smooth trajectory. For a bounded head oscillation it is scale-free — about
+twice the oscillation amplitude at any step size — so no step passes the
+test, and the run would descend to the floor and accept the vertex degraded
+while charging the whole network the floor's cost at every step. A vertex
+whose window shows oscillation without advance — the two divided differences
+$\dot H$ carry opposite signs, and the net head movement across the window
+is within $4\varepsilon_H$ — therefore contributes
+$\min(e_i,\ \texttt{routing\_err\_tol}/4)$: its head is stationary to a
+few head tolerances, the oscillation is exactly what the floor path would
+have accepted as degraded, and large excursions remain governed
+independently by the quarter-crown rate constraint of the seed. The cap
+sits at a quarter of the tolerance — the quiescence threshold — rather than
+at the tolerance itself, because a capped vertex must neither reject nor
+steer: a cap at the tolerance would hold the growth factor $\gamma$ at its
+0.9 floor and a released chatterer would go on shrinking every step it no
+longer rejects. The stationarity band is $4\varepsilon_H$ (about 6 mm)
+because chatter carries net phase drift of the order of its amplitude:
+a band of one $\varepsilon_H$ released only oscillations smaller than the
+head tolerance itself, and the millimetre-scale regulator chatter this
+paragraph exists for landed outside it. A window that advances more than
+the band restores the full measure. On the network above, three
+regulator-stub vertices — 0.3% of the network, each a weir or rated outlet
+behind a channel of a few metres — drove 95% of all rejections through
+exactly this mechanism.
 
 > **CORRESPONDENCE:** the predecessor's variable step is stability-governed
 > only — Courant times a factor, plus the quarter-crown rate rule — with no
