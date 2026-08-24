@@ -17,15 +17,64 @@ modelling deviations.
 
 | Workload | Hydra / SWMM runtime |
 |---|---|
-| Bellinge (published, 1,020 nodes), 7 h storm | 1.00 |
-| Bellinge, 24 h event | 1.24 |
+| Bellinge (published, 1,020 nodes), 48 h including its storm | 1.04 |
+| Bellinge, the storm hours alone (03:00 to 12:00) | **0.95** |
+| Bellinge, a dry-weather day (12 h) | 1.21 |
 | SWMM test corpus, models running 0.2 to 1 s | 1.08 |
-| A 4,394-node combined system, 48 h dynamic wave | **0.66** |
+| A 4,394-node combined system, 48 h dynamic wave | **0.64** |
 
 The corpus is the predecessor's own regression suite. Its many
 sub-0.2-second models are dominated by process start and parse and are
 excluded from the ratio, because a single aggregate over them measures
 process creation rather than either solver.
+
+The stepping behind these numbers is error-controlled where SWMM's is
+not: the routing step is steered by a per-step local error estimate
+(hydraulics specification, section 6.5), and on these runs under 1% of
+Hydra's steps end unconverged against SWMM's 36% across the same 48
+hours (56% during the storm itself). The dry-weather ratio is the cost
+of that control on a network whose regulators cycle continuously in dry
+weather; routing continuity on that day reads 0.34% for Hydra against
+SWMM's 0.54%.
+
+### Measured against SWMM 6
+
+SWMM 6 here means `openswmm.engine` 6.0.0-alpha.3, the community
+continuation of EPA SWMM: a C++ rework of the 5.x engine with OpenMP
+threading over its routing iteration. It is an alpha, so these numbers
+are pinned to that version, measured August 2026 with the same method
+as above; expect them to move as it matures. Its results track
+SWMM 5.2.4 very closely (99.96% or more of all-period node depths
+within 0.1 on the two networks below), so the accuracy comparisons on
+this page carry over to it unchanged.
+
+| Workload | Hydra | SWMM 6, 1 thread | SWMM 6, 4 threads |
+|---|---|---|---|
+| Bellinge, 48 h | 52 s serial, 43 s at width 6 | 55 s | 26 s |
+| 4,394-node system, 48 h | 227 s serial, **185 s at width 4** | — | 194 s |
+
+Per core the engines are at parity: Hydra's serial run edges SWMM 6's
+single thread on both networks. Threaded, SWMM 6 leads on Bellinge
+because its parallel region spans the whole routing iteration where
+Hydra's covers the channel phase, and it spends processor time freely
+to do it: on the larger system Hydra at width 4 finishes ahead of
+SWMM 6's four threads while using under three quarters of the
+processor seconds. Both engines hold results bit-identical across
+thread counts; Hydra's serial default additionally means the browser
+build and the desktop app compute the same bytes.
+### Width, for integrators
+
+The SDK's `threads` cargo feature runs the channel phase across a
+persistent worker team, with the width taken from the model's own
+`THREADS` option. Results are byte-identical at every width: the
+specification fixes the accumulation order, and a test holds serial and
+threaded runs to the same bytes. So measured, same method: Bellinge at
+width 6 runs 43 s (0.86 of SWMM), and the 4,394-node system at width 4
+runs 185 s (0.52 of SWMM, and ahead of SWMM6's four-thread 194 s). The
+official binaries do not enable the feature yet: compiling it costs a
+measured ~8% of serial routing through displaced inlining under the
+release profile's fat LTO, a poor default trade for models that never
+ask for width.
 
 Accuracy rides the same runs. On the 48-hour system, 4,373 of 4,394 node
 depths agree within 5 cm. On Bellinge, node depths match SWMM's own
