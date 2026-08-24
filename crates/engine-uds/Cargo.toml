@@ -16,11 +16,10 @@ categories = ["science", "simulation"]
 [dependencies]
 hydra-common = { path = "../common", version = "14.0.0" }
 serde_json = "1"
-# The one concurrency dependency, feature-gated so the default (and every
-# wasm) build carries no threads at all. See AGENTS.md and spec 6.4.
-rayon = { version = "1.10", optional = true }
 
 [features]
-# Parallel channel phase (spec 6.4), width from the model's THREADS option.
-# Byte-identical results at any width; never enabled for wasm builds.
-threads = ["dep:rayon"]
+# Parallel channel phase (spec 6.4) on an in-house persistent spin team,
+# width from the model's THREADS option. Byte-identical results at any
+# width; never enabled for wasm builds. No dependencies: the team is
+# hydraulics/team.rs.
+threads = []

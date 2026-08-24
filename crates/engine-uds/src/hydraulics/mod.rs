@@ -11,6 +11,8 @@ pub mod inlets;
 pub mod routing;
 pub mod section;
 pub mod tables;
+#[cfg(feature = "threads")]
+pub(crate) mod team;
 
 /// Standard gravity (m/s²), exact per §2.11.
 pub const GRAVITY: f64 = 9.80665;

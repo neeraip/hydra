@@ -655,11 +655,12 @@ pub struct Router {
     dt_floor: f64,
     courant_factor: f64,
     max_trials: u32,
-    /// The §6.4 worker pool: built once at `build` from the model's
+    /// The §6.4 worker team: built once at `build` from the model's
     /// THREADS option, present only when the feature is on and the model
-    /// asked for width. Absent = serial.
+    /// asked for width. Absent = serial. The mutex serialises publishers,
+    /// never workers, and is uncontended.
     #[cfg(feature = "threads")]
-    pool: Option<rayon::ThreadPool>,
+    team: Option<std::sync::Mutex<super::team::Team>>,
     head_tol: f64,
     min_surface_area: f64,
     continuity_tol: f64,
@@ -1356,26 +1357,17 @@ impl Router {
             dt_floor: step_floor(net.options.min_routing_step, net.options.routing_step),
             courant_factor: net.options.courant_factor,
             max_trials: net.options.max_trials.max(2),
-            // §6.4's width is an upper bound the environment may reduce,
-            // and the reduction here is measured, not cautious: each
-            // per-iterate dispatch costs on the order of the work a
-            // thousand channels do, so a worker handed fewer than that
-            // spends the step waking up (Bellinge, 1,044 channels, ran
-            // 93 s at width 4 against 81 s serial; Raytown, 4,371, ran
-            // 186 s against 228 s). A pool that cannot be built is not a
-            // reason to refuse the model: one width is always available.
+            // §6.4's width is an upper bound the environment may reduce.
+            // The floor here is per-worker work: the team's hot-spin
+            // dispatch costs far less than a sleeping pool's (which
+            // needed ~a thousand channels per worker to break even and
+            // still lost on a 1,044-channel network), but a worker with
+            // only a few dozen channels is still contention, not help.
             #[cfg(feature = "threads")]
-            pool: {
-                const CHANNELS_PER_WORKER: usize = 1000;
+            team: {
+                const CHANNELS_PER_WORKER: usize = 128;
                 let width = (net.options.threads.max(1) as usize).min(nc / CHANNELS_PER_WORKER);
-                if width >= 2 {
-                    rayon::ThreadPoolBuilder::new()
-                        .num_threads(width)
-                        .build()
-                        .ok()
-                } else {
-                    None
-                }
+                super::team::Team::new(width).map(std::sync::Mutex::new)
             },
             head_tol: net.options.head_tol,
             min_surface_area: net.options.min_surface_area,
@@ -1999,33 +1991,69 @@ impl Router {
                 }
             }
         }
-        // Channel Courant term, unless quiescence released it.
+        // Channel Courant term (∥), unless quiescence released it. A
+        // minimum is the same value in every evaluation order, so the
+        // gather runs across the §6.4 team when one exists — no
+        // accumulation-order rule needed, unlike the channel phase's sums.
         if self.courant_factor > 0.0 && self.quiet_streak < 3 {
-            for (ci, c) in self.chans.iter().enumerate() {
-                let q = self.q[ci] / c.barrels;
-                let a = self.a_mid[ci];
-                if a <= DRY || q.abs() <= Q_DRY {
-                    continue;
-                }
-                let y1 = (self.y[c.from] - c.off1).max(0.0);
-                let y2 = (self.y[c.to] - c.off2).max(0.0);
-                // Closed channels flowing full are exempt: their wave is
-                // the slot celerity itself (§6.5).
-                if c.geom.w_slot > 0.0 && y1 >= c.geom.sec.y_full() && y2 >= c.geom.sec.y_full() {
-                    continue;
-                }
-                let y_mid = 0.5 * (y1 + y2);
-                let w = c.geom.width(y_mid.max(DRY)).max(1e-9);
-                let u = (q / a).abs();
-                let cel = (GRAVITY * a / w).sqrt();
-                let fr = u / (GRAVITY * (a / w)).sqrt().max(1e-12);
-                if fr <= 0.01 {
-                    continue;
-                }
-                dt = dt.min(self.courant_factor * c.length / (u + cel));
-            }
+            dt = dt.min(self.courant_min());
         }
         dt.max(self.dt_floor)
+    }
+
+    /// One channel's Courant step candidate from the accepted state, or
+    /// infinity where the term is exempt (§6.5).
+    #[inline(always)]
+    fn courant_candidate(&self, ci: usize) -> f64 {
+        let c = &self.chans[ci];
+        let q = self.q[ci] / c.barrels;
+        let a = self.a_mid[ci];
+        if a <= DRY || q.abs() <= Q_DRY {
+            return f64::INFINITY;
+        }
+        let y1 = (self.y[c.from] - c.off1).max(0.0);
+        let y2 = (self.y[c.to] - c.off2).max(0.0);
+        // Closed channels flowing full are exempt: their wave is
+        // the slot celerity itself (§6.5).
+        if c.geom.w_slot > 0.0 && y1 >= c.geom.sec.y_full() && y2 >= c.geom.sec.y_full() {
+            return f64::INFINITY;
+        }
+        let y_mid = 0.5 * (y1 + y2);
+        let w = c.geom.width(y_mid.max(DRY)).max(1e-9);
+        let u = (q / a).abs();
+        let cel = (GRAVITY * a / w).sqrt();
+        let fr = u / (GRAVITY * (a / w)).sqrt().max(1e-12);
+        if fr <= 0.01 {
+            return f64::INFINITY;
+        }
+        self.courant_factor * c.length / (u + cel)
+    }
+
+    /// The §6.5 Courant minimum over every channel — across the team
+    /// where one exists, serially otherwise; a min is order-free, so the
+    /// two agree to the bit.
+    fn courant_min(&self) -> f64 {
+        let nc = self.chans.len();
+        #[cfg(feature = "threads")]
+        if let Some(team) = &self.team {
+            let mut mins: Vec<f64> = vec![f64::INFINITY; nc];
+            {
+                let mins_ptr = super::team::SendPtr::new(mins.as_mut_ptr());
+                let mut team = team.lock().expect("team poisoned");
+                team.run(nc, |ci| {
+                    let m = self.courant_candidate(ci);
+                    // SAFETY: per-index disjoint write; `mins` outlives
+                    // the job (`run` returns after every item completes).
+                    unsafe {
+                        *mins_ptr.get().add(ci) = m;
+                    }
+                });
+            }
+            return mins.into_iter().fold(f64::INFINITY, f64::min);
+        }
+        (0..nc)
+            .map(|ci| self.courant_candidate(ci))
+            .fold(f64::INFINITY, f64::min)
     }
 
     fn accept(&mut self, dt: f64, trial: Trial, lat: &[f64], clock_capped: bool) {
@@ -2458,7 +2486,7 @@ impl Router {
 
     /// One §6.4 trial: iterate channel and vertex phases to
     /// self-consistency over the interval `dt`.
-    /// The split channel phase: map across the §6.4 pool, join in
+    /// The split channel phase: map across the §6.4 team, join in
     /// channel order. Never inlined — its body inside `run_trial` cost
     /// the serial loop its own inlining, a measured 8% of a large run.
     #[cfg(feature = "threads")]
@@ -2472,24 +2500,32 @@ impl Router {
         settled: &[bool],
         mut join: ChanJoin,
     ) {
-        use rayon::prelude::*;
         let nc = self.chans.len();
-        let outs: Vec<(ChanFlow, bool)> = {
+        let mut outs: Vec<(ChanFlow, bool)> = vec![((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), false); nc];
+        {
             let last: &[ChanFlow] = join.chan_last;
-            self.pool.as_ref().expect("checked by caller").install(|| {
-                (0..nc)
-                    .into_par_iter()
-                    .map(|ci| {
-                        let c = &self.chans[ci];
-                        if may_keep(step, settled, c.from, c.to) {
-                            (last[ci], true)
-                        } else {
-                            (self.channel_flow(ci, y, q[ci], dt, step), false)
-                        }
-                    })
-                    .collect()
-            })
-        };
+            let outs_ptr = super::team::SendPtr::new(outs.as_mut_ptr());
+            let mut team = self
+                .team
+                .as_ref()
+                .expect("checked by caller")
+                .lock()
+                .expect("team poisoned");
+            team.run(nc, |ci| {
+                let c = &self.chans[ci];
+                let out = if may_keep(step, settled, c.from, c.to) {
+                    (last[ci], true)
+                } else {
+                    (self.channel_flow(ci, y, q[ci], dt, step), false)
+                };
+                // SAFETY: the team hands each index to exactly one call,
+                // so this write is per-index disjoint, and `outs` outlives
+                // the job — `run` returns only once every item completed.
+                unsafe {
+                    *outs_ptr.get().add(ci) = out;
+                }
+            });
+        }
         for (ci, &(out, was_kept)) in outs.iter().enumerate() {
             self.join_channel(&mut join, ci, out, was_kept);
         }
@@ -2616,7 +2652,7 @@ impl Router {
         let use_pool = {
             #[cfg(feature = "threads")]
             {
-                self.pool.is_some()
+                self.team.is_some()
             }
             #[cfg(not(feature = "threads"))]
             {
@@ -5551,9 +5587,9 @@ impl Router {
             dt_floor: _,
             courant_factor: _,
             max_trials: _,
-            // §6.4 worker pool: a parameter, rebuilt from the model.
+            // §6.4 worker team: a parameter, rebuilt from the model.
             #[cfg(feature = "threads")]
-                pool: _,
+                team: _,
             head_tol: _,
             min_surface_area: _,
             continuity_tol: _,

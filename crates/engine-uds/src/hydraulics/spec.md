@@ -682,7 +682,11 @@ downward without a rejection, and never collapses it. Growing twice per
 accepted step and halving on rejection — the previous rule — sawtoothed
 against any persistent error source: on a combined network's dry-weather
 day it rejected 35% of all trials climbing to the same ceiling it had just
-been rejected at. Channels with $Fr \le 0.01$, negligible
+been rejected at. The Courant term's
+minimum is **∥**: each channel's candidate is a function of the accepted
+state alone, and a minimum is the same value in every evaluation order,
+so the term may be gathered concurrently without an accumulation-order
+rule. Channels with $Fr \le 0.01$, negligible
 flow, or negligible area are exempt from the Courant term — and so are
 **closed channels flowing full**: their $\sqrt{g\tilde A/\tilde W}$ is the
 slot celerity $c$ itself, and resolving the slot wave is not the point of the
