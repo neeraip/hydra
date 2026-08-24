@@ -661,6 +661,10 @@ pub struct Router {
     /// never workers, and is uncontended.
     #[cfg(feature = "threads")]
     team: Option<std::sync::Mutex<super::team::Team>>,
+    /// The incidence the pooled trial gathers along; built exactly when
+    /// the team is (a parameter, like the team — never persisted).
+    #[cfg(feature = "threads")]
+    incid: Option<Incid>,
     head_tol: f64,
     min_surface_area: f64,
     continuity_tol: f64,
@@ -881,6 +885,27 @@ struct Trial {
     kept: u32,
 }
 
+/// Claim spans of `n` indices from a phase's cursor and run `f` over
+/// each — the pooled trial's work distribution. `fetch_add` hands every
+/// claimant a disjoint span, so each index runs exactly once; Relaxed
+/// suffices because the claim only partitions, and every data edge is
+/// ordered by the region's barriers.
+#[cfg(feature = "threads")]
+fn claim_span(cur: &std::sync::atomic::AtomicU64, n: usize, mut f: impl FnMut(usize)) {
+    const STEP: u64 = 32;
+    loop {
+        let start = cur.fetch_add(STEP, std::sync::atomic::Ordering::Relaxed);
+        if start >= n as u64 {
+            return;
+        }
+        let start = start as usize;
+        let end = (start + STEP as usize).min(n);
+        for i in start..end {
+            f(i);
+        }
+    }
+}
+
 /// Whether a channel may keep its last contribution this iterate (§6.4).
 ///
 /// Both its end vertices must have settled — moved by no more than the
@@ -899,19 +924,73 @@ struct Trial {
 #[cfg(feature = "threads")]
 type ChanFlow = (f64, f64, f64, f64, f64, f64);
 
-/// The mutable half of the §6.4 join: every slot the per-channel pass
-/// writes, gathered so the split path's join has one body.
+/// The network's incidence, vertex-major, for the pooled trial's §6.4
+/// gathers: which channels and structures touch each vertex, in
+/// ascending element order, with `true` marking the from end.
+///
+/// The serial arm scatters element-by-element in ascending element
+/// order, so each vertex sum receives its contributions in ascending
+/// element order there too. Gathering along these lists performs the
+/// same additions on the same accumulator in the same order — the same
+/// floating point to the bit, which is what lets the gather run one
+/// vertex per team item. A degenerate self-loop lists its from entry
+/// first, as the scatter writes it.
 #[cfg(feature = "threads")]
-struct ChanJoin<'a> {
-    chan_last: &'a mut [ChanFlow],
-    chan_evap: &'a mut [f64],
-    chan_seep: &'a mut [f64],
-    q_next: &'a mut [f64],
-    a_mid_new: &'a mut [f64],
-    surf: &'a mut [f64],
-    net_new: &'a mut [f64],
-    loss_total: &'a mut f64,
-    kept: &'a mut u32,
+struct Incid {
+    chan_off: Vec<u32>,
+    chan_at: Vec<(u32, bool)>,
+    str_off: Vec<u32>,
+    str_at: Vec<(u32, bool)>,
+    /// Whether each vertex is an outfall, flat for the gather's §7.7
+    /// loss-share test.
+    is_outfall: Vec<bool>,
+}
+
+#[cfg(feature = "threads")]
+impl Incid {
+    fn build(verts: &[Vert], chans: &[Chan], structs: &[Structure]) -> Incid {
+        let nv = verts.len();
+        let csr = |ends: &mut dyn Iterator<Item = (usize, usize)>| -> (Vec<u32>, Vec<(u32, bool)>) {
+            let ends: Vec<(usize, usize)> = ends.collect();
+            let mut off = vec![0u32; nv + 1];
+            for &(f, t) in &ends {
+                off[f + 1] += 1;
+                off[t + 1] += 1;
+            }
+            for i in 0..nv {
+                off[i + 1] += off[i];
+            }
+            let mut cur = off.clone();
+            let mut at = vec![(0u32, false); *off.last().unwrap_or(&0) as usize];
+            for (ei, &(f, t)) in ends.iter().enumerate() {
+                at[cur[f] as usize] = (ei as u32, true);
+                cur[f] += 1;
+                at[cur[t] as usize] = (ei as u32, false);
+                cur[t] += 1;
+            }
+            (off, at)
+        };
+        let (chan_off, chan_at) = csr(&mut chans.iter().map(|c| (c.from, c.to)));
+        let (str_off, str_at) = csr(&mut structs.iter().map(|s| (s.from, s.to)));
+        Incid {
+            chan_off,
+            chan_at,
+            str_off,
+            str_at,
+            is_outfall: verts
+                .iter()
+                .map(|v| matches!(v.class, VertClass::Outfall(_)))
+                .collect(),
+        }
+    }
+
+    fn chans_of(&self, vi: usize) -> &[(u32, bool)] {
+        &self.chan_at[self.chan_off[vi] as usize..self.chan_off[vi + 1] as usize]
+    }
+
+    fn structs_of(&self, vi: usize) -> &[(u32, bool)] {
+        &self.str_at[self.str_off[vi] as usize..self.str_off[vi + 1] as usize]
+    }
 }
 
 /// §6.5's chatter test: the window's direction reversed and the net head
@@ -1369,6 +1448,8 @@ impl Router {
                 let width = (net.options.threads.max(1) as usize).min(nc / CHANNELS_PER_WORKER);
                 super::team::Team::new(width).map(std::sync::Mutex::new)
             },
+            #[cfg(feature = "threads")]
+            incid: None,
             head_tol: net.options.head_tol,
             min_surface_area: net.options.min_surface_area,
             continuity_tol: net.options.continuity_tol,
@@ -1427,6 +1508,10 @@ impl Router {
             if let VertClass::Storage(g) = &r.verts[vi].class {
                 r.vertex_stats[vi].full_volume = g.volume(r.verts[vi].y_max);
             }
+        }
+        #[cfg(feature = "threads")]
+        if r.team.is_some() {
+            r.incid = Some(Incid::build(&r.verts, &r.chans, &r.structs));
         }
         r.seed_initial_state(net);
         r.report.initial_storage = (0..r.verts.len())
@@ -2204,12 +2289,19 @@ impl Router {
 
     /// Accumulate the §11.2 per-object statistics for one accepted step.
     fn accumulate_stats(&mut self, dt: f64, lat: &[f64]) {
+        // §11.2 ∥: with a team, the derivation and the rows run across
+        // it. Same rows, same body methods, same values — the spec's
+        // accumulation is per-row and order-free across objects.
+        #[cfg(feature = "threads")]
+        if self.team.is_some() {
+            self.accumulate_stats_pooled(dt, lat);
+            return;
+        }
         let t = self.t;
         let nv = self.verts.len();
 
-        // Everything that needs to read the whole router is gathered
-        // first: the statistics rows below are borrowed mutably one at a
-        // time, and no `&self` method can be called while one is held.
+        // Everything that needs to read the whole router is derived
+        // first (§11.2): the rows below consume it read-only.
         let mut q_in = vec![0.0; nv];
         let mut q_out = vec![0.0; nv];
         for (ci, c) in self.chans.iter().enumerate() {
@@ -2232,346 +2324,900 @@ impl Router {
                 q_out[s.to] += -q;
             }
         }
-        let vol_now: Vec<f64> = (0..nv).map(|vi| self.vertex_volume_now(vi)).collect();
+
         // One classification per channel per accepted step (§11.2) — the
         // accepted state's class, not any trial's.
+        let vol_now: Vec<f64> = (0..nv).map(|vi| self.vertex_volume_now(vi)).collect();
         let classes: Vec<(FlowClass, bool, bool)> = (0..self.chans.len())
             .map(|ci| self.classify_now(ci))
             .collect();
 
-        for vi in 0..nv {
-            let y = self.y[vi];
-            let (crown, y_max, ponded_area, is_outfall, is_storage) = {
-                let v = &self.verts[vi];
-                (
-                    v.crown,
-                    v.y_max,
-                    v.ponded_area,
-                    matches!(v.class, VertClass::Outfall(_)),
-                    matches!(v.class, VertClass::Storage(_)),
-                )
-            };
-            let (fl, net, evap, seep) = (
-                self.flood_now[vi],
-                self.net_flow[vi],
-                self.stor_evap_now[vi],
-                self.stor_seep_now[vi],
-            );
-            let (qi, qo, vol, l) = (q_in[vi], q_out[vi], vol_now[vi], lat[vi]);
-            let st = &mut self.vertex_stats[vi];
-            if st.steps == 0 {
-                st.initial_volume = vol;
-            }
-            st.final_volume = vol;
-            st.steps += 1;
-            st.obs_time += dt;
-            st.depth_sum += y * dt;
-            if y > st.max_depth {
-                st.max_depth = y;
-                st.t_max_depth = t;
-            }
-            if fl > 0.0 {
-                st.flood_time += dt;
-                st.flood_volume += fl * dt;
-                if fl > st.max_flood {
-                    st.max_flood = fl;
-                    st.t_max_flood = t;
-                }
-                if ponded_area > 0.0 {
-                    st.max_ponded_volume =
-                        st.max_ponded_volume.max((y - y_max).max(0.0) * ponded_area);
-                }
-            }
-            if crown > 0.0 && y > crown && !is_outfall {
-                st.surcharge_time += dt;
-                st.max_crown_height = st.max_crown_height.max(y - crown);
-                // The least freeboard reached, and zero once it floods.
-                let rim = (y_max - y).max(0.0);
-                st.min_rim_depth = if st.surcharge_time <= dt {
-                    rim
-                } else {
-                    st.min_rim_depth.min(rim)
-                };
-            }
-            // Inflow (§11.2). The lateral is part of the total, and a
-            // negative lateral is an outflow by its sign (§11.1).
-            let lat_in = l.max(0.0);
-            let total_in = qi + lat_in;
-            st.max_lat_inflow = st.max_lat_inflow.max(lat_in);
-            if total_in > st.max_total_inflow {
-                st.max_total_inflow = total_in;
-                st.t_max_total_inflow = t;
-            }
-            st.lat_inflow_volume += lat_in * dt;
-            st.total_inflow_volume += total_in * dt;
-            st.outflow_volume += (qo + (-l).max(0.0) + fl) * dt;
-            if is_storage {
-                st.volume_sum += vol * dt;
-                if vol > st.max_volume {
-                    st.max_volume = vol;
-                    st.t_max_volume = t;
-                }
-                st.evap_loss_volume += evap * dt;
-                st.exfil_loss_volume += seep * dt;
-                st.max_outflow = st.max_outflow.max(qo);
-            }
-            if is_outfall {
-                let q = net.max(0.0);
-                st.out_volume += q * dt;
-                st.out_peak = st.out_peak.max(q);
-                if q > Q_DRY {
-                    st.out_time += dt;
-                }
-            }
+        // The rows are taken out for the row calls: a row is borrowed
+        // mutably while the body reads `&self`.
+        let mut vstats = std::mem::take(&mut self.vertex_stats);
+        for (vi, st) in vstats.iter_mut().enumerate() {
+            self.vertex_stat_row(vi, t, dt, q_in[vi], q_out[vi], vol_now[vi], lat[vi], st);
         }
-        // Indexed rather than iterated: the body borrows `self.chans`
-        // again for the section width and `self.link_stats` mutably, so
-        // an iterator over `self.chans` would hold a borrow across both.
-        #[allow(clippy::needless_range_loop)]
+        self.vertex_stats = vstats;
+        let mut lstats = std::mem::take(&mut self.link_stats);
         for ci in 0..self.chans.len() {
-            let c = &self.chans[ci];
-            let (from, to, off1, off2, barrels, y_full) =
-                (c.from, c.to, c.off1, c.off2, c.barrels, c.geom.sec.y_full());
-            let q_signed = self.q[ci];
-            let q = q_signed.abs();
-            let a = self.a_mid[ci].max(DRY);
-            let y1 = (self.y[from] - off1).max(0.0);
-            let y2 = (self.y[to] - off2).max(0.0);
-            let (class, norm_limited, inlet_control) = classes[ci];
-            let link = c.link;
-            let st = &mut self.link_stats[link];
-            if q > st.max_flow {
-                st.max_flow = q;
-                st.t_max_flow = t;
-            }
-            st.obs_time += dt;
-            st.max_velocity = st.max_velocity.max((q / barrels / a).min(V_MAX));
-            let y_mid = (0.5 * (y1 + y2)).min(y_full);
-            st.max_depth = st.max_depth.max(y_mid);
-            let (up_full, down_full) = (y1 >= y_full, y2 >= y_full);
-            if up_full && down_full {
-                st.full_time += dt;
-                st.full_both_time += dt;
-            } else if up_full {
-                st.full_up_time += dt;
-            } else if down_full {
-                st.full_down_time += dt;
-            }
-            // Supercritical is not a §6.3 class of its own: the
-            // classification returns subcritical and the Froude number
-            // separates the two (§11.2).
-            let idx = match class {
-                FlowClass::Dry => 0,
-                FlowClass::UpDry => 1,
-                FlowClass::DownDry => 2,
-                FlowClass::Subcritical => {
-                    let w = self.chans[ci].geom.width(y_mid.max(DRY));
-                    usize::from(froude(q / barrels / a, a, w) > 1.0) + 3
-                }
-                FlowClass::UpCritical => 5,
-                FlowClass::DownCritical => 6,
-            };
-            let st = &mut self.link_stats[link];
-            st.class_time[idx] += dt;
-            if norm_limited {
-                st.norm_limited_time += dt;
-            }
-            if inlet_control {
-                st.inlet_control_time += dt;
-            }
-            // The Max/Full ratios divide stored constants, so they are
-            // derived at report time; only the times are accumulated.
-            if st.full_flow > 0.0 && q > st.full_flow {
-                st.above_normal_time += dt;
-                if up_full && down_full {
-                    st.capacity_limited_time += dt;
-                }
-            }
-            // §11.2 instability: this step's change reversed the last
-            // one, both clearing the flow tolerance.
-            //
-            // The tolerance is a fraction of the section's *capacity*,
-            // not of the link's running peak. Every converged solution
-            // wanders in its last digits, so an absolute floor calls a
-            // quiescent link unstable; and a fraction of the peak makes
-            // the test tighten as the peak grows, so a link that has
-            // barely flowed is judged against a threshold near zero.
-            // Capacity is fixed for the run and is the scale the
-            // oscillation would have to matter against.
-            let dq = q_signed - st.prev_flow;
-            let tol = (0.02 * st.full_flow).max(0.02 * st.max_flow).max(Q_DRY);
-            if st.prev_delta * dq < 0.0 && st.prev_delta.abs() > tol && dq.abs() > tol {
-                st.instability_count += 1;
-            }
-            st.steps += 1;
-            st.prev_delta = dq;
-            st.prev_flow = q_signed;
+            self.channel_stat_row(ci, t, dt, classes[ci], &mut lstats[self.chans[ci].link]);
         }
+        let mut prev_off = std::mem::take(&mut self.pump_prev_off);
         for si in 0..self.structs.len() {
-            let link = self.structs[si].link;
-            let (from, to) = (self.structs[si].from, self.structs[si].to);
-            let q = self.sq[si].abs();
-            // Pump quantities computed before the stats row is borrowed.
-            let pump = if let StructKind::Pump { kind, .. } = &self.structs[si].kind {
-                let dh =
-                    (self.verts[to].invert + self.y[to] - self.verts[from].invert - self.y[from])
-                        .max(0.0);
-                // Off-curve time books to the correct end for every pump
-                // type (§11.2).
-                let arg = match kind {
-                    PumpKind::Volume(_) => Some(self.vertex_volume_now(from)),
-                    PumpKind::Depth(_) | PumpKind::InlineDepth(_) => Some(self.y[from]),
-                    // Type 5 looks its rated curve up at the
-                    // affinity-scaled head (§7.1, §11.2).
-                    PumpKind::Head { affinity, .. } => {
-                        let sp = if *affinity {
-                            self.sett[si].max(1e-6)
-                        } else {
-                            1.0
-                        };
-                        Some(dh / (sp * sp))
-                    }
-                    PumpKind::Ideal => None,
-                };
-                let ends = match kind {
-                    PumpKind::Volume(p)
-                    | PumpKind::Depth(p)
-                    | PumpKind::InlineDepth(p)
-                    | PumpKind::Head { points: p, .. } => {
-                        p.first().zip(p.last()).map(|(a, b)| (a.0, b.0))
-                    }
-                    PumpKind::Ideal => None,
-                };
-                Some((dh, arg.zip(ends)))
-            } else {
-                None
-            };
-            let st = &mut self.link_stats[link];
-            if q > st.max_flow {
-                st.max_flow = q;
-                st.t_max_flow = t;
-            }
-            // §11.2: the denominator of every fraction reported against
-            // this link. The channel loop above accumulates its own; a
-            // structure reached this far without one, so the pump
-            // summary's utilisation divided by the guard against zero
-            // and printed the run's on-time scaled by 10^14.
-            st.obs_time += dt;
-            let Some((dh, off)) = pump else {
-                continue;
-            };
-            if q > 0.0 {
-                if self.pump_prev_off[si] {
-                    st.startups += 1;
-                    self.pump_prev_off[si] = false;
-                }
-                st.on_time += dt;
-                st.volume += q * dt;
-                st.min_flow = st.min_flow.min(q);
-                st.max_pump_flow = st.max_pump_flow.max(q);
-                // Energy: ρgQΔH per §7.1 (§11.2), in kWh.
-                st.energy_kwh += 1000.0 * GRAVITY * q * dh * dt / 3.6e6;
-                if let Some((x, (lo, hi))) = off {
-                    if x < lo {
-                        st.off_low_time += dt;
-                    } else if x > hi {
-                        st.off_high_time += dt;
-                    }
-                }
-            } else {
-                self.pump_prev_off[si] = true;
-            }
+            self.struct_stat_row(
+                si,
+                t,
+                dt,
+                &mut lstats[self.structs[si].link],
+                &mut prev_off[si],
+            );
         }
+        self.pump_prev_off = prev_off;
+        self.link_stats = lstats;
     }
 
-    /// One §6.4 trial: iterate channel and vertex phases to
-    /// self-consistency over the interval `dt`.
-    /// The split channel phase: map across the §6.4 team, join in
-    /// channel order. Never inlined — its body inside `run_trial` cost
-    /// the serial loop its own inlining, a measured 8% of a large run.
+    /// The §11.2 statistics pass across the team: the same derivation
+    /// and the same row bodies as the serial arm, distributed by claim
+    /// cursors. Two phases in one region — derive (classification,
+    /// volumes, per-vertex flow assembly), then the rows — separated by
+    /// one barrier; slot 0 takes the structure rows, whose count never
+    /// justifies claims. Rows are per-object disjoint (§11.2), so every
+    /// value is the serial arm's.
     #[cfg(feature = "threads")]
     #[inline(never)]
-    fn channel_phase_pooled(
-        &self,
-        step: u32,
-        dt: f64,
-        y: &[f64],
-        q: &[f64],
-        settled: &[bool],
-        mut join: ChanJoin,
-    ) {
+    fn accumulate_stats_pooled(&mut self, dt: f64, lat: &[f64]) {
+        use super::team::SendPtr;
+        use std::sync::atomic::AtomicU64;
+        let t = self.t;
+        let nv = self.verts.len();
         let nc = self.chans.len();
-        let mut outs: Vec<(ChanFlow, bool)> = vec![((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), false); nc];
+        let ns = self.structs.len();
+        let mut vstats = std::mem::take(&mut self.vertex_stats);
+        let mut lstats = std::mem::take(&mut self.link_stats);
+        let mut prev_off = std::mem::take(&mut self.pump_prev_off);
         {
-            let last: &[ChanFlow] = join.chan_last;
-            let outs_ptr = super::team::SendPtr::new(outs.as_mut_ptr());
+            let incid = self.incid.as_ref().expect("built with the team");
             let mut team = self
                 .team
                 .as_ref()
                 .expect("checked by caller")
                 .lock()
                 .expect("team poisoned");
-            team.run(nc, |ci| {
-                let c = &self.chans[ci];
-                let out = if may_keep(step, settled, c.from, c.to) {
-                    (last[ci], true)
-                } else {
-                    (self.channel_flow(ci, y, q[ci], dt, step), false)
-                };
-                // SAFETY: the team hands each index to exactly one call,
-                // so this write is per-index disjoint, and `outs` outlives
-                // the job — `run` returns only once every item completed.
-                unsafe {
-                    *outs_ptr.get().add(ci) = out;
+            let width = team.width();
+
+            let mut q_in = vec![0.0; nv];
+            let mut q_out = vec![0.0; nv];
+            let mut vol_now = vec![0.0; nv];
+            let mut classes: Vec<(FlowClass, bool, bool)> =
+                vec![(FlowClass::Dry, false, false); nc];
+
+            let qin_p = SendPtr::new(q_in.as_mut_ptr());
+            let qout_p = SendPtr::new(q_out.as_mut_ptr());
+            let vol_p = SendPtr::new(vol_now.as_mut_ptr());
+            let cls_p = SendPtr::new(classes.as_mut_ptr());
+            let vst_p = SendPtr::new(vstats.as_mut_ptr());
+            let lst_p = SendPtr::new(lstats.as_mut_ptr());
+            let poff_p = SendPtr::new(prev_off.as_mut_ptr());
+            let bar = super::team::Barrier::new(width);
+            let derive_cur = AtomicU64::new(0);
+            let rows_cur = AtomicU64::new(0);
+
+            // SAFETY, for the region: every pointer outlives it; within
+            // a phase each index is claimed once and writes only its own
+            // slots (a channel's stats row is its own — links and
+            // channels are one-to-one — and structure links are theirs
+            // alone, taken by slot 0); the barrier orders the derive
+            // phase's writes before the row phase's reads; `self`, `lat`
+            // and the accepted state are read-only throughout.
+            team.run_spmd(|slot| {
+                let mut sense = false;
+                // ── ∥ Derive: classes, volumes, per-vertex flows ─────
+                claim_span(&derive_cur, nc + nv, |i| unsafe {
+                    if i < nc {
+                        *cls_p.get().add(i) = self.classify_now(i);
+                    } else {
+                        let vi = i - nc;
+                        *vol_p.get().add(vi) = self.vertex_volume_now(vi);
+                        // Gathered along the incidence lists in element
+                        // order — the serial scatter's per-accumulator
+                        // order.
+                        let mut qi = 0.0;
+                        let mut qo = 0.0;
+                        for &(ci, is_from) in incid.chans_of(vi) {
+                            let q = self.q[ci as usize];
+                            if q > 0.0 {
+                                if is_from {
+                                    qo += q;
+                                } else {
+                                    qi += q;
+                                }
+                            } else if q < 0.0 {
+                                if is_from {
+                                    qi += -q;
+                                } else {
+                                    qo += -q;
+                                }
+                            }
+                        }
+                        for &(si, is_from) in incid.structs_of(vi) {
+                            let q = self.sq[si as usize];
+                            if q > 0.0 {
+                                if is_from {
+                                    qo += q;
+                                } else {
+                                    qi += q;
+                                }
+                            } else if q < 0.0 {
+                                if is_from {
+                                    qi += -q;
+                                } else {
+                                    qo += -q;
+                                }
+                            }
+                        }
+                        *qin_p.get().add(vi) = qi;
+                        *qout_p.get().add(vi) = qo;
+                    }
+                });
+                bar.wait(&mut sense);
+                // ── ∥ Rows: slot 0 opens with the structure rows ─────
+                if slot == 0 {
+                    for si in 0..ns {
+                        // SAFETY: structure links are disjoint from
+                        // channel links, so these rows are slot 0's
+                        // alone; `prev_off` likewise.
+                        unsafe {
+                            self.struct_stat_row(
+                                si,
+                                t,
+                                dt,
+                                &mut *lst_p.get().add(self.structs[si].link),
+                                &mut *poff_p.get().add(si),
+                            );
+                        }
+                    }
                 }
+                claim_span(&rows_cur, nv + nc, |i| unsafe {
+                    if i < nv {
+                        let vi = i;
+                        self.vertex_stat_row(
+                            vi,
+                            t,
+                            dt,
+                            *qin_p.get().add(vi),
+                            *qout_p.get().add(vi),
+                            *vol_p.get().add(vi),
+                            lat[vi],
+                            &mut *vst_p.get().add(vi),
+                        );
+                    } else {
+                        let ci = i - nv;
+                        self.channel_stat_row(
+                            ci,
+                            t,
+                            dt,
+                            *cls_p.get().add(ci),
+                            &mut *lst_p.get().add(self.chans[ci].link),
+                        );
+                    }
+                });
             });
         }
-        for (ci, &(out, was_kept)) in outs.iter().enumerate() {
-            self.join_channel(&mut join, ci, out, was_kept);
-        }
+        self.vertex_stats = vstats;
+        self.link_stats = lstats;
+        self.pump_prev_off = prev_off;
     }
 
-    /// One channel's §6.4 join: write its results into the per-channel
-    /// slots and accumulate into the per-vertex sums, in channel order —
-    /// the same order, and so the same floating point, as the fused
-    /// serial arm in `run_trial` (the byte-identity test binds them).
-    #[cfg(feature = "threads")]
-    #[inline(always)]
-    fn join_channel(&self, j: &mut ChanJoin, ci: usize, out: ChanFlow, was_kept: bool) {
-        let (qn, a_mid, s1, s2, loss, evap) = out;
-        if was_kept {
-            *j.kept += 1;
-        } else {
-            j.chan_last[ci] = out;
+    /// One vertex's §11.2 row for one accepted step. The single body
+    /// both arms call: per-row, reading the accepted state alone.
+    #[allow(clippy::too_many_arguments)]
+    fn vertex_stat_row(
+        &self,
+        vi: usize,
+        t: f64,
+        dt: f64,
+        qi: f64,
+        qo: f64,
+        vol: f64,
+        l: f64,
+        st: &mut VertexStats,
+    ) {
+        let y = self.y[vi];
+        let (crown, y_max, ponded_area, is_outfall, is_storage) = {
+            let v = &self.verts[vi];
+            (
+                v.crown,
+                v.y_max,
+                v.ponded_area,
+                matches!(v.class, VertClass::Outfall(_)),
+                matches!(v.class, VertClass::Storage(_)),
+            )
+        };
+        let (fl, net, evap, seep) = (
+            self.flood_now[vi],
+            self.net_flow[vi],
+            self.stor_evap_now[vi],
+            self.stor_seep_now[vi],
+        );
+        if st.steps == 0 {
+            st.initial_volume = vol;
         }
-        j.chan_evap[ci] = evap;
-        j.chan_seep[ci] = (loss - evap).max(0.0);
-        j.q_next[ci] = qn;
-        j.a_mid_new[ci] = a_mid;
-        let c = &self.chans[ci];
-        j.surf[c.from] += s1;
-        j.surf[c.to] += s2;
-        let qt = qn; // total flow (barrels folded inside)
-        j.net_new[c.from] -= qt;
-        j.net_new[c.to] += qt;
-        // Evaporation and seepage debit the end vertices, halved
-        // between them; outfalls do not share (§7.7).
-        if loss > 0.0 {
-            *j.loss_total += loss;
-            let out1 = matches!(self.verts[c.from].class, VertClass::Outfall(_));
-            let out2 = matches!(self.verts[c.to].class, VertClass::Outfall(_));
-            match (out1, out2) {
-                (false, false) => {
-                    j.net_new[c.from] -= loss / 2.0;
-                    j.net_new[c.to] -= loss / 2.0;
-                }
-                (false, true) => j.net_new[c.from] -= loss,
-                (true, false) => j.net_new[c.to] -= loss,
-                (true, true) => {}
+        st.final_volume = vol;
+        st.steps += 1;
+        st.obs_time += dt;
+        st.depth_sum += y * dt;
+        if y > st.max_depth {
+            st.max_depth = y;
+            st.t_max_depth = t;
+        }
+        if fl > 0.0 {
+            st.flood_time += dt;
+            st.flood_volume += fl * dt;
+            if fl > st.max_flood {
+                st.max_flood = fl;
+                st.t_max_flood = t;
+            }
+            if ponded_area > 0.0 {
+                st.max_ponded_volume = st.max_ponded_volume.max((y - y_max).max(0.0) * ponded_area);
+            }
+        }
+        if crown > 0.0 && y > crown && !is_outfall {
+            st.surcharge_time += dt;
+            st.max_crown_height = st.max_crown_height.max(y - crown);
+            // The least freeboard reached, and zero once it floods.
+            let rim = (y_max - y).max(0.0);
+            st.min_rim_depth = if st.surcharge_time <= dt {
+                rim
+            } else {
+                st.min_rim_depth.min(rim)
+            };
+        }
+        // Inflow (§11.2). The lateral is part of the total, and a
+        // negative lateral is an outflow by its sign (§11.1).
+        let lat_in = l.max(0.0);
+        let total_in = qi + lat_in;
+        st.max_lat_inflow = st.max_lat_inflow.max(lat_in);
+        if total_in > st.max_total_inflow {
+            st.max_total_inflow = total_in;
+            st.t_max_total_inflow = t;
+        }
+        st.lat_inflow_volume += lat_in * dt;
+        st.total_inflow_volume += total_in * dt;
+        st.outflow_volume += (qo + (-l).max(0.0) + fl) * dt;
+        if is_storage {
+            st.volume_sum += vol * dt;
+            if vol > st.max_volume {
+                st.max_volume = vol;
+                st.t_max_volume = t;
+            }
+            st.evap_loss_volume += evap * dt;
+            st.exfil_loss_volume += seep * dt;
+            st.max_outflow = st.max_outflow.max(qo);
+        }
+        if is_outfall {
+            let q = net.max(0.0);
+            st.out_volume += q * dt;
+            st.out_peak = st.out_peak.max(q);
+            if q > Q_DRY {
+                st.out_time += dt;
             }
         }
     }
 
+    /// One channel's §11.2 row for one accepted step — the single body
+    /// both arms call.
+    fn channel_stat_row(
+        &self,
+        ci: usize,
+        t: f64,
+        dt: f64,
+        class3: (FlowClass, bool, bool),
+        st: &mut LinkStats,
+    ) {
+        let c = &self.chans[ci];
+        let (from, to, off1, off2, barrels, y_full) =
+            (c.from, c.to, c.off1, c.off2, c.barrels, c.geom.sec.y_full());
+        let q_signed = self.q[ci];
+        let q = q_signed.abs();
+        let a = self.a_mid[ci].max(DRY);
+        let y1 = (self.y[from] - off1).max(0.0);
+        let y2 = (self.y[to] - off2).max(0.0);
+        let (class, norm_limited, inlet_control) = class3;
+        if q > st.max_flow {
+            st.max_flow = q;
+            st.t_max_flow = t;
+        }
+        st.obs_time += dt;
+        st.max_velocity = st.max_velocity.max((q / barrels / a).min(V_MAX));
+        let y_mid = (0.5 * (y1 + y2)).min(y_full);
+        st.max_depth = st.max_depth.max(y_mid);
+        let (up_full, down_full) = (y1 >= y_full, y2 >= y_full);
+        if up_full && down_full {
+            st.full_time += dt;
+            st.full_both_time += dt;
+        } else if up_full {
+            st.full_up_time += dt;
+        } else if down_full {
+            st.full_down_time += dt;
+        }
+        // Supercritical is not a §6.3 class of its own: the
+        // classification returns subcritical and the Froude number
+        // separates the two (§11.2).
+        let idx = match class {
+            FlowClass::Dry => 0,
+            FlowClass::UpDry => 1,
+            FlowClass::DownDry => 2,
+            FlowClass::Subcritical => {
+                let w = c.geom.width(y_mid.max(DRY));
+                usize::from(froude(q / barrels / a, a, w) > 1.0) + 3
+            }
+            FlowClass::UpCritical => 5,
+            FlowClass::DownCritical => 6,
+        };
+        st.class_time[idx] += dt;
+        if norm_limited {
+            st.norm_limited_time += dt;
+        }
+        if inlet_control {
+            st.inlet_control_time += dt;
+        }
+        // The Max/Full ratios divide stored constants, so they are
+        // derived at report time; only the times are accumulated.
+        if st.full_flow > 0.0 && q > st.full_flow {
+            st.above_normal_time += dt;
+            if up_full && down_full {
+                st.capacity_limited_time += dt;
+            }
+        }
+        // §11.2 instability: this step's change reversed the last
+        // one, both clearing the flow tolerance.
+        //
+        // The tolerance is a fraction of the section's *capacity*,
+        // not of the link's running peak. Every converged solution
+        // wanders in its last digits, so an absolute floor calls a
+        // quiescent link unstable; and a fraction of the peak makes
+        // the test tighten as the peak grows, so a link that has
+        // barely flowed is judged against a threshold near zero.
+        // Capacity is fixed for the run and is the scale the
+        // oscillation would have to matter against.
+        let dq = q_signed - st.prev_flow;
+        let tol = (0.02 * st.full_flow).max(0.02 * st.max_flow).max(Q_DRY);
+        if st.prev_delta * dq < 0.0 && st.prev_delta.abs() > tol && dq.abs() > tol {
+            st.instability_count += 1;
+        }
+        st.steps += 1;
+        st.prev_delta = dq;
+        st.prev_flow = q_signed;
+    }
+
+    /// One structure's §11.2 row for one accepted step — the single
+    /// body both arms call.
+    fn struct_stat_row(&self, si: usize, t: f64, dt: f64, st: &mut LinkStats, prev_off: &mut bool) {
+        let (from, to) = (self.structs[si].from, self.structs[si].to);
+        let q = self.sq[si].abs();
+        // Pump quantities computed before the stats row is touched.
+        let pump = if let StructKind::Pump { kind, .. } = &self.structs[si].kind {
+            let dh = (self.verts[to].invert + self.y[to] - self.verts[from].invert - self.y[from])
+                .max(0.0);
+            // Off-curve time books to the correct end for every pump
+            // type (§11.2).
+            let arg = match kind {
+                PumpKind::Volume(_) => Some(self.vertex_volume_now(from)),
+                PumpKind::Depth(_) | PumpKind::InlineDepth(_) => Some(self.y[from]),
+                // Type 5 looks its rated curve up at the
+                // affinity-scaled head (§7.1, §11.2).
+                PumpKind::Head { affinity, .. } => {
+                    let sp = if *affinity {
+                        self.sett[si].max(1e-6)
+                    } else {
+                        1.0
+                    };
+                    Some(dh / (sp * sp))
+                }
+                PumpKind::Ideal => None,
+            };
+            let ends = match kind {
+                PumpKind::Volume(p)
+                | PumpKind::Depth(p)
+                | PumpKind::InlineDepth(p)
+                | PumpKind::Head { points: p, .. } => {
+                    p.first().zip(p.last()).map(|(a, b)| (a.0, b.0))
+                }
+                PumpKind::Ideal => None,
+            };
+            Some((dh, arg.zip(ends)))
+        } else {
+            None
+        };
+        if q > st.max_flow {
+            st.max_flow = q;
+            st.t_max_flow = t;
+        }
+        // §11.2: the denominator of every fraction reported against
+        // this link. The channel rows accumulate their own; a
+        // structure reached this far without one, so the pump
+        // summary's utilisation divided by the guard against zero
+        // and printed the run's on-time scaled by 10^14.
+        st.obs_time += dt;
+        let Some((dh, off)) = pump else {
+            return;
+        };
+        if q > 0.0 {
+            if *prev_off {
+                st.startups += 1;
+                *prev_off = false;
+            }
+            st.on_time += dt;
+            st.volume += q * dt;
+            st.min_flow = st.min_flow.min(q);
+            st.max_pump_flow = st.max_pump_flow.max(q);
+            // Energy: ρgQΔH per §7.1 (§11.2), in kWh.
+            st.energy_kwh += 1000.0 * GRAVITY * q * dh * dt / 3.6e6;
+            if let Some((x, (lo, hi))) = off {
+                if x < lo {
+                    st.off_low_time += dt;
+                } else if x > hi {
+                    st.off_high_time += dt;
+                }
+            }
+        } else {
+            *prev_off = true;
+        }
+    }
+
+    /// The pooled §6.4 trial: the same iteration as `run_trial`, run as
+    /// one SPMD region per trial. Every team slot executes the same
+    /// iterate loop; the ∥ phases distribute their indices through
+    /// claim cursors, sense-reversing barriers separate the phases, and
+    /// slot 0 alone runs the serial sections — the scalar folds, the
+    /// structure phase, and the convergence decision — while the other
+    /// slots hold at the next barrier. One region per trial rather than
+    /// one per phase because dispatching a region costs about what a
+    /// five-microsecond phase is worth, where a barrier costs a
+    /// fraction of one — measured, the per-phase version gained nothing
+    /// over parallelising the channel map alone.
+    ///
+    /// Bit-identity with the serial arm, phase by phase: the channel
+    /// map writes only per-channel slots; each vertex's sums are
+    /// gathered along the incidence lists in ascending element order —
+    /// the order the serial scatter reaches that vertex's accumulator
+    /// in — with laterals and storage losses folded at the serial
+    /// arm's positions; every scalar reduction is folded by slot 0 in
+    /// the serial arm's element order. Flows ping-pong between two
+    /// buffers by iterate parity, which is only a renaming of the
+    /// serial arm's fresh-vector-per-iterate. The byte-identity test
+    /// binds the two arms.
+    ///
+    /// Never inlined, for the same reason `run_trial` is pinned
+    /// standalone: this body must not blow the serial arm's inlining
+    /// budget in builds that carry both.
+    #[cfg(feature = "threads")]
+    #[inline(never)]
+    #[allow(clippy::too_many_lines)]
+    fn run_trial_pooled(&self, dt: f64, lat: &[f64]) -> Trial {
+        use super::team::SendPtr;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let nv = self.verts.len();
+        let nc = self.chans.len();
+        let ns = self.structs.len();
+        let incid = self.incid.as_ref().expect("built with the team");
+        let mut team = self
+            .team
+            .as_ref()
+            .expect("checked by caller")
+            .lock()
+            .expect("team poisoned");
+        let width = team.width();
+
+        let mut y = self.y.clone();
+        // Flow ping-pong: iterate `step` reads buffer `step % 2` and
+        // writes the other; the channel map overwrites every slot of the
+        // write buffer, so this renames the serial arm's fresh
+        // `q_next`/`sq_next` without changing a value.
+        let mut q_a = self.q.clone();
+        let mut q_b = vec![0.0; nc];
+        let mut sq_a = self.sq.clone();
+        let mut sq_b = vec![0.0; ns];
+        let mut a_mid_new = self.a_mid.clone();
+        let mut net_new = vec![0.0; nv];
+        let mut chan_last = vec![(0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64); nc];
+        let mut settled = vec![false; nv];
+        let mut chan_evap = vec![0.0; nc];
+        let mut chan_seep = vec![0.0; nc];
+        let mut flood = vec![0.0; nv];
+        let mut surf = vec![0.0; nv];
+        let mut outs: Vec<(ChanFlow, bool)> = vec![((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), false); nc];
+        let mut pos_in = vec![0.0; nv];
+        // Per-vertex convergence contributions: (head change, continuity
+        // residual, storage area), zero at outfalls — folded by slot 0.
+        let mut upd = vec![(0.0_f64, 0.0_f64, 0.0_f64); nv];
+        let mut net_base = vec![0.0; nv];
+        let mut surf_base = vec![0.0; nv];
+        let mut areas = vec![(0.0, 0.0); ns];
+
+        // §7.7 storage losses, exactly as the serial arm computes them.
+        let mut stor_evap = vec![0.0; nv];
+        let mut stor_seep = vec![0.0; nv];
+        let mut stor_loss_sum = 0.0;
+        for vi in 0..nv {
+            let VertClass::Storage(g) = &self.verts[vi].class else {
+                continue;
+            };
+            let y0 = self.y[vi];
+            if y0 <= DRY {
+                continue;
+            }
+            let area = g.area(y0).max(0.0);
+            let mut evap = self.evap_rate * self.stor_evap_frac[vi] * area;
+            let mut seep = match &self.stor_ga[vi] {
+                Some(ga) => {
+                    let mut probe = ga.clone();
+                    probe.step(
+                        dt,
+                        0.0,
+                        y0,
+                        InfilFactors {
+                            conductivity: 1.0,
+                            recovery: 1.0,
+                        },
+                    ) * area
+                }
+                None => self.stor_seep_ksat[vi] * area,
+            };
+            let cap = g.volume(y0) / dt;
+            let total = evap + seep;
+            if total > cap && total > 0.0 {
+                let scale = cap / total;
+                evap *= scale;
+                seep *= scale;
+            }
+            stor_evap[vi] = evap;
+            stor_seep[vi] = seep;
+            stor_loss_sum += evap + seep;
+        }
+
+        /// What slot 0's serial sections accumulate for the frame.
+        struct Ser {
+            loss_total: f64,
+            kept: u32,
+            converged: bool,
+            iterations: u32,
+            last_step: usize,
+        }
+        let mut ser = Ser {
+            loss_total: 0.0,
+            kept: 0,
+            converged: false,
+            iterations: self.max_trials,
+            last_step: 0,
+        };
+
+        let max_trials = self.max_trials as usize;
+        let bar = super::team::Barrier::new(width);
+        let stop = AtomicBool::new(false);
+        // One claim cursor per (iterate, ∥ phase), all pre-armed at
+        // zero: no cursor is ever reused, so no slot can claim into the
+        // wrong phase and no arming step is needed between phases.
+        let cursors: Vec<AtomicU64> = (0..max_trials * 3).map(|_| AtomicU64::new(0)).collect();
+
+        let y_p = SendPtr::new(y.as_mut_ptr());
+        let qa_p = SendPtr::new(q_a.as_mut_ptr());
+        let qb_p = SendPtr::new(q_b.as_mut_ptr());
+        let sqa_p = SendPtr::new(sq_a.as_mut_ptr());
+        let sqb_p = SendPtr::new(sq_b.as_mut_ptr());
+        let am_p = SendPtr::new(a_mid_new.as_mut_ptr());
+        let net_p = SendPtr::new(net_new.as_mut_ptr());
+        let last_p = SendPtr::new(chan_last.as_mut_ptr());
+        let settled_p = SendPtr::new(settled.as_mut_ptr());
+        let evap_p = SendPtr::new(chan_evap.as_mut_ptr());
+        let seep_p = SendPtr::new(chan_seep.as_mut_ptr());
+        let flood_p = SendPtr::new(flood.as_mut_ptr());
+        let surf_p = SendPtr::new(surf.as_mut_ptr());
+        let outs_p = SendPtr::new(outs.as_mut_ptr());
+        let pin_p = SendPtr::new(pos_in.as_mut_ptr());
+        let upd_p = SendPtr::new(upd.as_mut_ptr());
+        let netb_p = SendPtr::new(net_base.as_mut_ptr());
+        let surfb_p = SendPtr::new(surf_base.as_mut_ptr());
+        let areas_p = SendPtr::new(areas.as_mut_ptr());
+        let ser_p = SendPtr::new(&mut ser);
+        let stor_evap_ref = &stor_evap;
+        let stor_seep_ref = &stor_seep;
+
+        // SAFETY, for the whole region: every pointer above outlives the
+        // region (`run_spmd` returns only after every slot completes).
+        // Within a ∥ phase, writes are per-index disjoint (each index is
+        // claimed once) and nothing reads what that phase writes; across
+        // phases, the barrier's release sequence orders every write
+        // before every read; the serial sections run on slot 0 alone
+        // between two barriers, so their whole-buffer access is
+        // exclusive. Shared reads (`self`, `lat`, the storage-loss
+        // arrays) are never written inside the region.
+        team.run_spmd(|slot| {
+            let mut sense = false;
+            for step in 0..max_trials {
+                let (q_read, q_write) = if step.is_multiple_of(2) {
+                    (qa_p.get(), qb_p.get())
+                } else {
+                    (qb_p.get(), qa_p.get())
+                };
+                let (sq_read, sq_write) = if step.is_multiple_of(2) {
+                    (sqa_p.get(), sqb_p.get())
+                } else {
+                    (sqb_p.get(), sqa_p.get())
+                };
+
+                // ── ∥ Channel phase: flows from the last iterate ─────
+                let step_u = u32::try_from(step).unwrap_or(u32::MAX);
+                claim_span(&cursors[step * 3], nc, |ci| unsafe {
+                    let c = &self.chans[ci];
+                    let y_s = std::slice::from_raw_parts(y_p.get(), nv);
+                    let settled_s = std::slice::from_raw_parts(settled_p.get(), nv);
+                    let (out, was_kept) = if may_keep(step_u, settled_s, c.from, c.to) {
+                        (*last_p.get().add(ci), true)
+                    } else {
+                        let out = self.channel_flow(ci, y_s, *q_read.add(ci), dt, step_u);
+                        *last_p.get().add(ci) = out;
+                        (out, false)
+                    };
+                    let (qn, a_mid, _, _, loss, evap) = out;
+                    *evap_p.get().add(ci) = evap;
+                    *seep_p.get().add(ci) = (loss - evap).max(0.0);
+                    *q_write.add(ci) = qn;
+                    *am_p.get().add(ci) = a_mid;
+                    *outs_p.get().add(ci) = (out, was_kept);
+                });
+                bar.wait(&mut sense);
+                if slot == 0 {
+                    // The loss ledger, folded in channel order — the
+                    // serial arm's accumulation. Runs beside the other
+                    // slots' gathers, which touch none of this.
+                    let outs_s = unsafe { std::slice::from_raw_parts(outs_p.get(), nc) };
+                    let ser = unsafe { &mut *ser_p.get() };
+                    let mut loss_total = 0.0;
+                    for &((_, _, _, _, loss, _), was_kept) in outs_s {
+                        if loss > 0.0 {
+                            loss_total += loss;
+                        }
+                        ser.kept += u32::from(was_kept);
+                    }
+                    ser.loss_total = loss_total + stor_loss_sum;
+                }
+
+                // ── ∥ Gather: each vertex's sums, in scatter order ───
+                claim_span(&cursors[step * 3 + 1], nv, |vi| unsafe {
+                    let outs_s = std::slice::from_raw_parts(outs_p.get(), nc);
+                    let mut srf = 0.0;
+                    let mut net = 0.0;
+                    // Laterals lead the positive arrivals but trail the
+                    // channel contributions in the net sum — the serial
+                    // arm's loop order, kept per accumulator.
+                    let mut pin = lat[vi].max(0.0);
+                    let self_outfall = incid.is_outfall[vi];
+                    for &(ci, is_from) in incid.chans_of(vi) {
+                        let ci = ci as usize;
+                        let (qn, _, s1, s2, loss, _) = outs_s[ci].0;
+                        let other = if is_from {
+                            self.chans[ci].to
+                        } else {
+                            self.chans[ci].from
+                        };
+                        if is_from {
+                            srf += s1;
+                            net -= qn;
+                            if qn < 0.0 {
+                                pin -= qn;
+                            }
+                        } else {
+                            srf += s2;
+                            net += qn;
+                            if qn >= 0.0 {
+                                pin += qn;
+                            }
+                        }
+                        // §7.7 loss shares, the serial match by cases.
+                        if loss > 0.0 && !self_outfall {
+                            if incid.is_outfall[other] {
+                                net -= loss;
+                            } else {
+                                net -= loss / 2.0;
+                            }
+                        }
+                    }
+                    net += lat[vi];
+                    let stor_loss = stor_evap_ref[vi] + stor_seep_ref[vi];
+                    if stor_loss > 0.0 {
+                        net -= stor_loss;
+                    }
+                    for &(si, is_from) in incid.structs_of(vi) {
+                        let qt = *sq_read.add(si as usize);
+                        if qt >= 0.0 {
+                            if !is_from {
+                                pin += qt;
+                            }
+                        } else if is_from {
+                            pin -= qt;
+                        }
+                    }
+                    *surf_p.get().add(vi) = srf;
+                    *net_p.get().add(vi) = net;
+                    *pin_p.get().add(vi) = pin;
+                });
+                bar.wait(&mut sense);
+
+                // ── Structure phase: slot 0, against frozen state ────
+                if slot == 0 {
+                    // SAFETY: exclusive between barriers; every slice is
+                    // fully initialised at its recorded length.
+                    unsafe {
+                        let y_s = std::slice::from_raw_parts(y_p.get(), nv);
+                        let pos_s = std::slice::from_raw_parts(pin_p.get(), nv);
+                        let net_s = std::slice::from_raw_parts_mut(net_p.get(), nv);
+                        let surf_s = std::slice::from_raw_parts_mut(surf_p.get(), nv);
+                        let netb = std::slice::from_raw_parts_mut(netb_p.get(), nv);
+                        let surfb = std::slice::from_raw_parts_mut(surfb_p.get(), nv);
+                        netb.copy_from_slice(net_s);
+                        surfb.copy_from_slice(surf_s);
+                        let areas_s = std::slice::from_raw_parts_mut(areas_p.get(), ns);
+                        for (si, area) in areas_s.iter_mut().enumerate() {
+                            let (qn, s1, s2) = self.structure_flow(
+                                si,
+                                y_s,
+                                *sq_read.add(si),
+                                dt,
+                                step_u,
+                                pos_s,
+                                netb,
+                                surfb,
+                            );
+                            *sq_write.add(si) = qn;
+                            *area = (s1, s2);
+                        }
+                        for (si, &(s1, s2)) in areas_s.iter().enumerate() {
+                            let st = &self.structs[si];
+                            surf_s[st.from] += s1;
+                            surf_s[st.to] += s2;
+                            net_s[st.from] -= *sq_write.add(si);
+                            net_s[st.to] += *sq_write.add(si);
+                        }
+                    }
+                }
+                bar.wait(&mut sense);
+
+                // ── ∥ Vertex phase: per-vertex update ────────────────
+                claim_span(&cursors[step * 3 + 2], nv, |vi| unsafe {
+                    let v = &self.verts[vi];
+                    match &v.class {
+                        VertClass::Outfall(b) => {
+                            let q_s = std::slice::from_raw_parts(q_write, nc);
+                            let y_new = self.outfall_depth(vi, b, q_s);
+                            *y_p.get().add(vi) = y_new;
+                            *settled_p.get().add(vi) = false;
+                            *flood_p.get().add(vi) = 0.0;
+                            *upd_p.get().add(vi) = (0.0, 0.0, 0.0);
+                        }
+                        _ => {
+                            let y_i = *y_p.get().add(vi);
+                            let mut area = *surf_p.get().add(vi);
+                            if let VertClass::Storage(g) = &v.class {
+                                area += g.area(y_i);
+                            }
+                            let ponded = self.allow_ponding && v.ponded_area > 0.0 && y_i > v.y_max;
+                            if ponded {
+                                area = v.ponded_area;
+                            }
+                            let area = area.max(self.min_surface_area);
+                            let net_i = *net_p.get().add(vi);
+                            let dv = 0.5 * (self.net_flow[vi] + net_i) * dt;
+                            let y_raw = self.y[vi] + dv / area;
+                            let mut y_new = y_raw;
+                            if step > 0 && !(v.crown > 0.0 && y_i > v.crown) {
+                                y_new = (1.0 - OMEGA) * y_i + OMEGA * y_new;
+                            }
+                            if y_new < 0.0 {
+                                y_new = 0.0;
+                            }
+                            let cap = v.y_max + v.surcharge;
+                            let mut fl = 0.0;
+                            if y_new > cap && !(self.allow_ponding && v.ponded_area > 0.0) {
+                                fl = (y_raw - cap).max(0.0) * area / dt;
+                                y_new = cap;
+                            }
+                            let dy = (y_new - y_i).abs();
+                            *settled_p.get().add(vi) = dy <= self.head_tol;
+                            *y_p.get().add(vi) = y_new;
+                            *flood_p.get().add(vi) = fl;
+                            let stored = area * (y_new - self.y[vi]) / dt;
+                            let resid = (0.5 * (self.net_flow[vi] + net_i) - stored - fl).abs();
+                            *upd_p.get().add(vi) = (dy, resid, area);
+                        }
+                    }
+                });
+                bar.wait(&mut sense);
+
+                // ── Convergence: slot 0 folds and decides ────────────
+                if slot == 0 {
+                    // SAFETY: exclusive between barriers, as above.
+                    unsafe {
+                        let upd_s = std::slice::from_raw_parts(upd_p.get(), nv);
+                        let q_s = std::slice::from_raw_parts(q_write, nc);
+                        let sq_s = std::slice::from_raw_parts(sq_write, ns);
+                        let ser = &mut *ser_p.get();
+                        ser.last_step = step;
+                        let mut max_dy = 0.0_f64;
+                        let mut residual = 0.0_f64;
+                        let mut area_sum = 0.0_f64;
+                        for &(dy, resid, area) in upd_s {
+                            max_dy = max_dy.max(dy);
+                            residual += resid;
+                            area_sum += area;
+                        }
+                        let mut flow_scale = 0.0_f64;
+                        for qi in q_s {
+                            flow_scale += qi.abs();
+                        }
+                        for qi in sq_s {
+                            flow_scale += qi.abs();
+                        }
+                        for l in lat {
+                            flow_scale += l.abs();
+                        }
+                        if step >= 1
+                            && max_dy <= self.head_tol
+                            && residual
+                                <= continuity_allowance(
+                                    self.continuity_tol,
+                                    flow_scale,
+                                    self.head_tol,
+                                    dt,
+                                    area_sum,
+                                )
+                        {
+                            ser.converged = true;
+                            ser.iterations = step_u + 1;
+                            stop.store(true, Ordering::Release);
+                        }
+                    }
+                }
+                bar.wait(&mut sense);
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+        });
+        drop(team);
+
+        // The last iterate wrote the buffer opposite its read parity.
+        let (q, sq) = if ser.last_step.is_multiple_of(2) {
+            (q_b, sq_b)
+        } else {
+            (q_a, sq_a)
+        };
+
+        // §6.5 error estimate from the head history.
+        let (err, worst) = self.error_estimate(dt, &y);
+        Trial {
+            y,
+            q,
+            sq,
+            loss_rate: ser.loss_total,
+            a_mid: a_mid_new,
+            net_flow: net_new,
+            converged: ser.converged,
+            iterations: ser.iterations,
+            flood_rate: flood,
+            chan_evap,
+            chan_seep,
+            stor_evap,
+            stor_seep,
+            worst_vertex: worst,
+            err,
+            kept: ser.kept,
+        }
+    }
+
+    /// One §6.4 trial: iterate channel and vertex phases to
+    /// self-consistency over the interval `dt`.
     /// Pinned standalone: with rayon in the LTO unit the inliner folded
     /// this whole function into `step_once`, and the section math inside
     /// lost its own inlining to the blown budget — a measured 8% of a
@@ -2579,6 +3225,14 @@ impl Router {
     /// makes that the rule rather than the inliner's mood.
     #[inline(never)]
     fn run_trial(&self, dt: f64, lat: &[f64]) -> Trial {
+        // §6.4: with a team, the whole iteration runs its ∥ phases across
+        // it — a separate, never-inlined body, so this serial arm keeps
+        // its inlining (the last split inside this function cost a
+        // measured 8%). The byte-identity test binds the two arms.
+        #[cfg(feature = "threads")]
+        if self.team.is_some() {
+            return self.run_trial_pooled(dt, lat);
+        }
         let nv = self.verts.len();
         let nc = self.chans.len();
         let mut y = self.y.clone();
@@ -2649,16 +3303,6 @@ impl Router {
             stor_loss_sum += evap + seep;
         }
 
-        let use_pool = {
-            #[cfg(feature = "threads")]
-            {
-                self.team.is_some()
-            }
-            #[cfg(not(feature = "threads"))]
-            {
-                false
-            }
-        };
         for step in 0..self.max_trials {
             // ── Channel phase (∥): flows from the last iterate ─────────
             //
@@ -2676,38 +3320,7 @@ impl Router {
             loss_total = 0.0;
             chan_evap.iter_mut().for_each(|e| *e = 0.0);
             chan_seep.iter_mut().for_each(|e| *e = 0.0);
-            if use_pool {
-                // The split path lives in its own never-inlined method:
-                // its body inside this function pushed the hot serial
-                // loop past the inliner's budget, a measured 8%. Only
-                // reachable when `build` engaged a pool; the
-                // byte-identity test (tests/threads.rs) holds it to the
-                // serial arm's exact bytes.
-                #[cfg(feature = "threads")]
-                self.channel_phase_pooled(
-                    step,
-                    dt,
-                    &y,
-                    &q,
-                    &settled,
-                    ChanJoin {
-                        chan_last: &mut chan_last,
-                        chan_evap: &mut chan_evap,
-                        chan_seep: &mut chan_seep,
-                        q_next: &mut q_next,
-                        a_mid_new: &mut a_mid_new,
-                        surf: &mut surf,
-                        net_new: &mut net_new,
-                        loss_total: &mut loss_total,
-                        kept: &mut kept,
-                    },
-                );
-            } else {
-                // The fused serial path, kept textually as it was before
-                // the split existed: routing a large run's inner loop
-                // through a borrow struct cost a measured 16%, so the two
-                // arms duplicate the join body and the byte-identity test
-                // is what keeps them the same computation.
+            {
                 for ci in 0..nc {
                     let (from, to) = (self.chans[ci].from, self.chans[ci].to);
                     let (qn, a_mid, s1, s2, loss, evap) = if may_keep(step, &settled, from, to) {
@@ -5590,6 +6203,8 @@ impl Router {
             // §6.4 worker team: a parameter, rebuilt from the model.
             #[cfg(feature = "threads")]
                 team: _,
+            #[cfg(feature = "threads")]
+                incid: _,
             head_tol: _,
             min_surface_area: _,
             continuity_tol: _,

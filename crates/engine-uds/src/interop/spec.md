@@ -103,7 +103,7 @@ options that survive as this engine's own (`MIN_SURFAREA`,
 `MAX_TRIALS`, `HEAD_TOLERANCE`, `VARIABLE_STEP` — whose value is the Courant
 factor of §6.5 — `MINIMUM_STEP`, `MIN_SLOPE`, …) convert units and
 carry over. `THREADS` maps to
-the width of §6.4's ∥ channel phase: an upper bound, honoured where the
+the shared width of §6.4's ∥ iteration phases: an upper bound, honoured where the
 execution environment offers concurrency and reduced to one where it does
 not. §6.4 fixes the accumulation order, so every width computes identical
 results; the option spends cores, never accuracy. Time-step interlocks

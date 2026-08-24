@@ -44,7 +44,7 @@ identity.
 
 **`hydra-cli`, `hydra-gui` and `hydra-demo` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
 
-**The engines must keep working on `wasm32-unknown-unknown`.** They have no filesystem calls outside test code and `io::out_reader`, and no threads by default, which is what makes a browser build possible at all. The one concurrency door is `hydra-engine-uds`'s `threads` cargo feature: it parallelises exactly the spec's ∥ channel phase (uds §6.4), takes its width from the model's own `THREADS` option, is off by default and never enabled for a wasm build, and produces byte-identical results at any width — so a serial build and a threaded one cannot disagree, and a test that holds on one holds on both. Three things break it, and only the first is caught by compiling:
+**The engines must keep working on `wasm32-unknown-unknown`.** They have no filesystem calls outside test code and `io::out_reader`, and no threads by default, which is what makes a browser build possible at all. The one concurrency door is `hydra-engine-uds`'s `threads` cargo feature: it parallelises exactly the spec's ∥ iteration phases (uds §6.4), takes its width from the model's own `THREADS` option, is off by default and never enabled for a wasm build, and produces byte-identical results at any width — so a serial build and a threaded one cannot disagree, and a test that holds on one holds on both. Three things break it, and only the first is caught by compiling:
 
 | Break | Example | Guarded by |
 |---|---|---|

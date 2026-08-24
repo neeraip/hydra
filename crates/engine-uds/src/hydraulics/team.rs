@@ -48,6 +48,10 @@ struct Job {
     gen: u32,
     f: *const (dyn Fn(usize) + Sync),
     n: usize,
+    /// How the job distributes: chunk-claimed indices (`run`), or one
+    /// call per team slot (`run_spmd`), where the closure synchronises
+    /// itself with a [`Barrier`].
+    spmd: bool,
 }
 
 // SAFETY: `Job` crosses threads only as a mutex-guarded copy, and the
@@ -77,6 +81,56 @@ impl<T> SendPtr<T> {
     /// travels with the pointer instead of being disjointed away.
     pub fn get(&self) -> *mut T {
         self.0
+    }
+}
+
+/// A sense-reversing spin barrier for the slots of one SPMD region.
+///
+/// Each slot carries a local sense flag (start `false`) and passes it to
+/// every `wait`; the barrier flips its shared sense once the last slot
+/// arrives, which releases the spinners and leaves the barrier armed for
+/// the next phase with no reset step. The counter's read-modify-writes
+/// form a release sequence, so everything a slot wrote before arriving
+/// is visible to every slot after release — the barrier is the region's
+/// only ordering, and it is enough.
+///
+/// Waits spin (with a yield fallback for oversubscribed hosts) and never
+/// park: a barrier separates phases microseconds apart, inside a region
+/// whose publisher already holds every participant awake.
+pub struct Barrier {
+    width: usize,
+    count: AtomicUsize,
+    sense: AtomicBool,
+}
+
+impl Barrier {
+    pub fn new(width: usize) -> Barrier {
+        Barrier {
+            width,
+            count: AtomicUsize::new(0),
+            sense: AtomicBool::new(false),
+        }
+    }
+
+    /// Arrive and wait for the rest of the team. `sense` is this slot's
+    /// local flag: `false` before the first wait, handed back unchanged
+    /// between waits, never shared between slots.
+    pub fn wait(&self, sense: &mut bool) {
+        *sense = !*sense;
+        if self.count.fetch_add(1, Ordering::AcqRel) + 1 == self.width {
+            self.count.store(0, Ordering::Relaxed);
+            self.sense.store(*sense, Ordering::Release);
+        } else {
+            let mut spins = 0u32;
+            while self.sense.load(Ordering::Acquire) != *sense {
+                spins += 1;
+                if spins < SPINS_BEFORE_PARK {
+                    std::hint::spin_loop();
+                } else {
+                    thread::yield_now();
+                }
+            }
+        }
     }
 }
 
@@ -117,15 +171,16 @@ impl Team {
                 gen: 0,
                 f: &idle,
                 n: 0,
+                spmd: false,
             }),
             cursor: AtomicU64::new(pack(0, u32::MAX)),
             done: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
         });
         let mut handles = Vec::with_capacity(width - 1);
-        for _ in 0..width - 1 {
+        for slot in 1..width {
             let sh = Arc::clone(&shared);
-            handles.push(thread::spawn(move || worker(&sh)));
+            handles.push(thread::spawn(move || worker(&sh, slot)));
         }
         let parked = handles.iter().map(|h| h.thread().clone()).collect();
         Some(Team {
@@ -134,6 +189,66 @@ impl Team {
             parked,
             gen: 0,
         })
+    }
+
+    /// The team's width: the caller plus its workers.
+    pub fn width(&self) -> usize {
+        self.handles.len() + 1
+    }
+
+    /// Run `f(slot)` exactly once per team slot — the caller as slot 0,
+    /// each worker as its own slot — returning once every call is
+    /// complete. The closure is the whole parallel region: it
+    /// synchronises its phases itself with a [`Barrier`] of this team's
+    /// width, and every slot must reach every barrier the closure waits
+    /// on, or the region deadlocks.
+    ///
+    /// This exists because a region dispatched per phase costs a
+    /// publish-and-complete round per phase — measured break-even near
+    /// five microseconds of work — where a barrier between phases inside
+    /// one region costs a fraction of one. An iteration whose phases are
+    /// each a few microseconds only gains from width when the whole
+    /// iteration is one region.
+    pub fn run_spmd<F: Fn(usize) + Sync>(&mut self, f: F) {
+        let width = self.width();
+        self.gen = self.gen.wrapping_add(1);
+        let gen = self.gen;
+        let sh = &*self.shared;
+        {
+            // SAFETY: as in `run` — the transmute erases the borrow's
+            // lifetime only, and this function returns only after every
+            // slot has completed its call.
+            let erased: *const (dyn Fn(usize) + Sync) = unsafe {
+                std::mem::transmute::<*const (dyn Fn(usize) + Sync), *const (dyn Fn(usize) + Sync)>(
+                    &f as &(dyn Fn(usize) + Sync) as *const _,
+                )
+            };
+            *sh.job.lock().expect("team poisoned") = Job {
+                gen,
+                f: erased,
+                n: width,
+                spmd: true,
+            };
+        }
+        sh.done.store(0, Ordering::Relaxed);
+        // No cursor: slots are assigned, not claimed. Lapse the cursor's
+        // generation so a stale chunk worker cannot claim into this job.
+        sh.cursor.store(pack(gen, u32::MAX), Ordering::Release);
+        sh.seq.store(u64::from(gen), Ordering::Release);
+        for t in &self.parked {
+            t.unpark();
+        }
+        f(0);
+        sh.done.fetch_add(1, Ordering::Release);
+        let mut spins = 0u32;
+        while sh.done.load(Ordering::Acquire) < width {
+            spins += 1;
+            if spins < SPINS_BEFORE_PARK {
+                std::hint::spin_loop();
+            } else {
+                thread::yield_now();
+            }
+        }
     }
 
     /// Run `f(i)` for every `i in 0..n` across the team, the caller
@@ -161,7 +276,12 @@ impl Team {
                     &f as &(dyn Fn(usize) + Sync) as *const _,
                 )
             };
-            *sh.job.lock().expect("team poisoned") = Job { gen, f: erased, n };
+            *sh.job.lock().expect("team poisoned") = Job {
+                gen,
+                f: erased,
+                n,
+                spmd: false,
+            };
         }
         sh.done.store(0, Ordering::Relaxed);
         sh.cursor.store(pack(gen, 0), Ordering::Release);
@@ -213,7 +333,7 @@ fn work_chunks(sh: &Shared, gen: u32, f: &(dyn Fn(usize) + Sync), n: usize) {
     }
 }
 
-fn worker(sh: &Shared) {
+fn worker(sh: &Shared, slot: usize) {
     let mut seen = 0u64;
     loop {
         // Wait for the doorbell: spin hot first, park across long gaps.
@@ -221,7 +341,9 @@ fn worker(sh: &Shared) {
         loop {
             let s = sh.seq.load(Ordering::Acquire);
             if s != seen {
-                seen = s;
+                // `seen` syncs to the job copy below, not to `s`: the
+                // copy may already be a later generation than the
+                // doorbell that woke us.
                 break;
             }
             if sh.stop.load(Ordering::Relaxed) {
@@ -242,6 +364,30 @@ fn worker(sh: &Shared) {
         // write, and the generation-tagged claims make a stale copy
         // inert without ever dereferencing it.
         let job = *sh.job.lock().expect("team poisoned");
+        // The copy is whatever job is current, which may already be a
+        // generation past the doorbell value that woke us (the publisher
+        // of a chunks job returns without needing every worker). Sync
+        // `seen` to the copy: without this, a worker that executed job
+        // k+1 through an early break meets k+1 at the doorbell again and
+        // runs it twice — for an SPMD job, a double execution and a
+        // double completion count.
+        seen = u64::from(job.gen);
+        if job.spmd {
+            // An SPMD job is current by construction: the publisher's
+            // completion wait spans every slot's call, so a worker that
+            // reached here through this generation's doorbell holds a
+            // live closure. Oversleeping a generation entirely is
+            // impossible while the publisher blocks on `done`.
+            if slot < job.n {
+                // SAFETY: the publisher waits for `done == n`, which
+                // this slot's add below is part of, so the closure
+                // outlives the call.
+                let f = unsafe { &*job.f };
+                f(slot);
+            }
+            sh.done.fetch_add(1, Ordering::Release);
+            continue;
+        }
         // SAFETY: dereferenced only inside claims whose generation
         // matches this copy, which the protocol bounds to the closure's
         // lifetime (see `Team::run`).
@@ -304,5 +450,53 @@ mod tests {
     fn a_team_of_one_is_refused() {
         assert!(Team::new(0).is_none());
         assert!(Team::new(1).is_none());
+    }
+
+    /// Every slot of an SPMD region runs exactly once, and the barrier
+    /// really separates phases: phase-two reads observe every phase-one
+    /// write, across thousands of back-to-back regions.
+    #[test]
+    fn an_spmd_region_runs_every_slot_and_its_barrier_orders_phases() {
+        let mut team = Team::new(4).expect("width 4");
+        let width = team.width();
+        for _ in 0..2_000 {
+            let bar = Barrier::new(width);
+            let ran: Vec<AtomicU32> = (0..width).map(|_| AtomicU32::new(0)).collect();
+            let sums: Vec<AtomicU32> = (0..width).map(|_| AtomicU32::new(0)).collect();
+            team.run_spmd(|slot| {
+                let mut sense = false;
+                ran[slot].fetch_add(1, Ordering::Relaxed);
+                bar.wait(&mut sense);
+                // Phase two: every slot sums every slot's phase-one mark.
+                let total: u32 = ran.iter().map(|r| r.load(Ordering::Relaxed)).sum();
+                sums[slot].store(total, Ordering::Relaxed);
+                bar.wait(&mut sense);
+            });
+            assert!(ran.iter().all(|r| r.load(Ordering::Relaxed) == 1));
+            assert!(sums
+                .iter()
+                .all(|s| s.load(Ordering::Relaxed) == width as u32));
+        }
+    }
+
+    /// Chunked and SPMD jobs interleave on one team without confusing
+    /// each other's dispatch.
+    #[test]
+    fn chunked_and_spmd_jobs_interleave() {
+        let mut team = Team::new(3).expect("width 3");
+        let width = team.width();
+        let total = AtomicU32::new(0);
+        for round in 0..1_000u32 {
+            if round % 2 == 0 {
+                team.run(50, |_| {
+                    total.fetch_add(1, Ordering::Relaxed);
+                });
+            } else {
+                team.run_spmd(|_| {
+                    total.fetch_add(1, Ordering::Relaxed);
+                });
+            }
+        }
+        assert_eq!(total.load(Ordering::Relaxed), 500 * 50 + 500 * width as u32);
     }
 }

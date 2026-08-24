@@ -533,18 +533,33 @@ numerical fiction.
 Within a trial step the scheme iterates to self-consistency:
 
 1. **∥ Channel phase**: every channel computes its flow update from the
-   last iterate's heads. This phase is order-independent by construction and
-   is the specification's parallel region; accumulation of channel flows
-   into vertex sums is performed in a fixed order regardless of thread
-   count, so results are bit-reproducible under any parallelism. The
-   phase's width is the model's `THREADS` option (§14.4): an upper bound,
-   honoured where the execution environment offers concurrency and reduced
-   to one where it does not, with identical results at every width.
-2. **Structure phase**: pumps, orifices, weirs, outlets, and zero-length
+   last iterate's heads. This phase is order-independent by construction;
+   accumulation of channel flows into vertex sums is performed in a fixed
+   order regardless of thread count, so results are bit-reproducible under
+   any parallelism. The order is defined per sum: each vertex's sums
+   receive their contributions in one fixed sequence (its incident
+   channels in ascending order, then its lateral inflow, then its storage
+   losses), which is the same additions in the same order whether
+   contributions are scattered channel-by-channel or gathered
+   vertex-by-vertex.
+2. **∥ Structure phase**: pumps, orifices, weirs, outlets, and zero-length
    connectors compute their flows **against the last iterate's vertex state**.
    The phase is order-independent: no structure sees the running accumulation
-   of another's result within the same iterate.
-3. **Vertex phase**: heads update per §6.3 from the accumulated flows.
+   of another's result within the same iterate — which is also what makes
+   evaluating structures concurrently safe. Structure results are applied
+   to the vertex sums afterwards, in a fixed structure order.
+3. **∥ Vertex phase**: heads update per §6.3 from the accumulated flows.
+   Each vertex's update reads only its own accumulated sums, its own prior
+   state, and the iterate's channel flows, so the phase is
+   order-independent. The convergence measures it feeds — the head
+   criterion's maximum and the summed continuity residual below — are
+   folded from the per-vertex values in a fixed vertex order regardless of
+   parallelism.
+
+The three ∥ phases share one width, the model's `THREADS` option (§14.4):
+an upper bound, honoured where the execution environment offers
+concurrency and reduced to one where it does not, with identical results
+at every width.
 
 > **CORRESPONDENCE:** the predecessor's structure phase solves serially in
 > link-definition order, each structure immediately updating its end vertices,

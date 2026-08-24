@@ -294,6 +294,17 @@ Time-weighted means are accumulated as $\sum x\,\Delta t$ against
 $\sum \Delta t$ over the same steps, never as unweighted step means — the
 step size varies, so the two differ.
 
+**∥ Accumulation across objects.** Each object's statistics row is a
+function of the accepted state and that row alone: no row reads another,
+and the shared quantities the rows consume — the accepted state, each
+vertex's assembled in- and outflows, each channel's classification — are
+derived from the accepted state before any row updates. Deriving those
+quantities and updating the rows may therefore run across objects in any
+order, or concurrently, without changing a value; any whole-run scalar
+accumulated alongside the rows is folded in a fixed object order
+regardless of parallelism, so the statistics are bit-reproducible at any
+width. The width is §6.4's.
+
 **Surface.** Per parcel: precipitation, run-on, evaporation, infiltration
 and runoff depths over the run; runoff separated into its impervious and
 pervious shares; peak runoff rate; and the runoff coefficient, the ratio of
