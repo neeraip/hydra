@@ -50,31 +50,32 @@ this page carry over to it unchanged.
 
 | Workload | Hydra | SWMM 6, 1 thread | SWMM 6, 4 threads |
 |---|---|---|---|
-| Bellinge, 48 h | 52 s serial, 43 s at width 6 | 55 s | 26 s |
-| 4,394-node system, 48 h | 227 s serial, **185 s at width 4** | — | 194 s |
+| Bellinge, 48 h | 52 s serial, **30 s at width 6** | 55 s | 26 s |
+| 4,394-node system, 48 h | 227 s serial, **120 s at width 4** | — | 194 s |
 
 Per core the engines are at parity: Hydra's serial run edges SWMM 6's
-single thread on both networks. Threaded, SWMM 6 leads on Bellinge
-because its parallel region spans the whole routing iteration where
-Hydra's covers the channel phase, and it spends processor time freely
-to do it: on the larger system Hydra at width 4 finishes ahead of
-SWMM 6's four threads while using under three quarters of the
-processor seconds. Both engines hold results bit-identical across
-thread counts; Hydra's serial default additionally means the browser
-build and the desktop app compute the same bytes.
+single thread on both networks. Threaded, both engines now run the
+whole routing iteration as one parallel region; on Bellinge they land
+within a few seconds of each other, and on the larger system Hydra at
+width 4 finishes in under two thirds of SWMM 6's four-thread time
+while using fewer processor seconds. Both engines hold results
+bit-identical across thread counts; Hydra's serial default
+additionally means the browser build and the desktop app compute the
+same bytes.
 ### Width, for integrators
 
-The SDK's `threads` cargo feature runs the channel phase across a
-persistent worker team, with the width taken from the model's own
-`THREADS` option. Results are byte-identical at every width: the
-specification fixes the accumulation order, and a test holds serial and
-threaded runs to the same bytes. So measured, same method: Bellinge at
-width 6 runs 43 s (0.86 of SWMM), and the 4,394-node system at width 4
-runs 185 s (0.52 of SWMM, and ahead of SWMM6's four-thread 194 s). The
-official binaries do not enable the feature yet: compiling it costs a
-measured ~8% of serial routing through displaced inlining under the
-release profile's fat LTO, a poor default trade for models that never
-ask for width.
+The SDK's `threads` cargo feature runs the routing iteration and the
+statistics pass across a persistent worker team, with the width taken
+from the model's own `THREADS` option. Results are byte-identical at
+every width: the specification fixes every accumulation order, and a
+test holds serial and threaded runs, results and report both, to the
+same bytes. So measured, same method: Bellinge at width 6 runs 30 s
+(0.60 of SWMM), and the 4,394-node system at width 4 runs 120 s (0.34
+of SWMM, and well ahead of SWMM 6's four-thread 194 s). The official
+binaries do not enable the feature yet: compiling it costs a measured
+~8% of serial routing through displaced inlining under the release
+profile's fat LTO, a poor default trade for models that never ask for
+width.
 
 Accuracy rides the same runs. On the 48-hour system, 4,373 of 4,394 node
 depths agree within 5 cm. On Bellinge, node depths match SWMM's own
