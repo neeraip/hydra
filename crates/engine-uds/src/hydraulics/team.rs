@@ -364,20 +364,30 @@ fn worker(sh: &Shared, slot: usize) {
         // write, and the generation-tagged claims make a stale copy
         // inert without ever dereferencing it.
         let job = *sh.job.lock().expect("team poisoned");
-        // The copy is whatever job is current, which may already be a
-        // generation past the doorbell value that woke us (the publisher
-        // of a chunks job returns without needing every worker). Sync
-        // `seen` to the copy: without this, a worker that executed job
-        // k+1 through an early break meets k+1 at the doorbell again and
-        // runs it twice — for an SPMD job, a double execution and a
-        // double completion count.
-        seen = u64::from(job.gen);
+        // Act only on a copy whose generation equals the doorbell right
+        // now, and advance `seen` only by acting. A copy ahead of the
+        // doorbell is half-published — its `done` and cursor still
+        // belong to the previous job, so acting would add completions
+        // to the wrong counter and run an SPMD job twice. A copy behind
+        // the doorbell was superseded between the lock and this read.
+        // Either way, re-read: `seen` is stale, so the doorbell breaks
+        // straight back here, and the loop settles the moment no
+        // publish is mid-flight. Advancing `seen` any other way is how
+        // a worker silently skips an SPMD job and livelocks its
+        // publisher — this file's second caught race. A chunks job we
+        // were behind on is skipped naturally, through the slot: by the
+        // time we catch up, the slot holds a later job, which is only
+        // possible because that publisher finished without us.
+        let s2 = sh.seq.load(Ordering::Acquire);
+        if u64::from(job.gen) != s2 {
+            continue;
+        }
+        seen = s2;
         if job.spmd {
-            // An SPMD job is current by construction: the publisher's
-            // completion wait spans every slot's call, so a worker that
-            // reached here through this generation's doorbell holds a
-            // live closure. Oversleeping a generation entirely is
-            // impossible while the publisher blocks on `done`.
+            // Current and fully published by the check above; the
+            // publisher's completion wait spans this slot's call, so
+            // the closure is live for it, and every worker reaches
+            // every SPMD job exactly once.
             if slot < job.n {
                 // SAFETY: the publisher waits for `done == n`, which
                 // this slot's add below is part of, so the closure
@@ -480,23 +490,35 @@ mod tests {
     }
 
     /// Chunked and SPMD jobs interleave on one team without confusing
-    /// each other's dispatch.
+    /// each other's dispatch: every item and every slot runs exactly
+    /// once, per round. Per-round accounting rather than a grand total,
+    /// because the half-published-copy race this test caught showed up
+    /// as a handful of extra executions in tens of thousands — a total
+    /// smears that into flakiness, a round pins it to a job.
     #[test]
     fn chunked_and_spmd_jobs_interleave() {
-        let mut team = Team::new(3).expect("width 3");
+        let mut team = Team::new(4).expect("width 4");
         let width = team.width();
-        let total = AtomicU32::new(0);
-        for round in 0..1_000u32 {
+        for round in 0..15_000u32 {
             if round % 2 == 0 {
-                team.run(50, |_| {
-                    total.fetch_add(1, Ordering::Relaxed);
+                let hits: Vec<AtomicU32> = (0..50).map(|_| AtomicU32::new(0)).collect();
+                team.run(50, |i| {
+                    hits[i].fetch_add(1, Ordering::Relaxed);
                 });
+                for (i, h) in hits.iter().enumerate() {
+                    let v = h.load(Ordering::Relaxed);
+                    assert!(v == 1, "round {round}: chunk item {i} ran {v} times");
+                }
             } else {
-                team.run_spmd(|_| {
-                    total.fetch_add(1, Ordering::Relaxed);
+                let ran: Vec<AtomicU32> = (0..width).map(|_| AtomicU32::new(0)).collect();
+                team.run_spmd(|slot| {
+                    ran[slot].fetch_add(1, Ordering::Relaxed);
                 });
+                for (sl, r) in ran.iter().enumerate() {
+                    let v = r.load(Ordering::Relaxed);
+                    assert!(v == 1, "round {round}: spmd slot {sl} ran {v} times");
+                }
             }
         }
-        assert_eq!(total.load(Ordering::Relaxed), 500 * 50 + 500 * width as u32);
     }
 }
