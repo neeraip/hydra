@@ -21,7 +21,6 @@ modelling deviations.
 | Bellinge, the storm hours alone (03:00 to 12:00) | **0.95** |
 | Bellinge, a dry-weather day (12 h) | 1.21 |
 | SWMM test corpus, models running 0.2 to 1 s | 1.08 |
-| A 4,394-node combined system, 48 h dynamic wave | **0.64** |
 
 The corpus is the predecessor's own regression suite. Its many
 sub-0.2-second models are dominated by process start and parse and are
@@ -45,23 +44,20 @@ threading over its routing iteration. It is an alpha, so these numbers
 are pinned to that version, measured August 2026 with the same method
 as above; expect them to move as it matures. Its results track
 SWMM 5.2.4 very closely (99.96% or more of all-period node depths
-within 0.1 on the two networks below), so the accuracy comparisons on
-this page carry over to it unchanged.
+within 0.1 on the network below), so the accuracy comparisons on this
+page carry over to it unchanged.
 
 | Workload | Hydra | SWMM 6, 1 thread | SWMM 6, 4 threads |
 |---|---|---|---|
-| Bellinge, 48 h | 52 s serial, **30 s at width 6** | 55 s | 26 s |
-| 4,394-node system, 48 h | 227 s serial, **120 s at width 4** | — | 194 s |
+| Bellinge, 48 h | 52 s serial, **29 s at width 6** | 55 s | 26 s |
 
 Per core the engines are at parity: Hydra's serial run edges SWMM 6's
-single thread on both networks. Threaded, both engines now run the
-whole routing iteration as one parallel region; on Bellinge they land
-within a few seconds of each other, and on the larger system Hydra at
-width 4 finishes in under two thirds of SWMM 6's four-thread time
-while using fewer processor seconds. Both engines hold results
-bit-identical across thread counts; Hydra's serial default
-additionally means the browser build and the desktop app compute the
-same bytes.
+single thread. Threaded, both engines run the whole routing iteration
+as one parallel region and land within a few seconds of each other,
+with Hydra using fewer processor seconds to get there. Both engines
+hold results bit-identical across thread counts; Hydra's serial
+default additionally means the browser build and the desktop app
+compute the same bytes.
 ### Width, for integrators
 
 The SDK's `threads` cargo feature runs the routing iteration and the
@@ -69,25 +65,17 @@ statistics pass across a persistent worker team, with the width taken
 from the model's own `THREADS` option. Results are byte-identical at
 every width: the specification fixes every accumulation order, and a
 test holds serial and threaded runs, results and report both, to the
-same bytes. So measured, same method: Bellinge at width 6 runs 30 s
-(0.60 of SWMM), and the 4,394-node system at width 4 runs 120 s (0.34
-of SWMM, and well ahead of SWMM 6's four-thread 194 s). The official
-binaries do not enable the feature yet: compiling it costs a measured
-~8% of serial routing through displaced inlining under the release
-profile's fat LTO, a poor default trade for models that never ask for
-width.
+same bytes. So measured, same method: Bellinge at width 6 runs 29 s,
+0.58 of SWMM 5's serial time on the same window. The official
+binaries enable the feature: a model that never asks for width runs
+the serial arm, bit for bit, at a compiled-in cost of about 2%, and a
+model whose `THREADS` asks for width takes the whole gain.
 
-Accuracy rides the same runs. On the 48-hour system, 4,373 of 4,394 node
-depths agree within 5 cm. On Bellinge, node depths match SWMM's own
-Preissmann-slot closure on 992 of 1,020 nodes. Every remaining
+Accuracy rides the same runs. On Bellinge, node depths match SWMM's
+own Preissmann-slot closure on 992 of 1,020 nodes. Every remaining
 difference across the corpus is either fixed or documented in the
 specification with its cause and a source citation; the specifications'
 correspondence notes are the index of them.
-
-Memory on the 4,394-node model (a 320 MB input): 613 MB peak during
-import, 194 MB for the rest of the run, against SWMM's roughly 160 MB.
-SWMM reads the file from disk in passes; Hydra holds the model bytes in
-memory, which is also what lets the same engine run in a browser.
 
 ## Water distribution, measured against EPANET
 
