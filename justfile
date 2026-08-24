@@ -47,8 +47,12 @@ setup-tools:
 # Run all tests with the same flags CI uses
 test:
     cargo test --workspace --all-targets --locked
-    # The 6.4 width contract only compiles with the feature on; without
-    # this line nothing in CI would ever run the threaded path.
+    # Workspace unification switches the drainage engine's `threads`
+    # feature on (the apps enable it), so the line above tests the
+    # threaded configuration. These two keep the other configurations
+    # honest: the engine's serial-only compile, and the 6.4 width
+    # contract even if the apps ever drop the feature.
+    cargo test -p hydra-engine-uds --locked
     cargo test -p hydra-engine-uds --features threads --test threads --locked
 
 # Run hydra-engine-wds tests only
