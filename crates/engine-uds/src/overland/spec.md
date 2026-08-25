@@ -276,7 +276,16 @@ at the *finer* of its two cells' cadences, and the positivity share of
 cannot be overdrawn by a fine face. Boundary-condition and coupling cells
 are pinned to tier 0. Tiers and the active set rebuild every fourth macro
 cycle; between rebuilds the base step may only tighten (a frozen step has
-been observed to let a seiche grow at $\alpha = 0.7$). A window tail too
+been observed to let a seiche grow at $\alpha = 0.7$). Re-tiering
+invalidates the positivity bookkeeping of any in-flight accumulator (a
+face's take count restarts against an exporter volume that has not yet
+absorbed the pending takes, and the doubled grant has been measured to
+overdraw cells into the positivity floor, leaking volume), so every
+pending accumulator side is gathered into its cell, and the cell's
+closure re-evaluated, immediately before tiers are reassigned — at every
+rebuild and before a tail collapse. A face walled by deactivation
+surrenders its discharge at the rebuild: stale momentum must not survive
+re-activation. A window tail too
 short for a full macro cycle collapses every cell to tier 0 and lands
 exactly on the target time: **an advance always reaches its target** —
 there is no rejection or retry in this subsystem, and §15.4.6 records why
@@ -293,6 +302,17 @@ halo of the active set is kept active so an advancing front always has a
 receiving cell, and a face conveys only when **both** its cells are
 active (one-sided conveyance has been measured to lose basin volume).
 Cells with coupling points or non-wall boundary edges are always active.
+
+**The published picture.** An advance returns with every cell at the
+target time, but a prognostic face discharge was last clamped against
+the surface it saw at its own firing, and cell firings since have moved
+that surface: a draining front would otherwise expose a super-Froude
+discharge inconsistent with the published depths. The observable face
+discharge is therefore re-limited on reading: the face flow depth is
+re-evaluated from the published surfaces (§15.3), a face at or below
+the drying depth reads zero, and the Froude cap of §15.4.2 is
+re-applied. The prognostic value is untouched; the re-limit is a
+reading, not an integration step.
 
 #### 15.4.5 Concurrency
 
@@ -515,7 +535,12 @@ implemented reference solutions: lake at rest over immersed and emerged
 bumps (exact to round-off — the well-balancing property, which the
 deadband and face-gating exist to protect); subcritical flow over a bump
 (≲ 1%, the residual being the omitted velocity-head dip); MacDonald
-subcritical profile (≲ 2%). Transcritical, dam-break, and oscillating
+subcritical profile (≲ 2%). A frictionless case posed between a
+specified-flow inlet and a specified-stage outlet holds an undamped
+standing wave — both laws reflect, and the scheme adds no dissipation
+of its own — so steady analytic cases are graded on the **time-mean**
+field over whole periods of the settled oscillation, which is the
+steady solution the oscillation rides on. Transcritical, dam-break, and oscillating
 (Thacker) cases are graded against recorded baselines rather than
 analytic solutions while the convective term is optional, and the
 supercritical MacDonald profile is an **expected failure**, recorded as

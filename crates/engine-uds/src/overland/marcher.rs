@@ -128,7 +128,12 @@ pub struct Marcher {
     /// §15.4.4 active set with hysteresis, one-ring halo, and pinned
     /// boundary cells.
     active: Vec<bool>,
-    substep: u64,
+    /// §15.4.4 tier per cell (0 = every base substep); boundary cells
+    /// pinned to 0, inactive cells parked at the coarsest.
+    tier: Vec<u8>,
+    /// A face fires at the finer of its two cells' cadences.
+    face_tier: Vec<u8>,
+    macro_cycles: u64,
 
     // ── Sources, set by the caller before an advance (m/s) ─────────
     pub rain: Vec<f64>,
@@ -306,7 +311,9 @@ impl Marcher {
             facc_l: vec![0.0; nf],
             facc_r: vec![0.0; nf],
             active: vec![false; nc],
-            substep: 0,
+            tier: vec![0; nc],
+            face_tier: Vec::new(),
+            macro_cycles: 0,
             rain: vec![0.0; nc],
             evap: vec![0.0; nc],
             coupling: vec![0.0; nc],
@@ -318,6 +325,7 @@ impl Marcher {
         for ci in 0..nc {
             m.reclose(ci);
         }
+        m.face_tier = vec![0; m.faces.len()];
         m.refresh_perot();
         m.rebuild_active();
         m
@@ -340,21 +348,30 @@ impl Marcher {
     /// the march (waves growing from the θ-blend feeding on itself).
     fn refresh_perot(&mut self) {
         for ci in 0..self.area.len() {
-            let (mut sx, mut sy) = (0.0, 0.0);
-            let lo = self.cf_off[ci] as usize;
-            let hi = self.cf_off[ci + 1] as usize;
-            for &(fi, sign) in &self.cf_face[lo..hi] {
-                let f = &self.faces[fi as usize];
-                let flux = sign * self.q[fi as usize] * f.xi;
-                sx += flux * (f.mx - self.cx[ci]);
-                sy += flux * (f.my - self.cy[ci]);
-            }
-            self.qcx[ci] = sx / self.area[ci];
-            self.qcy[ci] = sy / self.area[ci];
+            self.perot_cell(ci);
         }
-        // §15.5 completion: a boundary edge's discharge belongs to its
-        // cell's reconstruction too, in the same outward-flux convention
-        // (the prognostic is inflow-positive, so outward is its negation).
+        self.perot_complete_boundaries();
+    }
+
+    /// One cell's interior-face reconstruction, at its firing.
+    fn perot_cell(&mut self, ci: usize) {
+        let (mut sx, mut sy) = (0.0, 0.0);
+        let lo = self.cf_off[ci] as usize;
+        let hi = self.cf_off[ci + 1] as usize;
+        for &(fi, sign) in &self.cf_face[lo..hi] {
+            let f = &self.faces[fi as usize];
+            let flux = sign * self.q[fi as usize] * f.xi;
+            sx += flux * (f.mx - self.cx[ci]);
+            sy += flux * (f.my - self.cy[ci]);
+        }
+        self.qcx[ci] = sx / self.area[ci];
+        self.qcy[ci] = sy / self.area[ci];
+    }
+
+    /// §15.5 completion: a boundary edge's discharge belongs to its
+    /// cell's reconstruction too, in the same outward-flux convention
+    /// (the prognostic is inflow-positive, so outward is its negation).
+    fn perot_complete_boundaries(&mut self) {
         for b in &self.boundaries {
             let ci = b.cell as usize;
             let flux = -b.q * b.xi;
@@ -391,26 +408,109 @@ impl Marcher {
         self.active = next;
     }
 
-    /// §15.4.4: the stable step over active cells.
-    fn stable_dt(&self) -> f64 {
-        let mut dt = self.max_dt;
-        for ci in 0..self.area.len() {
-            if !self.active[ci] || self.depth[ci] <= self.dry_depth {
-                continue;
-            }
-            let h = self.depth[ci];
-            let speed = (G * h).sqrt() + (self.qcx[ci].hypot(self.qcy[ci])) / h;
-            if self.metric[ci] > 0.0 && speed > 0.0 {
-                let l = (2.0 * self.area[ci] / self.metric[ci]).sqrt();
-                dt = dt.min(self.cfl * l / speed);
-            }
+    /// §15.4.4: a cell's stable step, `max_dt` where no wave constrains.
+    fn cell_dt(&self, ci: usize) -> f64 {
+        if !self.active[ci] || self.depth[ci] <= self.dry_depth {
+            return self.max_dt;
         }
-        dt
+        let h = self.depth[ci];
+        let speed = (G * h).sqrt() + (self.qcx[ci].hypot(self.qcy[ci])) / h;
+        if self.metric[ci] > 0.0 && speed > 0.0 {
+            let l = (2.0 * self.area[ci] / self.metric[ci]).sqrt();
+            (self.cfl * l / speed).min(self.max_dt)
+        } else {
+            self.max_dt
+        }
     }
 
-    /// §15.4.2 ∥ face phase (serial in this slice; per-face writes only).
-    fn fire_faces(&mut self, dt: f64) {
+    /// §15.4.4: the stable base step over active cells.
+    fn stable_dt(&self) -> f64 {
+        (0..self.area.len())
+            .map(|ci| self.cell_dt(ci))
+            .fold(self.max_dt, f64::min)
+    }
+
+    /// §15.4.4 published picture: the observable discharge of face
+    /// `fi`, re-limited against the published surfaces — dry faces read
+    /// zero and the Froude cap is re-applied. The prognostic value is
+    /// untouched.
+    pub fn published_face_q(&self, fi: usize) -> f64 {
+        let f = &self.faces[fi];
+        let (cl, cr) = (f.cl as usize, f.cr as usize);
+        let h_f = match self.face_rec {
+            FaceReconstruction::Mean => face_depth_mean(self.eta[cl], self.eta[cr], f.z_face),
+            FaceReconstruction::VfrFace => {
+                face_depth_vfr(self.eta[cl], self.eta[cr], f.z_lo, f.z_hi)
+            }
+        };
+        if h_f <= self.dry_depth {
+            return 0.0;
+        }
+        let cap = self.froude_max * h_f * (G * h_f).sqrt();
+        self.q[fi].clamp(-cap, cap)
+    }
+
+    /// §15.4.4: re-tiering invalidates the positivity bookkeeping of
+    /// in-flight accumulators, so gather every pending side into its
+    /// cell first, and re-close the cells that changed.
+    fn settle_accumulators(&mut self) {
+        for ci in 0..self.area.len() {
+            let lo = self.cf_off[ci] as usize;
+            let hi = self.cf_off[ci + 1] as usize;
+            let mut pending = 0.0;
+            for &(fi, sign) in &self.cf_face[lo..hi] {
+                let fi = fi as usize;
+                if sign > 0.0 {
+                    pending += self.facc_l[fi];
+                    self.facc_l[fi] = 0.0;
+                } else {
+                    pending += self.facc_r[fi];
+                    self.facc_r[fi] = 0.0;
+                }
+            }
+            if pending != 0.0 {
+                self.vol[ci] = (self.vol[ci] + pending).max(0.0);
+                self.reclose(ci);
+            }
+        }
+    }
+
+    /// §15.4.4: assign every cell its power-of-two tier from its own
+    /// stable step against the base step; boundary cells pin to 0,
+    /// inactive cells park at the coarsest; a face takes the finer of
+    /// its two cells' cadences.
+    fn assign_tiers(&mut self, dt0: f64) {
+        let k_max = self.lts_tiers.saturating_sub(1).min(7) as u8;
+        for ci in 0..self.area.len() {
+            self.tier[ci] = if !self.active[ci] {
+                k_max
+            } else {
+                let ratio = (self.cell_dt(ci) / dt0).max(1.0);
+                (ratio.log2().floor() as u8).min(k_max)
+            };
+        }
+        for b in &self.boundaries {
+            self.tier[b.cell as usize] = 0;
+        }
+        for (fi, f) in self.faces.iter().enumerate() {
+            self.face_tier[fi] = self.tier[f.cl as usize].min(self.tier[f.cr as usize]);
+            // §15.4.4: a face walled by deactivation surrenders its
+            // discharge; stale momentum must not survive re-activation.
+            if !(self.active[f.cl as usize] && self.active[f.cr as usize]) {
+                self.q[fi] = 0.0;
+            }
+        }
+    }
+
+    /// §15.4.2 ∥ face phase (serial in this slice; per-face writes
+    /// only): fire every face whose tier is due at base substep `s`,
+    /// each over its own tier's interval.
+    fn fire_faces(&mut self, dt0: f64, s: u64) {
         for fi in 0..self.faces.len() {
+            if !s.is_multiple_of(1u64 << self.face_tier[fi]) {
+                continue;
+            }
+            let dt = dt0 * f64::from(1u32 << self.face_tier[fi]);
             let f = &self.faces[fi];
             let (cl, cr) = (f.cl as usize, f.cr as usize);
             // Both-active gating: a one-sided face loses basin volume.
@@ -445,9 +545,13 @@ impl Marcher {
             let q_cap = self.froude_max * h_f * (G * h_f).sqrt();
             q_new = q_new.clamp(-q_cap, q_cap);
             // Positivity: the exporter grants at most β/3 of its volume
-            // per cell cycle.
+            // per cell cycle, divided by the times this face fires
+            // within the exporter's cycle (§15.4.4) — repeated takes at
+            // a tier interface would otherwise drain the cell into the
+            // backstop.
             let exporter = if q_new > 0.0 { cl } else { cr };
-            let budget = BETA / 3.0 * self.vol[exporter].max(0.0);
+            let refire = 1u32 << (self.tier[exporter] - self.face_tier[fi]);
+            let budget = BETA / 3.0 / f64::from(refire) * self.vol[exporter].max(0.0);
             let take = q_new.abs() * f.psi * f.xi * dt;
             if take > budget && take > 0.0 {
                 q_new *= budget / take;
@@ -459,10 +563,16 @@ impl Marcher {
         }
     }
 
-    /// §15.4.3 ∥ cell phase: gather own sides in fixed order, apply
-    /// sources, clamp, re-close.
-    fn fire_cells(&mut self, dt: f64) {
+    /// §15.4.3 ∥ cell phase: every cell whose tier is due at base
+    /// substep `s` gathers its own accumulator sides in fixed order,
+    /// applies its sources over its own tier's interval, clamps,
+    /// re-closes, and refreshes its velocity reconstruction.
+    fn fire_cells(&mut self, dt0: f64, s: u64) {
         for ci in 0..self.area.len() {
+            if !s.is_multiple_of(1u64 << self.tier[ci]) {
+                continue;
+            }
+            let dt = dt0 * f64::from(1u32 << self.tier[ci]);
             let lo = self.cf_off[ci] as usize;
             let hi = self.cf_off[ci + 1] as usize;
             let mut flux = 0.0;
@@ -490,6 +600,7 @@ impl Marcher {
             self.evap_out += take;
             self.vol[ci] = (before - take).max(0.0);
             self.reclose(ci);
+            self.perot_cell(ci);
         }
     }
 
@@ -576,32 +687,58 @@ impl Marcher {
             }
             self.vol[ci] = v_new;
             self.reclose(ci);
+            self.perot_cell(ci);
         }
+        self.perot_complete_boundaries();
     }
 
     /// Advance to exactly `span` seconds from now (§15.4.4: an advance
     /// always reaches its target).
     pub fn advance(&mut self, span: f64) {
         let mut remaining = span;
-        // Rebuild cadence: every fourth macro cycle of the (future) tier
-        // ladder — with the single-tier march, every 4·2^(K−1) substeps.
-        let rebuild_every = 4u64 << (self.lts_tiers.saturating_sub(1));
+        let nsub = 1u64 << self.lts_tiers.saturating_sub(1).min(7);
         let mut dt0 = self.stable_dt();
         while remaining > 1e-12 {
-            if self.substep.is_multiple_of(rebuild_every) {
+            // §15.4.4: the active set and the tiers rebuild every fourth
+            // macro cycle; between rebuilds the base step may only
+            // tighten, at macro-cycle boundaries, so every firing within
+            // a cycle shares one consistent dt0 and every cell
+            // integrates exactly nsub·dt0 per cycle.
+            if self.macro_cycles.is_multiple_of(4) {
+                self.settle_accumulators();
                 self.rebuild_active();
                 dt0 = self.stable_dt();
+                self.assign_tiers(dt0);
             } else {
-                // Between rebuilds the step may only tighten.
                 dt0 = dt0.min(self.stable_dt());
             }
-            let dt = dt0.min(remaining);
-            self.fire_faces(dt);
-            self.fire_cells(dt);
-            self.fire_boundaries(dt);
-            self.refresh_perot();
-            self.substep += 1;
-            remaining -= dt;
+            if dt0 * nsub as f64 > remaining {
+                // Tail: collapse every cell to tier 0 and land exactly.
+                // The collapse is a re-tiering, so settle first (§15.4.4).
+                self.settle_accumulators();
+                for t in &mut self.tier {
+                    *t = 0;
+                }
+                for t in &mut self.face_tier {
+                    *t = 0;
+                }
+                while remaining > 1e-12 {
+                    let dt = dt0.min(remaining);
+                    self.fire_faces(dt, 0);
+                    self.fire_cells(dt, 0);
+                    self.fire_boundaries(dt);
+                    remaining -= dt;
+                }
+                self.macro_cycles += 1;
+                break;
+            }
+            for s in 0..nsub {
+                self.fire_faces(dt0, s);
+                self.fire_cells(dt0, s);
+                self.fire_boundaries(dt0);
+            }
+            remaining -= dt0 * nsub as f64;
+            self.macro_cycles += 1;
         }
     }
 
@@ -846,6 +983,390 @@ mod tests {
         assert!(
             (h_avg / h_n - 1.0).abs() < 0.06,
             "mid-strip depth {h_avg} vs normal {h_n}"
+        );
+    }
+
+    /// A geometrically graded strip: cell sizes span a decade, so the
+    /// tier ladder genuinely spreads. `ratio` grades each quad's width.
+    fn graded_strip(nx: usize, ny: usize, dx0: f64, ratio: f64) -> OverlandMesh {
+        let mut mesh = OverlandMesh::default();
+        let mut xs = vec![0.0];
+        let mut dx = dx0;
+        for _ in 0..nx {
+            xs.push(xs.last().unwrap() + dx);
+            dx *= ratio;
+        }
+        let nvx = nx + 1;
+        for j in 0..=ny {
+            for &x in &xs {
+                mesh.verts.push(MeshVertex {
+                    x,
+                    y: j as f64,
+                    z: 10.0,
+                    tag: None,
+                });
+            }
+        }
+        for j in 0..ny {
+            for i in 0..nx {
+                let v00 = (j * nvx + i) as u32;
+                let v10 = (j * nvx + i + 1) as u32;
+                let v01 = ((j + 1) * nvx + i) as u32;
+                let v11 = ((j + 1) * nvx + i + 1) as u32;
+                mesh.cells.push(MeshCell {
+                    v: [v00, v10, v11],
+                    n: 0.10,
+                    h0: 0.0,
+                    tag: None,
+                });
+                mesh.cells.push(MeshCell {
+                    v: [v00, v11, v01],
+                    n: 0.10,
+                    h0: 0.0,
+                    tag: None,
+                });
+            }
+        }
+        mesh
+    }
+
+    /// The graded dam break at K tiers: 1.5 m charged over the fine end,
+    /// fronts crossing every tier interface. Returns (volumes at t_mid,
+    /// time-mean volumes over the last window, relative volume drift).
+    fn graded_dam_break(k: u32, t_mid: f64, t_end: f64) -> (Vec<f64>, Vec<f64>, f64) {
+        let mut mesh = graded_strip(24, 4, 1.0, 1.08);
+        mesh.options.lts_tiers = k;
+        let topo = Topology::build(&mesh).expect("valid");
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ci, mut c)| {
+                if topo.centroid[ci][0] < 4.0 {
+                    c.h0 = 1.5;
+                }
+                c
+            })
+            .collect();
+        let mut m = build(&mesh);
+        let v0 = m.storage();
+        let mut t = 0.0;
+        while t < t_mid {
+            m.advance(5.0f64.min(t_mid - t));
+            t += 5.0;
+        }
+        let v_mid = m.vol.clone();
+        // Time-mean over the last 60 s: the closed basin sustains a
+        // weakly damped seiche, and an instantaneous sample aliases the
+        // K-dependent phase; the mean is the settled solution.
+        let mut acc = vec![0.0; m.vol.len()];
+        let mut n_samples = 0u32;
+        while t < t_end {
+            m.advance(5.0f64.min(t_end - t));
+            t += 5.0;
+            if t >= t_end - 60.0 {
+                for (a, v) in acc.iter_mut().zip(&m.vol) {
+                    *a += v;
+                }
+                n_samples += 1;
+            }
+        }
+        for a in &mut acc {
+            *a /= f64::from(n_samples);
+        }
+        let drift = ((m.storage() - v0) / v0).abs();
+        (v_mid, acc, drift)
+    }
+
+    /// §15.9: the march conserves exactly at every tier count, through a
+    /// multiscale dam break with fronts crossing tier interfaces.
+    #[test]
+    fn lts_conserves_at_every_tier_count() {
+        for k in [1u32, 2, 4, 6] {
+            let (_, _, drift) = graded_dam_break(k, 60.0, 120.0);
+            assert!(drift < 1e-10, "volume drift {drift} at K={k}");
+        }
+    }
+
+    /// §15.9: the tiered march agrees with the global-step march — the
+    /// mid-transient divergence decays rather than grows, and the
+    /// settled solutions match to centimetres.
+    #[test]
+    fn lts_agrees_with_the_global_step() {
+        let (mid1, end1, _) = graded_dam_break(1, 120.0, 600.0);
+        let (mid4, end4, _) = graded_dam_break(4, 120.0, 600.0);
+        let mesh = graded_strip(24, 4, 1.0, 1.08);
+        let topo = Topology::build(&mesh).expect("valid");
+        let depth_div = |a: &[f64], b: &[f64]| {
+            a.iter()
+                .zip(b)
+                .enumerate()
+                .map(|(ci, (x, y))| (x - y).abs() / topo.area[ci])
+                .fold(0.0_f64, f64::max)
+        };
+        let max_mid = depth_div(&mid1, &mid4);
+        let max_end = depth_div(&end1, &end4);
+        assert!(
+            max_end < max_mid,
+            "tier divergence must decay, not grow: mid {max_mid} end {max_end}"
+        );
+        assert!(max_end <= 0.025, "settled max depth divergence {max_end}");
+        // Peak settled depths agree within 5%.
+        let peak = |v: &[f64]| {
+            v.iter()
+                .enumerate()
+                .map(|(ci, x)| x / topo.area[ci])
+                .fold(0.0_f64, f64::max)
+        };
+        let (p1, p4) = (peak(&end1), peak(&end4));
+        assert!(
+            (p4 - p1).abs() <= 0.05 * p1.max(1e-12),
+            "peaks: global {p1} tiered {p4}"
+        );
+    }
+
+    /// §15.4.2: at steady state the free surface is spatially smooth —
+    /// no standing cell-to-cell stair from the split-quad centroid
+    /// staggering. Guards the shared-edge sill datum, both closures.
+    #[test]
+    fn a_steady_slope_carries_no_checkerboard() {
+        for closure in [CellClosure::Flat, CellClosure::Vfr] {
+            let (nx, ny, dx, slope) = (40usize, 4usize, 1.0, 0.01);
+            let mut mesh = grid(nx, ny, dx, |x, _| 10.0 + slope * x);
+            mesh.options.cell_closure = closure;
+            let topo = Topology::build(&mesh).expect("valid");
+            for ci in 0..mesh.cells.len() {
+                for e in 0..3usize {
+                    let slot = ci * 3 + e;
+                    if topo.neighbour[slot].is_none() && topo.edge_mid[slot][0] < 1e-9 {
+                        mesh.boundaries.push(crate::overland::BoundaryRow {
+                            cell: ci as u32,
+                            edge: e as u8,
+                            condition: BoundaryCondition::NormalFlow { slope },
+                            group: None,
+                        });
+                    }
+                }
+            }
+            let mut m = build(&mesh);
+            for r in &mut m.rain {
+                *r = 2.0e-4;
+            }
+            m.advance(6000.0);
+            // Roughness of η against the face-neighbour mean over the
+            // strip interior (the outlet drawdown and the upslope crest
+            // carry genuine one-sided curvature).
+            let (mut ss, mut mx, mut n) = (0.0_f64, 0.0_f64, 0u32);
+            for ci in 0..m.eta.len() {
+                let x = topo.centroid[ci][0];
+                if !(5.0..=35.0).contains(&x) {
+                    continue;
+                }
+                let (mut hs, mut hn) = (0.0, 0u32);
+                for e in 0..3usize {
+                    if let Some(nb) = topo.neighbour[ci * 3 + e] {
+                        hs += m.eta[nb as usize];
+                        hn += 1;
+                    }
+                }
+                if hn < 3 {
+                    continue;
+                }
+                let r = m.eta[ci] - hs / f64::from(hn);
+                ss += r * r;
+                mx = mx.max(r.abs());
+                n += 1;
+            }
+            let rms = (ss / f64::from(n.max(1))).sqrt();
+            assert!(rms < 1.2e-3, "{closure:?}: surface roughness rms {rms}");
+            assert!(mx < 3.5e-3, "{closure:?}: surface roughness max {mx}");
+        }
+    }
+
+    /// §15.4.2: on a steep dam-break every published face discharge obeys
+    /// the Froude cap against the clamp's own face depth, and nothing
+    /// runs away.
+    #[test]
+    fn the_froude_clamp_bounds_every_face() {
+        let mut mesh = grid(20, 3, 1.0, |x, _| 10.0 - 0.10 * x);
+        let topo = Topology::build(&mesh).expect("valid");
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ci, mut c)| {
+                c.n = 0.015;
+                if topo.centroid[ci][0] < 3.0 {
+                    c.h0 = 1.0;
+                }
+                c
+            })
+            .collect();
+        let mut m = build(&mesh);
+        for _ in 0..40 {
+            m.advance(1.0);
+            for &v in &m.vol {
+                assert!(v.is_finite());
+            }
+            for (fi, f) in m.faces.iter().enumerate() {
+                let q = m.published_face_q(fi).abs();
+                if q == 0.0 {
+                    continue;
+                }
+                let h_f = m.eta[f.cl as usize].max(m.eta[f.cr as usize]) - f.z_face;
+                assert!(h_f > 0.0, "published flux across a dry face");
+                let cap = m.froude_max * h_f * (G * h_f).sqrt();
+                assert!(q <= cap * (1.0 + 1e-9), "face {fi}: {q} above cap {cap}");
+            }
+        }
+    }
+
+    /// §15.3: a one-vertex-wide ridge holds a pool under `VFR_FACE` (the
+    /// edge's own endpoint beds wall it) and leaks under `MEAN` (the
+    /// centroid-diluted face bed conveys) — the documented defect the
+    /// option exists to fix.
+    #[test]
+    fn a_thin_crest_holds_under_vfr_face_and_leaks_under_mean() {
+        let ridge = |x: f64, _: f64| if (x - 8.0).abs() < 1e-9 { 1.0 } else { 0.0 };
+        let seed = |rec: FaceReconstruction| {
+            let mut mesh = grid(8, 4, 2.0, ridge);
+            mesh.options.face_reconstruction = rec;
+            fill_to_stage(&mut mesh, 0.9);
+            let topo = Topology::build(&mesh).expect("valid");
+            let cells = std::mem::take(&mut mesh.cells);
+            mesh.cells = cells
+                .into_iter()
+                .enumerate()
+                .map(|(ci, mut c)| {
+                    if topo.centroid[ci][0] > 8.0 {
+                        c.h0 = 0.0;
+                    }
+                    c
+                })
+                .collect();
+            (build(&mesh), topo)
+        };
+
+        // VFR_FACE walls the crest: the right half stays bone dry and the
+        // pool keeps its volume.
+        let (mut m, topo) = seed(FaceReconstruction::VfrFace);
+        let v0 = m.vol.clone();
+        m.advance(600.0);
+        for (ci, (&v, &v_init)) in m.vol.iter().zip(&v0).enumerate() {
+            if topo.centroid[ci][0] > 8.0 {
+                assert_eq!(v, 0.0, "VFR_FACE leaked at cell {ci}");
+            } else {
+                assert!(
+                    (v - v_init).abs() <= 1e-9 * (v_init + 1.0),
+                    "pool cell {ci} moved: {v} vs {v_init}"
+                );
+            }
+        }
+
+        // MEAN leaks through the centroid-diluted crest.
+        let (mut m, topo) = seed(FaceReconstruction::Mean);
+        m.advance(600.0);
+        let crossed: f64 = (0..m.vol.len())
+            .filter(|&ci| topo.centroid[ci][0] > 8.0)
+            .map(|ci| m.vol[ci])
+            .sum();
+        assert!(crossed > 0.0, "expected the centroid face bed to leak");
+    }
+
+    /// §15.9 SWASHES: subcritical flow over a bump, against the exact
+    /// Bernoulli cubic. The scheme omits convective acceleration, so its
+    /// frictionless steady surface is flat and the residual is exactly
+    /// the velocity-head dip over the bump; the grade bounds the
+    /// relative L1 depth error at 1.5%.
+    #[test]
+    fn swashes_subcritical_flow_over_a_bump() {
+        let (nx, ny, dx) = (100usize, 2usize, 0.25);
+        let l = nx as f64 * dx;
+        let (q_in, h_out) = (4.42, 2.0);
+        let bump = |x: f64, _: f64| {
+            if x > 8.0 && x < 12.0 {
+                0.2 - 0.05 * (x - 10.0) * (x - 10.0)
+            } else {
+                0.0
+            }
+        };
+        let mut mesh = grid(nx, ny, dx, bump);
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .map(|mut c| {
+                c.n = 1e-6; // the case is frictionless
+                c
+            })
+            .collect();
+        fill_to_stage(&mut mesh, h_out);
+        let topo = Topology::build(&mesh).expect("valid");
+        for ci in 0..mesh.cells.len() {
+            for e in 0..3usize {
+                let slot = ci * 3 + e;
+                if topo.neighbour[slot].is_some() {
+                    continue;
+                }
+                let x = topo.edge_mid[slot][0];
+                if x < 1e-9 {
+                    // Inflow: authored outward-positive, so inflow is
+                    // negative (§15.5).
+                    mesh.boundaries.push(crate::overland::BoundaryRow {
+                        cell: ci as u32,
+                        edge: e as u8,
+                        condition: BoundaryCondition::Flow(SeriesOrValue::Value(-q_in)),
+                        group: None,
+                    });
+                } else if x > l - 1e-9 {
+                    mesh.boundaries.push(crate::overland::BoundaryRow {
+                        cell: ci as u32,
+                        edge: e as u8,
+                        condition: BoundaryCondition::Stage(SeriesOrValue::Value(h_out)),
+                        group: None,
+                    });
+                }
+            }
+        }
+        let mut m = build(&mesh);
+        // §15.9: between a specified-flow inlet and a stage outlet the
+        // frictionless case holds an undamped standing wave; the grade
+        // reads the time-mean field, which is the steady solution.
+        m.advance(300.0);
+        let mut mean = vec![0.0; m.depth.len()];
+        let samples = 300u32;
+        for _ in 0..samples {
+            m.advance(1.0);
+            for (a, h) in mean.iter_mut().zip(&m.depth) {
+                *a += h;
+            }
+        }
+        for a in &mut mean {
+            *a /= f64::from(samples);
+        }
+
+        // The exact profile: h³ + (z − H)h² + q²/2g = 0, subcritical
+        // root, H the outlet's total head.
+        let head = h_out + q_in * q_in / (2.0 * G * h_out * h_out);
+        let exact = |z: f64| {
+            let mut h = (head - z).max(0.1);
+            for _ in 0..60 {
+                let f = h * h * h + (z - head) * h * h + q_in * q_in / (2.0 * G);
+                let df = 3.0 * h * h + 2.0 * (z - head) * h;
+                h -= f / df;
+            }
+            h
+        };
+        let (mut err, mut norm) = (0.0, 0.0);
+        for (ci, &h) in mean.iter().enumerate() {
+            let x = topo.centroid[ci][0];
+            let h_ref = exact(bump(x, 0.0));
+            err += (h - h_ref).abs() * topo.area[ci];
+            norm += h_ref * topo.area[ci];
+        }
+        assert!(
+            err / norm < 0.0125,
+            "SWASHES bump relative L1 depth error {}",
+            err / norm
         );
     }
 
