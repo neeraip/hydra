@@ -45,6 +45,9 @@ concurrency:
 
 permissions:
   contents: write
+  # For the recreate-note comment below; Dependabot-triggered runs get a
+  # read-only GITHUB_TOKEN unless the scope is granted here explicitly.
+  pull-requests: write
 
 jobs:
   notices:
@@ -130,3 +133,21 @@ jobs:
           git commit -m "chore(gui): regenerate third-party licenses for this bump"
           git push origin "HEAD:${GITHUB_HEAD_REF}"
           echo "Pushed regenerated notices onto ${GITHUB_HEAD_REF}." >> "$GITHUB_STEP_SUMMARY"
+
+      # Dependabot refuses to rebase a branch holding a commit it did not
+      # author, so the push above trades `@dependabot rebase` away. Say so
+      # on the pull request, once, with the command that still works —
+      # otherwise the trade is discovered from Dependabot's refusal, PRs
+      # deep into a conflict.
+      - name: Note the recreate command on the pull request
+        if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' && steps.check.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- licenses-ci-recreate-note -->"
+          if gh api "repos/${{ github.repository }}/issues/$PR/comments" --jq '.[].body' | grep -qF "$marker"; then
+            exit 0
+          fi
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body "$marker
+          This branch now carries a CI commit (regenerated licence notices), so Dependabot will refuse \`@dependabot rebase\` from here on. Use \`@dependabot recreate\` instead — it rebuilds the pull request from scratch, and this workflow re-completes the notices on the new head."
