@@ -84,20 +84,24 @@ use hydra_sdk::io;
 use hydra_sdk::uds;
 ```
 
-The complete `hydra-engine-uds` crate, namespaced. The session API is
-`uds::simulation::engine::Simulation`: `open` (or `open_with_climate`) a model
-from its input text, `step`/`run` it, then query results by element id or
-write them with `write_out` (SWMM-compatible binary) and `write_report`
-(text). The engine performs no file I/O: model text and any auxiliary file
-contents (climate records, hotstart bytes, routing interface files) are
-supplied in memory, the way the `hydra` CLI does it.
+The complete `hydra-engine-uds` crate, namespaced. The engine is
+format-blind: the session API is `uds::simulation::engine::Simulation`,
+built from a parsed model with `from_network`, stepped or run, then queried
+by element id. Everything between SWMM text or files and that session lives
+in the `swmm` dialect module: `swmm::session::open` (or
+`open_with_climate`) opens a session straight from model text, and
+`swmm::session::write_out` / `write_report` persist a finished run. The
+engine performs no file I/O: model text and any auxiliary file contents
+(climate records, hotstart bytes, routing interface files) are supplied in
+memory, the way the `hydra` CLI does it.
 
 | Module | Purpose |
 |---|---|
 | `uds::model` | SWMM data model: `Network`, vertices, channels, parcels, options |
-| `uds::io` | INP import (`objects::parse_network`), recognition, climate files, OUT/RPT writers, interface files |
 | `uds::simulation` | Session (`engine::Simulation`), controls, statistics |
 | `uds::hydrology` / `uds::hydraulics` / `uds::transport` | The solver compartments, exposed for integrators that need direct access |
+| `swmm` | The SWMM dialect: INP import and recognition, `swmm::session` (open/run/write helpers), climate files, OUT/RPT writers, interface files |
+| `epanet` | The EPANET dialect, same shape, for the water-distribution engine. The `io` module above is its conventional face |
 
 ### Engine Identity
 

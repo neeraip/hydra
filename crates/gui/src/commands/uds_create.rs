@@ -1051,8 +1051,8 @@ pub(crate) fn create_uds_parcel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hydra::uds::io::inp_writer::write_inp;
-    use hydra::uds::io::objects::parse_network;
+    use hydra::swmm::inp_writer::write_inp;
+    use hydra::swmm::objects::parse_network;
 
     const MODEL: &str = "\
 [OPTIONS]

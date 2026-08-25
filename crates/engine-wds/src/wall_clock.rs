@@ -33,7 +33,7 @@ use std::time::SystemTime;
 // here rather than trapping in a browser.
 #[allow(clippy::disallowed_methods)]
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub(crate) fn now() -> SystemTime {
+pub fn now() -> SystemTime {
     SystemTime::now()
 }
 
@@ -43,7 +43,7 @@ pub(crate) fn now() -> SystemTime {
 /// only reachable if the host clock is set before 1970, and a provenance
 /// stamp is not worth aborting a run over.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub(crate) fn now() -> SystemTime {
+pub fn now() -> SystemTime {
     let millis = chrono::Utc::now().timestamp_millis();
     match u64::try_from(millis) {
         Ok(ms) => SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(ms),

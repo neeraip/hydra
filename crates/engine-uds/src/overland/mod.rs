@@ -817,3 +817,72 @@ mod tests {
             .any(|e| matches!(e, MeshError::NonManifoldEdge { .. })));
     }
 }
+
+/// One §15.8 ledger row, cumulative since the start of the run (m³).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LedgerRow {
+    pub storage: f64,
+    pub rain_in: f64,
+    pub evap_out: f64,
+    pub infiltration_out: f64,
+    pub junction_out: f64,
+    pub junction_in: f64,
+    pub outfall_in: f64,
+    pub outfall_out: f64,
+    pub boundary_in: f64,
+    pub boundary_out: f64,
+    pub error: f64,
+}
+
+impl LedgerRow {
+    /// Read the row off the live marcher.
+    pub fn of(m: &marcher::Marcher) -> LedgerRow {
+        LedgerRow {
+            storage: m.storage(),
+            rain_in: m.rain_in,
+            evap_out: m.evap_out,
+            infiltration_out: m.infiltration_out,
+            junction_out: m.coupling_out,
+            junction_in: m.coupling_in,
+            outfall_in: m.outfall_in,
+            outfall_out: m.outfall_out,
+            boundary_in: m.boundary_in,
+            boundary_out: m.boundary_out,
+            error: m.ledger_error(),
+        }
+    }
+
+    /// The §14.16 serialisation order, for the dialect tooling.
+    pub fn to_array(self) -> [f64; 11] {
+        [
+            self.storage,
+            self.rain_in,
+            self.evap_out,
+            self.infiltration_out,
+            self.junction_out,
+            self.junction_in,
+            self.outfall_in,
+            self.outfall_out,
+            self.boundary_in,
+            self.boundary_out,
+            self.error,
+        ]
+    }
+
+    /// The §14.16 serialisation order's inverse.
+    pub fn from_array(a: [f64; 11]) -> LedgerRow {
+        LedgerRow {
+            storage: a[0],
+            rain_in: a[1],
+            evap_out: a[2],
+            infiltration_out: a[3],
+            junction_out: a[4],
+            junction_in: a[5],
+            outfall_in: a[6],
+            outfall_out: a[7],
+            boundary_in: a[8],
+            boundary_out: a[9],
+            error: a[10],
+        }
+    }
+}

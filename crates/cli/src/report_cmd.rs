@@ -152,7 +152,14 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         &template,
         hydra::report_catalog(),
         context,
-        |id, options| hydra::produce_report_block(id, results_path, &network, options),
+        |id, options| {
+            let src = hydra::io::out_reader::OutFileSource::open(results_path).map_err(|e| {
+                hydra::common::BlockError::Failed {
+                    message: e.to_string(),
+                }
+            })?;
+            hydra::produce_report_block(id, &src, &network, options)
+        },
     );
     // Quantity-tagged values arrive in SI display units (hydra-common
     // §3.3); the CLI has no reader preference to honour, so it resolves to

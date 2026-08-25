@@ -1,0 +1,17 @@
+[package]
+name = "hydra-interop-swmm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Hydra's SWMM dialect — INP import, OUT/RPT output, interface files, and recognition for the urban drainage engine"
+keywords = ["water", "hydraulics", "simulation", "swmm"]
+categories = ["science", "simulation"]
+
+[dependencies]
+hydra-common = { path = "../common", version = "14.0.0" }
+hydra-engine-uds = { path = "../engine-uds", version = "14.0.0" }

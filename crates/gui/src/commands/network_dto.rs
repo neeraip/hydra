@@ -425,7 +425,7 @@ impl NetworkStateInner {
             return None;
         };
         if *dirty {
-            match hydra::uds::io::inp_writer::write_inp(network) {
+            match hydra::swmm::inp_writer::write_inp(network) {
                 Ok(text) => {
                     *raw_text = text;
                     *dirty = false;
@@ -1217,7 +1217,7 @@ J1  10  3  0  0  0
 [OUTFALLS]
 O1  9  FREE  NO
 ";
-        let (network, diags) = hydra::uds::io::objects::parse_network(INP);
+        let (network, diags) = hydra::swmm::objects::parse_network(INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         let mut state = NetworkStateInner::LoadedUds {
             raw_text: INP.to_string(),
@@ -1252,7 +1252,7 @@ O1  9  FREE  NO
     /// distinction `current_model_result` exists to keep.
     #[test]
     fn an_unwritable_drainage_model_reports_rather_than_saving_nothing() {
-        let (network, _) = hydra::uds::io::objects::parse_network(
+        let (network, _) = hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CMS\n\n[JUNCTIONS]\nJ1 10 3 0 0 0\n",
         );
         let mut network = network;

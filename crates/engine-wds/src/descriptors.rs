@@ -817,7 +817,7 @@ mod tests {
             panic!("link status must be categorical");
         };
         for st in [XHead, TempClosed, Closed, Open, Active, XFcv, XPressure] {
-            let code = crate::io::out_writer::status_out_code(st) as i64;
+            let code = crate::dialect::out_writer::status_out_code(st) as i64;
             assert!(
                 items.iter().any(|i| i.value == code),
                 "status {st:?} is written as {code} but no catalog item declares it"

@@ -234,6 +234,8 @@ LIBRARY_PATHS = [
     "crates/engine-uds",
     "crates/engine-wds",
     "crates/engines",
+    "crates/interop-epanet",
+    "crates/interop-swmm",
     "crates/report",
     "crates/sdk",
 ]

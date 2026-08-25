@@ -81,13 +81,13 @@ TS1  1:00  0.0
 /// checkpoint. The results must not differ by a bit.
 #[test]
 fn a_restored_run_continues_bit_identically() {
-    let (mut whole, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     whole.run();
     let want = every_output(&whole);
 
     // Stop mid-storm, where depths, flows and the head history are all
     // non-trivial: a checkpoint taken at rest would pass whatever it lost.
-    let (mut first, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     while first.report().elapsed < 1_800.0 {
         if !first.step() {
             panic!("the run ended before the checkpoint instant");
@@ -97,7 +97,7 @@ fn a_restored_run_continues_bit_identically() {
     first.save_checkpoint(&mut cp).expect("checkpoint");
     assert!(!cp.is_empty(), "an empty checkpoint proves nothing");
 
-    let (mut second, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let got = every_output(&second);
@@ -137,9 +137,9 @@ struct Outputs {
 
 fn every_output(sim: &Simulation) -> Outputs {
     let mut results = Vec::new();
-    sim.write_out(&mut results).expect("results");
+    hydra_interop_swmm::session::write_out(sim, &mut results).expect("results");
     let mut report = Vec::new();
-    sim.write_report(&mut report).expect("report");
+    hydra_interop_swmm::session::write_report(sim, &mut report).expect("report");
     let led = sim.ledgers();
     Outputs {
         results,
@@ -164,7 +164,7 @@ fn every_output(sim: &Simulation) -> Outputs {
 /// or the test above passes on an empty river.
 #[test]
 fn the_checkpoint_instant_is_not_a_model_at_rest() {
-    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     while sim.report().elapsed < 1_800.0 {
         assert!(sim.step(), "the run ended early");
     }
@@ -185,7 +185,7 @@ fn the_checkpoint_instant_is_not_a_model_at_rest() {
 /// whatever happens to line up.
 #[test]
 fn a_checkpoint_from_another_model_is_refused() {
-    let (mut a, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     a.run();
     let mut cp = Vec::new();
     a.save_checkpoint(&mut cp).expect("checkpoint");
@@ -193,7 +193,7 @@ fn a_checkpoint_from_another_model_is_refused() {
     // Renamed, not reshaped: the counts still match, which is the whole
     // of the check the predecessor makes.
     let renamed = MODEL.replace("J2", "JX");
-    let (mut b, _, _) = Simulation::open(&renamed).expect("open");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(&renamed).expect("open");
     let err = b.load_checkpoint(&cp).expect_err("a different model");
     assert!(err.contains("different model"), "{err}");
 }
@@ -201,7 +201,7 @@ fn a_checkpoint_from_another_model_is_refused() {
 /// Reordering alone is refused, which counts cannot catch.
 #[test]
 fn a_reordered_model_is_refused() {
-    let (mut a, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     a.run();
     let mut cp = Vec::new();
     a.save_checkpoint(&mut cp).expect("checkpoint");
@@ -211,7 +211,7 @@ fn a_reordered_model_is_refused() {
         "J2  9   4  0  0  0\nJ1  10  4  0  0  0",
     );
     assert_ne!(swapped, MODEL, "the fixture must actually reorder");
-    let (mut b, _, _) = Simulation::open(&swapped).expect("open");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(&swapped).expect("open");
     let err = b.load_checkpoint(&cp).expect_err("a reordered model");
     assert!(err.contains("reordered"), "{err}");
 }
@@ -220,13 +220,13 @@ fn a_reordered_model_is_refused() {
 /// same file again.
 #[test]
 fn a_replaying_run_restores_when_the_file_is_supplied_again() {
-    let (mut whole, _, _) = Simulation::open(&replay_model()).expect("open");
-    whole.supply_runoff(&replay_file()).expect("supply");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut whole, &replay_file()).expect("supply");
     whole.run();
     let want = every_output(&whole);
 
-    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
-    first.supply_runoff(&replay_file()).expect("supply");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut first, &replay_file()).expect("supply");
     let target = ((whole.snapshots.len() as f64 * 0.4) as usize).max(1);
     while first.snapshots.len() < target {
         assert!(first.step(), "the run ended before the checkpoint instant");
@@ -234,8 +234,8 @@ fn a_replaying_run_restores_when_the_file_is_supplied_again() {
     let mut cp = Vec::new();
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&replay_model()).expect("open");
-    second.supply_runoff(&replay_file()).expect("supply");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut second, &replay_file()).expect("supply");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let got = every_output(&second);
@@ -253,8 +253,8 @@ fn a_replaying_run_restores_when_the_file_is_supplied_again() {
 /// was never receiving and look entirely healthy.
 #[test]
 fn a_replaying_run_is_refused_without_the_same_file() {
-    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
-    first.supply_runoff(&replay_file()).expect("supply");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut first, &replay_file()).expect("supply");
     while first.snapshots.len() < 2 {
         assert!(first.step(), "the run ended early");
     }
@@ -262,14 +262,14 @@ fn a_replaying_run_is_refused_without_the_same_file() {
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
     // No file at all.
-    let (mut bare, _, _) = Simulation::open(&replay_model()).expect("open");
+    let (mut bare, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
     let err = bare.load_checkpoint(&cp).expect_err("no file supplied");
     assert!(err.contains("runoff"), "{err}");
     assert!(err.contains("given none"), "{err}");
 
     // A file of the same shape carrying different flows.
-    let (mut other, _, _) = Simulation::open(&replay_model()).expect("open");
-    other.supply_runoff(&replay_file_of(2.0)).expect("supply");
+    let (mut other, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut other, &replay_file_of(2.0)).expect("supply");
     let err = other.load_checkpoint(&cp).expect_err("a different file");
     assert!(err.contains("same files must be supplied"), "{err}");
 }
@@ -304,7 +304,7 @@ fn replay_model() -> String {
 /// A truncated checkpoint is refused rather than read short.
 #[test]
 fn a_truncated_checkpoint_is_refused() {
-    let (mut a, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     a.run();
     let mut cp = Vec::new();
     a.save_checkpoint(&mut cp).expect("checkpoint");
@@ -315,7 +315,7 @@ fn a_truncated_checkpoint_is_refused() {
     for cut in [4, 40, cp.len() / 3, cp.len() / 2, cp.len() - 1] {
         let mut short = cp.clone();
         short.truncate(cut);
-        let (mut b, _, _) = Simulation::open(MODEL).expect("open");
+        let (mut b, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
         let err = b
             .load_checkpoint(&short)
             .expect_err("a checkpoint cut at {cut} must be refused");
@@ -346,11 +346,11 @@ fn a_restored_run_continues_bit_identically_when_reporting_starts_late() {
         "the fixture must actually move the report start"
     );
 
-    let (mut whole, _, _) = Simulation::open(&late).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     whole.run();
     let want = every_output(&whole);
 
-    let (mut first, _, _) = Simulation::open(&late).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     while first.report().elapsed < 3_000.0 {
         assert!(first.step(), "the run ended before the checkpoint instant");
     }
@@ -363,7 +363,7 @@ fn a_restored_run_continues_bit_identically_when_reporting_starts_late() {
     let mut cp = Vec::new();
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&late).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let got = every_output(&second);
@@ -389,11 +389,11 @@ fn a_run_restored_before_reporting_opens_still_opens_it_on_time() {
         "REPORT_STEP          00:05:00",
         "REPORT_STEP          00:05:00\nREPORT_START_TIME    00:40:00",
     );
-    let (mut whole, _, _) = Simulation::open(&late).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     whole.run();
     let want = every_output(&whole);
 
-    let (mut first, _, _) = Simulation::open(&late).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     while first.report().elapsed < 600.0 {
         assert!(first.step(), "the run ended before the checkpoint instant");
     }
@@ -404,7 +404,7 @@ fn a_run_restored_before_reporting_opens_still_opens_it_on_time() {
     let mut cp = Vec::new();
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&late).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&late).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let got = every_output(&second);
@@ -484,7 +484,7 @@ RAIN  0:30  0.0
 /// absolute instant past its end silently becomes a checkpoint at the end,
 /// which proves nothing.
 fn restores_identically(model: &str, fraction: f64) {
-    let (mut whole, diags, _) = Simulation::open(model).expect("open");
+    let (mut whole, diags, _) = hydra_interop_swmm::session::open(model).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     whole.run();
     let want = every_output(&whole);
@@ -498,14 +498,14 @@ fn restores_identically(model: &str, fraction: f64) {
         whole.snapshots.len()
     );
 
-    let (mut first, _, _) = Simulation::open(model).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(model).expect("open");
     while first.snapshots.len() < target {
         assert!(first.step(), "the run ended before the checkpoint instant");
     }
     let mut cp = Vec::new();
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(model).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(model).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let got = every_output(&second);
@@ -586,7 +586,8 @@ P1  PP  1  500  10  0  50  0
 #[test]
 fn the_surface_checkpoint_instants_are_not_dry() {
     for at in [900.0, 3_000.0] {
-        let (mut sim, _, _) = Simulation::open(&parcel_model("", "")).expect("open");
+        let (mut sim, _, _) =
+            hydra_interop_swmm::session::open(&parcel_model("", "")).expect("open");
         while sim.report().elapsed < at {
             assert!(sim.step(), "the run ended early");
         }
@@ -649,10 +650,11 @@ fn the_fixture_instants_hold_their_state() {
          fraction: f64,
          what: &str,
          f: fn(&hydra_engine_uds::simulation::engine::SubcatchRecord) -> f64| {
-            let (mut whole, _, _) = Simulation::open(&fixture(name)).expect("open");
+            let (mut whole, _, _) =
+                hydra_interop_swmm::session::open(&fixture(name)).expect("open");
             whole.run();
             let target = ((whole.snapshots.len() as f64 * fraction) as usize).max(1);
-            let (mut sim, _, _) = Simulation::open(&fixture(name)).expect("open");
+            let (mut sim, _, _) = hydra_interop_swmm::session::open(&fixture(name)).expect("open");
             while sim.snapshots.len() < target {
                 assert!(sim.step(), "{name}: the run ended early");
             }
@@ -695,10 +697,10 @@ fn the_cascade_instant_has_run_on_in_flight() {
         "P1  G1  J1  10  40  500  0.01  0",
         "P1  G1  P2  10  40  500  0.01  0",
     );
-    let (mut whole, _, _) = Simulation::open(&cascade).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&cascade).expect("open");
     whole.run();
     let target = ((whole.snapshots.len() as f64 * 0.25) as usize).max(1);
-    let (mut sim, _, _) = Simulation::open(&cascade).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&cascade).expect("open");
     while sim.snapshots.len() < target {
         assert!(sim.step(), "the run ended early");
     }
@@ -739,10 +741,10 @@ fn a_restored_quality_run_keeps_the_mass_on_the_ground() {
 #[test]
 fn the_quality_instant_carries_mass() {
     let model = fixture("buildup_washoff_treatment.inp");
-    let (mut whole, _, _) = Simulation::open(&model).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     whole.run();
     let target = ((whole.snapshots.len() as f64 * 0.3) as usize).max(1);
-    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     while sim.snapshots.len() < target {
         assert!(sim.step(), "the run ended early");
     }
@@ -821,12 +823,12 @@ fn a_restored_swept_surface_continues_bit_identically() {
 /// however little the field influences results — which is exactly the
 /// case for everything the property tests above cannot reach.
 fn resaves_identically(model: &str, fraction: f64) {
-    let (mut whole, diags, _) = Simulation::open(model).expect("open");
+    let (mut whole, diags, _) = hydra_interop_swmm::session::open(model).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     whole.run();
     let target = ((whole.snapshots.len() as f64 * fraction) as usize).max(1);
 
-    let (mut first, _, _) = Simulation::open(model).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(model).expect("open");
     while first.snapshots.len() < target {
         assert!(first.step(), "the run ended before the checkpoint instant");
     }
@@ -834,7 +836,7 @@ fn resaves_identically(model: &str, fraction: f64) {
     first.save_checkpoint(&mut once).expect("checkpoint");
     assert!(once.len() > 200, "a checkpoint of {} bytes", once.len());
 
-    let (mut second, _, _) = Simulation::open(model).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(model).expect("open");
     second.load_checkpoint(&once).expect("restore");
     let mut twice = Vec::new();
     second
@@ -961,7 +963,7 @@ fn a_restored_storage_residence_time_continues_bit_identically() {
 #[test]
 fn the_treated_storage_is_treating() {
     let model = treated_storage();
-    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     sim.run();
     let snap = sim
         .snapshots
@@ -972,7 +974,7 @@ fn the_treated_storage_is_treating() {
     // is what made this test look impossible the first time, since it
     // reported the junction upstream of the treatment in both runs.
     let untreated = model.replace("[TREATMENT]\nS1  TSS  C = 20 / (1 + HRT)\n\n", "");
-    let (mut plain, _, _) = Simulation::open(&untreated).expect("open");
+    let (mut plain, _, _) = hydra_interop_swmm::session::open(&untreated).expect("open");
     plain.run();
     let at = sim
         .snapshots
@@ -1052,10 +1054,12 @@ fn a_street_inlet_checkpoint_survives_a_round_trip() {
 fn the_control_and_inflow_instants_are_active() {
     // A rule must have fired, or the log and the error history are empty
     // and their loss cannot be seen.
-    let (mut sim, _, _) = Simulation::open(&fixture("control_rules.inp")).expect("open");
+    let (mut sim, _, _) =
+        hydra_interop_swmm::session::open(&fixture("control_rules.inp")).expect("open");
     sim.run();
     let whole = sim.snapshots.len();
-    let (mut part, _, _) = Simulation::open(&fixture("control_rules.inp")).expect("open");
+    let (mut part, _, _) =
+        hydra_interop_swmm::session::open(&fixture("control_rules.inp")).expect("open");
     while part.snapshots.len() < ((whole as f64 * 0.4) as usize).max(1) {
         assert!(part.step(), "the run ended early");
     }
@@ -1067,7 +1071,8 @@ fn the_control_and_inflow_instants_are_active() {
     );
 
     // And sewer inflow must be arriving.
-    let (mut sim, _, _) = Simulation::open(&fixture("rdii_sanitary_inflow.inp")).expect("open");
+    let (mut sim, _, _) =
+        hydra_interop_swmm::session::open(&fixture("rdii_sanitary_inflow.inp")).expect("open");
     sim.run();
     assert!(
         sim.ledgers().network.inflow > 0.0,
@@ -1095,7 +1100,7 @@ fn a_pid_checkpoint_survives_a_round_trip() {
 /// its error history is zero and the two tests above prove nothing.
 #[test]
 fn the_pid_controller_is_modulating() {
-    let (mut sim, diags, _) = Simulation::open(&pid_model()).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(&pid_model()).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let settings: Vec<f64> = sim.snapshots.iter().map(|s| s.link_capacity[0]).collect();
@@ -1129,16 +1134,16 @@ fn pid_model() -> String {
 
 #[test]
 fn a_replaying_checkpoint_survives_a_round_trip() {
-    let (mut first, _, _) = Simulation::open(&replay_model()).expect("open");
-    first.supply_runoff(&replay_file()).expect("supply");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut first, &replay_file()).expect("supply");
     while first.snapshots.len() < 3 {
         assert!(first.step(), "the run ended early");
     }
     let mut once = Vec::new();
     first.save_checkpoint(&mut once).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&replay_model()).expect("open");
-    second.supply_runoff(&replay_file()).expect("supply");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&replay_model()).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut second, &replay_file()).expect("supply");
     second.load_checkpoint(&once).expect("restore");
     let mut twice = Vec::new();
     second
@@ -1161,12 +1166,12 @@ fn a_replaying_checkpoint_survives_a_round_trip() {
 #[test]
 fn a_collecting_run_keeps_what_it_has_collected() {
     let saving = parcel_model("", "[FILES]\nSAVE RUNOFF runoff.bin");
-    let (mut whole, _, _) = Simulation::open(&saving).expect("open");
+    let (mut whole, _, _) = hydra_interop_swmm::session::open(&saving).expect("open");
     whole.run();
     let mut want = Vec::new();
-    whole.write_runoff(&mut want).expect("write");
+    hydra_interop_swmm::session::write_runoff(&whole, &mut want).expect("write");
 
-    let (mut first, _, _) = Simulation::open(&saving).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&saving).expect("open");
     let target = ((whole.snapshots.len() as f64 * 0.4) as usize).max(1);
     while first.snapshots.len() < target {
         assert!(first.step(), "the run ended before the checkpoint instant");
@@ -1174,11 +1179,11 @@ fn a_collecting_run_keeps_what_it_has_collected() {
     let mut cp = Vec::new();
     first.save_checkpoint(&mut cp).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&saving).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&saving).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
     let mut got = Vec::new();
-    second.write_runoff(&mut got).expect("write");
+    hydra_interop_swmm::session::write_runoff(&second, &mut got).expect("write");
 
     assert_eq!(
         want.len(),
@@ -1199,7 +1204,7 @@ fn a_collecting_run_keeps_what_it_has_collected() {
 #[test]
 fn a_standing_injection_survives_a_checkpoint() {
     let model = parcel_model("", "");
-    let (mut first, _, _) = Simulation::open(&model).expect("open");
+    let (mut first, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     assert!(first.set_precipitation("G1", Some(30.0e-3 / 3600.0)));
     assert!(first.set_lateral_inflow("J1", Some(0.4)));
     while first.snapshots.len() < 3 {
@@ -1209,7 +1214,7 @@ fn a_standing_injection_survives_a_checkpoint() {
     first.save_checkpoint(&mut cp).expect("checkpoint");
     while first.step() {}
 
-    let (mut second, _, _) = Simulation::open(&model).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     second.load_checkpoint(&cp).expect("restore");
     second.run();
 
@@ -1232,7 +1237,7 @@ fn a_standing_injection_survives_a_checkpoint() {
 #[test]
 fn an_injection_survives_a_checkpoint_round_trip() {
     let model = parcel_model("", "");
-    let (mut sim, _, _) = Simulation::open(&model).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     assert!(sim.set_precipitation("G1", Some(30.0e-3 / 3600.0)));
     assert!(sim.set_lateral_inflow("J1", Some(0.4)));
     while sim.snapshots.len() < 3 {
@@ -1241,7 +1246,7 @@ fn an_injection_survives_a_checkpoint_round_trip() {
     let mut once = Vec::new();
     sim.save_checkpoint(&mut once).expect("checkpoint");
 
-    let (mut second, _, _) = Simulation::open(&model).expect("open");
+    let (mut second, _, _) = hydra_interop_swmm::session::open(&model).expect("open");
     second.load_checkpoint(&once).expect("restore");
     let mut twice = Vec::new();
     second
@@ -1257,7 +1262,7 @@ fn an_injection_survives_a_checkpoint_round_trip() {
 #[test]
 fn a_run_that_disclaims_checkpointing_still_writes_the_same_results() {
     let bytes = |may_checkpoint: bool| {
-        let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
         let sink: Vec<u8> = Vec::new();
         let held = std::sync::Arc::new(std::sync::Mutex::new(sink));
         struct Shared(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
@@ -1270,8 +1275,12 @@ fn a_run_that_disclaims_checkpointing_still_writes_the_same_results() {
                 Ok(())
             }
         }
-        sim.begin_results(Box::new(Shared(held.clone())), may_checkpoint)
-            .expect("attach");
+        hydra_interop_swmm::session::begin_results(
+            &mut sim,
+            Box::new(Shared(held.clone())),
+            may_checkpoint,
+        )
+        .expect("attach");
         sim.run();
         sim.finish_results().expect("finish");
         let out = held.lock().expect("lock").clone();
@@ -1301,8 +1310,8 @@ fn checkpointing_a_run_that_disclaimed_it_is_refused() {
     // The alternative is a checkpoint written from an empty buffer, which
     // restores a run that then writes only the instants after it. Losing
     // results quietly is worse than refusing.
-    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
-    sim.begin_results(Box::new(std::io::sink()), false)
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
+    hydra_interop_swmm::session::begin_results(&mut sim, Box::new(std::io::sink()), false)
         .expect("attach");
     for _ in 0..40 {
         if !sim.step() {

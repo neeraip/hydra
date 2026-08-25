@@ -6,7 +6,7 @@
 //! in the file's unit system; times compare in days.
 
 use super::expression::Expression;
-use crate::io::options::FlowUnits;
+use crate::model::options::FlowUnits;
 use crate::model::{CurveKind, LinkKind, Network};
 
 /// A quantity a premise can observe.
@@ -613,7 +613,7 @@ impl Controls {
                     }
                     SimAttr::DayOfYear => {
                         let d = super::time::civil_from_days(view.date_days as i64);
-                        let jan1 = super::time::days_from_civil(crate::io::options::Date {
+                        let jan1 = super::time::days_from_civil(crate::model::options::Date {
                             year: d.year,
                             month: 1,
                             day: 1,
@@ -843,7 +843,7 @@ fn parse_premise_value(tok: &str, attr: Option<Source>) -> Result<f64, String> {
                 let m: u32 = parts[0].parse().map_err(|_| bad(tok))?;
                 let d: u32 = parts[1].parse().map_err(|_| bad(tok))?;
                 let y: i32 = parts[2].parse().map_err(|_| bad(tok))?;
-                Ok(super::time::days_from_civil(crate::io::options::Date {
+                Ok(super::time::days_from_civil(crate::model::options::Date {
                     year: y,
                     month: m,
                     day: d,

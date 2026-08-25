@@ -169,9 +169,10 @@ pub use hydra_engine_wds::{
 /// be run yet — which [`io::parse_tolerant`] hands back rather than rejecting,
 /// hence its narrower [`io::ReadError`] failure type.
 pub mod io {
-    pub use hydra_engine_wds::io::{
+    pub use hydra_engine_wds::model::units;
+    pub use hydra_interop_epanet::{
         compute_network_digest, control_statements, out_reader, out_writer, parse, parse_tolerant,
-        rpt_writer, rule_statements, units, write_inp, ParseError, ReadError,
+        rpt_writer, rule_statements, write_inp, ParseError, ReadError,
     };
 }
 
@@ -179,12 +180,12 @@ pub mod io {
 ///
 /// The inverse of [`io::parse`]: all values are converted from the internal
 /// unit system back to the user-declared unit system.
-pub use hydra_engine_wds::write_inp;
+pub use hydra_interop_epanet::write_inp;
 
 /// Compute the FNV-1a 64-bit network topology digest stored in `.out` result
 /// files (model spec §4.4.7). Lets consumers detect results that are stale
 /// relative to an edited network topology.
-pub use hydra_engine_wds::compute_network_digest;
+pub use hydra_interop_epanet::compute_network_digest;
 
 // ── Foundation contracts ──────────────────────────────────────────────────────
 
@@ -212,19 +213,27 @@ pub use hydra_engine_wds::descriptors;
 ///
 /// Namespaced rather than flattened because its vocabulary overlaps the
 /// water-distribution types above (both have networks, simulations, and
-/// options). The session API is [`uds::simulation::engine::Simulation`]:
-/// `open` a model from its input text, `step`/`run` it, then write results
-/// with `write_out` and `write_report`. Model text and auxiliary-file
-/// contents are supplied in memory; the engine's one filesystem surface is
-/// the path-based `.out` streaming reader (`uds::io::out_reader`), the
-/// same carve-out the water-distribution engine has.
-///
-/// A model can also be written back out: `uds::io::inp_writer::write_inp`
-/// serialises a network as SWMM input text, so an integrator can build or
-/// modify a drainage model and hand it to another tool. It writes the
-/// model as it stands *after* import's validation and repairs, which is
-/// not a copy of the file it came from — see the engine's §14.13.
+/// options). The engine is format-blind: a session is built from a parsed
+/// model ([`uds::simulation::engine::Simulation::from_network`]), stepped
+/// or run, and queried by element id. Every path between SWMM text or
+/// files and that session — parsing, recognition, `.out`/`.rpt` output,
+/// interface files — lives in the [`swmm`] dialect module.
 pub use hydra_engine_uds as uds;
+
+/// The SWMM dialect: INP import (`swmm::session::open` opens a `uds`
+/// session straight from model text), OUT/RPT output, interface files,
+/// recognition, and `swmm::inp_writer::write_inp` to serialise a network
+/// back to SWMM input text. It writes the model as it stands *after*
+/// import's validation and repairs, which is not a copy of the file it
+/// came from — see the interop spec §14.13. The engine itself is
+/// format-blind; every path from text to a running `uds` session goes
+/// through here.
+pub use hydra_interop_swmm as swmm;
+
+/// The EPANET dialect (format-blind extraction): INP import, OUT/RPT
+/// output, and recognition for the water distribution engine. The
+/// legacy `hydra::io` module remains the conventional path.
+pub use hydra_interop_epanet as epanet;
 
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract, and its criteria catalog and

@@ -18,9 +18,7 @@ use crate::hydrology::infiltration::InfilFactors;
 use crate::hydrology::rdii::RdiiState;
 use crate::hydrology::runoff::{Surface, SurfaceRefusal};
 use crate::hydrology::snow::SnowClimate;
-use crate::io::objects::parse_network;
-use crate::io::survey::Diagnostic;
-use crate::io::validate::{validate, ValidationDiagnostic};
+use crate::model::validate::{validate, ValidationDiagnostic};
 use crate::model::{
     InflowKind, Network, OutfallStage, PatternKind, SeriesTime, TimeSeriesSource, VertexKind,
 };
@@ -39,8 +37,6 @@ const DEFAULT_AIR_TEMPERATURE_C: f64 = 5.0 / 9.0 * (70.0 - 32.0);
 /// typed error rather than faulting).
 #[derive(Debug)]
 pub enum OpenError {
-    /// The file was refused by parsing; the diagnostics say where.
-    Parse(Vec<Diagnostic>),
     /// The model was refused by §14.7 validation.
     Validation(Vec<ValidationDiagnostic>),
     /// The router cannot serve this model yet.
@@ -77,15 +73,6 @@ impl std::fmt::Display for OpenError {
             }
         }
         match self {
-            OpenError::Parse(diags) => {
-                let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
-                first_and_rest(
-                    f,
-                    "the model was refused by parsing",
-                    errors.first().map(|d| d.to_string()),
-                    errors.len(),
-                )
-            }
             OpenError::Validation(findings) => {
                 let errors: Vec<_> = findings.iter().filter(|v| v.kind.is_error()).collect();
                 first_and_rest(
@@ -123,21 +110,6 @@ mod open_error_display_tests {
             assert!(!line.contains('{') && !line.contains("(\""), "{line:?}");
             assert!(!line.is_empty());
         }
-    }
-
-    #[test]
-    fn a_parse_refusal_displays_as_prose() {
-        let (_, diags) = parse_network("not a model at all");
-        let e = OpenError::Parse(diags);
-        let line = e.to_string();
-        assert!(
-            line.starts_with("the model was refused by parsing"),
-            "{line}"
-        );
-        assert!(
-            !line.contains("Diagnostic") && !line.contains('{'),
-            "{line}"
-        );
     }
 }
 
@@ -200,8 +172,8 @@ pub struct SubcatchRecord {
 /// A reported parcel record as an interface-file row, still in engine
 /// units (§14.8.2). The file's field order is its own, so the mapping is
 /// written out rather than derived from either type's layout.
-fn parcel_replay(r: &SubcatchRecord) -> crate::io::iface::ParcelReplay {
-    crate::io::iface::ParcelReplay {
+fn parcel_replay(r: &SubcatchRecord) -> crate::simulation::records::ParcelReplay {
+    crate::simulation::records::ParcelReplay {
         rainfall: r.rain,
         snow_depth: r.snow_depth,
         evap: r.evap,
@@ -213,6 +185,10 @@ fn parcel_replay(r: &SubcatchRecord) -> crate::io::iface::ParcelReplay {
         washoff: r.washoff.clone(),
     }
 }
+
+/// §14.8.1: what a recorded RDII file is written from — the vertices
+/// in column order, the declared step (s), and the dated rows.
+pub type RdiiRecords<'a> = (Vec<usize>, f64, &'a [(f64, Vec<f64>)]);
 
 /// One §11.1 balance: the accumulated inflow and outflow sides and the
 /// error statistic ε = 100(1 − O/I), sign-mirrored when the ledger has
@@ -351,8 +327,8 @@ pub struct Simulation {
     /// §15.5 driven boundary slots: (marcher boundary, series index,
     /// stage?), resolved once at attach.
     overland_driven: Vec<(usize, usize, bool)>,
-    /// §14.16: the overland results stream, when a sink is attached.
-    overland_out: Option<crate::io::overland_out::OverlandStream<Box<dyn std::io::Write + Send>>>,
+    /// §14.16: the overland results destination, when one is attached.
+    overland_out: Option<Box<dyn crate::simulation::sinks::OverlandSink>>,
     overland_out_error: Option<std::io::Error>,
     /// §12.4: injected outfall stages and link settings, held so a rule
     /// cannot move an element a caller has taken over, and so a restored
@@ -379,10 +355,10 @@ pub struct Simulation {
     climate_records: Vec<crate::model::DailyClimate>,
     climate_state: ClimateDayState,
     /// A supplied routing interface inflow file (§14.8).
-    iface_in: Option<crate::io::iface::RoutingInterface>,
+    iface_in: Option<crate::simulation::records::RoutingInterface>,
     /// A supplied RDII interface file (§14.8.1). When present it *is* the
     /// RDII hydrograph and the convolutions are not run.
-    rdii_in: Option<crate::io::iface::RdiiInterface>,
+    rdii_in: Option<crate::simulation::records::RdiiInterface>,
     /// Convolved RDII for `SAVE` (§14.8.1): `(epoch s, flow per assignment)`
     /// at each hydrology step. Collected only when the model asks for a
     /// file, since a long run holds one row per step per assignment.
@@ -391,14 +367,14 @@ pub struct Simulation {
     /// every file-sourced gage's record normalised to interval depths in
     /// inches. Fixed at load: the cache is of the records, and no part of
     /// a run changes them.
-    rain_out: Option<Vec<crate::io::iface::RainGageRecord>>,
+    rain_out: Option<Vec<crate::simulation::records::RainGageRecord>>,
     /// §14.8.2: when the model asks to save a runoff interface file
     /// (`SAVE`), one `(step length, per-parcel record)` per hydrology step,
     /// in engine units. Held rather than streamed so the header's step
     /// count is the number of records the run actually produced. `USE` is
     /// the other half of the same option and fills `runoff_in` instead;
     /// a run does one or the other, never both.
-    runoff_out: Option<Vec<(f64, Vec<crate::io::iface::ParcelReplay>)>>,
+    runoff_out: Option<Vec<(f64, Vec<crate::simulation::records::ParcelReplay>)>>,
     /// §12.3: a fingerprint of each interface file supplied to this run,
     /// as `(what it is, hash of its bytes)`. A checkpoint carries these so
     /// a restored run given a different file, or none, is refused rather
@@ -407,7 +383,7 @@ pub struct Simulation {
     /// A supplied runoff interface file (§14.8.2) and the cursor into it.
     /// When present the surface is not stepped at all and the hydrology
     /// clock follows the file's own steps.
-    runoff_in: Option<(crate::io::iface::RunoffInterface, usize)>,
+    runoff_in: Option<(crate::simulation::records::RunoffInterface, usize)>,
     /// Said once when a replayed file runs out before the run does.
     runoff_exhausted: bool,
     /// The replayed record now in force, per parcel, in engine units.
@@ -416,7 +392,7 @@ pub struct Simulation {
     /// replayed run never steps, so without this a replay routed the
     /// file's flows correctly and reported every parcel as producing
     /// nothing (§14.8.2).
-    runoff_now: Vec<crate::io::iface::ParcelReplay>,
+    runoff_now: Vec<crate::simulation::records::ParcelReplay>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -448,7 +424,7 @@ pub struct Simulation {
     /// [`Self::finish_results`]; absent when the caller wants no results
     /// file. Not state: a resumed run attaches its own sink, and the
     /// bytes already written are in the file the caller holds.
-    out: Option<crate::io::out_writer::OutStream<Box<dyn std::io::Write + Send>>>,
+    out: Option<Box<dyn crate::simulation::sinks::SnapshotSink>>,
     /// The first write failure the stream met, held until the caller
     /// closes it. A step is not the place to fail on a results file.
     out_error: Option<std::io::Error>,
@@ -478,129 +454,31 @@ struct LidRptStream(
 );
 
 impl Simulation {
-    /// Load a model from its input text: parse, validate (§14.7 mutations
-    /// applied), and build the router. Warning-class diagnostics from
-    /// both passes are returned alongside the session.
-    pub fn open(
-        input: &str,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_with_files(input, Vec::new(), Vec::new())
-    }
-
-    /// Load a model together with daily climate records (§3.1) — the
-    /// caller owns reading the climate file; `io::climate` parses its
-    /// text. Records serve file-sourced temperature, evaporation, wind,
-    /// and the Hargreaves relation.
-    pub fn open_with_climate(
-        input: &str,
-        climate_records: Vec<crate::model::DailyClimate>,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_with_files(input, climate_records, Vec::new())
-    }
-
-    /// Load a model together with every auxiliary record the caller read
-    /// for it (§12.1): daily climate records (§3.1), and external rain
-    /// records (§14.12) as `(file name, parsed readings)` — `io::rain`
-    /// parses their text. File-sourced gages are realised as the
-    /// equivalent series at load; a gage naming a file not supplied here
-    /// refuses the load with the file named.
-    pub fn open_with_files(
-        input: &str,
-        climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        let records = rain_files
-            .into_iter()
-            .map(|(name, readings)| (name, crate::io::rain::RainRecords::Station(readings)))
-            .collect();
-        Simulation::open_inner(input, climate_records, records, None, None)
-    }
-
-    /// Load a model together with rain files in whichever layout each was
-    /// written in (§14.12, §14.12.1) — `io::rain::parse_any_rain_file`
-    /// recognises them, and a gage reads whichever its file turned out to
-    /// be without declaring anything.
-    pub fn open_with_rain_records(
-        input: &str,
-        climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_inner(input, climate_records, rain_files, None, None)
-    }
-
-    /// Load a model whose file-sourced gages read a rainfall interface
-    /// file (§14.8.3) rather than their own records.
+    /// Build a session from a parsed, in-memory model (§12.1) — the
+    /// engine's only door. The dialect tooling parses text into the
+    /// [`Network`] and the auxiliary records;
+    /// this constructor validates, builds the router, realises the
+    /// supplied records, and attaches the overland surface. The
+    /// returned findings are §14.7 validation's; parse diagnostics
+    /// belong to whoever parsed.
     ///
-    /// The file caches records already parsed and normalised, so it stands
-    /// in for every external record the model would otherwise need: a gage
-    /// is matched to it by station identifier, and one whose station the
-    /// file does not carry refuses the load by name.
-    pub fn open_with_rain_interface(
-        input: &str,
+    /// A declared-but-uncombined external mesh file must be resolved by
+    /// the caller before this call: a mesh still naming one here is
+    /// refused, since its sections were never read.
+    pub fn from_network(
+        mut net: crate::model::Network,
         climate_records: Vec<crate::model::DailyClimate>,
-        rain_interface: &[u8],
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        let iface = crate::io::iface::parse_rain_iface(rain_interface)
-            .map_err(|e| OpenError::Transport(format!("rainfall interface file: {e}")))?;
-        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface), None)
-    }
-
-    /// Load a model together with the external mesh file its
-    /// `[2D_MESH_FILE]` declares (§14.15) — the caller owns reading it,
-    /// like every auxiliary. The external file's sections continue the
-    /// model's own: its vertices and cells extend the inline numbering,
-    /// and either file's SI header governs the whole mesh.
-    pub fn open_with_overland_mesh(
-        input: &str,
-        mesh_text: &str,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_inner(input, Vec::new(), Vec::new(), None, Some(mesh_text))
-    }
-
-    fn open_inner(
-        input: &str,
-        climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
-        rain_interface: Option<crate::io::iface::RainInterface>,
-        overland_mesh: Option<&str>,
-    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        let (mut net, mut diags) = parse_network(input);
-        if diags.iter().any(|d| d.kind.is_error()) {
-            return Err(OpenError::Parse(diags));
-        }
-        // §14.15: a declared external mesh file carries the mesh's own
-        // sections; supplied, they continue the inline ones — indices,
-        // units header and all — through one combined parse. Declared
-        // and not supplied, the mesh cannot be read: under IGNORE_2D
-        // the run warns and proceeds without it, and otherwise the
-        // refusals below name what is missing.
-        let mesh_file = net.overland.as_ref().and_then(|m| m.mesh_file.clone());
-        match (&mesh_file, overland_mesh) {
-            (Some(_), Some(external)) => {
-                net.overland = crate::io::overland::reparse_with_external(
-                    input,
-                    external,
-                    &net.options,
-                    &mut diags,
-                );
-            }
-            (Some(name), None) if net.options.ignore_overland => {
-                // The 1D half runs, but the author should hear that the
-                // unreadable mesh was dropped, file named.
-                diags.push(Diagnostic {
-                    line: 0,
-                    kind: crate::io::survey::DiagnosticKind::UnknownOverlandOption {
-                        key: format!("mesh file {name:?} not supplied; mesh ignored"),
-                    },
-                });
-                net.overland = None;
-            }
-            (Some(name), None) => {
+        rain_files: Vec<(String, crate::simulation::records::RainRecords)>,
+        rain_interface: Option<crate::simulation::records::RainInterface>,
+    ) -> Result<(Simulation, Vec<ValidationDiagnostic>), OpenError> {
+        if let Some(name) = net.overland.as_ref().and_then(|m| m.mesh_file.clone()) {
+            if !net.options.ignore_overland {
                 return Err(OpenError::Overland(format!(
-                    "this model reads its mesh from {name:?}, which was not                      supplied (§14.15)"
+                    "this model reads its mesh from {name:?}, which was not \
+                     supplied (§14.15)"
                 )));
             }
-            (None, _) => {}
+            net.overland = None;
         }
 
         // §1.8: the overland sections are specified (§15) and not yet
@@ -901,7 +779,6 @@ impl Simulation {
                 },
                 net,
             },
-            diags,
             findings,
         );
         // §1.8: serve §15 — attach the model's mesh to the session it
@@ -1278,7 +1155,7 @@ impl Simulation {
     fn replay_hydrology(&mut self, period_end: f64, routing_active: bool) {
         let nv = self.net.vertices.len();
         let np = self.net.constituents.len();
-        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
+        let cv = crate::simulation::records::flow_cv_of(self.net.options.flow_units);
         let Some(surface) = self.surface.take() else {
             return;
         };
@@ -1494,7 +1371,7 @@ impl Simulation {
                 let day = (self.start_epoch + self.hydro_t + dt) / 86_400.0;
                 let doy = {
                     let d = civil_from_days(day as i64);
-                    let jan1 = crate::io::options::Date {
+                    let jan1 = crate::model::options::Date {
                         year: d.year,
                         month: 1,
                         day: 1,
@@ -1651,7 +1528,7 @@ impl Simulation {
         // Day of year for the seasonal sweep.
         let epoch_days = ((self.start_epoch + t) / 86_400.0).floor() as i64;
         let date = civil_from_days(epoch_days);
-        let jan1 = crate::io::options::Date {
+        let jan1 = crate::model::options::Date {
             year: date.year,
             month: 1,
             day: 1,
@@ -1716,7 +1593,7 @@ impl Simulation {
         };
         st.prev_tmax = Some(hi);
         // Min at sunrise, max three hours before sunset (§3.1).
-        let jan1 = crate::io::options::Date {
+        let jan1 = crate::model::options::Date {
             year: date.year,
             month: 1,
             day: 1,
@@ -1921,27 +1798,18 @@ impl Simulation {
         Ok(())
     }
 
-    /// §14.16: stream the overland results to `sink` as the run
-    /// produces them, alongside the §14.9 stream. Attach after the
-    /// mesh and before stepping; refused for a model with no mesh.
-    pub fn begin_overland_results(
+    /// §14.16: attach a destination for overland records, fed at every
+    /// reporting instant. Refused for a model with no mesh.
+    pub fn attach_overland_results(
         &mut self,
-        sink: Box<dyn std::io::Write + Send>,
+        sink: Box<dyn crate::simulation::sinks::OverlandSink>,
     ) -> std::io::Result<()> {
-        let (Some(mesh), Some(cs)) = (self.net.overland.as_ref(), self.coupled.as_ref()) else {
+        if self.coupled.is_none() {
             return Err(std::io::Error::other(
                 "this run has no overland mesh to record",
             ));
-        };
-        let out = crate::io::overland_out::OverlandStream::begin(
-            sink,
-            mesh,
-            &cs.marcher,
-            self.start_epoch,
-            self.report_step,
-            self.next_report,
-        )?;
-        self.overland_out = Some(out);
+        }
+        self.overland_out = Some(sink);
         Ok(())
     }
 
@@ -2002,6 +1870,12 @@ impl Simulation {
     /// cue to attach the §14.16 results stream.
     pub fn has_overland(&self) -> bool {
         self.coupled.is_some()
+    }
+
+    /// The live overland marcher, when the model has a mesh — what the
+    /// §14.16 sidecar's header is built from.
+    pub fn overland_marcher(&self) -> Option<&crate::overland::marcher::Marcher> {
+        self.coupled.as_ref().map(|cs| &cs.marcher)
     }
 
     /// The attached overland surface, for the crate's own tests.
@@ -2988,20 +2862,30 @@ impl Simulation {
         Ok(())
     }
 
-    /// Supply the routing interface inflow file's text (§14.8); the
-    /// caller owns reading it. Values interpolate between bracketing
-    /// periods and add as boundary inflows at their vertices.
-    pub fn supply_routing_inflows(&mut self, text: &str) -> Result<(), String> {
-        self.iface_in = Some(crate::io::iface::parse_routing_file(text, &self.net)?);
-        self.note_supplied("routing inflows", text.as_bytes());
-        Ok(())
+    /// Supply routing interface inflows as parsed data (§14.8); the
+    /// dialect tooling parses the file's text against this model.
+    /// `raw` is the supplied bytes, fingerprinted so a checkpoint can
+    /// verify the same file on restore (§12.3). Values interpolate
+    /// between bracketing periods and add as boundary inflows at their
+    /// vertices.
+    pub fn supply_routing_data(
+        &mut self,
+        data: crate::simulation::records::RoutingInterface,
+        raw: &[u8],
+    ) {
+        self.iface_in = Some(data);
+        self.note_supplied("routing inflows", raw);
     }
 
     /// Supply the runoff interface file's bytes (§14.8.2); the caller owns
     /// reading it. The surface is then not run at all: the file replays
     /// what it produced, and the hydrology clock follows the file's steps
     /// rather than the model's wet and dry ones.
-    pub fn supply_runoff(&mut self, bytes: &[u8]) -> Result<(), String> {
+    pub fn supply_runoff_data(
+        &mut self,
+        data: crate::simulation::records::RunoffInterface,
+        raw: &[u8],
+    ) -> Result<(), String> {
         // §14.8.2: a run either replays a hydrology or records the one it
         // computes. Accepting both would write a file that only copies its
         // input, under a name that claims to be this run's own hydrology.
@@ -3012,20 +2896,21 @@ impl Simulation {
                     .into(),
             );
         }
-        let ifc = crate::io::iface::parse_runoff_file(bytes, &self.net)?;
-        self.runoff_in = Some((ifc, 0));
-        self.note_supplied("runoff", bytes);
+        self.runoff_in = Some((data, 0));
+        self.note_supplied("runoff", raw);
         Ok(())
     }
 
     /// Supply the RDII interface file's bytes (§14.8.1); the caller owns
     /// reading it. Either of the predecessor's encodings is accepted, and
     /// the file replaces the RDII convolutions rather than adding to them.
-    pub fn supply_rdii(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
-        self.rdii_in = Some(crate::io::iface::parse_rdii_file(bytes, &self.net, cv)?);
-        self.note_supplied("sewer inflow", bytes);
-        Ok(())
+    pub fn supply_rdii_data(
+        &mut self,
+        data: crate::simulation::records::RdiiInterface,
+        raw: &[u8],
+    ) {
+        self.rdii_in = Some(data);
+        self.note_supplied("sewer inflow", raw);
     }
 
     /// Write a checkpoint of this session (§12.3).
@@ -3552,7 +3437,7 @@ impl Simulation {
             let rows = r.u()? as usize;
             let mut recs = Vec::with_capacity(rows.min(4096));
             for _ in 0..rows {
-                recs.push(crate::io::iface::ParcelReplay {
+                recs.push(crate::simulation::records::ParcelReplay {
                     rainfall: r.f()?,
                     snow_depth: r.f()?,
                     evap: r.f()?,
@@ -3651,7 +3536,7 @@ impl Simulation {
         let n = r.u()? as usize;
         self.runoff_now = Vec::with_capacity(n.min(4096));
         for _ in 0..n {
-            let rec = crate::io::iface::ParcelReplay {
+            let rec = crate::simulation::records::ParcelReplay {
                 rainfall: r.f()?,
                 snow_depth: r.f()?,
                 evap: r.f()?,
@@ -3814,22 +3699,16 @@ impl Simulation {
     ///
     /// The file caches the records rather than anything the run computed,
     /// so it is complete from the moment the model opens.
-    pub fn write_rain(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
-        let Some(gages) = &self.rain_out else {
-            return Ok(false);
-        };
-        crate::io::iface::write_rain_iface(gages, w)?;
-        Ok(true)
+    pub fn rain_interface_records(&self) -> Option<&[crate::simulation::records::RainGageRecord]> {
+        self.rain_out.as_deref()
     }
 
     /// Write the runoff interface file this run recorded, if it recorded
     /// one (§14.8.2). `false` when the model asked for no such file.
-    pub fn write_runoff(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
-        let Some(rows) = &self.runoff_out else {
-            return Ok(false);
-        };
-        crate::io::iface::write_runoff_file(&self.net, rows, w)?;
-        Ok(true)
+    pub fn runoff_records(
+        &self,
+    ) -> Option<&[(f64, Vec<crate::simulation::records::ParcelReplay>)]> {
+        self.runoff_out.as_deref()
     }
 
     /// Write the RDII interface file (§14.8.1) in the text form, if the
@@ -3838,35 +3717,32 @@ impl Simulation {
     /// The declared step is the longer of the two hydrology steps, which
     /// bounds every gap between the records, so the written hydrograph
     /// leaves no instant of the run uncovered.
-    pub fn write_rdii(&self, w: &mut impl std::io::Write) -> std::io::Result<bool> {
-        let Some(rows) = &self.rdii_out else {
-            return Ok(false);
-        };
+    pub fn rdii_records(&self) -> Option<RdiiRecords<'_>> {
+        let rows = self.rdii_out.as_deref()?;
         let vertices: Vec<usize> = self.rdii.iter().map(|r| r.vertex).collect();
         let step = self.net.options.wet_step.max(self.net.options.dry_step);
-        crate::io::iface::write_rdii_file(&self.net, &vertices, step, rows, w)?;
-        Ok(true)
+        Some((vertices, step, rows))
     }
 
     /// Write the routing interface outflow file (§14.8): outlet
     /// vertices' inflows and concentrations per reporting period.
-    pub fn write_routing_outflows(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        // A run that disclaimed checkpointing kept no instants (§12.3),
-        // so there is nothing here to write. An empty file would be a
-        // wrong answer rather than a failure, which is worse.
-        if !self.retain_snapshots {
-            return Err(std::io::Error::other(
-                "this run was opened without checkpointing, so the reporting instants \
-                 this file is built from were not kept",
-            ));
-        }
-        crate::io::iface::write_routing_file(
-            &self.net,
-            &self.snapshots,
-            self.start_epoch,
-            self.report_step,
-            w,
-        )
+    pub fn retains_snapshots(&self) -> bool {
+        self.retain_snapshots
+    }
+
+    /// The parsed model, as the run holds it.
+    pub fn network(&self) -> &crate::model::Network {
+        &self.net
+    }
+
+    /// The civil epoch of the run's start (s).
+    pub fn start_epoch(&self) -> f64 {
+        self.start_epoch
+    }
+
+    /// The reporting step (s).
+    pub fn report_step(&self) -> f64 {
+        self.report_step
     }
 
     /// The §14.8.4 report files this model declares, in declaration
@@ -4000,7 +3876,9 @@ impl Simulation {
 
     /// Write the §14.9 text report to `w`, drawing on the §11 ledgers,
     /// the control-action log, and the routing performance counters.
-    pub fn write_report(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+    /// §11: the run summary as data — everything the §14.9 report is
+    /// built from, for the dialect tooling to format.
+    pub fn report_inputs(&self) -> crate::simulation::summary::ReportInputs<'_> {
         let led = self.ledgers();
         let surface = self.surface.as_ref().map(|s| {
             let err = led.surface.map_or(0.0, |l| l.error_percent);
@@ -4164,61 +4042,50 @@ impl Simulation {
             }
             None => Vec::new(),
         };
-        crate::io::rpt_writer::write_rpt(
-            &crate::io::rpt_writer::ReportInputs {
-                net: &self.net,
-                overland: self
-                    .coupled
-                    .as_ref()
-                    .map(|cs| crate::io::rpt_writer::OverlandRpt {
-                        ledger: crate::io::overland_out::LedgerRow::of(&cs.marcher),
-                        initial_storage: cs.marcher.initial_storage(),
-                        delivered_in: cs.delivered_in,
-                        delivered_out: cs.delivered_out,
-                        march: cs.marcher.statistics(),
-                    }),
-                surface,
-                subsurface,
-                flow,
-                quality,
-                loading,
-                actions: self.control_actions(),
-                performance: &self.router.report,
-                vertex_stats: &self.router.vertex_stats,
-                link_stats: &self.router.link_stats,
-                parcel_totals,
-                washoff_by_parcel: self
-                    .surface_quality
-                    .as_ref()
-                    .map(|sq| sq.washed_by_parcel.clone()),
-                outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
-                link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
-                worst,
-                lid_performance,
-            },
-            w,
-        )
+        crate::simulation::summary::ReportInputs {
+            net: &self.net,
+            overland: self
+                .coupled
+                .as_ref()
+                .map(|cs| crate::simulation::summary::OverlandRpt {
+                    ledger: crate::overland::LedgerRow::of(&cs.marcher),
+                    initial_storage: cs.marcher.initial_storage(),
+                    delivered_in: cs.delivered_in,
+                    delivered_out: cs.delivered_out,
+                    march: cs.marcher.statistics(),
+                }),
+            surface,
+            subsurface,
+            flow,
+            quality,
+            loading,
+            actions: self.control_actions(),
+            performance: &self.router.report,
+            vertex_stats: &self.router.vertex_stats,
+            link_stats: &self.router.link_stats,
+            parcel_totals,
+            washoff_by_parcel: self
+                .surface_quality
+                .as_ref()
+                .map(|sq| sq.washed_by_parcel.clone()),
+            outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
+            link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
+            worst,
+            lid_performance,
+        }
     }
 
-    /// Stream the §14.9 results to `sink` as the run produces them.
-    ///
-    /// The alternative is [`Self::write_out`], which writes the whole run
-    /// at the end from the gathered instants. Streaming exists because
-    /// that set is the largest thing a long run owns.
-    ///
-    /// Attach before stepping: the header records where the first
-    /// reporting instant falls, so instants already produced would be
-    /// missing from a file opened late.
     /// State that this run will never be asked for a checkpoint (§12.3).
     ///
     /// A session keeps every reporting instant so a checkpoint can carry
     /// the whole run's results — the largest thing a long run holds. A
     /// run with a results sink states its intent through
-    /// [`Self::begin_results`]; this is the same statement for a run
-    /// without one, which otherwise pays for the guarantee forever. A
-    /// model that saves a routing outflow file keeps its instants
-    /// regardless, since that file is written from them at the end
-    /// (§14.8). Asking for a checkpoint afterwards is refused.
+    /// [`Self::attach_results`]'s `may_checkpoint` argument; this is the
+    /// same statement for a run without one, which otherwise pays for
+    /// the guarantee forever. A model that saves a routing outflow file
+    /// keeps its instants regardless, since that file is written from
+    /// them at the end (§14.8). Asking for a checkpoint afterwards is
+    /// refused.
     pub fn forgo_checkpoint(&mut self) {
         let saves_outflows = self.net.interface_files.outflows.is_some();
         self.retain_snapshots = saves_outflows;
@@ -4227,28 +4094,20 @@ impl Simulation {
         }
     }
 
-    pub fn begin_results(
+    /// §14.9: attach a destination for reporting instants, fed as the
+    /// run produces them. On a run resumed from a checkpoint (§12.3)
+    /// the restored instants are appended straight away, so a resumed
+    /// run still records the whole run's results and not merely the
+    /// tail.
+    pub fn attach_results(
         &mut self,
-        sink: Box<dyn std::io::Write + Send>,
+        mut sink: Box<dyn crate::simulation::sinks::SnapshotSink>,
         may_checkpoint: bool,
     ) -> std::io::Result<()> {
-        // The header backdates from the run's *first* instant, which on a
-        // run resumed from a checkpoint (§12.3) is one the checkpoint
-        // restored rather than the next one falling due. Those restored
-        // instants are written straight away, so a resumed run still
-        // writes the whole run's results and not merely the tail.
-        let first = self.snapshots.first().map_or(self.next_report, |s| s.t);
-        let mut out = crate::io::out_writer::OutStream::begin(
-            sink,
-            &self.net,
-            self.start_epoch,
-            self.report_step,
-            first,
-        )?;
         for snap in &self.snapshots {
-            out.append(snap)?;
+            sink.append(snap)?;
         }
-        self.out = Some(out);
+        self.out = Some(sink);
         // A routing outflow file is written from the same instants once
         // the run ends (§14.8), so a model that saves one keeps them
         // whatever the caller says about checkpoints.
@@ -4258,6 +4117,14 @@ impl Simulation {
             self.snapshots = Vec::new();
         }
         Ok(())
+    }
+
+    /// §14.9: the run time of the first reporting instant a destination
+    /// will receive — the header datum a format needs before any
+    /// instant exists. On a resumed run it is the earliest restored
+    /// instant, so the whole run's results are recorded.
+    pub fn first_report_instant(&self) -> f64 {
+        self.snapshots.first().map_or(self.next_report, |s| s.t)
     }
 
     /// Close a streamed results file, reporting the first write failure
@@ -4279,27 +4146,6 @@ impl Simulation {
             Some(out) => out.finish().map(|_| ()),
             None => Ok(()),
         }
-    }
-
-    /// Write the §14.9 binary results to `w`; the caller owns where the
-    /// bytes go (§12.2).
-    pub fn write_out(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        // A run that disclaimed checkpointing kept no instants (§12.3),
-        // so there is nothing here to write. An empty file would be a
-        // wrong answer rather than a failure, which is worse.
-        if !self.retain_snapshots {
-            return Err(std::io::Error::other(
-                "this run was opened without checkpointing, so the reporting instants \
-                 this file is built from were not kept",
-            ));
-        }
-        crate::io::out_writer::write_out(
-            &self.net,
-            &self.snapshots,
-            self.start_epoch,
-            self.report_step,
-            w,
-        )
     }
 
     /// The §9.1 control-action log: (time s, link, setting, rule).
@@ -4586,9 +4432,10 @@ impl Simulation {
 /// were authored on, and the caller supplies the file it actually found.
 fn realise_file_gages(
     net: &mut Network,
-    rain_files: &[(String, crate::io::rain::RainRecords)],
-    rain_interface: Option<&crate::io::iface::RainInterface>,
-) -> Result<Vec<crate::io::iface::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal> {
+    rain_files: &[(String, crate::simulation::records::RainRecords)],
+    rain_interface: Option<&crate::simulation::records::RainInterface>,
+) -> Result<Vec<crate::simulation::records::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal>
+{
     use crate::hydrology::runoff::SurfaceRefusal;
     use crate::model::{GageSource, RainFileUnit};
 
@@ -4679,8 +4526,8 @@ fn realise_file_gages(
         // it is realised exactly as a cache of one is, and the gage's
         // declared form describes its record rather than the file.
         let readings = match supplied {
-            crate::io::rain::RainRecords::Station(readings) => readings,
-            crate::io::rain::RainRecords::Archive(rec) => {
+            crate::simulation::records::RainRecords::Station(readings) => readings,
+            crate::simulation::records::RainRecords::Archive(rec) => {
                 let to_model = if net.options.flow_units.is_us() {
                     1.0
                 } else {
@@ -4797,8 +4644,8 @@ fn cacheable_record(
     form: crate::model::RainForm,
     unit: Option<crate::model::RainFileUnit>,
     model_is_us: bool,
-    readings: &[crate::io::rain::RainReading],
-) -> crate::io::iface::RainGageRecord {
+    readings: &[crate::simulation::records::RainReading],
+) -> crate::simulation::records::RainGageRecord {
     use crate::model::{RainFileUnit, RainForm};
     // The record's own declared unit, not the model's: an undeclared unit
     // is the model unit system's depth unit (§14.12).
@@ -4833,7 +4680,7 @@ fn cacheable_record(
         let day = SWMM_EPOCH_DAYS_ENGINE + days_from_civil(r.date) as f64 + r.seconds / 86_400.0;
         out.push((day, depth * to_inches));
     }
-    crate::io::iface::RainGageRecord {
+    crate::simulation::records::RainGageRecord {
         station: station.to_string(),
         interval,
         readings: out,
@@ -4846,7 +4693,7 @@ fn cacheable_record(
 /// back as 899.9999999 s — so the second is rounded to the nearest
 /// millisecond, far above the encoding's noise and far below any interval
 /// a record uses.
-fn civil_from_decimal_day(day: f64) -> (crate::io::options::Date, f64) {
+fn civil_from_decimal_day(day: f64) -> (crate::model::options::Date, f64) {
     let since_epoch = day - SWMM_EPOCH_DAYS_ENGINE;
     let days = since_epoch.floor();
     let seconds = ((since_epoch - days) * 86_400.0 * 1000.0).round() / 1000.0;
@@ -4887,8 +4734,8 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
 
 /// The internal-unit scale (metres per foot-based slot) for each §14.8
 /// infiltration state slot under the session's model.
-fn infil_slot_ft(model: crate::io::options::InfiltrationModel, slot: usize) -> f64 {
-    use crate::io::options::InfiltrationModel as M;
+fn infil_slot_ft(model: crate::model::options::InfiltrationModel, slot: usize) -> f64 {
+    use crate::model::options::InfiltrationModel as M;
     const FT: f64 = 0.3048;
     match model {
         // tp (s), Fe (ft), rest unused.
@@ -4968,7 +4815,6 @@ fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64, hold_en
 
 #[cfg(test)]
 mod interface_file_modes {
-    use super::*;
 
     fn model_with(files: &str) -> String {
         let base = std::fs::read_to_string(
@@ -4990,7 +4836,8 @@ mod interface_file_modes {
             "[FILES]\nSAVE RDII rdii.txt",
             "",
         ] {
-            let Ok((_sim, _diags, findings)) = Simulation::open(&model_with(files)) else {
+            let Ok((_sim, _diags, findings)) = crate::dialect::session::open(&model_with(files))
+            else {
                 panic!("a served format must not block the model: {files:?}");
             };
             let errors: Vec<_> = findings.iter().filter(|f| f.kind.is_error()).collect();
@@ -5007,7 +4854,7 @@ mod interface_file_modes {
             "G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1",
             "G1  INTENSITY  0:15  1.0  FILE  \"rain.dat\"  STA01  IN",
         );
-        let Err(err) = Simulation::open(&file_gage) else {
+        let Err(err) = crate::dialect::session::open(&file_gage) else {
             panic!("a model reading an unsupplied cache must not open");
         };
         let text = err.to_string();
@@ -5019,7 +4866,7 @@ mod interface_file_modes {
     #[test]
     fn a_rainfall_file_no_gage_reads_does_not_block_the_model() {
         assert!(
-            Simulation::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")).is_ok(),
+            crate::dialect::session::open(&model_with("[FILES]\nUSE RAINFALL rain.rff")).is_ok(),
             "a cache nothing reads must not refuse the model"
         );
     }

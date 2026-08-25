@@ -1,4 +1,4 @@
-// writable — implements crate::io::WritableSimulation for Simulation.
+// writable — implements crate::simulation::contract::WritableSimulation for Simulation.
 //
 // This bridges the simulation crate's internal state to the generic trait
 // that the output writers in crate::io require. No solver logic lives
@@ -6,7 +6,7 @@
 
 use super::*;
 
-use crate::io::{
+use crate::simulation::contract::{
     FlowBalance, FlowBalanceSummary, HydSnapshot, MassBalance, PumpEnergy, SimWarning,
     WritableSimulation,
 };
@@ -94,7 +94,7 @@ mod tests {
     /// specifically to let integrators call.
     #[test]
     fn writing_before_a_model_is_loaded_is_an_error_not_a_panic() {
-        use crate::io::{out_writer::write_binary_output, rpt_writer};
+        use crate::dialect::{out_writer::write_binary_output, rpt_writer};
         use crate::FlowUnits;
 
         let sim = Simulation::create();
@@ -236,7 +236,7 @@ mod tests {
     /// (simulation spec §8.3, streaming serialization).
     #[test]
     fn streamed_out_is_byte_identical_to_post_run_out() {
-        use crate::io::out_writer::{write_binary_output, OutStreamWriter};
+        use crate::dialect::out_writer::{write_binary_output, OutStreamWriter};
         use crate::FlowUnits;
         use std::io::Cursor;
 
@@ -294,7 +294,7 @@ mod tests {
     /// quality: it closes with zero periods rather than wrong values.
     #[test]
     fn stream_finished_before_quality_holds_back_all_periods() {
-        use crate::io::out_writer::OutStreamWriter;
+        use crate::dialect::out_writer::OutStreamWriter;
         use crate::FlowUnits;
         use std::io::Cursor;
 

@@ -6,7 +6,8 @@
 //! fine enough that first-order error is negligible against the differences
 //! the assertions measure.
 
-use hydra_engine_wds::{io, NodeQuantity, Simulation, WarningKind};
+use hydra_engine_wds::{NodeQuantity, Simulation, WarningKind};
+use hydra_interop_epanet as io;
 
 /// Reservoir at 150 ft filling a 40 ft-diameter tank through a long 8-inch
 /// pipe: a smooth exponential-approach trajectory with visibly curving net

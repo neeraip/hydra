@@ -24,7 +24,8 @@
 //!
 //! and paste the printed `GOLDEN_*` constants over the ones below.
 
-use hydra_engine_wds::{io, LinkQuantity, NodeQuantity, QualityMode, Simulation};
+use hydra_engine_wds::{LinkQuantity, NodeQuantity, QualityMode, Simulation};
+use hydra_interop_epanet as io;
 use std::path::PathBuf;
 
 /// Golden comparisons use the standard mixed criterion:

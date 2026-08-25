@@ -1380,7 +1380,7 @@ mod tests {
                      [JUNCTIONS]\nJ1 100 4 0.5\n[OUTFALLS]\nO1 98 FREE\n\
                      [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let rows = element_attributes(&net, "J1").expect("junction rows");
         // Schema order: the kind's own values, then the tag every
@@ -1419,7 +1419,7 @@ mod tests {
                      [CONDUITS]\nC1 J1 O1 400 0.013 0 0 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
                      [COORDINATES]\nJ1 0 0\nO1 100 0\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let conduits = kind_elements(&net, "conduit");
         assert_eq!(conduits.ids, vec!["C1"]);
@@ -1439,7 +1439,7 @@ mod tests {
                      [CURVES]\nST1 STORAGE 0 100\nST1 1 150\n\
                      [TIMESERIES]\nTS1 0:00 0.1\nTS1 1:00 0.4\n\
                      [PATTERNS]\nP1 HOURLY 1 1 1 1 1 1\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let pollutants = kind_elements(&net, "pollutant");
         assert_eq!(pollutants.ids, vec!["TSS"]);
@@ -1471,7 +1471,7 @@ mod tests {
                      [CURVES]\nST1 STORAGE 0 100\nST1 1 150\n\
                      [PATTERNS]\nP1 HOURLY 1 2 3\n\
                      [TIMESERIES]\nTS1 0:00 0.1\nTS1 1:00 0.4\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         // A storage curve relates depth to surface area, and the values
         // are SI — the model declares CFS, so the importer converted feet
@@ -1519,7 +1519,7 @@ mod tests {
                      [JUNCTIONS]\nJ1 100 4 0.5\n\
                      [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO\n\
                      [TIMESERIES]\nRAIN FILE \"rain.dat\"\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let external = collection_detail(&net, "timeseries", "RAIN");
         assert!(external.rows.is_empty() && external.lines.is_empty());
@@ -1551,7 +1551,7 @@ mod tests {
                      [LID_CONTROLS]\n\
                      GR1 BIO_CELL\n\
                      GR1 SURFACE 150 0.0 0.1 1.0 5\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
         let detail = collection_detail(&net, "lidcontrol", "GR1");
         assert!(detail.rows.is_empty() && detail.lines.is_empty());
         assert_eq!(detail.note, None);
@@ -1562,7 +1562,7 @@ mod tests {
     #[test]
     fn collection_detail_is_empty_for_an_unknown_id() {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4 0.5\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
         let d = collection_detail(&net, "curve", "nope");
         assert!(d.columns.is_empty() && d.rows.is_empty() && d.lines.is_empty());
         // ...as is a kind that is not a container at all.
@@ -1583,7 +1583,7 @@ mod tests {
                      [TRANSECTS]\nNC 0.05 0.05 0.03\n\
                      X1 TR1 4 0 0 0 0 0 0 0\n\
                      GR 10 0 5 5 5 10 10 15\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let land = kind_elements(&net, "landuse");
         assert_eq!(land.ids, vec!["Residential"]);
@@ -1607,7 +1607,7 @@ mod tests {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
                      [JUNCTIONS]\nJ1 100 4 0.5\n\
                      [TIMESERIES]\nTS1 FILE \"rain.dat\"\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
         let ts = kind_elements(&net, "timeseries");
         assert_eq!(ts.ids, vec!["TS1"]);
         let points = ts
@@ -1641,7 +1641,7 @@ mod tests {
                      [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
                      [CURVES]\nCV1 STORAGE 0 0\n\
                      [TIMESERIES]\nTS1 0:00 0.1\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
         let counts = kind_counts(&net);
         let mut nonzero = 0;
         for kind in hydra::uds::descriptors::ELEMENT_KINDS {
@@ -1675,7 +1675,7 @@ mod tests {
                      [CONDUITS]\nC1 J1 J2 400 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
                      [COORDINATES]\nJ1 10 20\nO1 30 40\n";
-        let (net, _) = hydra::uds::io::objects::parse_network(model);
+        let (net, _) = hydra::swmm::objects::parse_network(model);
 
         let junctions = kind_elements(&net, "junction");
         assert_eq!(junctions.ids, vec!["J1", "J2"]);
@@ -1695,7 +1695,7 @@ mod tests {
                      [OUTFALLS]\nO1 88 FREE NO\n\
                      [CONDUITS]\nC1 J1 J2 400 0.013 0 0\nC2 J2 O1 300 0.015 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let junctions = kind_elements(&net, "junction");
         assert_eq!(junctions.ids, vec!["J1", "J2"]);
@@ -1744,7 +1744,7 @@ mod tests {
                      [OUTFALLS]\nO1 88 FREE NO\n\
                      [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let mut compared = 0;
         for (kind, id) in [("junction", "J1"), ("outfall", "O1"), ("conduit", "C1")] {
@@ -1791,7 +1791,7 @@ mod tests {
                      [JUNCTIONS]\nJ1 100 4\n\
                      [SUBCATCHMENTS]\nS1 RG1 J1 2.5 40 500 1.5 0\n\
                      [TIMESERIES]\nTS1 0 0.5 1 0.25\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
         let rows = element_attributes(&net, "S1").expect("subcatchment rows");
         let by = |label: &str| {
             rows.iter()
@@ -1863,7 +1863,7 @@ GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE
 ";
 
     fn network() -> Network {
-        hydra::uds::io::objects::parse_network(MODEL).0
+        hydra::swmm::objects::parse_network(MODEL).0
     }
 
     /// Both are declared kinds, so the Editor's catalog-driven rail lists
@@ -2722,7 +2722,7 @@ mod write_tests {
     const INP: &str = crate::commands::test_fixtures::UDS_FULL_INP;
 
     fn model() -> Network {
-        let (net, diags) = hydra::uds::io::objects::parse_network(INP);
+        let (net, diags) = hydra::swmm::objects::parse_network(INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         net
     }
@@ -2765,7 +2765,7 @@ mod write_tests {
         let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
                      [JUNCTIONS]\nJ1 10 3 0 0 0\n\
                      [POLLUTANTS]\nTSS MG/L 0 0 0 0.1 NO\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
         // The model holds it per second, which is the file's 0.1 a day.
         assert!((net.constituents[0].decay - 0.1 / 86_400.0).abs() < 1e-15);
 
@@ -2796,7 +2796,7 @@ mod write_tests {
         let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
                      [JUNCTIONS]\nJ1 10 3 0 0 0\n\
                      [PATTERNS]\nP1 HOURLY 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
 
         // Read as the file writes it, not as the enum spells it.
         let shown = kind_elements(&net, "pattern")
@@ -2849,7 +2849,7 @@ mod write_tests {
                      [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
                      [HYDROGRAPHS]\nUH1 RG1\nUH1 All SHORT 0.5 1.0 2.0\n\
                      [TIMESERIES]\nTS1 0:00 1.0\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
 
         set_attribute(&mut net, "UH1", "raingage", &serde_json::json!("RG2"))
             .expect("a group takes a gage");
@@ -2876,7 +2876,7 @@ mod write_tests {
         let model = "[OPTIONS]\nFLOW_UNITS CMS\n\
                      [JUNCTIONS]\nJ1 10 3 0 0 0\n\
                      [POLLUTANTS]\nTSS UG/L 0 0 0 0 NO\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
         let units = kind_elements(&net, "pollutant")
             .values_at("units", 0)
             .and_then(|v| v.as_str().map(str::to_string))
@@ -2903,7 +2903,7 @@ mod write_tests {
                      [POLLUTANTS]\n\
                      TSS MG/L 0 0 0 0 NO\n\
                      LEAD MG/L 0 0 0 0 NO\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
         assert!(
             set_attribute(&mut net, "LEAD", "coPollutant", &serde_json::json!("LEAD")).is_err()
         );
@@ -3159,7 +3159,7 @@ mod write_tests {
     /// which the file writes as `*`.
     #[test]
     fn a_divider_can_be_told_which_link_its_flow_leaves_by() {
-        let (mut net, diags) = hydra::uds::io::objects::parse_network(
+        let (mut net, diags) = hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CMS\n\
              [JUNCTIONS]\nJ1 10 3 0 0 0\n\
              [DIVIDERS]\nD1 9 * OVERFLOW\n\
@@ -3343,8 +3343,8 @@ mod write_tests {
         // sit in memory.
         let mut net = model();
         set_attribute(&mut net, "S1", "imperviousness", &serde_json::json!(62.0)).expect("set");
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
-        let (again, diags) = hydra::uds::io::objects::parse_network(&text);
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("export");
+        let (again, diags) = hydra::swmm::objects::parse_network(&text);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         assert!((read(&again, "S1", "Imperviousness") - 62.0).abs() < 1e-9);
     }

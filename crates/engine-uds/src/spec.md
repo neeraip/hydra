@@ -230,6 +230,15 @@ interoperability is specified last, as an adapter between the predecessor's
 formats and a model defined independently of them. A reader should be able to
 understand everything this engine computes without reading §14.
 
+§14's hosting moved with the format-blind extraction (2026-08-26):
+every dialect's tooling lives in its own interop crate, and the §14
+document travels with that code. Rule 3 below is why this costs nothing — the
+range keeps its numbers and every cross-reference holds. The engine
+itself is becoming format-blind: models enter as data, results leave as
+typed streams, and §14 describes the adapter that speaks the
+predecessor's formats on this engine's behalf. Tier 1 of §1.4 binds
+exactly as before; which crate discharges it is a wiring detail.
+
 Three rules keep the scheme intact:
 
 1. **A new top-level section takes the next free number within its owning

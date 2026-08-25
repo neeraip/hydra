@@ -5,8 +5,6 @@
 //! (result-authoritative); element identifiers and declared display units
 //! come from the network. Production is read-only and deterministic.
 
-use std::path::Path;
-
 use hydra_common::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
     LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
@@ -17,7 +15,7 @@ use super::demand_reliability::{
     compute_demand_reliability_from_out_with_options, DemandReliabilityOptions,
 };
 use super::service_compliance::{compute_service_compliance_from_out, ServiceComplianceThresholds};
-use crate::io::out_reader::{self, OutMetadata};
+use super::source::{self, OutMetadata, ResultsSource};
 use crate::{FlowUnits, LinkKind, Network, NodeKind};
 
 /// Sample budget for the range scan (analysis spec §4.2). Matches the
@@ -139,36 +137,34 @@ pub fn report_catalog() -> &'static [BlockDescriptor] {
 /// options value (analysis spec §4.1.1/§4.2).
 pub fn produce_report_block(
     id: &str,
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
     match id {
-        "wds.run-summary" => run_summary(out_path, network),
-        "wds.result-extremes" => result_extremes(out_path, network),
-        "wds.pump-energy" => pump_energy(out_path, network),
-        "wds.quality-summary" => quality_summary(out_path),
-        "wds.quality-compliance" => quality_compliance(out_path, network, options),
-        "wds.unit-headloss" => unit_headloss(out_path, network, options),
-        "wds.service-compliance" => service_compliance(out_path, network, options),
-        "wds.demand-reliability" => demand_reliability(out_path, network, options),
-        "wds.pressure-distribution" => pressure_distribution(out_path, network),
-        "wds.velocity-distribution" => velocity_distribution(out_path, network),
-        "wds.tank-levels" => tank_levels(out_path, network),
-        "wds.mass-balance" => mass_balance(out_path, network),
-        "wds.pipe-criticality" => pipe_criticality(out_path, network, options),
-        "wds.pressure-thresholds" => pressure_thresholds(out_path, network, options),
-        "wds.velocity-thresholds" => velocity_thresholds(out_path, network, options),
+        "wds.run-summary" => run_summary(src, network),
+        "wds.result-extremes" => result_extremes(src, network),
+        "wds.pump-energy" => pump_energy(src, network),
+        "wds.quality-summary" => quality_summary(src),
+        "wds.quality-compliance" => quality_compliance(src, network, options),
+        "wds.unit-headloss" => unit_headloss(src, network, options),
+        "wds.service-compliance" => service_compliance(src, network, options),
+        "wds.demand-reliability" => demand_reliability(src, network, options),
+        "wds.pressure-distribution" => pressure_distribution(src, network),
+        "wds.velocity-distribution" => velocity_distribution(src, network),
+        "wds.tank-levels" => tank_levels(src, network),
+        "wds.mass-balance" => mass_balance(src, network),
+        "wds.pipe-criticality" => pipe_criticality(src, network, options),
+        "wds.pressure-thresholds" => pressure_thresholds(src, network, options),
+        "wds.velocity-thresholds" => velocity_thresholds(src, network, options),
         _ => Err(BlockError::UnknownBlock { id: id.into() }),
     }
 }
 
 // ── Value / metadata helpers ──────────────────────────────────────────────────
 
-fn read_meta(out_path: &Path) -> Result<OutMetadata, BlockError> {
-    out_reader::read_metadata_checked(out_path).map_err(|e| BlockError::Failed {
-        message: e.to_string(),
-    })
+fn read_meta(src: &dyn ResultsSource) -> Result<OutMetadata, BlockError> {
+    Ok(src.meta().clone())
 }
 
 fn int(value: usize) -> Value {
@@ -281,8 +277,8 @@ fn sampling_note(n_periods: usize) -> Option<FragmentItem> {
 
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
-fn run_summary(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn run_summary(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     let (pressure, _, _) = unit_labels(network);
     let final_report_time =
         meta.report_start + meta.report_step * (meta.n_periods.max(1) - 1) as f64;
@@ -368,7 +364,7 @@ struct SiDisplay {
 
 impl SiDisplay {
     fn new(network: &Network) -> Self {
-        let ucf = crate::io::units::make_ucf(
+        let ucf = crate::model::units::make_ucf(
             network.options.flow_units,
             network.options.specific_gravity,
         );
@@ -414,14 +410,15 @@ fn q_col(name: &str, key: &str) -> Column {
     }
 }
 
-fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn result_extremes(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
-    let ranges = out_reader::scan_ranges(out_path, &meta, MAX_RANGE_SAMPLES)
+    let ranges = src
+        .scan_ranges(MAX_RANGE_SAMPLES)
         .map_err(|message| BlockError::Failed { message })?;
 
     let u = SiDisplay::new(network);
@@ -508,14 +505,15 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
     })
 }
 
-fn pump_energy(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn pump_energy(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_pumps == 0 {
         return Err(BlockError::Unavailable {
             reason: "The network has no pumps.".into(),
         });
     }
-    let energy = out_reader::read_energy(out_path, &meta)
+    let energy = src
+        .read_energy()
         .map_err(|message| BlockError::Failed { message })?;
 
     let rows = energy
@@ -592,14 +590,15 @@ fn pump_energy(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
     })
 }
 
-fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn quality_summary(src: &dyn ResultsSource) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.quality_flag == 0 {
         return Err(BlockError::Unavailable {
             reason: "The run has no water-quality results.".into(),
         });
     }
-    let ranges = out_reader::scan_ranges(out_path, &meta, MAX_RANGE_SAMPLES)
+    let ranges = src
+        .scan_ranges(MAX_RANGE_SAMPLES)
         .map_err(|message| BlockError::Failed { message })?;
 
     let unit = quality_unit(meta.quality_flag);
@@ -620,11 +619,11 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
 }
 
 fn quality_compliance(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     match meta.quality_flag {
         0 => {
             return Err(BlockError::Unavailable {
@@ -641,7 +640,8 @@ fn quality_compliance(
     let min_residual = opt_f64(options, "minResidual", true)?.unwrap_or(0.2);
     let max_age = opt_f64(options, "maxAge", true)?.unwrap_or(24.0);
     let worst_count = opt_usize(options, "worstCount")?.unwrap_or(DEFAULT_WORST_COUNT);
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
 
     // Spec §4.1: chemical mode judges each junction's minimum residual
@@ -753,18 +753,19 @@ fn quality_compliance(
 const DEFAULT_HEADLOSS_COUNT: usize = 10;
 
 fn unit_headloss(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
     let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_HEADLOSS_COUNT);
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
 
     // Pipes only: the stored headloss variable is a length-normalised
@@ -1046,11 +1047,11 @@ fn percent(ratio: f64) -> Value {
 }
 
 fn service_compliance(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
@@ -1071,11 +1072,10 @@ fn service_compliance(
         min_pressure,
         max_pressure,
     };
-    let report = compute_service_compliance_from_out(out_path, thresholds).map_err(|e| {
-        BlockError::Failed {
+    let report =
+        compute_service_compliance_from_out(src, thresholds).map_err(|e| BlockError::Failed {
             message: e.to_string(),
-        }
-    })?;
+        })?;
     let summary = &report.summary;
 
     // The option arrives in file display units (§4.1.1, unchanged); its
@@ -1209,11 +1209,11 @@ fn service_compliance(
 }
 
 fn demand_reliability(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
@@ -1225,7 +1225,7 @@ fn demand_reliability(
     }
     let worst_count = opt_usize(options, "worstCount")?.unwrap_or(DEFAULT_WORST_COUNT);
 
-    let report = compute_demand_reliability_from_out_with_options(out_path, network, dr_options)
+    let report = compute_demand_reliability_from_out_with_options(src, network, dr_options)
         .map_err(|e| BlockError::Failed {
             message: e.to_string(),
         })?;
@@ -1321,14 +1321,18 @@ fn demand_reliability(
     })
 }
 
-fn pressure_distribution(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn pressure_distribution(
+    src: &dyn ResultsSource,
+    network: &Network,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let (pressure_unit, _, _) = unit_labels(network);
     // Junctions only (analysis spec §4.1.2): tank/reservoir indices sit at
@@ -1352,14 +1356,18 @@ fn pressure_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     ))
 }
 
-fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn velocity_distribution(
+    src: &dyn ResultsSource,
+    network: &Network,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, velocity_unit) = unit_labels(network);
     // Pipes only (analysis spec §4.1.2): a pump or valve has no pipe
@@ -1481,7 +1489,7 @@ fn fmt_edge(v: f64) -> String {
 }
 
 /// Junction minimum pressures, in the file's pressure display unit.
-fn junction_min_pressures(scan: &out_reader::AnalyticsScan, meta: &OutMetadata) -> Vec<f64> {
+fn junction_min_pressures(scan: &source::AnalyticsScan, meta: &OutMetadata) -> Vec<f64> {
     let junction_count = meta.n_nodes.saturating_sub(meta.n_tanks);
     scan.node_min_pressure
         .iter()
@@ -1492,7 +1500,7 @@ fn junction_min_pressures(scan: &out_reader::AnalyticsScan, meta: &OutMetadata) 
 }
 
 /// Per-pipe maximum velocities (pumps and valves excluded, §4.1.2).
-fn pipe_max_velocities(scan: &out_reader::AnalyticsScan, network: &Network) -> Vec<(usize, f64)> {
+fn pipe_max_velocities(scan: &source::AnalyticsScan, network: &Network) -> Vec<(usize, f64)> {
     scan.link_max_velocity
         .iter()
         .enumerate()
@@ -1507,14 +1515,15 @@ fn pipe_max_velocities(scan: &out_reader::AnalyticsScan, network: &Network) -> V
         .collect()
 }
 
-fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn mass_balance(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, _) = unit_labels(network);
 
@@ -1573,18 +1582,19 @@ fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockErr
 const DEFAULT_TOP_COUNT: usize = 5;
 
 fn pipe_criticality(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
     let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_TOP_COUNT);
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let u = SiDisplay::new(network);
 
@@ -1642,11 +1652,11 @@ fn pipe_criticality(
 }
 
 fn pressure_thresholds(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
@@ -1656,7 +1666,8 @@ fn pressure_thresholds(
         options,
         default_pressure_edges(is_si(network.options.flow_units)),
     )?;
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let (pressure_unit, _, _) = unit_labels(network);
     let values = junction_min_pressures(&scan, &meta);
@@ -1671,11 +1682,11 @@ fn pressure_thresholds(
 }
 
 fn velocity_thresholds(
-    out_path: &Path,
+    src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
@@ -1685,7 +1696,8 @@ fn velocity_thresholds(
         options,
         default_velocity_edges(is_si(network.options.flow_units)),
     )?;
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, velocity_unit) = unit_labels(network);
     let values: Vec<f64> = pipe_max_velocities(&scan, network)
@@ -1780,14 +1792,15 @@ fn distribution_fragment(
 /// the first [`MAX_TANK_SERIES`] with a disclosure note when more exist.
 const MAX_TANK_SERIES: usize = 8;
 
-fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
-    let meta = read_meta(out_path)?;
+fn tank_levels(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(src)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
             message: "The results file holds no reporting periods.".into(),
         });
     }
-    let scan = out_reader::scan_analytics(out_path, &meta)
+    let scan = src
+        .scan_analytics()
         .map_err(|message| BlockError::Failed { message })?;
     let u = SiDisplay::new(network);
     let tank_start = meta.n_nodes.saturating_sub(meta.n_tanks);
@@ -1874,7 +1887,41 @@ fn node_id(network: &Network, node_index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+
+    /// The path-based source the production callers build in the
+    /// dialect crate; tests read fixtures the same way.
+    fn src_of(path: &Path) -> crate::dialect::out_reader::OutFileSource {
+        crate::dialect::out_reader::OutFileSource::open(path).expect("open results fixture")
+    }
+
+    /// A source no block may touch: rejection by id must not read.
+    struct NoSource;
+    impl ResultsSource for NoSource {
+        fn meta(&self) -> &OutMetadata {
+            unreachable!("an unknown block id must be rejected before any read")
+        }
+        fn flow_units_code(&self) -> Result<i32, source::OutValidityError> {
+            unreachable!()
+        }
+        fn tank_node_indices(&self) -> Result<Vec<usize>, String> {
+            unreachable!()
+        }
+        fn read_energy(&self) -> Result<source::OutEnergy, String> {
+            unreachable!()
+        }
+        fn read_period(&self, _: usize) -> Result<source::PeriodResult, String> {
+            unreachable!()
+        }
+        fn scan_ranges(&self, _: usize) -> Result<source::ResultRanges, String> {
+            unreachable!()
+        }
+        fn scan_analytics(&self) -> Result<source::AnalyticsScan, String> {
+            unreachable!()
+        }
+    }
 
     #[test]
     fn catalog_ids_are_namespaced_and_unique() {
@@ -1914,8 +1961,8 @@ mod tests {
 
     #[test]
     fn unknown_block_id_is_rejected() {
-        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
-        let err = produce_report_block("wds.nope", Path::new("/nonexistent"), &network, None)
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let err = produce_report_block("wds.nope", &NoSource, &network, None)
             .expect_err("unknown id must fail");
         assert!(matches!(err, BlockError::UnknownBlock { .. }));
     }
@@ -1930,7 +1977,7 @@ mod tests {
         [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n[END]\n";
 
     fn described(id: &str, inp: &str) -> Vec<OptionDescriptor> {
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         report_block_options(id, &network)
     }
 
@@ -2010,14 +2057,19 @@ mod tests {
         // template or the CLI from setting it.
         with_fixture_out(|path, network| {
             let options = serde_json::json!({ "deficitTolerance": 0.001 });
-            produce_report_block("wds.demand-reliability", path, network, Some(&options))
-                .expect("an undescribed option must still be honoured");
+            produce_report_block(
+                "wds.demand-reliability",
+                &src_of(path),
+                network,
+                Some(&options),
+            )
+            .expect("an undescribed option must still be honoured");
         });
     }
 
     #[test]
     fn blocks_without_options_describe_none() {
-        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
         for id in ["wds.run-summary", "wds.tank-levels", "wds.mass-balance"] {
             assert!(
                 report_block_options(id, &network).is_empty(),
@@ -2045,38 +2097,38 @@ mod tests {
 
     struct MockSession {
         network: crate::Network,
-        snapshots: Vec<crate::io::HydSnapshot>,
+        snapshots: Vec<crate::simulation::contract::HydSnapshot>,
     }
 
-    impl crate::io::WritableSimulation for MockSession {
+    impl crate::simulation::contract::WritableSimulation for MockSession {
         fn net(&self) -> &crate::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::simulation::contract::HydSnapshot] {
             &self.snapshots
         }
-        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::simulation::contract::MassBalance> {
             None
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::simulation::contract::SimWarning] {
             &[]
         }
-        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (None, None)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             None
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             None
         }
     }
@@ -2117,7 +2169,8 @@ mod tests {
     fn us_files_produce_tagged_si_values_that_round_trip() {
         with_inp_out(FIXTURE_INP_US, |path, network| {
             let fragment =
-                produce_report_block("wds.result-extremes", path, network, None).expect("produce");
+                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                    .expect("produce");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("extremes table");
             };
@@ -2140,7 +2193,7 @@ mod tests {
             let d = qty("pressure").expect("cataloged");
             let head_m: f64 = 50.0; // J1 head set by the harness
             let elevation = 0.0;
-            let ucf = crate::io::units::make_ucf(
+            let ucf = crate::model::units::make_ucf(
                 network.options.flow_units,
                 network.options.specific_gravity,
             );
@@ -2164,7 +2217,8 @@ mod tests {
     fn si_files_tag_without_changing_values() {
         with_inp_out(FIXTURE_INP, |path, network| {
             let fragment =
-                produce_report_block("wds.result-extremes", path, network, None).expect("produce");
+                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                    .expect("produce");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("extremes table");
             };
@@ -2189,9 +2243,13 @@ mod tests {
     fn a_us_criterion_echo_round_trips_exactly() {
         with_inp_out(FIXTURE_INP_US, |path, network| {
             let options = serde_json::json!({ "minPressure": 20.0 });
-            let fragment =
-                produce_report_block("wds.service-compliance", path, network, Some(&options))
-                    .expect("produce");
+            let fragment = produce_report_block(
+                "wds.service-compliance",
+                &src_of(path),
+                network,
+                Some(&options),
+            )
+            .expect("produce");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("key values");
             };
@@ -2216,7 +2274,7 @@ mod tests {
     }
 
     fn with_inp_out(inp: &str, f: impl FnOnce(&Path, &crate::Network)) {
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
             .nodes
             .iter()
@@ -2234,7 +2292,7 @@ mod tests {
             .collect();
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::simulation::contract::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -2245,8 +2303,10 @@ mod tests {
         // The file carries the model's own declared units, as a real run's
         // would — the US fixtures below depend on this.
         let declared = session.network.options.flow_units;
-        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
-            .expect("write .out");
+        crate::dialect::out_writer::write_binary_output(
+            &mut buf, &session, "test.inp", "", declared,
+        )
+        .expect("write .out");
 
         let mut path = std::env::temp_dir();
         path.push(format!(
@@ -2272,7 +2332,7 @@ mod tests {
              [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
              [OPTIONS]\nUnits  LPS\nHeadloss  H-W\nQuality  {quality_line}\n\n[END]\n"
         );
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
             .nodes
             .iter()
@@ -2291,7 +2351,7 @@ mod tests {
             .collect();
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::simulation::contract::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -2299,8 +2359,10 @@ mod tests {
         };
         let mut buf = std::io::Cursor::new(Vec::new());
         let declared = session.network.options.flow_units;
-        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
-            .expect("write .out");
+        crate::dialect::out_writer::write_binary_output(
+            &mut buf, &session, "test.inp", "", declared,
+        )
+        .expect("write .out");
         let mut path = std::env::temp_dir();
         path.push(format!(
             "hydra-quality-blocks-{}-{:?}.out",
@@ -2318,7 +2380,7 @@ mod tests {
     #[test]
     fn unit_headloss_ranks_pipes_by_the_stored_ratio() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.unit-headloss", path, network, None)
+            let fragment = produce_report_block("wds.unit-headloss", &src_of(path), network, None)
                 .expect("produce unit headloss");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected a table");
@@ -2344,8 +2406,9 @@ mod tests {
     #[test]
     fn chemical_compliance_counts_junctions_against_the_residual() {
         with_quality_out("Chlorine mg/L", &[0.5, 0.05, 1.0], |path, network| {
-            let fragment = produce_report_block("wds.quality-compliance", path, network, None)
-                .expect("produce quality compliance");
+            let fragment =
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None)
+                    .expect("produce quality compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values first");
             };
@@ -2379,8 +2442,9 @@ mod tests {
     #[test]
     fn age_compliance_judges_the_maximum_age() {
         with_quality_out("Age", &[30.0, 5.0, 0.0], |path, network| {
-            let fragment = produce_report_block("wds.quality-compliance", path, network, None)
-                .expect("produce quality compliance");
+            let fragment =
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None)
+                    .expect("produce quality compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values first");
             };
@@ -2401,7 +2465,7 @@ mod tests {
     #[test]
     fn quality_compliance_requires_a_judgeable_mode() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.quality-compliance", path, network, None)
+            let err = produce_report_block("wds.quality-compliance", &src_of(path), network, None)
                 .expect_err("no-quality run must be unavailable");
             assert_eq!(
                 err,
@@ -2411,7 +2475,7 @@ mod tests {
             );
         });
         with_quality_out("Trace R1", &[0.0, 0.0, 100.0], |path, network| {
-            let err = produce_report_block("wds.quality-compliance", path, network, None)
+            let err = produce_report_block("wds.quality-compliance", &src_of(path), network, None)
                 .expect_err("trace run must be unavailable");
             assert_eq!(
                 err,
@@ -2425,7 +2489,7 @@ mod tests {
     #[test]
     fn run_summary_reports_counts_units_and_window() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.run-summary", path, network, None)
+            let fragment = produce_report_block("wds.run-summary", &src_of(path), network, None)
                 .expect("produce run summary");
             assert_eq!(fragment.title, "Run Summary");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
@@ -2457,8 +2521,9 @@ mod tests {
     #[test]
     fn result_extremes_covers_core_quantities_without_quality() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.result-extremes", path, network, None)
-                .expect("produce extremes");
+            let fragment =
+                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                    .expect("produce extremes");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected table item");
             };
@@ -2488,7 +2553,7 @@ mod tests {
     #[test]
     fn pump_energy_requires_a_pump() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.pump-energy", path, network, None)
+            let err = produce_report_block("wds.pump-energy", &src_of(path), network, None)
                 .expect_err("no pumps in fixture");
             assert_eq!(
                 err,
@@ -2504,8 +2569,9 @@ mod tests {
         // Fixture junction gauge pressures are 50 m and 45 m — both above
         // the 14 m SI default criterion.
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.service-compliance", path, network, None)
-                .expect("produce compliance");
+            let fragment =
+                produce_report_block("wds.service-compliance", &src_of(path), network, None)
+                    .expect("produce compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values item");
             };
@@ -2535,9 +2601,13 @@ mod tests {
         // A 48 m criterion puts J2 (45 m) in violation but not J1 (50 m).
         with_fixture_out(|path, network| {
             let options = serde_json::json!({ "minPressure": 48 });
-            let fragment =
-                produce_report_block("wds.service-compliance", path, network, Some(&options))
-                    .expect("produce compliance");
+            let fragment = produce_report_block(
+                "wds.service-compliance",
+                &src_of(path),
+                network,
+                Some(&options),
+            )
+            .expect("produce compliance");
             let FragmentItem::Note { text } = &fragment.items[1] else {
                 panic!("expected narrative note");
             };
@@ -2557,8 +2627,13 @@ mod tests {
     fn malformed_options_fail_naming_the_field() {
         with_fixture_out(|path, network| {
             let options = serde_json::json!({ "minPressure": "high" });
-            let err = produce_report_block("wds.service-compliance", path, network, Some(&options))
-                .expect_err("string threshold must fail");
+            let err = produce_report_block(
+                "wds.service-compliance",
+                &src_of(path),
+                network,
+                Some(&options),
+            )
+            .expect_err("string threshold must fail");
             assert!(matches!(
                 &err,
                 BlockError::Failed { message } if message.contains("minPressure")
@@ -2571,8 +2646,9 @@ mod tests {
         // The fixture snapshot delivers zero demand against required base
         // demands of 5 and 8 LPS — full deficit everywhere.
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.demand-reliability", path, network, None)
-                .expect("produce reliability");
+            let fragment =
+                produce_report_block("wds.demand-reliability", &src_of(path), network, None)
+                    .expect("produce reliability");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values item");
             };
@@ -2597,8 +2673,9 @@ mod tests {
     #[test]
     fn pressure_distribution_bins_junction_minima_as_bar_chart() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.pressure-distribution", path, network, None)
-                .expect("produce distribution");
+            let fragment =
+                produce_report_block("wds.pressure-distribution", &src_of(path), network, None)
+                    .expect("produce distribution");
             let FragmentItem::Chart { chart } = &fragment.items[0] else {
                 panic!("expected distribution chart");
             };
@@ -2655,8 +2732,10 @@ mod tests {
             [CURVES]\nC1  0  100\nC1  50  80\nC1  100  0\n\n\
             [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
         with_inp_out(PUMP_INP, |path, network| {
-            let meta = read_meta(path).expect("meta");
-            let scan = out_reader::scan_analytics(path, &meta).expect("scan");
+            let meta =
+                read_meta(&crate::dialect::out_reader::OutFileSource::open(path).expect("open"))
+                    .expect("meta");
+            let scan = crate::dialect::out_reader::scan_analytics(path, &meta).expect("scan");
             let pipes = pipe_max_velocities(&scan, network);
             assert_eq!(pipes.len(), 1, "only the pipe should be counted");
             let pipe_idx = pipes[0].0;
@@ -2670,8 +2749,8 @@ mod tests {
     #[test]
     fn mass_balance_block_reports_closure_and_a_series() {
         with_inp_out(FIXTURE_INP, |path, network| {
-            let fragment =
-                produce_report_block("wds.mass-balance", path, network, None).expect("block");
+            let fragment = produce_report_block("wds.mass-balance", &src_of(path), network, None)
+                .expect("block");
             assert_eq!(fragment.title, "Mass Balance");
             let has_chart = fragment
                 .items
@@ -2689,9 +2768,13 @@ mod tests {
     fn pipe_criticality_ranks_descending_and_honours_top_count() {
         with_inp_out(FIXTURE_INP, |path, network| {
             let options = serde_json::json!({ "topCount": 1 });
-            let fragment =
-                produce_report_block("wds.pipe-criticality", path, network, Some(&options))
-                    .expect("block");
+            let fragment = produce_report_block(
+                "wds.pipe-criticality",
+                &src_of(path),
+                network,
+                Some(&options),
+            )
+            .expect("block");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected a table first");
             };
@@ -2702,7 +2785,7 @@ mod tests {
     #[test]
     fn tank_levels_charts_tanks_but_not_reservoirs() {
         with_inp_out(TANK_FIXTURE_INP, |path, network| {
-            let fragment = produce_report_block("wds.tank-levels", path, network, None)
+            let fragment = produce_report_block("wds.tank-levels", &src_of(path), network, None)
                 .expect("produce tank levels");
             let FragmentItem::Chart { chart } = &fragment.items[0] else {
                 panic!("expected line chart");
@@ -2722,7 +2805,7 @@ mod tests {
     #[test]
     fn quality_summary_requires_a_quality_run() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.quality-summary", path, network, None)
+            let err = produce_report_block("wds.quality-summary", &src_of(path), network, None)
                 .expect_err("fixture has no quality results");
             assert_eq!(
                 err,

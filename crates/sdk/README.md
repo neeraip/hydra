@@ -5,7 +5,7 @@
 
 Water infrastructure simulation: EPANET-compatible water distribution and SWMM-compatible urban drainage simulation.
 
-`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`, flattened at the crate root), the urban-drainage engine (`hydra-engine-uds`, namespaced as `uds`), engine dispatch (`hydra-engines`, which routes a model of unknown provenance to its engine), the shared foundation contracts (`hydra-common`: engine identity and the reportable-output contract), and report generation (`hydra-report`: templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
+`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`, flattened at the crate root), the urban-drainage engine (`hydra-engine-uds`, namespaced as `uds`), the dialect crates (`hydra-interop-epanet` as `epanet`, which also feeds the conventional `io` module, and `hydra-interop-swmm` as `swmm`; the engines themselves are format-blind), engine dispatch (`hydra-engines`, which routes a model of unknown provenance to its engine), the shared foundation contracts (`hydra-common`: engine identity and the reportable-output contract), and report generation (`hydra-report`: templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/docs/sdk/overview.html)**
 

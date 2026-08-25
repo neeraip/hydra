@@ -41,7 +41,7 @@ QIN  2:00  0.25
 QIN  2:01  0.0
 QIN  9:00  0.0
 ";
-    let (mut sim, _, findings) = Simulation::open(inp).expect("open");
+    let (mut sim, _, findings) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(findings.iter().all(|f| !f.kind.is_error()));
     sim.run();
     assert!((sim.time() - 4.0 * 3600.0).abs() < 1e-6);
@@ -103,7 +103,7 @@ MON   MONTHLY  1 1 1 1 1 2.0 1 1 1 1 1 1
 WKND  WEEKEND  1.5 1 1 1 1 1 1 1 1 1 1 1
 WKND           1 1 1 1 1 1 1 1 1 1 1 1
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     // June (factor 2) on a Saturday midnight hour (factor 1.5):
     // 0.05 × 2 × 1.5 = 0.15.
@@ -137,7 +137,7 @@ C1  RECT_OPEN  2  2  0  0
 [CURVES]
 TC  TIDAL  0  100.2  6  100.8  12  100.2  18  100.8  24  100.2
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     // A 06:00 start: the tide is at its 06:00 high, not its curve-origin
     // low — clock-indexed, per §14.7.
     sim.step();
@@ -182,7 +182,7 @@ QIN  9:00  0.2
 [EVENTS]
 06/01/2024  00:00  06/01/2024  01:00
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     // Routing ran only inside the one-hour window: the ledger holds one
     // hour of inflow, and the clock still reached the end.
@@ -225,7 +225,7 @@ J1  FLOW  SHORT
 SHORT  0:00  0.2
 SHORT  0:30  0.2
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let warnings: Vec<_> = sim
         .notices
@@ -343,7 +343,7 @@ RAIN  0:15  90
 RAIN  0:30  0
 ";
     // Asking for a fixed step is not silently overruled.
-    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(
         diags.iter().any(|d| {
             let m = d.to_string();
@@ -361,7 +361,7 @@ RAIN  0:30  0
     // With the test off the run holds the step the model asked for; with
     // it on it does not, which is the whole point of saying so.
     let steps = |tol: Option<f64>| {
-        let (mut s, _, _) = Simulation::open(inp).expect("open");
+        let (mut s, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
         assert!(s.set_routing_error_tolerance(tol));
         s.run();
         s.report().accepted
@@ -443,7 +443,7 @@ RAIN  2:00  0
     };
 
     let surface_of = |route: &str| {
-        let (mut sim, _, _) = Simulation::open(&inp(route)).expect("open");
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp(route)).expect("open");
         sim.run();
         sim.ledgers().surface.expect("surface ledger")
     };
@@ -521,7 +521,7 @@ RAIN  0:00  25.0
 RAIN  1:00  25.0
 RAIN  2:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let surf = sim.ledgers().surface.expect("surface ledger");
     // 25 mm/h over 2 h on 2 ha. Nothing else feeds this parcel, so the
@@ -542,7 +542,7 @@ fn an_impervious_parcel_converts_rain_to_runoff() {
     // Fully impervious: everything that falls beyond depression storage
     // reaches the outfall.
     let inp = runoff_model(100.0, 25.0, "HORTON");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // 25 mm/h over 2 h on 2 ha = 1000 m³; depression storage holds
     // 0.05 mm × ~15000 m² ≈ 0.75 m³ plus what still ponds.
@@ -567,7 +567,7 @@ fn horton_infiltration_swallows_light_rain_on_pervious_ground() {
     // Fully pervious with Horton f0 = 20 mm/h: 10 mm/h rain infiltrates
     // whole while capacity lasts.
     let inp = runoff_model(0.0, 10.0, "HORTON");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.report();
     let rain_vol = 0.010 * 2.0 * 20_000.0;
@@ -583,7 +583,7 @@ fn heavier_rain_exceeds_capacity_and_runs_off() {
     // 40 mm/h against a capacity decaying from 20 to 5 mm/h: runoff is
     // substantial but well below the fully-impervious volume.
     let inp = runoff_model(0.0, 40.0, "HORTON");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.report();
     let rain_vol = 0.040 * 2.0 * 20_000.0;
@@ -603,7 +603,7 @@ fn green_ampt_and_curve_number_also_close_their_balances() {
         } else {
             inp = inp.replace("S1  20  5  4  7  0", "S1  80  0  7");
         }
-        let (mut sim, _, _) = Simulation::open(&inp).expect(infil);
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect(infil);
         sim.run();
         let led = sim.report();
         let rain_vol = 0.040 * 2.0 * 20_000.0;
@@ -640,7 +640,7 @@ S2  0.012  0.1  0.05  0.05  25  OUTLET
 [INFILTRATION]
 S2  20  5  4  7  0
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.report();
     // Three hectares' worth of rain reaches the network.
@@ -714,7 +714,7 @@ fn a_custom_lateral_relation_adds_to_the_power_relation() {
 [GWF]
 S1  LATERAL  0.02
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let q = sim.flow("C1").expect("flow");
     assert!((q - 0.04).abs() < 0.004, "custom lateral flow {q}");
@@ -736,7 +736,7 @@ fn a_domain_guarded_expression_warns_once_and_reads_zero() {
 [GWF]
 S1  DEEP  sqrt ( 0 - 1 )
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let warnings: Vec<_> = sim
         .notices
@@ -756,7 +756,7 @@ fn an_unknown_expression_name_refuses_the_model() {
 S1  LATERAL  0.001 * BOGUS
 ";
     assert!(
-        Simulation::open(&inp).is_err(),
+        hydra_interop_swmm::session::open(&inp).is_err(),
         "unknown vocabulary name must refuse the model"
     );
 }
@@ -766,7 +766,7 @@ fn a_charged_aquifer_discharges_and_recedes() {
     // Water table starts 1 m above the threshold (J1's invert at 98,
     // aquifer bottom 95 → h* = 3 m; table at 99 → d_L = 4 m).
     let inp = gw_model(0.01, 1.0, 99.0);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // The vertex received baseflow: 0.01 cms/ha × 0.2 ha-scaled head
     // decays as the table falls; the ledger carries real volume.
@@ -811,7 +811,7 @@ fn a_table_below_the_threshold_yields_no_baseflow() {
     // d_L = 1 m < h* = 3 m, and the upper zone at field capacity so no
     // percolation lifts the table.
     let inp = gw_model(0.01, 1.0, 96.0).replace("95  96  0.30", "95  96  0.20");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     assert!(
         sim.report().inflow < 1.0,
@@ -835,7 +835,7 @@ fn rain_recharges_the_aquifer_through_infiltration() {
         "[TIMESERIES]\nRAIN  0:00  15\nRAIN  12:00  15\nRAIN  23:00  15\n",
         &format!("[TIMESERIES]\n{series}"),
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // Surface runoff is small on fully pervious ground under 15 mm/h
     // against a 20 mm/h conductivity, but the aquifer fills and
@@ -920,7 +920,7 @@ TEMP  20:00  -5
 TEMP  24:00  8
 TEMP  48:00  8";
     let inp = snow_model(temps);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     // Run through the cold day: snow holds, the network stays dry.
     while sim.time() < 20.0 * 3600.0 {
         sim.step();
@@ -973,7 +973,7 @@ TEMP  48:00  1";
     };
     let day = |wind: Option<f64>| {
         vec![hydra_engine_uds::model::DailyClimate {
-            date: hydra_engine_uds::io::options::Date {
+            date: hydra_interop_swmm::options::Date {
                 year: 2024,
                 month: 1,
                 day: 15,
@@ -985,7 +985,8 @@ TEMP  48:00  1";
         }]
     };
     let melt = |inp: String, records| {
-        let (mut sim, _, _) = Simulation::open_with_climate(&inp, records).expect("open");
+        let (mut sim, _, _) =
+            hydra_interop_swmm::session::open_with_climate(&inp, records).expect("open");
         sim.run();
         sim.report().inflow
     };
@@ -1023,7 +1024,7 @@ fn warm_rain_passes_straight_through_a_snow_parcel() {
 TEMP  0:00   10
 TEMP  48:00  10";
     let inp = snow_model(temps);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let total_precip = 0.005 * 6.0 * 20_000.0;
     assert!(
@@ -1075,7 +1076,7 @@ RAIN  0:00  20
 RAIN  1:00  20
 RAIN  2:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     // Two hours of 20 mm/h over a 10 ha sewershed with R = 0.30 total:
     // volume in = 0.04 m × 100 000 m² × 0.30 = 1200 m³, all delivered
@@ -1149,7 +1150,7 @@ fn a_clock_rule_closes_the_conduit_and_water_backs_up() {
 IF SIMULATION CLOCKTIME >= 2:00
 THEN CONDUIT C1 STATUS = CLOSED",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while sim.time() < 1.9 * 3600.0 {
         sim.step();
     }
@@ -1185,7 +1186,7 @@ IF SIMULATION TIME >= 0
 THEN CONDUIT C1 STATUS = OPEN
 PRIORITY 5",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     assert!(
         sim.flow("C1").unwrap() > 0.2,
@@ -1236,7 +1237,7 @@ IF NODE J1 DEPTH > 0.2
 THEN ORIFICE OR1 SETTING = 0.25
 ELSE ORIFICE OR1 SETTING = 1.0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     while sim.time() < 2.0 * 3600.0 {
         sim.step();
     }
@@ -1270,7 +1271,7 @@ RULE R1
 IF E > 0
 THEN CONDUIT C1 STATUS = CLOSED",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while sim.time() < 1.9 * 3600.0 {
         sim.step();
     }
@@ -1321,7 +1322,7 @@ RULE R1
 IF NODE J1 DEPTH <> 1.0
 THEN ORIFICE OR1 SETTING = PID -0.5 0.1 0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let d = sim.depth("J1").unwrap();
     assert!(
@@ -1378,7 +1379,7 @@ QIN  9:00  0.25
 #[test]
 fn a_conservative_constituent_arrives_at_its_inflow_concentration() {
     let inp = quality_model(0.0);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // Steady state: the whole path carries the 100 mg/L inflow.
     let c_link = sim.link_concentration("C1", "TSS").expect("conc");
@@ -1399,7 +1400,7 @@ fn a_conservative_constituent_arrives_at_its_inflow_concentration() {
 fn first_order_decay_attenuates_along_the_channel() {
     // 100 per day on a ~450 s residence: a visible, partial loss.
     let inp = quality_model(100.0);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let c_out = sim.node_concentration("O1", "TSS").expect("conc");
     assert!(
@@ -1449,7 +1450,7 @@ J1  BOD   40
 
 [TIMESERIES]
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let c = sim.link_concentration("C1", "BOD").expect("conc");
     assert!((c - 40.0).abs() < 1.5, "sanitary concentration {c}");
@@ -1519,7 +1520,7 @@ fn emc_washoff_carries_the_event_mean_concentration() {
 RES  TSS  EMC  50  0  0  0
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while sim.time() < 1.5 * 3600.0 {
         sim.step();
     }
@@ -1549,7 +1550,7 @@ RES  TSS  EXP  0.5  1.2  0  0
 S1  TSS  40
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // 80 kg = 80 000 g admitted to the network (U = g for mg/L).
     let (m_in, m_out, _, _) = sim.quality_ledger("TSS").expect("ledger");
@@ -1568,7 +1569,7 @@ fn a_removal_treatment_halves_the_influent() {
 [TREATMENT]
 J1  TSS  R = 0.5
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     // Half the 100 mg/L influent survives treatment at J1.
     let c = sim.link_concentration("C1", "TSS").expect("conc");
@@ -1592,7 +1593,7 @@ fn a_concentration_treatment_caps_the_effluent() {
 [TREATMENT]
 J1  TSS  C = 20
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let c = sim.link_concentration("C1", "TSS").expect("conc");
     assert!((c - 20.0).abs() < 2.0, "effluent concentration {c}");
@@ -1662,7 +1663,7 @@ RAIN  0:00  0
 RAIN  4:00  25
 RAIN  6:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let (m_in, m_out, _, _) = sim.quality_ledger("TSS").expect("ledger");
     assert!(
@@ -1682,10 +1683,10 @@ fn the_binary_output_writes_the_predecessor_layout() {
 NODES  ALL
 LINKS  ALL
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_out(&mut buf).expect("write");
+    hydra_interop_swmm::session::write_out(&sim, &mut buf).expect("write");
 
     let i32_at = |o: usize| i32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
     let f32_at = |o: usize| f32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
@@ -1739,7 +1740,7 @@ fn the_ledgers_close_over_a_storm() {
     // balances close within a few percent, judged by their own §11.1
     // definitions.
     let inp = runoff_model(50.0, 25.0, "HORTON");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.ledgers();
     let surf = led.surface.expect("surface ledger");
@@ -1766,7 +1767,7 @@ fn the_constituent_and_loading_ledgers_close() {
 RES  TSS  EMC  50  0  0  0
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.ledgers();
     let (_, tss) = &led.constituents[0];
@@ -1800,7 +1801,7 @@ fn the_admitted_load_splits_into_its_origins_without_loss() {
 RES  TSS  EMC  50  0  0  0
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
 
     let (admitted, ..) = sim.quality_ledger("TSS").expect("ledger");
@@ -1870,7 +1871,7 @@ J1  FLOW  0.05
 J2  FLOW  QIN
 J2  TSS   CIN  CONCEN
 ";
-    let (mut sim, _, findings) = Simulation::open(inp).expect("open");
+    let (mut sim, _, findings) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
     sim.run();
 
@@ -1895,7 +1896,7 @@ J2  TSS   CIN  CONCEN
 #[test]
 fn the_subsurface_ledger_closes() {
     let inp = gw_model(0.01, 1.0, 99.0);
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.ledgers();
     let gw = led.subsurface.expect("subsurface ledger");
@@ -1923,7 +1924,7 @@ DRY_ONLY    NO
 [TIMESERIES]
 EVP  0:00  240
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let rain_vol = 0.025 * 2.0 * 20_000.0;
     let led = sim.report();
@@ -1975,7 +1976,7 @@ C1  CIRCULAR  1  0  0  0
 
 [REPORT]
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     assert_eq!(240.0, sim.duration(), "four minutes, to the second");
     sim.run();
     assert_eq!(
@@ -2063,7 +2064,7 @@ fn rect_normal_depth(psi: f64, width: f64) -> f64 {
 /// depth, per barrel, and the vertex it comes from takes that depth.
 #[test]
 fn an_initial_flow_implies_the_normal_depth_it_carries() {
-    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let (sim, _, _) = hydra_interop_swmm::session::open(&seeding_model(4.0)).expect("open");
     assert!(
         (sim.flow("C1").expect("C1") - 4.0).abs() < 1e-12,
         "the channel carries the flow it was given"
@@ -2089,7 +2090,7 @@ fn an_initial_flow_implies_the_normal_depth_it_carries() {
 /// offset. J2 is reached by two such links whose outlet offsets differ.
 #[test]
 fn a_junction_averages_its_flowing_links_end_depths_and_offsets() {
-    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let (sim, _, _) = hydra_interop_swmm::session::open(&seeding_model(4.0)).expect("open");
     let psi = 0.013 * 2.0 / (0.01_f64).sqrt();
     let y = rect_normal_depth(psi, 2.0);
 
@@ -2118,14 +2119,14 @@ fn a_junction_averages_its_flowing_links_end_depths_and_offsets() {
 /// depth into the junction.
 #[test]
 fn a_vertex_reached_only_by_dry_links_starts_dry() {
-    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let (sim, _, _) = hydra_interop_swmm::session::open(&seeding_model(4.0)).expect("open");
     assert_eq!(
         0.0,
         sim.depth("J4").expect("J4"),
         "a dry link's offset is not water"
     );
     // And with no initial flow anywhere, nothing is seeded at all.
-    let (dry, _, _) = Simulation::open(&seeding_model(0.0)).expect("open");
+    let (dry, _, _) = hydra_interop_swmm::session::open(&seeding_model(0.0)).expect("open");
     for v in ["J1", "J2", "J5"] {
         assert_eq!(0.0, dry.depth(v).expect(v), "{v}");
     }
@@ -2136,7 +2137,7 @@ fn a_vertex_reached_only_by_dry_links_starts_dry() {
 /// the links imply.
 #[test]
 fn a_supplied_depth_is_not_averaged_away() {
-    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let (sim, _, _) = hydra_interop_swmm::session::open(&seeding_model(4.0)).expect("open");
     assert!(
         (sim.depth("J3").expect("J3") - 1.5).abs() < 1e-12,
         "J3 was given 1.5 m: {}",
@@ -2150,7 +2151,7 @@ fn a_supplied_depth_is_not_averaged_away() {
 /// rather than arriving as volume created on the first step.
 #[test]
 fn a_staged_outfall_starts_holding_the_water_its_stage_implies() {
-    let (sim, _, _) = Simulation::open(&seeding_model(4.0)).expect("open");
+    let (sim, _, _) = hydra_interop_swmm::session::open(&seeding_model(4.0)).expect("open");
     assert!(
         (sim.depth("O1").expect("O1") - 1.5).abs() < 1e-9,
         "the outfall holds {} rather than its stage's 1.5 m",
@@ -2212,7 +2213,8 @@ PC1  {kind}  {points}
 /// The pump's flow after one second, before the well has drawn down
 /// enough to matter.
 fn pump_flow(kind: &str, points: &str) -> f64 {
-    let (mut sim, _, _) = Simulation::open(&pump_model(kind, points)).expect("open");
+    let (mut sim, _, _) =
+        hydra_interop_swmm::session::open(&pump_model(kind, points)).expect("open");
     sim.step();
     sim.flow("P1").expect("P1")
 }
@@ -2299,7 +2301,7 @@ fn the_affinity_scaling_separates_type_five_from_type_three() {
     let half = "RULE R1\nIF SIMULATION TIME > 0\nTHEN PUMP P1 SETTING = 0.5";
     let flow = |kind: &str| {
         let (mut sim, _, _) =
-            Simulation::open(&pump_model_at_speed(kind, pts, half)).expect("open");
+            hydra_interop_swmm::session::open(&pump_model_at_speed(kind, pts, half)).expect("open");
         for _ in 0..3 {
             sim.step();
         }
@@ -2397,7 +2399,8 @@ fn slope_from_seed(depth: f64, flow: f64, width: f64, n: f64) -> f64 {
 /// 0.6.
 #[test]
 fn a_channels_slope_is_its_drop_over_its_horizontal_run() {
-    let (sim, _, _) = Simulation::open(&slope_probe_model(10.0, 106.0, 0.0)).expect("open");
+    let (sim, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(10.0, 106.0, 0.0)).expect("open");
     let seeded = sim.depth("J1").expect("J1");
     let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
     let dz: f64 = 6.0;
@@ -2416,7 +2419,8 @@ fn a_channels_slope_is_its_drop_over_its_horizontal_run() {
 /// negative number.
 #[test]
 fn a_drop_exceeding_the_length_falls_back_to_the_bed_slope() {
-    let (sim, _, _) = Simulation::open(&slope_probe_model(5.0, 106.0, 0.0)).expect("open");
+    let (sim, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(5.0, 106.0, 0.0)).expect("open");
     let seeded = sim.depth("J1").expect("J1");
     assert!(seeded.is_finite() && seeded > 0.0, "seeded at {seeded}");
     let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
@@ -2431,7 +2435,8 @@ fn a_drop_exceeding_the_length_falls_back_to_the_bed_slope() {
 #[test]
 fn a_flat_channel_takes_the_minimum_slope() {
     // Level inverts, and a floor of one percent.
-    let (sim, _, _) = Simulation::open(&slope_probe_model(100.0, 100.0, 1.0)).expect("open");
+    let (sim, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(100.0, 100.0, 1.0)).expect("open");
     let seeded = sim.depth("J1").expect("J1");
     let got = slope_from_seed(seeded, 2.0, 2.0, 0.013);
     assert!(
@@ -2440,7 +2445,8 @@ fn a_flat_channel_takes_the_minimum_slope() {
     );
 
     // And the floor does not hold a steeper channel back.
-    let (steep, _, _) = Simulation::open(&slope_probe_model(100.0, 110.0, 1.0)).expect("open");
+    let (steep, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(100.0, 110.0, 1.0)).expect("open");
     let got = slope_from_seed(steep.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
     assert!(
         got > 0.05,
@@ -2456,7 +2462,8 @@ fn a_flat_channel_takes_the_minimum_slope() {
 fn a_level_channel_takes_the_smallest_drop_rather_than_none() {
     let flow = 0.3;
     let (sim, _, _) =
-        Simulation::open(&slope_probe_model_at(100.0, 100.0, 0.0, flow)).expect("open");
+        hydra_interop_swmm::session::open(&slope_probe_model_at(100.0, 100.0, 0.0, flow))
+            .expect("open");
     let seeded = sim.depth("J1").expect("J1");
     assert!(seeded.is_finite() && seeded > 0.0, "seeded at {seeded}");
     let got = slope_from_seed(seeded, flow, 2.0, 0.013);
@@ -2476,8 +2483,10 @@ fn a_level_channel_takes_the_smallest_drop_rather_than_none() {
 #[test]
 fn an_adverse_channel_uses_the_size_of_its_drop() {
     // The downstream invert six metres above the upstream one.
-    let (adverse, _, _) = Simulation::open(&slope_probe_model(100.0, 94.0, 0.0)).expect("open");
-    let (normal, _, _) = Simulation::open(&slope_probe_model(100.0, 106.0, 0.0)).expect("open");
+    let (adverse, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(100.0, 94.0, 0.0)).expect("open");
+    let (normal, _, _) =
+        hydra_interop_swmm::session::open(&slope_probe_model(100.0, 106.0, 0.0)).expect("open");
     let a = slope_from_seed(adverse.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
     let n = slope_from_seed(normal.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
     assert!(
@@ -2500,7 +2509,8 @@ fn the_offsets_are_part_of_the_bed_the_slope_is_measured_along() {
     // Level inverts, and two metres of outlet offset: the bed falls
     // backwards by two metres over a hundred.
     let (sim, _, _) =
-        Simulation::open(&slope_probe_offset(100.0, 100.0, 0.0, 2.0, 0.0, 2.0)).expect("open");
+        hydra_interop_swmm::session::open(&slope_probe_offset(100.0, 100.0, 0.0, 2.0, 0.0, 2.0))
+            .expect("open");
     let got = slope_from_seed(sim.depth("J1").expect("J1"), 2.0, 2.0, 0.013);
     let dz: f64 = 2.0;
     let expected = dz / (100.0_f64 * 100.0 - dz * dz).sqrt();
@@ -2520,7 +2530,7 @@ fn the_offsets_are_part_of_the_bed_the_slope_is_measured_along() {
 #[test]
 fn a_hotstart_file_round_trips_the_running_state() {
     let inp = quality_model(0.0);
-    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while a.time() < 2.0 * 3600.0 {
         a.step();
     }
@@ -2528,7 +2538,7 @@ fn a_hotstart_file_round_trips_the_running_state() {
     a.save_hotstart(&mut buf).expect("save");
     assert_eq!(&buf[..15], b"SWMM5-HOTSTART4");
 
-    let (mut b, _, _) = Simulation::open(&inp).expect("open");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     b.load_hotstart(&buf).expect("load");
     // The restored session resumes at the running state: same depth,
     // flow, and concentration.
@@ -2560,7 +2570,7 @@ fn a_hotstart_carries_how_wet_the_ground_already_is() {
     // Fully pervious, so infiltration is the whole story, and Horton,
     // whose capacity decays with wetting: f0 20 mm/h down to 5 mm/h.
     let inp = runoff_model(0.0, 25.0, "HORTON");
-    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while a.time() < 3600.0 {
         a.step();
     }
@@ -2575,10 +2585,10 @@ fn a_hotstart_carries_how_wet_the_ground_already_is() {
         }
         sim.snapshots.last().expect("a reporting boundary").subcatch[0].infil
     };
-    let (mut wet, _, _) = Simulation::open(&inp).expect("open");
+    let (mut wet, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     wet.load_hotstart(&saved).expect("load");
     let wet_rate = quarter(&mut wet);
-    let (mut dry, _, _) = Simulation::open(&inp).expect("open");
+    let (mut dry, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     let dry_rate = quarter(&mut dry);
 
     // An hour of rain has taken the capacity most of the way from 20 mm/h
@@ -2603,7 +2613,7 @@ fn a_hotstart_carries_how_wet_the_ground_already_is() {
 #[test]
 fn a_hotstart_carries_the_water_table() {
     let inp = gw_model(0.01, 1.5, 99.0);
-    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while a.time() < 6.0 * 3600.0 {
         a.step();
     }
@@ -2617,10 +2627,10 @@ fn a_hotstart_carries_the_water_table() {
         }
         sim.snapshots[0].subcatch[0].gw_elev
     };
-    let (mut resumed, _, _) = Simulation::open(&inp).expect("open");
+    let (mut resumed, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     resumed.load_hotstart(&saved).expect("load");
     let carried = first_elevation(&mut resumed);
-    let (mut fresh, _, _) = Simulation::open(&inp).expect("open");
+    let (mut fresh, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     let initial = first_elevation(&mut fresh);
 
     assert!(
@@ -2638,7 +2648,7 @@ fn a_hotstart_carries_the_snow_pack() {
 TEMP  0:00   -5
 TEMP  48:00  -5";
     let inp = snow_model(temps);
-    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while a.time() < 6.0 * 3600.0 {
         a.step();
     }
@@ -2653,10 +2663,10 @@ TEMP  48:00  -5";
         }
         sim.snapshots[0].subcatch[0].snow_depth
     };
-    let (mut resumed, _, _) = Simulation::open(&inp).expect("open");
+    let (mut resumed, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     resumed.load_hotstart(&saved).expect("load");
     let carried = first_depth(&mut resumed);
-    let (mut fresh, _, _) = Simulation::open(&inp).expect("open");
+    let (mut fresh, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     let bare = first_depth(&mut fresh);
 
     assert!(
@@ -2668,12 +2678,13 @@ TEMP  48:00  -5";
 
 #[test]
 fn a_mismatched_hotstart_is_refused() {
-    let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&quality_model(0.0)).expect("open");
     a.run();
     let mut buf = Vec::new();
     a.save_hotstart(&mut buf).expect("save");
     // A model with different object counts refuses the file.
-    let (mut b, _, _) = Simulation::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
+    let (mut b, _, _) =
+        hydra_interop_swmm::session::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
     assert!(b.load_hotstart(&buf).is_err());
 }
 
@@ -2684,10 +2695,10 @@ fn the_text_report_carries_the_continuity_blocks() {
 RES  TSS  EMC  50  0  0  0
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     let rpt = String::from_utf8(buf).expect("utf8");
     for needle in [
         "Analysis Options",
@@ -2780,11 +2791,11 @@ RAIN  0:00  25.0
 RAIN  1:00  25.0
 RAIN  2:00  0
 ";
-    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     let rpt = String::from_utf8(buf).expect("utf8");
     let ledger_row = rpt
         .lines()
@@ -2825,7 +2836,7 @@ RAIN  2:00  0
 #[test]
 fn a_run_that_forgoes_checkpoints_keeps_no_instants() {
     let inp = runoff_model(100.0, 25.0, "HORTON");
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.forgo_checkpoint();
     sim.run();
     assert!(
@@ -2838,7 +2849,7 @@ fn a_run_that_forgoes_checkpoints_keeps_no_instants() {
     // The report is unharmed: it draws on the statistics, not the
     // instants.
     let mut rpt = Vec::new();
-    sim.write_report(&mut rpt).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut rpt).expect("report");
     assert!(String::from_utf8_lossy(&rpt).contains("Runoff Quantity Continuity"));
 }
 
@@ -2891,7 +2902,7 @@ RAIN  0:00  1.0
 RAIN  1:00  1.0
 RAIN  2:00  0
 ";
-    let (mut sim, diags, _) = Simulation::open(inp).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     let files = sim.lid_report_files();
     assert_eq!(files.len(), 1);
@@ -2979,10 +2990,10 @@ RAIN  0:00  25.0
 RAIN  1:00  25.0
 RAIN  2:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     let rpt = String::from_utf8(buf).expect("utf8");
     let row = rpt
         .lines()
@@ -3078,10 +3089,10 @@ RAIN  0:00  25.0
 RAIN  1:00  25.0
 RAIN  2:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     let rpt = String::from_utf8(buf).expect("utf8");
     assert!(
         !rpt.contains("Upstream Runon"),
@@ -3135,10 +3146,10 @@ fn the_report_holds_the_predecessors_column_geometry() {
 RES  TSS  EMC  50  0  0  0
 ",
     );
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     let rpt = String::from_utf8(buf).expect("utf8");
 
     // A continuity block's asterisk rule is a fixed 26 wide whatever the
@@ -3247,7 +3258,7 @@ J1  FLOW  QIN
 QIN  0:00  2.0
 QIN  9:00  2.0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let q_in = 2.0 * 0.028_316_846_592;
     let q_sewer = sim.flow("SEW1").expect("sewer flow");
@@ -3278,7 +3289,7 @@ fn hargreaves_evaporation_runs_from_supplied_climate_records() {
 STA  2024  5  25  30  20
 STA  2024  6  2   30  20
 ";
-    let records = hydra_engine_uds::io::climate::parse_climate_file(climate_text).expect("parse");
+    let records = hydra_interop_swmm::climate::parse_climate_file(climate_text).expect("parse");
     let inp = runoff_model(100.0, 10.0, "HORTON")
         + "
 [EVAPORATION]
@@ -3289,7 +3300,7 @@ DRY_ONLY  NO
 FILE  climate.txt
 ";
     let (mut sim, _, _) =
-        hydra_engine_uds::simulation::Simulation::open_with_climate(&inp, records).expect("open");
+        hydra_interop_swmm::session::open_with_climate(&inp, records).expect("open");
     sim.run();
     // The surface ledger's evaporation side carries a real volume: the
     // ponded tail evaporates at the Hargreaves rate.
@@ -3301,7 +3312,7 @@ FILE  climate.txt
         surf.error_percent
     );
     let mut rpt = Vec::new();
-    sim.write_report(&mut rpt).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut rpt).expect("report");
     let rpt = String::from_utf8(rpt).unwrap();
     let line = rpt
         .lines()
@@ -3342,7 +3353,7 @@ EVS  0:00  0
 EVS  4:00  240
 EVS  9:00  240
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let rain_vol = 0.025 * 2.0 * 20_000.0;
     let led = sim.report();
@@ -3360,7 +3371,7 @@ fn missing_climate_records_refuse_hargreaves_at_open() {
 [EVAPORATION]
 TEMPERATURE
 ";
-    assert!(Simulation::open(&inp).is_err());
+    assert!(hydra_interop_swmm::session::open(&inp).is_err());
 }
 
 // ── §14.8 routing interface files ───────────────────────────────────────
@@ -3369,10 +3380,10 @@ TEMPERATURE
 fn routing_interface_files_chain_two_models() {
     // Model A discharges 0.25 m³/s at 100 mg/L; its outflow file drives
     // model B's boundary inflow, interpolated between periods.
-    let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open A");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&quality_model(0.0)).expect("open A");
     a.run();
     let mut iface = Vec::new();
-    a.write_routing_outflows(&mut iface).expect("write");
+    hydra_interop_swmm::session::write_routing_outflows(&a, &mut iface).expect("write");
     let text = String::from_utf8(iface).expect("utf8");
     assert!(text.starts_with("SWMM5 Interface File"), "{text}");
 
@@ -3402,8 +3413,8 @@ CB  RECT_OPEN  2  2  0  0
 [POLLUTANTS]
 TSS  MG/L  0  0  0  0  NO
 ";
-    let (mut b, _, _) = Simulation::open(b_inp).expect("open B");
-    b.supply_routing_inflows(&text).expect("supply");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(b_inp).expect("open B");
+    hydra_interop_swmm::session::supply_routing_inflows(&mut b, &text).expect("supply");
     b.run();
     // B's outfall carries A's discharge at A's concentration.
     let q = b.flow("CB").expect("flow");
@@ -3431,7 +3442,7 @@ BC1  DRAIN    1.0  0.5  50  0  0  0
 [LID_USAGE]
 S1  BC1  1  2000  20  0  60  0
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     sim.run();
     let led = sim.report();
     // The plain model delivers ≈ rain volume; the cell holds back and
@@ -3503,7 +3514,7 @@ RAIN  0:00  25
 RAIN  1:00  25
 RAIN  2:00  0
 ";
-    let (mut plain, _, _) = Simulation::open(base).expect("open plain");
+    let (mut plain, _, _) = hydra_interop_swmm::session::open(base).expect("open plain");
     while plain.time() < 2.5 * 3600.0 {
         plain.step();
     }
@@ -3511,7 +3522,8 @@ RAIN  2:00  0
     plain.run();
     let plain_vol = plain.report().inflow;
 
-    let (mut sim, _, _) = Simulation::open(&format!("{base}{swale}")).expect("open swale");
+    let (mut sim, _, _) =
+        hydra_interop_swmm::session::open(&format!("{base}{swale}")).expect("open swale");
     // Shortly after the storm the swale is still holding water back —
     // its delivered fraction lags the plain model's at the same clock.
     while sim.time() < 2.5 * 3600.0 {
@@ -3596,7 +3608,7 @@ RAIN  0:00  25
 RAIN  1:00  25
 RAIN  2:00  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let led = sim.report();
     // 500 m³ falls on S1 and 50 m³ directly on the swale. If the gate
@@ -3630,7 +3642,7 @@ RB1  DRAIN    20   0.5   0  1  0  0
 [LID_USAGE]
 S1  RB1  400  1  1  0  100  0
 ";
-    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     // Through the storm and just past — but before the 1 h drain delay
     // elapses at t = 3 h: barrels holding, little at the outfall.
     while sim.time() < 2.5 * 3600.0 {
@@ -3703,7 +3715,7 @@ J1  TSS  R = 0.5 * FLOW
 RAIN1  0:00  1.0
 RAIN1  1:00  0.0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let (m_in, m_out, m_react, m_final) = sim.quality_ledger("TSS").expect("ledger");
     assert!(m_react > 0.0, "treatment removed nothing");
@@ -3745,7 +3757,7 @@ W1  S1  O1  TRANSVERSE  8  3.3
 [XSECTIONS]
 W1  RECT_OPEN  1  4  0  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     let d = sim.depth("S1").expect("depth");
     let expected = (4.0 - 1.4 / 12.0) * 0.3048;
@@ -3776,7 +3788,8 @@ C1  NODE1  o1  400  0.013  0  0
 [XSECTIONS]
 C1  CIRCULAR  1.5  0  0  0
 ";
-    let (sim, _, _) = Simulation::open(inp).expect("mixed-case references must resolve");
+    let (sim, _, _) =
+        hydra_interop_swmm::session::open(inp).expect("mixed-case references must resolve");
     assert!(sim.depth("Node1").is_some());
 
     let dup = "\
@@ -3797,7 +3810,7 @@ C1  J1  O1  400  0.013  0  0
 C1  CIRCULAR  1.5  0  0  0
 ";
     assert!(
-        Simulation::open(dup).is_err(),
+        hydra_interop_swmm::session::open(dup).is_err(),
         "a case-only redeclaration is a duplicate"
     );
 }
@@ -3883,7 +3896,7 @@ TS1  12:00 0.0
 
 [REPORT]
 ";
-    let (mut sim, diags, findings) = Simulation::open(inp).expect("open");
+    let (mut sim, diags, findings) = hydra_interop_swmm::session::open(inp).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
     sim.run();
@@ -3990,11 +4003,14 @@ C1  RECT_OPEN  2  2  0  0
         .collect();
     let filed = base("G1  VOLUME  0:05  1.0  FILE  \"rain.dat\"  sta7  MM", "");
 
-    let readings = hydra_engine_uds::io::rain::parse_rain_file(&record).expect("record parses");
-    let (mut sim_inline, _, _) = Simulation::open(&inline).expect("inline opens");
-    let (mut sim_filed, _, _) =
-        Simulation::open_with_files(&filed, Vec::new(), vec![("rain.dat".to_string(), readings)])
-            .expect("filed opens");
+    let readings = hydra_interop_swmm::rain::parse_rain_file(&record).expect("record parses");
+    let (mut sim_inline, _, _) = hydra_interop_swmm::session::open(&inline).expect("inline opens");
+    let (mut sim_filed, _, _) = hydra_interop_swmm::session::open_with_files(
+        &filed,
+        Vec::new(),
+        vec![("rain.dat".to_string(), readings)],
+    )
+    .expect("filed opens");
     sim_inline.run();
     sim_filed.run();
 
@@ -4042,7 +4058,9 @@ C1  J1  O1  200  0.013  0  0
 [XSECTIONS]
 C1  RECT_OPEN  2  2  0  0
 ";
-    let err = Simulation::open(inp).err().expect("refuses");
+    let err = hydra_interop_swmm::session::open(inp)
+        .err()
+        .expect("refuses");
     let msg = format!("{err:?}");
     assert!(msg.contains("missing.dat"), "{msg}");
     assert!(msg.contains("was not supplied"), "{msg}");
@@ -4114,14 +4132,14 @@ RAIN  0:00  25
 RAIN  1:00  25
 RAIN  2:00  0
 ";
-    let (mut a, _, _) = Simulation::open(inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     while a.time() < 2.0 * 3600.0 {
         a.step();
     }
     let mut saved = Vec::new();
     a.save_hotstart(&mut saved).expect("save");
 
-    let (mut b, _, _) = Simulation::open(inp).expect("open");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     b.load_hotstart(&saved).expect("multi-pollutant restore");
     let mut resaved = Vec::new();
     b.save_hotstart(&mut resaved).expect("resave");
@@ -4190,7 +4208,7 @@ RES  TSS  EXP  0.1  1  0  0
     );
     // Mid-storm: the network is wet and carrying load, which is the
     // state a restore has to preserve.
-    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     while a.time() < 1.5 * 3600.0 {
         a.step();
     }
@@ -4199,7 +4217,7 @@ RES  TSS  EXP  0.1  1  0  0
     let restored_conc = a.link_concentration("C1", "TSS").expect("conc");
     assert!(restored_conc > 0.0, "the storm actually carried load");
 
-    let (mut b, _, _) = Simulation::open(&inp).expect("open");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     b.load_hotstart(&saved).expect("load");
 
     // One step must not wipe what the restore just loaded: the two
@@ -4294,7 +4312,7 @@ C1  RECT_OPEN  2  2  0  0
                 .map(|(t, v)| format!("RAIN  06/29/2012  {t}  {v}\n")),
         )
         .collect();
-    let (_, _, inline_findings) = Simulation::open(&model(
+    let (_, _, inline_findings) = hydra_interop_swmm::session::open(&model(
         "G1  VOLUME  0:05  1.0  TIMESERIES  RAIN",
         &inline_series,
     ))
@@ -4307,8 +4325,8 @@ C1  RECT_OPEN  2  2  0  0
             format!("sta7 2012 6 29 {h} {m} {v}\n")
         })
         .collect();
-    let readings = hydra_engine_uds::io::rain::parse_rain_file(&record).expect("record parses");
-    let (_, _, filed_findings) = Simulation::open_with_files(
+    let readings = hydra_interop_swmm::rain::parse_rain_file(&record).expect("record parses");
+    let (_, _, filed_findings) = hydra_interop_swmm::session::open_with_files(
         &model("G1  VOLUME  0:05  1.0  FILE  \"rain.dat\"  sta7  MM", ""),
         Vec::new(),
         vec![("rain.dat".to_string(), readings)],
@@ -4316,7 +4334,7 @@ C1  RECT_OPEN  2  2  0  0
     .expect("filed opens");
 
     // The same finding, for the same reason, on both paths.
-    let mentions_wet_step = |fs: &[hydra_engine_uds::io::validate::ValidationDiagnostic]| {
+    let mentions_wet_step = |fs: &[hydra_interop_swmm::validate::ValidationDiagnostic]| {
         fs.iter()
             .filter(|f| f.to_string().contains("wet-weather step"))
             .count()
@@ -4372,10 +4390,10 @@ C1  RECT_OPEN  2  2  0  0
         )
     };
     let readings =
-        hydra_engine_uds::io::rain::parse_rain_file("STA7 2012 6 29 0 5 1.2\n").expect("parses");
+        hydra_interop_swmm::rain::parse_rain_file("STA7 2012 6 29 0 5 1.2\n").expect("parses");
 
     // Case apart, this is the same station: it opens.
-    Simulation::open_with_files(
+    hydra_interop_swmm::session::open_with_files(
         &model("sta7"),
         Vec::new(),
         vec![("rain.dat".to_string(), readings.clone())],
@@ -4383,7 +4401,7 @@ C1  RECT_OPEN  2  2  0  0
     .expect("case-insensitive station match");
 
     // A station the record does not hold refuses, naming both.
-    let err = match Simulation::open_with_files(
+    let err = match hydra_interop_swmm::session::open_with_files(
         &model("elsewhere"),
         Vec::new(),
         vec![("rain.dat".to_string(), readings)],
@@ -4452,7 +4470,7 @@ TS1  0:20  0.5
     }
 
     fn run(inp: &str) -> (u64, f64) {
-        let (mut sim, diags, findings) = Simulation::open(inp).expect("open");
+        let (mut sim, diags, findings) = hydra_interop_swmm::session::open(inp).expect("open");
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
         sim.run();
@@ -4556,11 +4574,11 @@ TS1  6:00  0.0
     fn inflow(file: Option<&str>) -> f64 {
         // The model declares USE RDII, which used to refuse the model
         // outright; it now opens and waits for the bytes.
-        let (mut sim, diags, findings) = Simulation::open(MODEL).expect("open");
+        let (mut sim, diags, findings) = hydra_interop_swmm::session::open(MODEL).expect("open");
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
         if let Some(text) = file {
-            sim.supply_rdii(text.as_bytes()).expect("supply");
+            hydra_interop_swmm::session::supply_rdii(&mut sim, text.as_bytes()).expect("supply");
         }
         sim.run();
         sim.ledgers().network.inflow
@@ -4656,13 +4674,14 @@ TS1  6:00  0.0
     }
 
     // The run that computes the hydrograph and saves it.
-    let (mut saver, diags, _) = Simulation::open(&model("SAVE RDII rdii.txt")).expect("open");
+    let (mut saver, diags, _) =
+        hydra_interop_swmm::session::open(&model("SAVE RDII rdii.txt")).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     saver.run();
     let computed = saver.ledgers().network.inflow;
     let mut file = Vec::new();
     assert!(
-        saver.write_rdii(&mut file).expect("write"),
+        hydra_interop_swmm::session::write_rdii(&saver, &mut file).expect("write"),
         "a SAVE model writes"
     );
     let file = String::from_utf8(file).expect("the text form is text");
@@ -4678,8 +4697,9 @@ TS1  6:00  0.0
     );
 
     // The run that reuses it. Its convolution must not run at all.
-    let (mut reader, _, _) = Simulation::open(&model("USE RDII rdii.txt")).expect("open");
-    reader.supply_rdii(file.as_bytes()).expect("supply");
+    let (mut reader, _, _) =
+        hydra_interop_swmm::session::open(&model("USE RDII rdii.txt")).expect("open");
+    hydra_interop_swmm::session::supply_rdii(&mut reader, file.as_bytes()).expect("supply");
     reader.run();
     let replayed = reader.ledgers().network.inflow;
 
@@ -4694,7 +4714,7 @@ TS1  6:00  0.0
 /// answering `false` rather than producing an empty one.
 #[test]
 fn a_model_without_an_rdii_file_writes_nothing() {
-    let (sim, _, _) = Simulation::open(
+    let (sim, _, _) = hydra_interop_swmm::session::open(
         "\
 [OPTIONS]
 FLOW_UNITS  CMS
@@ -4711,7 +4731,7 @@ C1  CIRCULAR  2  0  0  0  1
     )
     .expect("open");
     let mut out = Vec::new();
-    assert!(!sim.write_rdii(&mut out).expect("write"));
+    assert!(!hydra_interop_swmm::session::write_rdii(&sim, &mut out).expect("write"));
     assert!(out.is_empty());
 }
 
@@ -4775,14 +4795,14 @@ TS1  8:00  0.0
 
 [REPORT]
 ";
-    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
     sim.run();
     let mut file = Vec::new();
-    assert!(sim.write_rdii(&mut file).expect("write"));
+    assert!(hydra_interop_swmm::session::write_rdii(&sim, &mut file).expect("write"));
     let text = String::from_utf8(file).expect("text form");
 
-    let (net, _) = hydra_engine_uds::io::objects::parse_network(MODEL);
-    let parsed = hydra_engine_uds::io::iface::parse_rdii_file(text.as_bytes(), &net, 1.0)
+    let (net, _) = hydra_interop_swmm::objects::parse_network(MODEL);
+    let parsed = hydra_interop_swmm::iface::parse_rdii_file(text.as_bytes(), &net, 1.0)
         .expect("the file we just wrote must read back");
 
     assert!(
@@ -4883,10 +4903,10 @@ TS1  1:00  0.0
     }
 
     fn run(file: Option<Vec<u8>>) -> (f64, bool) {
-        let (mut sim, diags, _) = Simulation::open(MODEL).expect("open");
+        let (mut sim, diags, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         if let Some(bytes) = file {
-            sim.supply_runoff(&bytes).expect("supply");
+            hydra_interop_swmm::session::supply_runoff(&mut sim, &bytes).expect("supply");
         }
         sim.run();
         let led = sim.ledgers();
@@ -4980,8 +5000,8 @@ TS1  1:00  0.0
         }
     }
 
-    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
-    sim.supply_runoff(&b).expect("supply");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut sim, &b).expect("supply");
     sim.run();
 
     let notices = &sim.notices;
@@ -5067,8 +5087,8 @@ TS1  1:00  0.0
         }
     }
 
-    let (mut sim, _, _) = Simulation::open(MODEL).expect("open");
-    sim.supply_runoff(&b).expect("supply");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(MODEL).expect("open");
+    hydra_interop_swmm::session::supply_runoff(&mut sim, &b).expect("supply");
     sim.run();
 
     let snaps = &sim.snapshots;
@@ -5183,11 +5203,14 @@ fn runoff_use_model() -> String {
 /// is where all the rain falls.
 #[test]
 fn a_saved_runoff_file_covers_every_hydrology_step() {
-    let (mut sim, diags, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(RUNOFF_SAVE_MODEL).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let mut bytes = Vec::new();
-    assert!(sim.write_runoff(&mut bytes).expect("write"), "file written");
+    assert!(
+        hydra_interop_swmm::session::write_runoff(&sim, &mut bytes).expect("write"),
+        "file written"
+    );
 
     let word = |o: usize| i32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
     assert_eq!(2, word(12), "two parcels");
@@ -5215,12 +5238,12 @@ fn a_saved_runoff_file_covers_every_hydrology_step() {
 #[test]
 fn saving_a_runoff_file_changes_nothing_else() {
     let run = |model: &str| {
-        let (mut sim, _, _) = Simulation::open(model).expect("open");
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(model).expect("open");
         sim.run();
         let mut out = Vec::new();
-        sim.write_out(&mut out).expect("out");
+        hydra_interop_swmm::session::write_out(&sim, &mut out).expect("out");
         let mut rpt = Vec::new();
-        sim.write_report(&mut rpt).expect("report");
+        hydra_interop_swmm::session::write_report(&sim, &mut rpt).expect("report");
         (sim.ledgers().network, out, rpt)
     };
     let plain = RUNOFF_SAVE_MODEL.replace("[FILES]\nSAVE RUNOFF runoff.bin\n\n", "");
@@ -5239,13 +5262,16 @@ fn saving_a_runoff_file_changes_nothing_else() {
 /// against hand-built rows.
 #[test]
 fn a_saved_runoff_file_replays_as_the_run_that_wrote_it() {
-    let (mut a, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open save");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(RUNOFF_SAVE_MODEL).expect("open save");
     a.run();
     let mut bytes = Vec::new();
-    assert!(a.write_runoff(&mut bytes).expect("write"), "file written");
+    assert!(
+        hydra_interop_swmm::session::write_runoff(&a, &mut bytes).expect("write"),
+        "file written"
+    );
 
-    let (mut b, _, _) = Simulation::open(&runoff_use_model()).expect("open use");
-    b.supply_runoff(&bytes).expect("supply");
+    let (mut b, _, _) = hydra_interop_swmm::session::open(&runoff_use_model()).expect("open use");
+    hydra_interop_swmm::session::supply_runoff(&mut b, &bytes).expect("supply");
     b.run();
 
     let (la, lb) = (a.ledgers().network, b.ledgers().network);
@@ -5281,14 +5307,13 @@ fn a_saved_runoff_file_replays_as_the_run_that_wrote_it() {
 /// A run cannot both record a hydrology and replay one.
 #[test]
 fn a_run_that_saves_a_runoff_file_cannot_also_replay_one() {
-    let (mut a, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
+    let (mut a, _, _) = hydra_interop_swmm::session::open(RUNOFF_SAVE_MODEL).expect("open");
     a.run();
     let mut bytes = Vec::new();
-    a.write_runoff(&mut bytes).expect("write");
+    hydra_interop_swmm::session::write_runoff(&a, &mut bytes).expect("write");
 
-    let (mut b, _, _) = Simulation::open(RUNOFF_SAVE_MODEL).expect("open");
-    let err = b
-        .supply_runoff(&bytes)
+    let (mut b, _, _) = hydra_interop_swmm::session::open(RUNOFF_SAVE_MODEL).expect("open");
+    let err = hydra_interop_swmm::session::supply_runoff(&mut b, &bytes)
         .expect_err("both at once is refused");
     assert!(err.contains("cannot also replay"), "{err}");
 }
@@ -5298,10 +5323,13 @@ fn a_run_that_saves_a_runoff_file_cannot_also_replay_one() {
 #[test]
 fn a_model_that_asks_for_no_runoff_file_writes_none() {
     let plain = RUNOFF_SAVE_MODEL.replace("[FILES]\nSAVE RUNOFF runoff.bin\n\n", "");
-    let (mut sim, _, _) = Simulation::open(&plain).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&plain).expect("open");
     sim.run();
     let mut bytes = Vec::new();
-    assert!(!sim.write_runoff(&mut bytes).expect("write"), "no file");
+    assert!(
+        !hydra_interop_swmm::session::write_runoff(&sim, &mut bytes).expect("write"),
+        "no file"
+    );
     assert!(bytes.is_empty(), "wrote {} bytes", bytes.len());
 }
 
@@ -5364,10 +5392,10 @@ STA01  2020  1  1  0   30  0.00
 STA01  2020  1  1  0   45  0.20
 ";
 
-fn rain_readings() -> Vec<(String, Vec<hydra_engine_uds::io::rain::RainReading>)> {
+fn rain_readings() -> Vec<(String, Vec<hydra_interop_swmm::rain::RainReading>)> {
     vec![(
         "rain.dat".to_string(),
-        hydra_engine_uds::io::rain::parse_rain_file(RAIN_RECORD).expect("record parses"),
+        hydra_interop_swmm::rain::parse_rain_file(RAIN_RECORD).expect("record parses"),
     )]
 }
 
@@ -5381,15 +5409,20 @@ fn rain_readings() -> Vec<(String, Vec<hydra_engine_uds::io::rain::RainReading>)
 #[test]
 fn a_cached_record_runs_as_the_record_it_cached() {
     let model = rain_model("VOLUME", "IN", "[FILES]\nSAVE RAINFALL rain.rff");
-    let (mut a, _, _) = Simulation::open_with_files(&model, Vec::new(), rain_readings())
-        .expect("open with the record");
+    let (mut a, _, _) =
+        hydra_interop_swmm::session::open_with_files(&model, Vec::new(), rain_readings())
+            .expect("open with the record");
     a.run();
     let mut cache = Vec::new();
-    assert!(a.write_rain(&mut cache).expect("write"), "file written");
+    assert!(
+        hydra_interop_swmm::session::write_rain(&a, &mut cache).expect("write"),
+        "file written"
+    );
 
     let use_model = rain_model("VOLUME", "IN", "[FILES]\nUSE RAINFALL rain.rff");
-    let (mut b, _, _) = Simulation::open_with_rain_interface(&use_model, Vec::new(), &cache)
-        .expect("open with the cache");
+    let (mut b, _, _) =
+        hydra_interop_swmm::session::open_with_rain_interface(&use_model, Vec::new(), &cache)
+            .expect("open with the cache");
     b.run();
 
     // The results agree to the precision the cache stores: depths are
@@ -5450,12 +5483,17 @@ fn a_cached_record_holds_interval_depths_in_inches() {
         let model = rain_model(form, unit, "[FILES]\nSAVE RAINFALL rain.rff");
         let readings = vec![(
             "rain.dat".to_string(),
-            hydra_engine_uds::io::rain::parse_rain_file(record).expect("record parses"),
+            hydra_interop_swmm::rain::parse_rain_file(record).expect("record parses"),
         )];
-        let (sim, _, _) = Simulation::open_with_files(&model, Vec::new(), readings).expect("open");
+        let (sim, _, _) =
+            hydra_interop_swmm::session::open_with_files(&model, Vec::new(), readings)
+                .expect("open");
         let mut bytes = Vec::new();
-        assert!(sim.write_rain(&mut bytes).expect("write"), "written");
-        let f = hydra_engine_uds::io::iface::parse_rain_iface(&bytes).expect("parse");
+        assert!(
+            hydra_interop_swmm::session::write_rain(&sim, &mut bytes).expect("write"),
+            "written"
+        );
+        let f = hydra_interop_swmm::iface::parse_rain_iface(&bytes).expect("parse");
         f.gages[0]
             .readings
             .iter()
@@ -5513,14 +5551,15 @@ STA01  2020  1  1  0   45  5.08
 #[test]
 fn a_gage_missing_from_the_cache_is_refused() {
     let model = rain_model("VOLUME", "IN", "[FILES]\nSAVE RAINFALL rain.rff");
-    let (sim, _, _) = Simulation::open_with_files(&model, Vec::new(), rain_readings())
-        .expect("open with the record");
+    let (sim, _, _) =
+        hydra_interop_swmm::session::open_with_files(&model, Vec::new(), rain_readings())
+            .expect("open with the record");
     let mut cache = Vec::new();
-    sim.write_rain(&mut cache).expect("write");
+    hydra_interop_swmm::session::write_rain(&sim, &mut cache).expect("write");
 
     let other =
         rain_model("VOLUME", "IN", "[FILES]\nUSE RAINFALL rain.rff").replace("STA01", "STA99");
-    let err = Simulation::open_with_rain_interface(&other, Vec::new(), &cache)
+    let err = hydra_interop_swmm::session::open_with_rain_interface(&other, Vec::new(), &cache)
         .err()
         .expect("a station that is not there must refuse");
     let text = err.to_string();
@@ -5532,9 +5571,13 @@ fn a_gage_missing_from_the_cache_is_refused() {
 fn a_model_that_asks_for_no_rainfall_file_writes_none() {
     let model = rain_model("VOLUME", "IN", "");
     let (sim, _, _) =
-        Simulation::open_with_files(&model, Vec::new(), rain_readings()).expect("open");
+        hydra_interop_swmm::session::open_with_files(&model, Vec::new(), rain_readings())
+            .expect("open");
     let mut bytes = Vec::new();
-    assert!(!sim.write_rain(&mut bytes).expect("write"), "no file");
+    assert!(
+        !hydra_interop_swmm::session::write_rain(&sim, &mut bytes).expect("write"),
+        "no file"
+    );
     assert!(bytes.is_empty(), "wrote {} bytes", bytes.len());
 }
 
@@ -5559,9 +5602,9 @@ STA01  2020  1  1  0   45  5.08
 ";
     let readings = vec![(
         "rain.dat".to_string(),
-        hydra_engine_uds::io::rain::parse_rain_file(record).expect("record parses"),
+        hydra_interop_swmm::rain::parse_rain_file(record).expect("record parses"),
     )];
-    let (mut a, _, _) = Simulation::open_with_files(
+    let (mut a, _, _) = hydra_interop_swmm::session::open_with_files(
         &metric("[FILES]\nSAVE RAINFALL rain.rff"),
         Vec::new(),
         readings,
@@ -5569,9 +5612,12 @@ STA01  2020  1  1  0   45  5.08
     .expect("open with the record");
     a.run();
     let mut cache = Vec::new();
-    assert!(a.write_rain(&mut cache).expect("write"), "written");
+    assert!(
+        hydra_interop_swmm::session::write_rain(&a, &mut cache).expect("write"),
+        "written"
+    );
 
-    let f = hydra_engine_uds::io::iface::parse_rain_iface(&cache).expect("parse");
+    let f = hydra_interop_swmm::iface::parse_rain_iface(&cache).expect("parse");
     let depths: Vec<f64> = f.gages[0]
         .readings
         .iter()
@@ -5579,7 +5625,7 @@ STA01  2020  1  1  0   45  5.08
         .collect();
     assert_eq!(vec![0.4, 0.8, 0.0, 0.2], depths, "the file is in inches");
 
-    let (mut b, _, _) = Simulation::open_with_rain_interface(
+    let (mut b, _, _) = hydra_interop_swmm::session::open_with_rain_interface(
         &metric("[FILES]\nUSE RAINFALL rain.rff"),
         Vec::new(),
         &cache,
@@ -5607,7 +5653,7 @@ STA01  2020  1  1  0   45  5.08
 /// which it was handed.
 #[test]
 fn an_archival_record_drives_a_run_as_its_station_record_does() {
-    use hydra_engine_uds::io::rain::{parse_any_rain_file, parse_rain_file, RainRecords};
+    use hydra_interop_swmm::rain::{parse_any_rain_file, parse_rain_file, RainRecords};
 
     // 0.25 in in the hour ending 01:00, 0.10 in in the hour ending 02:00.
     let archive = "123456 21 HPCP  HI2020 01 01 0100     25     0200     10    \n";
@@ -5664,7 +5710,7 @@ C1  CIRCULAR  2  0  0  0  1
         "recognised as an archive"
     );
     assert!(notices.is_empty(), "{notices:?}");
-    let (mut from_archive, _, _) = Simulation::open_with_rain_records(
+    let (mut from_archive, _, _) = hydra_interop_swmm::session::open_with_rain_records(
         model,
         Vec::new(),
         vec![("rain.dat".to_string(), records)],
@@ -5672,7 +5718,7 @@ C1  CIRCULAR  2  0  0  0  1
     .expect("open with the archive");
     from_archive.run();
 
-    let (mut from_station, _, _) = Simulation::open_with_files(
+    let (mut from_station, _, _) = hydra_interop_swmm::session::open_with_files(
         model,
         Vec::new(),
         vec![(
@@ -5709,7 +5755,7 @@ C1  CIRCULAR  2  0  0  0  1
 /// neither says so once with both reasons.
 #[test]
 fn a_file_that_is_neither_layout_names_both_reasons() {
-    use hydra_engine_uds::io::rain::{parse_any_rain_file, RainRecords};
+    use hydra_interop_swmm::rain::{parse_any_rain_file, RainRecords};
 
     let (records, _) = parse_any_rain_file("STA01  2020  1  1  0  0  0.10\n")
         .expect("the station format is still recognised");
@@ -5783,7 +5829,7 @@ RAIN  1:00  0.0
 /// Run the model, calling `force` once at each step, and return the
 /// rainfall and outflow the run produced.
 fn forced_run(model: &str, mut force: impl FnMut(&mut Simulation, usize)) -> (f64, Vec<f64>) {
-    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(model).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     let mut step = 0;
     while {
@@ -5826,7 +5872,7 @@ fn injected_precipitation_supersedes_a_dry_record() {
     // routing period and there are twenty of them to a reporting one, so
     // counting steps released the injection before the first instant and
     // then compared the whole run against itself.
-    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(FORCING_MODEL).expect("open");
     assert!(sim.set_precipitation("G1", Some(20.0e-3 / 3600.0)));
     while sim.snapshots.len() < 4 {
         assert!(sim.step(), "the run ended before the release");
@@ -5881,7 +5927,7 @@ fn an_injected_stage_holds_a_free_outfall() {
 /// A stage is refused where it is not a thing to set.
 #[test]
 fn a_stage_on_a_junction_is_refused() {
-    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(FORCING_MODEL).expect("open");
     assert!(!sim.set_outfall_stage("J1", Some(9.0)), "J1 is a junction");
     assert!(
         !sim.set_outfall_stage("nowhere", Some(9.0)),
@@ -5912,7 +5958,7 @@ fn an_injected_setting_closes_a_regulator_and_says_so() {
         peak(&open)
     );
 
-    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(FORCING_MODEL).expect("open");
     assert!(sim.set_link_setting("R1", Some(0.0)));
     assert!(!sim.set_link_setting("nowhere", Some(0.0)), "no such link");
 }
@@ -5921,7 +5967,7 @@ fn an_injected_setting_closes_a_regulator_and_says_so() {
 #[test]
 fn an_injected_flow_limit_caps_a_channel() {
     let peak = |cap: Option<f64>| {
-        let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(FORCING_MODEL).expect("open");
         assert!(sim.set_precipitation("G1", Some(60.0e-3 / 3600.0)));
         if let Some(q) = cap {
             assert!(sim.set_flow_limit("C1", Some(q)));
@@ -5955,7 +6001,7 @@ fn losses_are_set_on_channels_and_refused_elsewhere() {
     // session's guard leaves it green because the router still refuses.
     // The session's guard earns its place on the release path, where it
     // is what supplies the model's own values to return to.
-    let (mut sim, _, _) = Simulation::open(FORCING_MODEL).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(FORCING_MODEL).expect("open");
     assert!(
         sim.set_losses("C1", Some((1.5, 1.0, 0.2))),
         "C1 is a channel"
@@ -5982,7 +6028,7 @@ fn an_injected_inflow_carries_its_concentrations() {
         "[POLLUTANTS]\nTSS  MG/L  0  0  0  0\n\n[JUNCTIONS]",
     );
     let load = |conc: Option<f64>| {
-        let (mut sim, diags, _) = Simulation::open(&with_quality).expect("open");
+        let (mut sim, diags, _) = hydra_interop_swmm::session::open(&with_quality).expect("open");
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         assert!(sim.set_lateral_inflow("J1", Some(0.5)));
         if let Some(c) = conc {
@@ -6007,7 +6053,7 @@ fn an_injected_inflow_carries_its_concentrations() {
 
     // One value per constituent, or the call is refused rather than
     // padded to a shape the caller did not mean.
-    let (mut sim, _, _) = Simulation::open(&with_quality).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&with_quality).expect("open");
     assert!(!sim.set_inflow_concentrations("J1", Some(vec![1.0, 2.0])));
     assert!(sim.set_inflow_concentrations("J1", Some(vec![1.0])));
     assert!(sim.set_inflow_concentrations("J1", None));
@@ -6033,7 +6079,7 @@ fn an_injected_drain_empties_a_control_measure() {
         )
     };
     let held = |open: bool| {
-        let (mut sim, diags, _) = Simulation::open(&base).expect("open");
+        let (mut sim, diags, _) = hydra_interop_swmm::session::open(&base).expect("open");
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         if open {
             assert!(
@@ -6070,7 +6116,7 @@ fn an_injected_drain_empties_a_control_measure() {
     // 0.01 this barrel drains as fast as its storage allows, so 0.5 and
     // 20 deliver identically and comparing them compared nothing.
     let with_coeff = |coeff: f64| {
-        let (mut sim, _, _) = Simulation::open(&base).expect("open");
+        let (mut sim, _, _) = hydra_interop_swmm::session::open(&base).expect("open");
         assert!(sim.set_drain(
             "S1",
             "RB1",
@@ -6095,7 +6141,7 @@ fn an_injected_drain_empties_a_control_measure() {
 
     // Addressed as the model addresses a placement, and refused for a
     // pair it does not place.
-    let (mut sim, _, _) = Simulation::open(&base).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(&base).expect("open");
     let from_model = sim.drain("S1", "RB1").expect("the barrel has a drain");
     assert!(
         !sim.set_drain("S1", "nothing", Some(from_model)),
@@ -6199,10 +6245,11 @@ fn report_instants_are_measured_from_the_report_start() {
     // report start — so any difference is the origin alone.
     let mut seen = Vec::new();
     for start in ["", "REPORT_START_TIME  02:00"] {
-        let (mut sim, _, _) = Simulation::open(&late_rain_model(start)).expect("open");
+        let (mut sim, _, _) =
+            hydra_interop_swmm::session::open(&late_rain_model(start)).expect("open");
         sim.run();
         let mut buf = Vec::new();
-        sim.write_report(&mut buf).expect("report");
+        hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
         let rpt = String::from_utf8(buf).expect("utf8");
         seen.push(instant_in(&rpt, "Node Depth Summary", "J1"));
     }
@@ -6275,7 +6322,7 @@ RAIN  0:00  0
 RAIN  0:10  12
 RAIN  0:15  0
 ";
-    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(inp).expect("open");
     sim.run();
     // (minutes, mm/h) at each reporting instant.
     let series: Vec<(i64, f64)> = sim
@@ -6368,7 +6415,8 @@ fn a_model_without_a_temperature_record_runs_at_the_default() {
     // §3.1: the predecessor holds 70 °F when nothing is declared, and the
     // results file carries it. Reporting zero instead says 0 °C, which is
     // a temperature, not an absence.
-    let (mut sim, _, _) = Simulation::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
+    let (mut sim, _, _) =
+        hydra_interop_swmm::session::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
     sim.run();
     let ta = sim.snapshots[0].system[0];
     assert!(
@@ -6386,7 +6434,7 @@ fn a_temperature_record_is_reported_without_a_snowmelt_block() {
         "PRECIP  0:00  0",
         "TEMP    0:00  -4\nTEMP    12:00  -4\nPRECIP  0:00  0",
     );
-    let (mut sim, diags, _) = Simulation::open(&inp).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(&inp).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let ta = sim.snapshots[0].system[0];
@@ -6405,7 +6453,8 @@ fn a_standing_pack_melts_against_the_default_temperature() {
     let melting = "SNOWMELT    0.5  0.5  0.6  100  45  -75
 ADC         IMPERV  1 1 1 1 1 1 1 1 1 1
 ADC         PERV    1 1 1 1 1 1 1 1 1 1";
-    let (mut sim, diags, _) = Simulation::open(&standing_snow_model(melting, 50.0)).expect("open");
+    let (mut sim, diags, _) =
+        hydra_interop_swmm::session::open(&standing_snow_model(melting, 50.0)).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let runoff: f64 = sim.snapshots.iter().map(|s| s.subcatch[0].runoff).sum();
@@ -6463,11 +6512,11 @@ THEN  CONDUIT C2 STATUS = CLOSED
 }
 
 fn report_text(model: &str) -> String {
-    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(model).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     sim.run();
     let mut buf = Vec::new();
-    sim.write_report(&mut buf).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut buf).expect("report");
     String::from_utf8(buf).expect("utf8")
 }
 
@@ -6580,13 +6629,13 @@ VA J1
 
     // Supplied: the coupling row in the model resolves against a vertex
     // the external file authors, and the coupled model runs (§1.8).
-    let (mut sim, diags, _) =
-        Simulation::open_with_overland_mesh(model, external).expect("the coupled model serves");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open_with_overland_mesh(model, external)
+        .expect("the coupled model serves");
     assert!(diags.iter().all(|d| !d.kind.is_error()));
     sim.run();
 
     // Not supplied: the refusal names the file instead.
-    let Err(err) = Simulation::open(model) else {
+    let Err(err) = hydra_interop_swmm::session::open(model) else {
         panic!("missing mesh file refuses");
     };
     assert!(err.to_string().contains("terrain.2dm"), "{err}");
@@ -6597,7 +6646,7 @@ VA J1
         "FLOW_UNITS CMS
 IGNORE_2D YES",
     );
-    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(&ignored).expect("1D half runs");
     assert!(diags.iter().any(|d| d.to_string().contains("terrain.2dm")));
     sim.run();
 }
@@ -6617,20 +6666,21 @@ fn a_mesh_model_is_served() {
         [2D_TRIANGLES]\n0 1 2 {N}\n";
 
     let served = base.replace("{IGNORE}", "").replace("{N}", "0.02");
-    let (mut sim, diags, _) = Simulation::open(&served).expect("mesh models serve");
+    let (mut sim, diags, _) =
+        hydra_interop_swmm::session::open(&served).expect("mesh models serve");
     assert!(diags.iter().all(|d| !d.kind.is_error()));
     sim.run();
 
     let ignored = base
         .replace("{IGNORE}", "IGNORE_2D YES")
         .replace("{N}", "0.02");
-    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(&ignored).expect("1D half runs");
     assert!(diags.iter().all(|d| !d.kind.is_error()));
     sim.run();
 
     for ignore in ["IGNORE_2D YES", ""] {
         let defective = base.replace("{IGNORE}", ignore).replace("{N}", "0");
-        let Err(err) = Simulation::open(&defective) else {
+        let Err(err) = hydra_interop_swmm::session::open(&defective) else {
             panic!("defects are heard, ignored or served");
         };
         assert!(err.to_string().contains("Manning"), "{err}");

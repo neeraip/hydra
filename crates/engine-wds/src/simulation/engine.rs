@@ -12,8 +12,8 @@ use super::accounting::{self, AccountingState};
 use super::controls;
 use super::timestep;
 use crate::hydraulics::{self as hydraulics, SolveResult, SolverContext};
-use crate::io::HydSnapshot;
 use crate::quality::{self as quality, QualityState};
+use crate::simulation::contract::HydSnapshot;
 use crate::{
     FavadCoeffs, FlowUnits, LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState,
     QualityMode,

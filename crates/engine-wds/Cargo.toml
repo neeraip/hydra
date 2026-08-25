@@ -35,6 +35,9 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
 
 [dev-dependencies]
+# Deliberate dev-only cycle for integration tests; unit tests use the
+# shared-source dialect mount instead (see lib.rs).
+hydra-interop-epanet = { path = "../interop-epanet" }
 approx = "0.5"
 criterion = { version = "0.8", features = ["html_reports"] }
 hydra-engine-wds = { path = ".", features = ["test-support"] }

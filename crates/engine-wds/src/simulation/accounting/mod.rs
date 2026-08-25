@@ -14,7 +14,7 @@ pub(crate) use energy::PrecomputedPumpPower;
 
 // PumpEnergy and FlowBalance are defined in crate::io so the output
 // writers in that crate can reference them without a circular dependency.
-pub(crate) use crate::io::{FlowBalance, PumpEnergy};
+pub(crate) use crate::simulation::contract::{FlowBalance, PumpEnergy};
 
 /// Mutable accounting state updated after every hydraulic step (§7).
 #[derive(Debug, Clone)]

@@ -1,5 +1,4 @@
 use super::errors::AnalysisComputeError;
-use crate::io::out_reader;
 
 /// Pressure thresholds used to classify reporting-period samples as in-limit or
 /// out-of-limit in a service-compliance analysis.
@@ -163,13 +162,12 @@ pub struct ServiceComplianceReport {
 ///   integrals over time
 /// - network-level summary statistics
 pub fn compute_service_compliance_from_out(
-    out_path: &std::path::Path,
+    src: &dyn super::source::ResultsSource,
     thresholds: ServiceComplianceThresholds,
 ) -> Result<ServiceComplianceReport, AnalysisComputeError> {
     validate_thresholds(thresholds)?;
 
-    let meta = out_reader::read_metadata_checked(out_path)
-        .map_err(|e| AnalysisComputeError::OutRead(e.to_string()))?;
+    let meta = src.meta().clone();
 
     if meta.n_periods == 0 {
         return Err(AnalysisComputeError::NoSnapshots);
@@ -183,7 +181,8 @@ pub fn compute_service_compliance_from_out(
 
     // Junctions = all nodes minus the prolog's tank/reservoir index list
     // (analysis spec §3.1).
-    let tank_indices = out_reader::read_tank_node_indices(out_path, &meta)
+    let tank_indices = src
+        .tank_node_indices()
         .map_err(AnalysisComputeError::OutRead)?;
     let mut is_junction = vec![true; meta.n_nodes];
     for idx in tank_indices {
@@ -201,7 +200,8 @@ pub fn compute_service_compliance_from_out(
     let mut current_streaks = vec![0usize; nodes.len()];
 
     for period in 0..meta.n_periods {
-        let period_results = out_reader::read_period(out_path, &meta, period)
+        let period_results = src
+            .read_period(period)
             .map_err(AnalysisComputeError::OutRead)?;
 
         for (j, (node, &node_index)) in nodes.iter_mut().zip(&junction_indices).enumerate() {
@@ -358,38 +358,38 @@ mod tests {
 
     struct MockSession {
         network: crate::Network,
-        snapshots: Vec<crate::io::HydSnapshot>,
+        snapshots: Vec<crate::simulation::contract::HydSnapshot>,
     }
 
-    impl crate::io::WritableSimulation for MockSession {
+    impl crate::simulation::contract::WritableSimulation for MockSession {
         fn net(&self) -> &crate::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::simulation::contract::HydSnapshot] {
             &self.snapshots
         }
-        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::simulation::contract::MassBalance> {
             None
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::simulation::contract::SimWarning] {
             &[]
         }
-        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (None, None)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             None
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             None
         }
     }
@@ -404,7 +404,7 @@ mod tests {
                    [RESERVOIRS]\nR1  100\n\n\
                    [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
                    [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         // Node order: J1, J2, R1.
         assert!(matches!(
             network.nodes[2].kind,
@@ -429,7 +429,7 @@ mod tests {
 
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::simulation::contract::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -437,7 +437,7 @@ mod tests {
         };
 
         let mut buf = std::io::Cursor::new(Vec::new());
-        crate::io::out_writer::write_binary_output(
+        crate::dialect::out_writer::write_binary_output(
             &mut buf,
             &session,
             "test.inp",
@@ -454,9 +454,11 @@ mod tests {
         ));
         std::fs::write(&path, buf.into_inner()).expect("persist .out");
 
-        let report =
-            compute_service_compliance_from_out(&path, ServiceComplianceThresholds::min_only(10.0))
-                .expect("compute compliance");
+        let report = compute_service_compliance_from_out(
+            &crate::dialect::out_reader::OutFileSource::open(&path).expect("open"),
+            ServiceComplianceThresholds::min_only(10.0),
+        )
+        .expect("compute compliance");
         let _ = std::fs::remove_file(&path);
 
         // Junctions only: the reservoir contributes no samples and no node.

@@ -21,13 +21,27 @@
 #![doc = include_str!("transport/spec.md")]
 #![doc = include_str!("simulation/spec.md")]
 #![doc = include_str!("report_blocks/spec.md")]
-#![doc = include_str!("interop/spec.md")]
 
 pub mod descriptors;
 pub mod hydraulics;
 pub mod hydrology;
-pub mod io;
 pub mod model;
+
+// ── Test-only dialect mount (format-blind extraction) ──────────────────
+// The engine's own behavioural tests open models from .inp text. A
+// dev-dependency on hydra-interop-swmm would hand them a second build of
+// this crate with incompatible types, so the dialect sources compile
+// directly into the test build instead, against `crate::engine_api` =
+// this crate. Integration tests (tests/) use the real dependency.
+#[cfg(test)]
+pub(crate) use crate as engine_api;
+#[cfg(test)]
+// The whole dialect compiles into the test build; the engine's tests
+// exercise the slice they need, and the crate's own build lints the
+// rest properly.
+#[allow(dead_code, unused_imports)]
+#[path = "../../interop-swmm/src/dialect/mod.rs"]
+pub(crate) mod dialect;
 pub mod overland;
 pub mod report_blocks;
 pub mod simulation;

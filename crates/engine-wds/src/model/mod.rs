@@ -4,6 +4,7 @@ mod network;
 mod state;
 mod validation;
 
+pub mod units;
 pub use network::*;
 pub use state::*;
 pub use validation::*;

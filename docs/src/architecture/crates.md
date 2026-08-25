@@ -5,8 +5,10 @@ Hydra is a multi-crate Rust workspace:
 | Crate | Role |
 |---|---|
 | `hydra-common` | Foundation contracts shared by every engine and application: engine identity, the reportable-output contract (block catalog, neutral fragment model), and the element-taxonomy, quantity, result-variable and criteria contracts. Depends on nothing else in the workspace |
-| `hydra-engine-wds` | Water-distribution engine: data model, parsers, unit conversion, GGA hydraulic solver, Lagrangian quality engine, session API, analytics, report blocks |
-| `hydra-engine-uds` | Urban-drainage engine: SWMM data model and import, rainfall-runoff hydrology, dynamic-wave routing, water quality, controls, session API, predecessor-format output |
+| `hydra-engine-wds` | Water-distribution engine: data model, unit conversion, GGA hydraulic solver, Lagrangian quality engine, session API, analytics, report blocks. Format-blind: models enter as typed data, results leave as typed streams |
+| `hydra-engine-uds` | Urban-drainage engine: SWMM data model, rainfall-runoff hydrology, dynamic-wave routing, 2D overland flow, water quality, controls, session API. Format-blind, like `hydra-engine-wds` |
+| `hydra-interop-epanet` | The EPANET dialect: `.inp` parse/write, `.out`/`.rpt` writers, the streaming `.out` reader, recognition. All the format knowledge the water-distribution engine deliberately does not have |
+| `hydra-interop-swmm` | The SWMM dialect, same shape, for the urban-drainage engine: `.inp` parse/write, `.out`/`.rpt` writers, interface and climate files, recognition |
 | `hydra-engines` | Engine dispatch: given a model of unknown provenance, decides which engine owns it. The one layer that sees both the registry and every engine, so the routing policy lives here once instead of in each interface |
 | `hydra-report` | Report generation: templates, document assembly from engine-neutral fragments, and the txt/csv/html/PDF renderers. Knows nothing about any engine; it depends only on `hydra-common` |
 | `hydra-sdk` | Umbrella facade: re-exports the complete user-facing API with all dependency versions pre-pinned |

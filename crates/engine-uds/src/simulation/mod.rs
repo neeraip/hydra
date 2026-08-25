@@ -14,6 +14,9 @@ pub mod checkpoint;
 pub mod controls;
 pub mod coupled;
 pub mod expression;
+pub mod records;
+pub mod sinks;
+pub mod summary;
 pub mod time;
 
 pub mod engine;

@@ -7,7 +7,7 @@
 //! state, and the balance form is exact for the rates given.
 
 use super::infiltration::{InfilFactors, InfilState};
-use crate::io::options::InfiltrationModel;
+use crate::model::options::InfiltrationModel;
 use crate::model::{Infiltration, LidControl, LidKind, LidUsage};
 
 /// One deployed unit's state (depths m, moisture as content).

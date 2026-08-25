@@ -19,15 +19,15 @@
 //! round trip is exact by construction. Dimensionless capacity, counts,
 //! and clock values stay untagged.
 
-use std::path::Path;
-
 use hydra_common::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
     LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
 };
 
-use crate::io::out_reader::{read_metadata, OutMetadata};
+pub mod source;
+
 use crate::model::{Network, VertexKind};
+use source::{PeriodSource, PeriodValues, ResultsMeta};
 
 const CATALOG: &[BlockDescriptor] = &[
     BlockDescriptor {
@@ -124,24 +124,24 @@ pub fn report_catalog() -> &'static [BlockDescriptor] {
 /// options value (hydra-common spec §3.4).
 pub fn produce_report_block(
     id: &str,
-    out_path: &Path,
+    src: &dyn PeriodSource,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
-    let meta = read_metadata(out_path).map_err(|message| BlockError::Failed { message })?;
+    let meta = src.meta();
     match id {
-        "uds.run-summary" => run_summary(out_path, &meta),
-        "uds.system-balance" => system_balance(out_path, &meta),
-        "uds.subcatchment-peaks" => subcatchment_peaks(out_path, &meta, rows(options)?),
-        "uds.runoff-summary" => runoff_summary(out_path, &meta, network, rows(options)?),
-        "uds.node-extremes" => node_extremes(out_path, &meta, rows(options)?),
-        "uds.link-extremes" => link_extremes(out_path, &meta, rows(options)?),
-        "uds.flooding-summary" => flooding_summary(out_path, &meta),
-        "uds.outfall-summary" => outfall_summary(out_path, &meta, network),
-        "uds.surcharge-summary" => surcharge_summary(out_path, &meta, network, options),
-        "uds.capacity-summary" => capacity_summary(out_path, &meta, network, options),
-        "uds.velocity-thresholds" => velocity_thresholds(out_path, &meta, network, options),
-        "uds.storage-summary" => storage_summary(out_path, &meta, network),
+        "uds.run-summary" => run_summary(src, meta),
+        "uds.system-balance" => system_balance(src, meta),
+        "uds.subcatchment-peaks" => subcatchment_peaks(src, meta, rows(options)?),
+        "uds.runoff-summary" => runoff_summary(src, meta, network, rows(options)?),
+        "uds.node-extremes" => node_extremes(src, meta, rows(options)?),
+        "uds.link-extremes" => link_extremes(src, meta, rows(options)?),
+        "uds.flooding-summary" => flooding_summary(src, meta),
+        "uds.outfall-summary" => outfall_summary(src, meta, network),
+        "uds.surcharge-summary" => surcharge_summary(src, meta, network, options),
+        "uds.capacity-summary" => capacity_summary(src, meta, network, options),
+        "uds.velocity-thresholds" => velocity_thresholds(src, meta, network, options),
+        "uds.storage-summary" => storage_summary(src, meta, network),
         _ => Err(BlockError::UnknownBlock { id: id.into() }),
     }
 }
@@ -245,7 +245,7 @@ struct SiDisplay {
 }
 
 impl SiDisplay {
-    fn new(meta: &OutMetadata) -> Self {
+    fn new(meta: &ResultsMeta) -> Self {
         Self {
             us: meta.flow_units.is_us(),
             flow_to_m3s: meta.flow_units.m3s_per_unit(),
@@ -307,13 +307,13 @@ fn col(name: &str, unit: Option<&str>, kind: ValueKind) -> Column {
 }
 
 /// Fold every period record through `f` — one sequential pass over the
-/// file, which extremes and summaries share.
+/// source, which extremes and summaries share.
 fn scan_periods(
-    out_path: &Path,
-    meta: &OutMetadata,
-    f: impl FnMut(usize, &crate::io::out_reader::PeriodRecord),
+    src: &dyn PeriodSource,
+    _meta: &ResultsMeta,
+    mut f: impl FnMut(usize, &PeriodValues),
 ) -> Result<(), BlockError> {
-    crate::io::out_reader::scan_periods(out_path, meta, f)
+    src.scan(&mut f)
         .map_err(|message| BlockError::Failed { message })
 }
 
@@ -335,12 +335,12 @@ fn ranked(
 
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
-fn run_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, BlockError> {
+fn run_summary(src: &dyn PeriodSource, meta: &ResultsMeta) -> Result<Fragment, BlockError> {
     let u = SiDisplay::new(meta);
     // System series indices per §14.9: 1 rainfall, 4 runoff, 9 total
     // lateral inflow, 10 flooding, 11 outflow.
     let mut peaks = [0f64; 5];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, sys_index) in [(0, 1usize), (1, 4), (2, 9), (3, 10), (4, 11)] {
             peaks[slot] = peaks[slot].max(rec.system[sys_index] as f64);
         }
@@ -403,8 +403,8 @@ fn kv(label: &str, value: Value) -> KeyValue {
 }
 
 fn subcatchment_peaks(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     keep: usize,
 ) -> Result<Fragment, BlockError> {
     if meta.subcatchment_ids.is_empty() {
@@ -417,7 +417,7 @@ fn subcatchment_peaks(
     let nv = meta.n_subcatch_vars;
     // Subcatchment variables per §14.9: 0 rainfall, 3 infiltration, 4 runoff.
     let mut maxima = vec![[0f64; 3]; n];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (i, m) in maxima.iter_mut().enumerate() {
             m[0] = m[0].max(rec.subcatchments[i * nv] as f64);
             m[1] = m[1].max(rec.subcatchments[i * nv + 3] as f64);
@@ -456,7 +456,11 @@ fn subcatchment_peaks(
     })
 }
 
-fn node_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fragment, BlockError> {
+fn node_extremes(
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
+    keep: usize,
+) -> Result<Fragment, BlockError> {
     if meta.node_ids.is_empty() {
         return Err(BlockError::Unavailable {
             reason: "The run reports no nodes.".into(),
@@ -467,7 +471,7 @@ fn node_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     let nv = meta.n_node_vars;
     // Node variables per §14.9: 0 depth, 1 head, 4 total inflow, 5 flooding.
     let mut maxima = vec![[0f64; 4]; n];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (i, m) in maxima.iter_mut().enumerate() {
             m[0] = m[0].max(rec.nodes[i * nv] as f64);
             m[1] = m[1].max(rec.nodes[i * nv + 1] as f64);
@@ -509,7 +513,11 @@ fn node_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     })
 }
 
-fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fragment, BlockError> {
+fn link_extremes(
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
+    keep: usize,
+) -> Result<Fragment, BlockError> {
     if meta.link_ids.is_empty() {
         return Err(BlockError::Unavailable {
             reason: "The run reports no links.".into(),
@@ -520,7 +528,7 @@ fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     let nv = meta.n_link_vars;
     // Link variables per §14.9: 0 flow, 2 velocity, 4 capacity.
     let mut maxima = vec![[0f64; 3]; n];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (i, m) in maxima.iter_mut().enumerate() {
             m[0] = m[0].max((rec.links[i * nv] as f64).abs());
             m[1] = m[1].max(rec.links[i * nv + 2] as f64);
@@ -559,7 +567,7 @@ fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     })
 }
 
-fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, BlockError> {
+fn flooding_summary(src: &dyn PeriodSource, meta: &ResultsMeta) -> Result<Fragment, BlockError> {
     if meta.node_ids.is_empty() {
         return Err(BlockError::Unavailable {
             reason: "The run reports no nodes.".into(),
@@ -570,7 +578,7 @@ fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Blo
     let nv = meta.n_node_vars;
     // (peak flooding, periods flooded, first flooded period)
     let mut acc: Vec<(f64, usize, Option<usize>)> = vec![(0.0, 0, None); n];
-    scan_periods(out_path, meta, |p, rec| {
+    scan_periods(src, meta, |p, rec| {
         for (i, a) in acc.iter_mut().enumerate() {
             let flooding = rec.nodes[i * nv + 5] as f64;
             if flooding > 0.0 {
@@ -634,7 +642,7 @@ fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Blo
     })
 }
 
-fn system_balance(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, BlockError> {
+fn system_balance(src: &dyn PeriodSource, meta: &ResultsMeta) -> Result<Fragment, BlockError> {
     if meta.n_periods == 0 {
         return Err(BlockError::Unavailable {
             reason: "The results file stores no periods.".into(),
@@ -659,7 +667,7 @@ fn system_balance(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Block
     let mut inflow_series: Vec<[f64; 2]> = Vec::with_capacity(meta.n_periods);
     let mut outflow_series: Vec<[f64; 2]> = Vec::with_capacity(meta.n_periods);
     let mut flooding_series: Vec<[f64; 2]> = Vec::with_capacity(meta.n_periods);
-    scan_periods(out_path, meta, |p, rec| {
+    scan_periods(src, meta, |p, rec| {
         for (slot, (index, _)) in COMPONENTS.iter().enumerate() {
             component_sums[slot] += f64::from(rec.system[*index]);
         }
@@ -736,8 +744,8 @@ fn system_balance(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Block
 }
 
 fn runoff_summary(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
     keep: usize,
 ) -> Result<Fragment, BlockError> {
@@ -751,7 +759,7 @@ fn runoff_summary(
     let nv = meta.n_subcatch_vars;
     // Intensity sums (rain, infiltration) and a runoff rate sum, per §13.3.
     let mut sums = vec![[0f64; 3]; n];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (i, s) in sums.iter_mut().enumerate() {
             s[0] += f64::from(rec.subcatchments[i * nv]);
             s[1] += f64::from(rec.subcatchments[i * nv + 3]);
@@ -824,8 +832,8 @@ fn runoff_summary(
 }
 
 fn outfall_summary(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
 ) -> Result<Fragment, BlockError> {
     // §13.4.6: outfalls are identified from the model, membership in the
@@ -854,7 +862,7 @@ fn outfall_summary(
     // (rate sum, peak rate, discharging periods) per reported outfall,
     // judged on the node's total inflow series (§14.9 node variable 4).
     let mut acc = vec![(0f64, 0f64, 0usize); reported.len()];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, &i) in reported.iter().enumerate() {
             let q = f64::from(rec.nodes[i * nv + 4]);
             if q > 0.0 {
@@ -926,8 +934,8 @@ fn rim_depth(kind: &VertexKind) -> Option<f64> {
 }
 
 fn surcharge_summary(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
@@ -954,7 +962,7 @@ fn surcharge_summary(
     let nv = meta.n_node_vars;
     // (max depth m, periods above the freeboard line) per candidate.
     let mut acc = vec![(0f64, 0usize); candidates.len()];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, (i, rim)) in candidates.iter().enumerate() {
             let depth = u.linear("depth", f64::from(rec.nodes[i * nv]));
             let a = &mut acc[slot];
@@ -1015,7 +1023,7 @@ fn surcharge_summary(
 
 /// Reported link indices that are conduits in the model (§13.4.8: other
 /// link kinds have no meaningful capacity fraction).
-fn reported_conduits(meta: &OutMetadata, network: &Network) -> Vec<usize> {
+fn reported_conduits(meta: &ResultsMeta, network: &Network) -> Vec<usize> {
     let conduits: std::collections::HashSet<&str> = network
         .links
         .iter()
@@ -1031,8 +1039,8 @@ fn reported_conduits(meta: &OutMetadata, network: &Network) -> Vec<usize> {
 }
 
 fn capacity_summary(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
@@ -1047,7 +1055,7 @@ fn capacity_summary(
     let nv = meta.n_link_vars;
     // (max capacity fraction, periods at or above threshold) per conduit.
     let mut acc = vec![(0f64, 0usize); conduits.len()];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, &i) in conduits.iter().enumerate() {
             let capacity = f64::from(rec.links[i * nv + 4]);
             let a = &mut acc[slot];
@@ -1092,8 +1100,8 @@ fn capacity_summary(
 }
 
 fn velocity_thresholds(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
     options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
@@ -1108,7 +1116,7 @@ fn velocity_thresholds(
     let u = SiDisplay::new(meta);
     let nv = meta.n_link_vars;
     let mut peaks = vec![0f64; conduits.len()];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, &i) in conduits.iter().enumerate() {
             let v = u.linear("velocity", f64::from(rec.links[i * nv + 2]).abs());
             peaks[slot] = peaks[slot].max(v);
@@ -1162,8 +1170,8 @@ fn velocity_thresholds(
 }
 
 fn storage_summary(
-    out_path: &Path,
-    meta: &OutMetadata,
+    src: &dyn PeriodSource,
+    meta: &ResultsMeta,
     network: &Network,
 ) -> Result<Fragment, BlockError> {
     // §13.4.10: reported storage vertices, with the model's full depth and
@@ -1227,7 +1235,7 @@ fn storage_summary(
     let nlv = meta.n_link_vars;
     // (max depth, volume sum, peak inflow, peak outflow) per candidate.
     let mut acc = vec![(0f64, 0f64, 0f64, 0f64); candidates.len()];
-    scan_periods(out_path, meta, |_, rec| {
+    scan_periods(src, meta, |_, rec| {
         for (slot, c) in candidates.iter().enumerate() {
             let a = &mut acc[slot];
             a.0 = a.0.max(f64::from(rec.nodes[c.node * nnv]));

@@ -2,7 +2,7 @@
 //! epoch, the inverse, and weekdays — Howard Hinnant's algorithms, exact
 //! over the proleptic Gregorian calendar.
 
-use crate::io::options::Date;
+use crate::model::options::Date;
 
 /// Days from 1970-01-01 for a civil date.
 pub fn days_from_civil(d: Date) -> i64 {
@@ -44,7 +44,7 @@ pub fn weekday(days: i64) -> u32 {
 /// per-object statistics on it, and the report measures every printed
 /// instant from it (§14.9). A report start before the run start is the run
 /// start, so the answer is never negative.
-pub fn report_start_offset(o: &crate::io::options::AnalysisOptions) -> f64 {
+pub fn report_start_offset(o: &crate::model::options::AnalysisOptions) -> f64 {
     let Some((d, s)) = o.report_start else {
         return 0.0;
     };
@@ -60,9 +60,9 @@ mod tests {
         start: (i32, u32, u32),
         start_s: f64,
         report: Option<((i32, u32, u32), f64)>,
-    ) -> crate::io::options::AnalysisOptions {
+    ) -> crate::model::options::AnalysisOptions {
         let d = |(year, month, day): (i32, u32, u32)| Date { year, month, day };
-        crate::io::options::AnalysisOptions {
+        crate::model::options::AnalysisOptions {
             start_date: d(start),
             start_time: start_s,
             report_start: report.map(|(rd, rs)| (d(rd), rs)),

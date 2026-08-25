@@ -161,8 +161,8 @@ pub fn criteria_block_options(
     network: &Network,
 ) -> Result<HashMap<&'static str, serde_json::Value>, String> {
     let ucf =
-        crate::io::units::make_ucf(network.options.flow_units, network.options.specific_gravity);
-    let si = crate::io::units::is_si(network.options.flow_units);
+        crate::model::units::make_ucf(network.options.flow_units, network.options.specific_gravity);
+    let si = crate::model::units::is_si(network.options.flow_units);
     let pressure = |m: f64| if si { m } else { m * ucf.pressure };
     let velocity = |ms: f64| if si { ms } else { ms * ucf.elev };
     let ascending = |edges: &[f64]| edges.windows(2).all(|w| w[1] > w[0]);
@@ -293,7 +293,7 @@ mod tests {
              [PIPES]\nP1  R1  J1  1000  300  100  0  Open\n\n\
              [OPTIONS]\nUnits  {units_line}\nHeadloss  H-W\n\n[END]\n"
         );
-        crate::io::parse(inp.as_bytes()).expect("parse")
+        crate::dialect::parse(inp.as_bytes()).expect("parse")
     }
 
     fn valuation() -> serde_json::Value {

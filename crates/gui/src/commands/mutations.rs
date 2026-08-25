@@ -2061,7 +2061,7 @@ pub(crate) fn validation_findings(network: &hydra::Network) -> Vec<ValidationFin
 /// Stable kebab-case code for a uds validation kind, derived from the
 /// variant name (part of the engine's public API, so as stable as the
 /// engine's own semver): `AdverseSlope` → `"adverse-slope"`.
-fn kebab_variant_code(kind: &hydra::uds::io::validate::ValidationKind) -> String {
+fn kebab_variant_code(kind: &hydra::swmm::validate::ValidationKind) -> String {
     let debug = format!("{kind:?}");
     let name = debug.split([' ', '(', '{']).next().unwrap_or("finding");
     let mut out = String::with_capacity(name.len() + 4);
@@ -2105,8 +2105,8 @@ pub fn validate_network(
                 // mutating (or cloning) the shared cache.
                 let raw = std::fs::read(&model_path).map_err(|e| e.to_string())?;
                 let text = String::from_utf8_lossy(&raw);
-                let (mut working, _import_diags) = hydra::uds::io::objects::parse_network(&text);
-                let diags = hydra::uds::io::validate::validate(&mut working);
+                let (mut working, _import_diags) = hydra::swmm::objects::parse_network(&text);
+                let diags = hydra::swmm::validate::validate(&mut working);
                 return Ok(diags
                     .into_iter()
                     .map(|d| {
@@ -2389,7 +2389,7 @@ mod tests {
     #[test]
     fn a_drainage_point_moves_in_the_section_that_draws_it() {
         let (mut net, diags) =
-            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+            hydra::swmm::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
 
         assert_eq!(uds_point_section(&net, "J1"), Some("[COORDINATES]"));
@@ -2401,7 +2401,7 @@ mod tests {
         // And the write the command makes with that answer lands where
         // the canvas reads gage positions from.
         super::super::uds_view::set_display_point(&mut net, "[SYMBOLS]", "G1", 7.5, 8.5);
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("write");
         let symbols = text.split("[SYMBOLS]").nth(1).expect("a symbols section");
         assert!(symbols.contains("G1"), "the gage line vanished");
         assert!(symbols.contains("7.5"), "the new x never landed: {symbols}");
@@ -2417,7 +2417,7 @@ mod tests {
     #[test]
     fn every_drainage_kind_renames_or_refuses_honestly() {
         let (net, diags) =
-            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+            hydra::swmm::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
 
         let mut renamed = 0;
@@ -2468,7 +2468,7 @@ mod tests {
         use super::*;
 
         fn state_owned_by(owner: Option<&str>) -> NetworkStateInner {
-            let (net, _) = hydra::uds::io::objects::parse_network(
+            let (net, _) = hydra::swmm::objects::parse_network(
                 "[TITLE]\nT\n[OPTIONS]\nFLOW_UNITS CMS\n\
                  [JUNCTIONS]\nJ1 10 3 0 0 0\n\
                  [OUTFALLS]\nO1 8 FREE NO\n\
@@ -2529,7 +2529,7 @@ mod tests {
     /// write refuses is the same shape the time-series contents bug had.
     #[test]
     fn a_drainage_title_takes_the_edit_too() {
-        let (net, _) = hydra::uds::io::objects::parse_network(
+        let (net, _) = hydra::swmm::objects::parse_network(
             "[TITLE]\nOld\n[OPTIONS]\nFLOW_UNITS CMS\n\
              [JUNCTIONS]\nJ1 10 3 0 0 0\n\
              [OUTFALLS]\nO1 8 FREE NO\n\
@@ -2553,7 +2553,7 @@ mod tests {
             panic!("state must stay loaded");
         };
         assert!(*dirty, "the edit must mark the state dirty");
-        let text = hydra::uds::io::inp_writer::write_inp(network).expect("write");
+        let text = hydra::swmm::inp_writer::write_inp(network).expect("write");
         assert!(
             text.contains("New title"),
             "the title never reached the file"

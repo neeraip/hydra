@@ -234,7 +234,7 @@ C1  J1  O1  100  0.013  0  0
 [XSECTIONS]
 C1  CIRCULAR  1.0  0  0  0
 ";
-        let (network, _) = hydra::uds::io::objects::parse_network(EVERY_SIDECAR);
+        let (network, _) = hydra::swmm::objects::parse_network(EVERY_SIDECAR);
         let refs = uds_sidecar_refs(&network);
         let flag = |name: &str| {
             refs.iter()
@@ -268,7 +268,7 @@ C1  CIRCULAR  1.0  0  0  0
     #[test]
     fn attach_covers_a_reference_and_refuses_a_stranger() {
         use super::super::network_dto::NetworkStateInner;
-        let (network, _) = hydra::uds::io::objects::parse_network(FILE_GAGE_INP);
+        let (network, _) = hydra::swmm::objects::parse_network(FILE_GAGE_INP);
         let mut inner = NetworkStateInner::LoadedUds {
             dirty: false,
             raw_text: FILE_GAGE_INP.to_string(),

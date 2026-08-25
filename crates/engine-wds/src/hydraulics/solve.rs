@@ -1115,7 +1115,8 @@ fn compute_py_coeffs(network: &Network, ctx: &mut SolverContext) -> Result<(), H
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{io::parse, LinkKind, NodeKind};
+    use crate::dialect::parse;
+    use crate::{LinkKind, NodeKind};
 
     fn load_fixture(name: &str) -> Network {
         let path = format!(

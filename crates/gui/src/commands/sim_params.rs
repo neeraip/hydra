@@ -289,7 +289,7 @@ pub fn get_sim_summary_pairs(
         label: label.to_string(),
         value,
     };
-    let date = |d: &hydra::uds::io::options::Date, t: f64| {
+    let date = |d: &hydra::swmm::options::Date, t: f64| {
         let (h, rem) = ((t / 3600.0) as u32, t % 3600.0);
         format!(
             "{:02}/{:02}/{} {:02}:{:02}",
@@ -325,27 +325,23 @@ pub fn get_sim_summary_pairs(
         pair(
             "Routing",
             match o.routing_request {
-                hydra::uds::io::options::RoutingRequest::Steady => "Steady flow".to_string(),
-                hydra::uds::io::options::RoutingRequest::KinematicWave => {
-                    "Kinematic wave".to_string()
-                }
-                hydra::uds::io::options::RoutingRequest::DynamicWave => "Dynamic wave".to_string(),
+                hydra::swmm::options::RoutingRequest::Steady => "Steady flow".to_string(),
+                hydra::swmm::options::RoutingRequest::KinematicWave => "Kinematic wave".to_string(),
+                hydra::swmm::options::RoutingRequest::DynamicWave => "Dynamic wave".to_string(),
             },
         ),
         pair(
             "Infiltration",
             match o.infiltration {
-                hydra::uds::io::options::InfiltrationModel::Horton => "Horton".to_string(),
-                hydra::uds::io::options::InfiltrationModel::ModifiedHorton => {
+                hydra::swmm::options::InfiltrationModel::Horton => "Horton".to_string(),
+                hydra::swmm::options::InfiltrationModel::ModifiedHorton => {
                     "Modified Horton".to_string()
                 }
-                hydra::uds::io::options::InfiltrationModel::GreenAmpt => "Green-Ampt".to_string(),
-                hydra::uds::io::options::InfiltrationModel::ModifiedGreenAmpt => {
+                hydra::swmm::options::InfiltrationModel::GreenAmpt => "Green-Ampt".to_string(),
+                hydra::swmm::options::InfiltrationModel::ModifiedGreenAmpt => {
                     "Modified Green-Ampt".to_string()
                 }
-                hydra::uds::io::options::InfiltrationModel::CurveNumber => {
-                    "Curve number".to_string()
-                }
+                hydra::swmm::options::InfiltrationModel::CurveNumber => "Curve number".to_string(),
             },
         ),
         pair("Start", date(&o.start_date, o.start_time)),
@@ -563,8 +559,8 @@ pub struct UdsDateDto {
     pub day: u32,
 }
 
-impl From<hydra::uds::io::options::Date> for UdsDateDto {
-    fn from(d: hydra::uds::io::options::Date) -> Self {
+impl From<hydra::swmm::options::Date> for UdsDateDto {
+    fn from(d: hydra::swmm::options::Date) -> Self {
         Self {
             year: d.year,
             month: d.month,
@@ -607,8 +603,8 @@ pub struct UdsSimParamsDto {
     pub infiltration: String,
 }
 
-fn uds_options_to_dto(o: &hydra::uds::io::options::AnalysisOptions) -> UdsSimParamsDto {
-    use hydra::uds::io::options::{InfiltrationModel, RoutingRequest};
+fn uds_options_to_dto(o: &hydra::swmm::options::AnalysisOptions) -> UdsSimParamsDto {
+    use hydra::swmm::options::{InfiltrationModel, RoutingRequest};
     UdsSimParamsDto {
         start_date: o.start_date.into(),
         start_time: o.start_time,
@@ -643,8 +639,8 @@ fn uds_options_to_dto(o: &hydra::uds::io::options::AnalysisOptions) -> UdsSimPar
 /// parameters are typed to the family, so a within-family flip is an
 /// option change while a cross-family one would orphan every parameter
 /// set in the model.
-fn infiltration_family(m: hydra::uds::io::options::InfiltrationModel) -> u8 {
-    use hydra::uds::io::options::InfiltrationModel::*;
+fn infiltration_family(m: hydra::swmm::options::InfiltrationModel) -> u8 {
+    use hydra::swmm::options::InfiltrationModel::*;
     match m {
         Horton | ModifiedHorton => 0,
         GreenAmpt | ModifiedGreenAmpt => 1,
@@ -682,7 +678,7 @@ fn apply_uds_dto(
     net: &mut hydra::uds::model::Network,
     dto: &UdsSimParamsDto,
 ) -> Result<(), String> {
-    use hydra::uds::io::options::{FlowUnits, InfiltrationModel, RoutingRequest};
+    use hydra::swmm::options::{FlowUnits, InfiltrationModel, RoutingRequest};
 
     let start = uds_epoch(&dto.start_date, dto.start_time, "start")?;
     let end = uds_epoch(&dto.end_date, dto.end_time, "end")?;
@@ -753,13 +749,13 @@ fn apply_uds_dto(
     o.flow_units = flow_units;
     o.routing_request = routing;
     o.infiltration = infiltration;
-    o.start_date = hydra::uds::io::options::Date {
+    o.start_date = hydra::swmm::options::Date {
         year: dto.start_date.year,
         month: dto.start_date.month,
         day: dto.start_date.day,
     };
     o.start_time = dto.start_time;
-    o.end_date = hydra::uds::io::options::Date {
+    o.end_date = hydra::swmm::options::Date {
         year: dto.end_date.year,
         month: dto.end_date.month,
         day: dto.end_date.day,
@@ -819,10 +815,9 @@ pub fn update_uds_sim_params(
         // Tolerant by construction — the drainage reader always yields a
         // network plus diagnostics, so options are editable regardless of
         // whether the model is finished.
-        let (mut network, _diagnostics) = hydra::uds::io::objects::parse_network(&text);
+        let (mut network, _diagnostics) = hydra::swmm::objects::parse_network(&text);
         apply_uds_dto(&mut network, &params)?;
-        let new_text =
-            hydra::uds::io::inp_writer::write_inp(&network).map_err(|e| e.to_string())?;
+        let new_text = hydra::swmm::inp_writer::write_inp(&network).map_err(|e| e.to_string())?;
         bundle::atomic_write(path, new_text.as_bytes()).map_err(|e| e.to_string())
     };
 
@@ -952,7 +947,7 @@ mod tests {
     // ── Drainage params ───────────────────────────────────────────────────
 
     fn uds_net() -> hydra::uds::model::Network {
-        hydra::uds::io::objects::parse_network(
+        hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CFS\nSTART_DATE 01/01/2004\nSTART_TIME 00:00:00\n\
              END_DATE 01/01/2004\nEND_TIME 00:00:00\nREPORT_STEP 00:15:00\nROUTING_STEP 20\n\
              [JUNCTIONS]\nJ1 100 4 0 0 0\n\
@@ -966,7 +961,7 @@ mod tests {
     /// A model whose subcatchment carries Horton parameters, for the
     /// infiltration family rule.
     fn uds_net_with_parcel() -> hydra::uds::model::Network {
-        hydra::uds::io::objects::parse_network(
+        hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nSTART_DATE 01/01/2004\n\
              START_TIME 00:00:00\nEND_DATE 01/01/2004\nEND_TIME 06:00:00\n\
              [RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
@@ -1000,7 +995,7 @@ mod tests {
         apply_uds_dto(&mut net, &within).expect("within the family");
         assert_eq!(
             net.options.infiltration,
-            hydra::uds::io::options::InfiltrationModel::ModifiedHorton
+            hydra::swmm::options::InfiltrationModel::ModifiedHorton
         );
 
         // Horton → Green-Ampt: every subcatchment's parameters would be
@@ -1037,15 +1032,15 @@ mod tests {
         dto.routing = "KINWAVE".into();
         apply_uds_dto(&mut net, &dto).expect("apply");
 
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
-        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::swmm::objects::parse_network(&text);
         assert_eq!(
             reparsed.options.flow_units,
-            hydra::uds::io::options::FlowUnits::Cms
+            hydra::swmm::options::FlowUnits::Cms
         );
         assert_eq!(
             reparsed.options.routing_request,
-            hydra::uds::io::options::RoutingRequest::KinematicWave
+            hydra::swmm::options::RoutingRequest::KinematicWave
         );
         let back = reparsed
             .vertices
@@ -1077,8 +1072,8 @@ mod tests {
         apply_uds_dto(&mut net, &dto).expect("apply");
         assert!((net.options.end_time - 21_600.0).abs() < 1e-9);
 
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
-        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::swmm::objects::parse_network(&text);
         assert!((reparsed.options.end_time - 21_600.0).abs() < 1e-9);
         assert_eq!(reparsed.options.end_date.day, 1);
     }
@@ -1099,8 +1094,8 @@ mod tests {
         assert!((net.options.min_routing_step - 2.5).abs() < 1e-9);
         assert!((net.options.courant_factor - 0.6).abs() < 1e-9);
 
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
-        let (reparsed, _) = hydra::uds::io::objects::parse_network(&text);
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("write");
+        let (reparsed, _) = hydra::swmm::objects::parse_network(&text);
         assert!(
             (reparsed.options.min_routing_step - 2.5).abs() < 1e-9,
             "MINIMUM_STEP did not survive the writer"

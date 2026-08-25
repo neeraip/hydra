@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use hydra_engine_uds::hydraulics::section::{
     build_section, build_street_section, build_transect_section, BuildError,
 };
-use hydra_engine_uds::io::objects::parse_network;
-use hydra_engine_uds::io::validate::validate;
 use hydra_engine_uds::model::{XsectReferent, XsectShape};
+use hydra_interop_swmm::objects::parse_network;
+use hydra_interop_swmm::validate::validate;
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/uds")

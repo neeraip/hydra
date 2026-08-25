@@ -461,10 +461,11 @@ fn open_uds(
     pending: &mut Vec<Diagnostic>,
     hotstart: &mut Option<Hotstart>,
 ) -> Result<EngineSession, Failure> {
-    use hydra::uds::io::climate::parse_any_climate_file;
-    use hydra::uds::io::objects::parse_network;
+    use hydra::swmm::climate::parse_any_climate_file;
+    use hydra::swmm::objects::parse_network;
+    use hydra::swmm::session::OpenError as SwmmOpenError;
     use hydra::uds::model::TemperatureSource;
-    use hydra::uds::simulation::engine::{OpenError, Simulation as UdsSimulation};
+    use hydra::uds::simulation::engine::OpenError;
 
     let text = String::from_utf8_lossy(bytes).into_owned();
 
@@ -523,7 +524,7 @@ fn open_uds(
         },
         _ => None,
     };
-    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
+    let mut rain_files: Vec<(String, hydra::swmm::rain::RainRecords)> = Vec::new();
     if rain_iface.is_none() {
         for gage in &net.gages {
             let hydra::uds::model::GageSource::File { file, .. } = &gage.source else {
@@ -534,7 +535,7 @@ fn open_uds(
             }
             match aux.get_text(file) {
                 Some(rain_text) => {
-                    let (records, notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
+                    let (records, notices) = hydra::swmm::rain::parse_any_rain_file(&rain_text)
                         .map_err(|e| {
                             Failure::one(
                                 EXIT_INPUT,
@@ -564,11 +565,11 @@ fn open_uds(
     }
 
     let opened = match &rain_iface {
-        Some(bytes) => UdsSimulation::open_with_rain_interface(&text, climate, bytes),
-        None => UdsSimulation::open_with_rain_records(&text, climate, rain_files),
+        Some(bytes) => hydra::swmm::session::open_with_rain_interface(&text, climate, bytes),
+        None => hydra::swmm::session::open_with_rain_records(&text, climate, rain_files),
     };
     let (mut sim, diags, findings) = opened.map_err(|e| match e {
-        OpenError::Parse(diags) => Failure {
+        SwmmOpenError::Parse(diags) => Failure {
             exit: EXIT_INPUT,
             diagnostics: diags
                 .iter()
@@ -576,7 +577,7 @@ fn open_uds(
                 .map(|d| Diagnostic::error("input/parse", d.to_string()))
                 .collect(),
         },
-        OpenError::Validation(findings) => Failure {
+        SwmmOpenError::Build(OpenError::Validation(findings)) => Failure {
             exit: EXIT_INPUT,
             diagnostics: findings
                 .iter()
@@ -584,17 +585,17 @@ fn open_uds(
                 .map(|v| Diagnostic::error("validation/network", v.to_string()))
                 .collect(),
         },
-        OpenError::Routing(r) => Failure::one(
+        SwmmOpenError::Build(OpenError::Routing(r)) => Failure::one(
             EXIT_INPUT,
             Diagnostic::error("input/unsupported", r.to_string()),
         ),
-        OpenError::Surface(s) => Failure::one(
+        SwmmOpenError::Build(OpenError::Surface(s)) => Failure::one(
             EXIT_INPUT,
             Diagnostic::error("input/unsupported", s.to_string()),
         ),
-        OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg) => {
-            Failure::one(EXIT_INPUT, Diagnostic::error("input/unsupported", msg))
-        }
+        SwmmOpenError::Build(
+            OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg),
+        ) => Failure::one(EXIT_INPUT, Diagnostic::error("input/unsupported", msg)),
     })?;
 
     for d in diags.iter().filter(|d| !d.kind.is_error()) {
@@ -651,7 +652,7 @@ fn open_uds(
 
     if let Some((hydra::uds::model::FileMode::Use, name)) = &iface.runoff {
         match aux.get(name) {
-            Some(bytes) => sim.supply_runoff(bytes).map_err(|e| {
+            Some(bytes) => hydra::swmm::session::supply_runoff(&mut sim, bytes).map_err(|e| {
                 Failure::one(
                     EXIT_INPUT,
                     Diagnostic::error(
@@ -672,7 +673,7 @@ fn open_uds(
 
     if let Some((hydra::uds::model::FileMode::Use, name)) = &iface.rdii {
         match aux.get(name) {
-            Some(bytes) => sim.supply_rdii(bytes).map_err(|e| {
+            Some(bytes) => hydra::swmm::session::supply_rdii(&mut sim, bytes).map_err(|e| {
                 Failure::one(
                     EXIT_INPUT,
                     Diagnostic::error("input/parse", format!("RDII interface file {name:?}: {e}")),
@@ -690,12 +691,17 @@ fn open_uds(
 
     if let Some(name) = &iface.inflows {
         match aux.get_text(name) {
-            Some(text) => sim.supply_routing_inflows(&text).map_err(|e| {
-                Failure::one(
-                    EXIT_INPUT,
-                    Diagnostic::error("input/parse", format!("routing inflows file {name:?}: {e}")),
-                )
-            })?,
+            Some(text) => {
+                hydra::swmm::session::supply_routing_inflows(&mut sim, &text).map_err(|e| {
+                    Failure::one(
+                        EXIT_INPUT,
+                        Diagnostic::error(
+                            "input/parse",
+                            format!("routing inflows file {name:?}: {e}"),
+                        ),
+                    )
+                })?
+            }
             None => pending.push(Diagnostic::warning(
                 "input/notice",
                 format!(
