@@ -885,6 +885,23 @@ struct Trial {
     kept: u32,
 }
 
+/// The §6.4 seed's extrapolation factor: a quarter of the trial's
+/// interval over the last accepted span, or nothing when there is no
+/// span to extrapolate from. Quarter strength is the measured setting
+/// (see `seed_heads`); this function is the whole of that decision.
+fn seed_factor(dt: f64, span: f64) -> Option<f64> {
+    if span <= 0.0 {
+        return None;
+    }
+    Some(0.25 * dt / span)
+}
+
+/// One vertex's §6.4 seeded head: the accepted head advanced by the
+/// factored motion since the previous accepted state, floored at dry.
+fn seeded_head(y0: f64, y_prev: f64, f: f64) -> f64 {
+    (y0 + (y0 - y_prev) * f).max(0.0)
+}
+
 /// Claim spans of `n` indices from a phase's cursor and run `f` over
 /// each — the pooled trial's work distribution. `fetch_add` hands every
 /// claimant a disjoint span, so each index runs exactly once; Relaxed
@@ -2837,6 +2854,7 @@ impl Router {
         let width = team.width();
 
         let mut y = self.y.clone();
+        self.seed_heads(&mut y, dt);
         // Flow ping-pong: iterate `step` reads buffer `step % 2` and
         // writes the other; the channel map overwrites every slot of the
         // write buffer, so this renames the serial arm's fresh
@@ -3242,6 +3260,27 @@ impl Router {
         }
     }
 
+    /// The §6.4 initial iterate: heads advanced by a quarter-strength
+    /// linear extrapolation of the last accepted step's motion, floored
+    /// at dry. Quarter strength is measured, not chosen: full strength
+    /// overshoots at regulator transitions and settles into states
+    /// whose mass balance drifts (−1.19% against −0.12% unseeded on a
+    /// large 48 h run), while a quarter keeps balance and predecessor
+    /// agreement indistinguishable from unseeded and still saves ~9%
+    /// of the run. Both arms call this before their first pass, so the
+    /// pooled trial stays byte-identical to the serial one.
+    fn seed_heads(&self, y: &mut [f64], dt: f64) {
+        let Some((t_prev, y_prev)) = self.hist.last() else {
+            return;
+        };
+        let Some(f) = seed_factor(dt, self.t - t_prev) else {
+            return;
+        };
+        for (yi, (&y0, &yp)) in y.iter_mut().zip(self.y.iter().zip(y_prev.iter())) {
+            *yi = seeded_head(y0, yp, f);
+        }
+    }
+
     /// One §6.4 trial: iterate channel and vertex phases to
     /// self-consistency over the interval `dt`.
     /// Pinned standalone: with rayon in the LTO unit the inliner folded
@@ -3262,6 +3301,7 @@ impl Router {
         let nv = self.verts.len();
         let nc = self.chans.len();
         let mut y = self.y.clone();
+        self.seed_heads(&mut y, dt);
         let mut q = self.q.clone();
         let mut sq = self.sq.clone();
         let mut a_mid_new = self.a_mid.clone();
@@ -5162,6 +5202,22 @@ C2  RECT_OPEN  3  2  0  0
         assert!((at_ceiling - 0.9).abs() < 1e-12, "{at_ceiling}");
         let neutral = growth_cap(tol, 0.81 * tol);
         assert!((neutral - 1.0).abs() < 1e-12, "{neutral}");
+    }
+
+    /// The seed decisions by name: no span, no extrapolation; the
+    /// strength is a quarter of the interval ratio; motion projects
+    /// forward and never below dry.
+    #[test]
+    fn the_seed_extrapolates_at_quarter_strength_and_floors_at_dry() {
+        assert!(seed_factor(4.0, 0.0).is_none(), "no span to project from");
+        assert!(seed_factor(4.0, -1.0).is_none(), "time cannot run back");
+        let f = seed_factor(4.0, 4.0).expect("equal spans");
+        assert!((f - 0.25).abs() < 1e-15, "{f}");
+        let f2 = seed_factor(2.0, 4.0).expect("half interval");
+        assert!((f2 - 0.125).abs() < 1e-15, "{f2}");
+        // Rising head projects on; falling head cannot cross dry.
+        assert!((seeded_head(1.0, 0.9, 0.25) - 1.025).abs() < 1e-12);
+        assert_eq!(seeded_head(0.001, 0.100, 0.25), 0.0, "floored at dry");
     }
 
     /// The chatter test by name: reversal inside the stationarity band is

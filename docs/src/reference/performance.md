@@ -18,8 +18,8 @@ modelling deviations.
 | Workload | Hydra / SWMM runtime |
 |---|---|
 | Bellinge (published, 1,020 nodes), 48 h including its storm | 1.04 |
-| Bellinge, the storm hours alone (03:00 to 12:00) | **0.95** |
-| Bellinge, a dry-weather day (12 h) | 1.21 |
+| Bellinge, the storm hours alone (03:00 to 12:00) | **0.91** |
+| Bellinge, a dry-weather day (12 h) | 1.24 |
 | SWMM test corpus, models running 0.2 to 1 s | 1.08 |
 
 The corpus is the predecessor's own regression suite. Its many
@@ -29,7 +29,7 @@ process creation rather than either solver.
 
 The stepping behind these numbers is error-controlled where SWMM's is
 not: the routing step is steered by a per-step local error estimate
-(hydraulics specification, section 6.5), and on these runs under 1% of
+(hydraulics specification, section 6.5), and on these runs under 2% of
 Hydra's steps end unconverged against SWMM's 36% across the same 48
 hours (56% during the storm itself). The dry-weather ratio is the cost
 of that control on a network whose regulators cycle continuously in dry

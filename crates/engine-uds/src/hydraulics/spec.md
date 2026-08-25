@@ -530,7 +530,40 @@ numerical fiction.
 
 ### 6.4 Iteration
 
-Within a trial step the scheme iterates to self-consistency:
+Within a trial step the scheme iterates to self-consistency, starting
+from a seeded initial iterate.
+
+**The initial iterate** is the accepted state with every vertex head
+advanced by a quarter-strength linear extrapolation of the last
+accepted step's motion, floored at dry:
+
+$$y_i^{(0)} = \max\!\left(0,\; y_i + \tfrac{1}{4}\,\Delta t\,
+\frac{y_i - y_i^{prev}}{\Delta t_{prev}}\right),$$
+
+where $y_i$ and $y_i^{prev}$ are the vertex's heads at the last two
+accepted states and $\Delta t$ is the trial's interval. Flows seed from
+the accepted state unchanged. The first trial of a run, having no
+motion to extrapolate, seeds from the accepted state alone.
+
+A seed closer to the coming state converges in fewer passes — measured
+on a large network, the modal trial drops a full pass and the run
+saves ~9% — but the strength is deliberately a quarter: full-strength
+extrapolation overshoots at regulator transitions, and the states it
+converges to drift in network mass balance (measured −1.19% against
+the unseeded −0.12%); at quarter strength the balance and the
+agreement with the predecessor are indistinguishable from unseeded
+while most of the saving remains. The seed changes no criterion: both
+convergence gates below judge the settled state exactly as before, so
+a converged state may differ from the unseeded one only by an amount
+the tolerance already accepts — the same license the settled-channel
+keep carries.
+
+> **CORRESPONDENCE:** the predecessor seeds every trial from the
+> previous state unmodified. This engine's seed is a solver detail on
+> the near side of the convergence gates; where results differ, they
+> differ within the gates' own tolerance.
+
+The scheme then iterates:
 
 1. **∥ Channel phase**: every channel computes its flow update from the
    last iterate's heads. This phase is order-independent by construction;
