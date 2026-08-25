@@ -5,7 +5,7 @@ use crate::ValidationError;
 // SimWarning, WarningKind, NodeQuantity, and LinkQuantity are defined in
 // crate::io so that the output writers in that crate can reference them
 // without a circular dependency.
-pub use crate::io::{LinkQuantity, NodeQuantity, SimWarning, WarningKind};
+pub use crate::simulation::contract::{LinkQuantity, NodeQuantity, SimWarning, WarningKind};
 
 // ── Error types ───────────────────────────────────────────────────────────────
 

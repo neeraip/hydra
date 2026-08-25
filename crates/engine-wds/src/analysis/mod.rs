@@ -1,6 +1,7 @@
 #![doc = include_str!("spec.md")]
 
 /// Semver version of the analysis engine, taken from `Cargo.toml` at compile time.
+pub mod source;
 pub const HYDRA_ANALYSIS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod binning;

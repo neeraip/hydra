@@ -7,7 +7,7 @@
 // All builder inputs are in user units (GPM, ft, inches for US customary).
 // Expected values are computed in internal units (CFS, ft) where needed.
 
-use crate::io::units::make_ucf;
+use crate::model::units::make_ucf;
 use crate::test_support::{no_pswitch, TestNetworkBuilder};
 use crate::{
     CurveKind, DemandModel, FlowUnits, HeadLossFormula, LinkKind, SimulationOptions, ValveType,

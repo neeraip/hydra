@@ -58,6 +58,11 @@
 //! Downstream crates (`hydra`, `hydra-cli`, `hydra-gui`) depend only on this
 //! crate's public re-export surface; they do not depend on any internal module.
 
+// The dialect sources reference the engine as `crate::engine_api` so
+// they compile both here (pre-lift / test mount) and in the interop
+// crate (format-blind extraction, phase 4).
+pub(crate) use crate as engine_api;
+
 pub mod analysis;
 pub mod descriptors;
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]

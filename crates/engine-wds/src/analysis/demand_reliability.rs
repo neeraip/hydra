@@ -1,6 +1,5 @@
 use super::errors::AnalysisComputeError;
-use crate::io::out_reader;
-use crate::io::units::make_ucf;
+use crate::model::units::make_ucf;
 use crate::{DemandModel, FlowUnits, Network, NodeKind};
 use std::collections::HashMap;
 
@@ -140,11 +139,11 @@ pub struct DemandReliabilityReport {
 ///   maximum observed deficit rate
 /// - network-level summary statistics
 pub fn compute_demand_reliability_from_out(
-    out_path: &std::path::Path,
+    src: &dyn super::source::ResultsSource,
     network: &Network,
 ) -> Result<DemandReliabilityReport, AnalysisComputeError> {
     compute_demand_reliability_from_out_with_options(
-        out_path,
+        src,
         network,
         DemandReliabilityOptions::default(),
     )
@@ -152,14 +151,13 @@ pub fn compute_demand_reliability_from_out(
 
 /// Like [`compute_demand_reliability_from_out`] but with explicit [`DemandReliabilityOptions`].
 pub fn compute_demand_reliability_from_out_with_options(
-    out_path: &std::path::Path,
+    src: &dyn super::source::ResultsSource,
     network: &Network,
     options: DemandReliabilityOptions,
 ) -> Result<DemandReliabilityReport, AnalysisComputeError> {
     validate_options(options)?;
 
-    let meta = out_reader::read_metadata_checked(out_path)
-        .map_err(|e| AnalysisComputeError::OutRead(e.to_string()))?;
+    let meta = src.meta().clone();
 
     if meta.n_periods == 0 {
         return Err(AnalysisComputeError::NoSnapshots);
@@ -179,7 +177,8 @@ pub fn compute_demand_reliability_from_out_with_options(
         1.0
     };
 
-    let flow_units_code = out_reader::read_flow_units_code(out_path)
+    let flow_units_code = src
+        .flow_units_code()
         .map_err(|e| AnalysisComputeError::OutRead(e.to_string()))?;
     let flow_units = flow_units_from_code(flow_units_code).ok_or_else(|| {
         AnalysisComputeError::InvalidInput(format!(
@@ -228,7 +227,8 @@ pub fn compute_demand_reliability_from_out_with_options(
 
     for period in 0..meta.n_periods {
         let t = meta.report_start + period as f64 * dt;
-        let period_results = out_reader::read_period(out_path, &meta, period)
+        let period_results = src
+            .read_period(period)
             .map_err(AnalysisComputeError::OutRead)?;
 
         for (j, (node_stats, node_index)) in

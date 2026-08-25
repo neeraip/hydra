@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::io::units::apply_unit_conversion;
+use crate::model::units::apply_unit_conversion;
 use crate::{
     Curve, CurveKind, CurvePoint, DemandCategory, FavadCoeffs, Junction, Link, LinkBase, LinkKind,
     LinkState, LinkStatus, MixModel, Network, Node, NodeBase, NodeKind, NodeState, Pattern, Pipe,

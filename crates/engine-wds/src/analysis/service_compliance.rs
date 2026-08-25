@@ -1,5 +1,4 @@
 use super::errors::AnalysisComputeError;
-use crate::io::out_reader;
 
 /// Pressure thresholds used to classify reporting-period samples as in-limit or
 /// out-of-limit in a service-compliance analysis.
@@ -163,13 +162,12 @@ pub struct ServiceComplianceReport {
 ///   integrals over time
 /// - network-level summary statistics
 pub fn compute_service_compliance_from_out(
-    out_path: &std::path::Path,
+    src: &dyn super::source::ResultsSource,
     thresholds: ServiceComplianceThresholds,
 ) -> Result<ServiceComplianceReport, AnalysisComputeError> {
     validate_thresholds(thresholds)?;
 
-    let meta = out_reader::read_metadata_checked(out_path)
-        .map_err(|e| AnalysisComputeError::OutRead(e.to_string()))?;
+    let meta = src.meta().clone();
 
     if meta.n_periods == 0 {
         return Err(AnalysisComputeError::NoSnapshots);
@@ -183,7 +181,8 @@ pub fn compute_service_compliance_from_out(
 
     // Junctions = all nodes minus the prolog's tank/reservoir index list
     // (analysis spec §3.1).
-    let tank_indices = out_reader::read_tank_node_indices(out_path, &meta)
+    let tank_indices = src
+        .tank_node_indices()
         .map_err(AnalysisComputeError::OutRead)?;
     let mut is_junction = vec![true; meta.n_nodes];
     for idx in tank_indices {
@@ -201,7 +200,8 @@ pub fn compute_service_compliance_from_out(
     let mut current_streaks = vec![0usize; nodes.len()];
 
     for period in 0..meta.n_periods {
-        let period_results = out_reader::read_period(out_path, &meta, period)
+        let period_results = src
+            .read_period(period)
             .map_err(AnalysisComputeError::OutRead)?;
 
         for (j, (node, &node_index)) in nodes.iter_mut().zip(&junction_indices).enumerate() {
@@ -454,9 +454,11 @@ mod tests {
         ));
         std::fs::write(&path, buf.into_inner()).expect("persist .out");
 
-        let report =
-            compute_service_compliance_from_out(&path, ServiceComplianceThresholds::min_only(10.0))
-                .expect("compute compliance");
+        let report = compute_service_compliance_from_out(
+            &crate::io::out_reader::OutFileSource::open(&path).expect("open"),
+            ServiceComplianceThresholds::min_only(10.0),
+        )
+        .expect("compute compliance");
         let _ = std::fs::remove_file(&path);
 
         // Junctions only: the reservoir contributes no samples and no node.

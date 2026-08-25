@@ -161,8 +161,8 @@ pub fn criteria_block_options(
     network: &Network,
 ) -> Result<HashMap<&'static str, serde_json::Value>, String> {
     let ucf =
-        crate::io::units::make_ucf(network.options.flow_units, network.options.specific_gravity);
-    let si = crate::io::units::is_si(network.options.flow_units);
+        crate::model::units::make_ucf(network.options.flow_units, network.options.specific_gravity);
+    let si = crate::model::units::is_si(network.options.flow_units);
     let pressure = |m: f64| if si { m } else { m * ucf.pressure };
     let velocity = |ms: f64| if si { ms } else { ms * ucf.elev };
     let ascending = |edges: &[f64]| edges.windows(2).all(|w| w[1] > w[0]);
