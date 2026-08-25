@@ -1,4 +1,15 @@
 version: 2
+
+# Bumps are grouped per ecosystem (minors and patches together, majors
+# individual). Ungrouped, every GUI bump invalidates the licence notices
+# the licenses-ci workflow pushed onto every other open bump: the first
+# merge conflicts the rest, Dependabot refuses to rebase branches
+# carrying that CI commit, and each PR then needs a manual
+# `@dependabot recreate` round-trip. One grouped PR per ecosystem per
+# week has nothing to invalidate — and costs one CI run instead of N.
+# Majors stay individual so a breaking bump never blocks the routine
+# ones riding with it; they need human review either way, and the
+# auto-merge workflow already excludes them.
 updates:
   - package-ecosystem: cargo
     directory: /
@@ -6,6 +17,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /crates/gui/frontend
@@ -13,6 +29,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+    groups:
+      frontend-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -20,3 +41,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
