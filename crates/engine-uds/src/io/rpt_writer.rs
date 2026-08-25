@@ -356,7 +356,7 @@ fn link_kind(l: &crate::model::Link) -> &'static str {
 #[derive(Debug, Clone)]
 pub struct OverlandRpt {
     /// The §15.8 ledger, cumulative over the run (m³).
-    pub ledger: crate::io::overland_out::LedgerRow,
+    pub ledger: crate::overland::LedgerRow,
     /// Opening surface storage (m³).
     pub initial_storage: f64,
     /// Exchange as delivered to the network ledger (m³): surface

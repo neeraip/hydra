@@ -200,8 +200,8 @@ pub struct SubcatchRecord {
 /// A reported parcel record as an interface-file row, still in engine
 /// units (§14.8.2). The file's field order is its own, so the mapping is
 /// written out rather than derived from either type's layout.
-fn parcel_replay(r: &SubcatchRecord) -> crate::io::iface::ParcelReplay {
-    crate::io::iface::ParcelReplay {
+fn parcel_replay(r: &SubcatchRecord) -> crate::simulation::records::ParcelReplay {
+    crate::simulation::records::ParcelReplay {
         rainfall: r.rain,
         snow_depth: r.snow_depth,
         evap: r.evap,
@@ -379,10 +379,10 @@ pub struct Simulation {
     climate_records: Vec<crate::model::DailyClimate>,
     climate_state: ClimateDayState,
     /// A supplied routing interface inflow file (§14.8).
-    iface_in: Option<crate::io::iface::RoutingInterface>,
+    iface_in: Option<crate::simulation::records::RoutingInterface>,
     /// A supplied RDII interface file (§14.8.1). When present it *is* the
     /// RDII hydrograph and the convolutions are not run.
-    rdii_in: Option<crate::io::iface::RdiiInterface>,
+    rdii_in: Option<crate::simulation::records::RdiiInterface>,
     /// Convolved RDII for `SAVE` (§14.8.1): `(epoch s, flow per assignment)`
     /// at each hydrology step. Collected only when the model asks for a
     /// file, since a long run holds one row per step per assignment.
@@ -391,14 +391,14 @@ pub struct Simulation {
     /// every file-sourced gage's record normalised to interval depths in
     /// inches. Fixed at load: the cache is of the records, and no part of
     /// a run changes them.
-    rain_out: Option<Vec<crate::io::iface::RainGageRecord>>,
+    rain_out: Option<Vec<crate::simulation::records::RainGageRecord>>,
     /// §14.8.2: when the model asks to save a runoff interface file
     /// (`SAVE`), one `(step length, per-parcel record)` per hydrology step,
     /// in engine units. Held rather than streamed so the header's step
     /// count is the number of records the run actually produced. `USE` is
     /// the other half of the same option and fills `runoff_in` instead;
     /// a run does one or the other, never both.
-    runoff_out: Option<Vec<(f64, Vec<crate::io::iface::ParcelReplay>)>>,
+    runoff_out: Option<Vec<(f64, Vec<crate::simulation::records::ParcelReplay>)>>,
     /// §12.3: a fingerprint of each interface file supplied to this run,
     /// as `(what it is, hash of its bytes)`. A checkpoint carries these so
     /// a restored run given a different file, or none, is refused rather
@@ -407,7 +407,7 @@ pub struct Simulation {
     /// A supplied runoff interface file (§14.8.2) and the cursor into it.
     /// When present the surface is not stepped at all and the hydrology
     /// clock follows the file's own steps.
-    runoff_in: Option<(crate::io::iface::RunoffInterface, usize)>,
+    runoff_in: Option<(crate::simulation::records::RunoffInterface, usize)>,
     /// Said once when a replayed file runs out before the run does.
     runoff_exhausted: bool,
     /// The replayed record now in force, per parcel, in engine units.
@@ -416,7 +416,7 @@ pub struct Simulation {
     /// replayed run never steps, so without this a replay routed the
     /// file's flows correctly and reported every parcel as producing
     /// nothing (§14.8.2).
-    runoff_now: Vec<crate::io::iface::ParcelReplay>,
+    runoff_now: Vec<crate::simulation::records::ParcelReplay>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<Vec<f64>>>,
     /// Hydrology lateral mass by origin, in HYDRO_SOURCES order:
@@ -507,11 +507,16 @@ impl Simulation {
     pub fn open_with_files(
         input: &str,
         climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
+        rain_files: Vec<(String, Vec<crate::simulation::records::RainReading>)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let records = rain_files
             .into_iter()
-            .map(|(name, readings)| (name, crate::io::rain::RainRecords::Station(readings)))
+            .map(|(name, readings)| {
+                (
+                    name,
+                    crate::simulation::records::RainRecords::Station(readings),
+                )
+            })
             .collect();
         Simulation::open_inner(input, climate_records, records, None, None)
     }
@@ -523,7 +528,7 @@ impl Simulation {
     pub fn open_with_rain_records(
         input: &str,
         climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
+        rain_files: Vec<(String, crate::simulation::records::RainRecords)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         Simulation::open_inner(input, climate_records, rain_files, None, None)
     }
@@ -560,8 +565,8 @@ impl Simulation {
     fn open_inner(
         input: &str,
         climate_records: Vec<crate::model::DailyClimate>,
-        rain_files: Vec<(String, crate::io::rain::RainRecords)>,
-        rain_interface: Option<crate::io::iface::RainInterface>,
+        rain_files: Vec<(String, crate::simulation::records::RainRecords)>,
+        rain_interface: Option<crate::simulation::records::RainInterface>,
         overland_mesh: Option<&str>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let (mut net, mut diags) = parse_network(input);
@@ -1278,7 +1283,7 @@ impl Simulation {
     fn replay_hydrology(&mut self, period_end: f64, routing_active: bool) {
         let nv = self.net.vertices.len();
         let np = self.net.constituents.len();
-        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
+        let cv = crate::simulation::records::flow_cv_of(self.net.options.flow_units);
         let Some(surface) = self.surface.take() else {
             return;
         };
@@ -3022,7 +3027,7 @@ impl Simulation {
     /// reading it. Either of the predecessor's encodings is accepted, and
     /// the file replaces the RDII convolutions rather than adding to them.
     pub fn supply_rdii(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let cv = crate::io::iface::flow_cv_of(self.net.options.flow_units);
+        let cv = crate::simulation::records::flow_cv_of(self.net.options.flow_units);
         self.rdii_in = Some(crate::io::iface::parse_rdii_file(bytes, &self.net, cv)?);
         self.note_supplied("sewer inflow", bytes);
         Ok(())
@@ -3552,7 +3557,7 @@ impl Simulation {
             let rows = r.u()? as usize;
             let mut recs = Vec::with_capacity(rows.min(4096));
             for _ in 0..rows {
-                recs.push(crate::io::iface::ParcelReplay {
+                recs.push(crate::simulation::records::ParcelReplay {
                     rainfall: r.f()?,
                     snow_depth: r.f()?,
                     evap: r.f()?,
@@ -3651,7 +3656,7 @@ impl Simulation {
         let n = r.u()? as usize;
         self.runoff_now = Vec::with_capacity(n.min(4096));
         for _ in 0..n {
-            let rec = crate::io::iface::ParcelReplay {
+            let rec = crate::simulation::records::ParcelReplay {
                 rainfall: r.f()?,
                 snow_depth: r.f()?,
                 evap: r.f()?,
@@ -4171,7 +4176,7 @@ impl Simulation {
                     .coupled
                     .as_ref()
                     .map(|cs| crate::io::rpt_writer::OverlandRpt {
-                        ledger: crate::io::overland_out::LedgerRow::of(&cs.marcher),
+                        ledger: crate::overland::LedgerRow::of(&cs.marcher),
                         initial_storage: cs.marcher.initial_storage(),
                         delivered_in: cs.delivered_in,
                         delivered_out: cs.delivered_out,
@@ -4586,9 +4591,10 @@ impl Simulation {
 /// were authored on, and the caller supplies the file it actually found.
 fn realise_file_gages(
     net: &mut Network,
-    rain_files: &[(String, crate::io::rain::RainRecords)],
-    rain_interface: Option<&crate::io::iface::RainInterface>,
-) -> Result<Vec<crate::io::iface::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal> {
+    rain_files: &[(String, crate::simulation::records::RainRecords)],
+    rain_interface: Option<&crate::simulation::records::RainInterface>,
+) -> Result<Vec<crate::simulation::records::RainGageRecord>, crate::hydrology::runoff::SurfaceRefusal>
+{
     use crate::hydrology::runoff::SurfaceRefusal;
     use crate::model::{GageSource, RainFileUnit};
 
@@ -4679,8 +4685,8 @@ fn realise_file_gages(
         // it is realised exactly as a cache of one is, and the gage's
         // declared form describes its record rather than the file.
         let readings = match supplied {
-            crate::io::rain::RainRecords::Station(readings) => readings,
-            crate::io::rain::RainRecords::Archive(rec) => {
+            crate::simulation::records::RainRecords::Station(readings) => readings,
+            crate::simulation::records::RainRecords::Archive(rec) => {
                 let to_model = if net.options.flow_units.is_us() {
                     1.0
                 } else {
@@ -4797,8 +4803,8 @@ fn cacheable_record(
     form: crate::model::RainForm,
     unit: Option<crate::model::RainFileUnit>,
     model_is_us: bool,
-    readings: &[crate::io::rain::RainReading],
-) -> crate::io::iface::RainGageRecord {
+    readings: &[crate::simulation::records::RainReading],
+) -> crate::simulation::records::RainGageRecord {
     use crate::model::{RainFileUnit, RainForm};
     // The record's own declared unit, not the model's: an undeclared unit
     // is the model unit system's depth unit (§14.12).
@@ -4833,7 +4839,7 @@ fn cacheable_record(
         let day = SWMM_EPOCH_DAYS_ENGINE + days_from_civil(r.date) as f64 + r.seconds / 86_400.0;
         out.push((day, depth * to_inches));
     }
-    crate::io::iface::RainGageRecord {
+    crate::simulation::records::RainGageRecord {
         station: station.to_string(),
         interval,
         readings: out,

@@ -9,22 +9,8 @@
 //! file is written in is recognised from the file, so a caller names a file
 //! and never a format.
 
-use crate::io::options::Date;
-
-/// One reading: a station's value for the recording interval starting at
-/// the stamped minute (§3.1 of the hydrology specification).
-#[derive(Debug, Clone, PartialEq)]
-pub struct RainReading {
-    /// Station identifier as written.
-    pub station: String,
-    /// Calendar date of the reading.
-    pub date: Date,
-    /// Seconds past that date's midnight.
-    pub seconds: f64,
-    /// The value, in the record's own declared unit, meaning whatever the
-    /// gage's form declares (intensity, volume, cumulative).
-    pub value: f64,
-}
+use crate::model::options::Date;
+pub use crate::simulation::records::{RainReading, RainRecords};
 
 /// Parse a user-prepared rain record. A malformed line is an error naming
 /// its line number, never skipped — silently dropping a typoed reading
@@ -373,7 +359,7 @@ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
 /// engine does not read is refused rather than read at a guess.
 pub fn parse_archive_file(
     text: &str,
-) -> Result<(crate::io::iface::RainGageRecord, Vec<String>), String> {
+) -> Result<(crate::simulation::records::RainGageRecord, Vec<String>), String> {
     let Some((layout, interval, station)) = recognise(text) else {
         return Err(
             "not an archival station record this engine reads: no line in the \
@@ -514,7 +500,7 @@ pub fn parse_archive_file(
         ));
     }
     Ok((
-        crate::io::iface::RainGageRecord {
+        crate::simulation::records::RainGageRecord {
             station,
             interval,
             readings,
@@ -698,7 +684,7 @@ mod archive_tests {
 
     /// Readings as `(hour of 2020-01-01, inches)`, rounded past the noise
     /// the decimal-day encoding carries.
-    pub(super) fn hours(rec: &crate::io::iface::RainGageRecord) -> Vec<(f64, f64)> {
+    pub(super) fn hours(rec: &crate::simulation::records::RainGageRecord) -> Vec<(f64, f64)> {
         rec.readings
             .iter()
             .map(|(day, v)| {
@@ -910,22 +896,6 @@ mod archive_tests {
         // Stamped a quarter hour before the instant the record marks.
         assert_eq!(vec![(0.0, 0.25)], hours(&rec));
     }
-}
-
-/// A supplied rain file, in whichever form it turned out to be.
-///
-/// A caller does not declare which: the layouts are recognised from the
-/// file's own opening lines, as the predecessor recognises them, so a
-/// modeller who swaps a station export for an archive changes nothing but
-/// the file.
-#[derive(Debug, Clone, PartialEq)]
-pub enum RainRecords {
-    /// The user-prepared station format (§14.12), read in the record's own
-    /// declared unit and meaning whatever the gage's form declares.
-    Station(Vec<RainReading>),
-    /// An archival station record (§14.12.1), already normalised to depths
-    /// in inches over the interval the file declares.
-    Archive(crate::io::iface::RainGageRecord),
 }
 
 /// Parse a supplied rain file in whichever layout it is written in.
