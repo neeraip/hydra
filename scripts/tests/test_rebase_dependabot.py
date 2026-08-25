@@ -43,6 +43,31 @@ class RunningChecksTests(unittest.TestCase):
         self.assertFalse(mod.has_running_checks(None))
 
 
+class CommandTests(unittest.TestCase):
+    # Dependabot refuses to rebase a branch holding a commit it did not
+    # author (the licences workflow pushes one onto GUI bumps); only
+    # `recreate` works from then on, and posting `rebase` there earns a
+    # refusal comment instead of a refresh.
+
+    def test_a_clean_branch_gets_rebase(self):
+        p = pr(1, "clean")
+        p["commits"] = [{"authors": [{"login": "dependabot[bot]"}]}]
+        self.assertEqual(mod.command_for(p), "@dependabot rebase")
+
+    def test_a_ci_completed_branch_gets_recreate(self):
+        p = pr(2, "gui-bump")
+        p["commits"] = [
+            {"authors": [{"login": "dependabot[bot]"}]},
+            {"authors": [{"login": "github-actions[bot]"}]},
+        ]
+        self.assertEqual(mod.command_for(p), "@dependabot recreate")
+
+    def test_missing_commit_data_reads_as_clean(self):
+        # The worst case of guessing wrong here is Dependabot's refusal
+        # comment, which itself names the fix.
+        self.assertEqual(mod.command_for(pr(3, "unknown")), "@dependabot rebase")
+
+
 class ConfirmationTests(unittest.TestCase):
     OUTDATED = [({"number": 7, "title": "bump x", "headRefName": "x", "baseRefName": "main"}, 4)]
 

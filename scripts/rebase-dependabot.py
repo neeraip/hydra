@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Ask Dependabot to rebase every open PR that is behind its base branch.
+"""Ask Dependabot to refresh every open PR that is behind its base branch.
 
 Dependabot rebases on its own schedule, or when a PR develops conflicts.
 After a burst of pushes to main its PRs all go stale at once, and the
-only lever GitHub offers is commenting `@dependabot rebase` on each one.
-This script does that, but only where the branch is actually behind its
-base, so PRs that are already current are not churned, and never while a
-PR still has checks running, since the rebase would throw that run away.
+only lever GitHub offers is commenting on each one. This script does
+that, but only where the branch is actually behind its base, so PRs that
+are already current are not churned, and never while a PR still has
+checks running, since the refresh would throw that run away.
+
+The command posted depends on the branch: `@dependabot rebase` on a
+clean one, `@dependabot recreate` where CI has pushed a commit onto it
+(the licences workflow completes GUI bumps that way), because Dependabot
+refuses to rebase a branch holding a commit it did not author and says
+so instead of acting.
 
 Usage: scripts/rebase-dependabot.py [--dry-run] [--force]
 
@@ -36,10 +42,26 @@ def open_dependabot_prs() -> list[dict]:
             "gh", "pr", "list",
             "--author", "app/dependabot",
             "--state", "open",
-            "--json", "number,title,headRefName,baseRefName,statusCheckRollup",
+            "--json", "number,title,headRefName,baseRefName,statusCheckRollup,commits",
         ]
     )
     return json.loads(out)
+
+
+def command_for(pr: dict) -> str:
+    """The refresh command this PR will actually obey.
+
+    Dependabot refuses to rebase a branch holding a commit it did not
+    author (the licences workflow pushes one onto GUI bumps), and only
+    `recreate` works from then on. Missing commit data reads as clean:
+    the worst case is a refusal comment from Dependabot naming the fix.
+    """
+    for commit in pr.get("commits") or []:
+        for author in commit.get("authors") or []:
+            login = author.get("login") or ""
+            if login not in ("dependabot", "dependabot[bot]"):
+                return "@dependabot recreate"
+    return "@dependabot rebase"
 
 
 def behind_by(base: str, head: str) -> int | None:
@@ -138,7 +160,8 @@ def main() -> int:
 
     if dry_run:
         for pr, behind in outdated:
-            print(f"#{pr['number']}: would request rebase (behind by {behind}) — {pr['title']}")
+            verb = command_for(pr).split()[-1]
+            print(f"#{pr['number']}: would request {verb} (behind by {behind}) — {pr['title']}")
         return 1 if unknown else 0
 
     if outdated and not force and not confirmed(outdated):
@@ -147,9 +170,13 @@ def main() -> int:
 
     failed = False
     for pr, behind in outdated:
+        command = command_for(pr)
         try:
-            sh(["gh", "pr", "comment", str(pr["number"]), "--body", "@dependabot rebase"])
-            print(f"#{pr['number']}: rebase requested (behind by {behind}) — {pr['title']}")
+            sh(["gh", "pr", "comment", str(pr["number"]), "--body", command])
+            print(
+                f"#{pr['number']}: {command.split()[-1]} requested (behind by {behind})"
+                f" — {pr['title']}"
+            )
         except RuntimeError as e:
             print(f"#{pr['number']}: comment failed: {e}", file=sys.stderr)
             failed = True

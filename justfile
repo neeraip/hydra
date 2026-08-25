@@ -444,8 +444,10 @@ bump-gui version push_flag="":
 release-status track="":
     @python3 scripts/release-status.py {{track}}
 
-# Ask Dependabot to rebase its open PRs that are behind main. Skips PRs with
-# checks still running, lists the rest and asks before commenting.
+# Ask Dependabot to refresh its open PRs that are behind main — `rebase` on
+# clean branches, `recreate` where CI pushed a commit onto one (Dependabot
+# refuses to rebase those). Skips PRs with checks still running, lists the
+# rest and asks before commenting.
 # Usage: just rebase-dependabot [--dry-run] [--force]
 rebase-dependabot *flags:
     @python3 scripts/rebase-dependabot.py {{flags}}
