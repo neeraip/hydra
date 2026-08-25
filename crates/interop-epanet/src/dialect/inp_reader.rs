@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 
 use hydra_common::Recognition;
 
-use super::{units::make_ucf, ParseError, ReadError};
-use crate::{
+use crate::dialect::{units::make_ucf, ParseError, ReadError};
+use crate::engine_api::{
     ActionValue, Curve, CurveKind, CurvePoint, DemandCategory, DemandModel, FlowUnits,
     HeadLossFormula, Junction, Link, LinkBase, LinkKind, LinkStatus, LogicOp, MixModel, Network,
     Node, NodeBase, NodeKind, Pattern, Pipe, Premise, PremiseAttribute, PremiseObject,
@@ -185,7 +185,7 @@ const EPANET_ONLY_SECTIONS: &[&str] = &[
 ///
 /// Section names only — no field is parsed, so this stays cheap enough to
 /// run against every registered engine before any model is read. Callers
-/// reach it through [`super::recognize`], which applies the §4.1 shape test
+/// reach it through [`crate::dialect::recognize`], which applies the §4.1 shape test
 /// first.
 pub(super) fn recognize_dialect(bytes: &[u8]) -> Recognition {
     let text = String::from_utf8_lossy(bytes);
@@ -236,7 +236,7 @@ where
 /// Parse a raw EPANET INP file into a validated [`Network`].
 ///
 /// This is the low-level byte-slice entry point; callers in `hydra-cli` and
-/// `hydra-gui` typically use the higher-level [`crate::io::parse`] wrapper
+/// `hydra-gui` typically use the higher-level [`crate::dialect::parse`] wrapper
 /// which handles format detection.
 pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     let network = build_network(bytes)?;
@@ -591,7 +591,7 @@ fn build_network(bytes: &[u8]) -> Result<Network, ReadError> {
 
     // ── Unit conversion (spec.md §3): convert all values from user units
     // to internal representation (CFS, ft) ────────────────────────────────────
-    super::units::apply_unit_conversion(
+    crate::engine_api::model::units::apply_unit_conversion(
         &mut options,
         &mut nodes,
         &mut links,
@@ -4399,7 +4399,7 @@ Headloss    H-W
         // rather than "INP-shaped and not obviously SWMM".
         let inp = "[JUNCTIONS]\nJ1 100\n\n[PIPES]\nP1 J1 J2 100 300 100 0 Open\n";
         assert_eq!(
-            super::super::recognize(inp.as_bytes()),
+            crate::dialect::recognize(inp.as_bytes()),
             Recognition::Definite
         );
     }
@@ -4407,7 +4407,7 @@ Headloss    H-W
     #[test]
     fn declines_a_swmm_model() {
         let inp = "[JUNCTIONS]\nJ1 100 3\n\n[SUBCATCHMENTS]\nS1 RG1 J1 10 50 500 0.5 0\n";
-        let verdict = super::super::recognize(inp.as_bytes());
+        let verdict = crate::dialect::recognize(inp.as_bytes());
         assert!(!verdict.claims());
         // The optional reason (§2.5) is what lets an application report
         // something better than a bare refusal.
@@ -4423,7 +4423,7 @@ Headloss    H-W
         // [PUMPS] exists in both formats, so it must not be read as evidence
         // for us when a SWMM-exclusive section is also present.
         let inp = "[PUMPS]\nP1 A B\n\n[CONDUITS]\nC1 J1 J2 400 0.01\n";
-        assert!(!super::super::recognize(inp.as_bytes()).claims());
+        assert!(!crate::dialect::recognize(inp.as_bytes()).claims());
     }
 
     #[test]
@@ -4433,7 +4433,7 @@ Headloss    H-W
         // failure §2.5.1 exists to prevent.
         let inp = "[TITLE]\nA network\n\n[JUNCTIONS]\nJ1 100\n\n[COORDINATES]\nJ1 0 0\n";
         assert_eq!(
-            super::super::recognize(inp.as_bytes()),
+            crate::dialect::recognize(inp.as_bytes()),
             Recognition::Plausible
         );
     }
@@ -4441,10 +4441,10 @@ Headloss    H-W
     #[test]
     fn declines_bytes_that_are_not_inp_shaped() {
         assert_eq!(
-            super::super::recognize(b"PK\x03\x04binary"),
+            crate::dialect::recognize(b"PK\x03\x04binary"),
             Recognition::no()
         );
-        assert_eq!(super::super::recognize(b""), Recognition::no());
+        assert_eq!(crate::dialect::recognize(b""), Recognition::no());
     }
 
     #[test]
@@ -4454,7 +4454,7 @@ Headloss    H-W
         // otherwise the explicit --engine escape hatch would not work.
         let inp = "[TITLE]\nA network\n\n[JUNCTIONS]\nJ1 100\n";
         assert_eq!(
-            super::super::recognize(inp.as_bytes()),
+            crate::dialect::recognize(inp.as_bytes()),
             Recognition::Plausible
         );
         assert!(parse_inp_tolerant(inp.as_bytes()).is_ok());
@@ -5198,7 +5198,7 @@ Headloss    H-W
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, crate::ValidationError::NoReservoir)),
+                        .any(|e| matches!(e, crate::engine_api::ValidationError::NoReservoir)),
                     "expected NoReservoir, got: {errors:?}"
                 );
             }
@@ -5216,9 +5216,10 @@ Headloss    H-W
         match err {
             ParseError::NotSimulable(errors) => {
                 assert!(
-                    errors
-                        .iter()
-                        .any(|e| matches!(e, crate::ValidationError::LinkSelfLoop { .. })),
+                    errors.iter().any(|e| matches!(
+                        e,
+                        crate::engine_api::ValidationError::LinkSelfLoop { .. }
+                    )),
                     "expected LinkSelfLoop, got: {errors:?}"
                 );
             }
@@ -5237,7 +5238,7 @@ Headloss    H-W
                 assert!(
                     errors.iter().any(|e| matches!(
                         e,
-                        crate::ValidationError::UnknownPatternRef { pattern_id, .. }
+                        crate::engine_api::ValidationError::UnknownPatternRef { pattern_id, .. }
                             if pattern_id == "PAT9"
                     )),
                     "expected UnknownPatternRef for PAT9, got: {errors:?}"
@@ -5259,7 +5260,7 @@ Headloss    H-W
                 assert!(
                     errors.iter().any(|e| matches!(
                         e,
-                        crate::ValidationError::UnknownCurveRef { curve_id, .. }
+                        crate::engine_api::ValidationError::UnknownCurveRef { curve_id, .. }
                             if curve_id == "VC9"
                     )),
                     "expected UnknownCurveRef for VC9, got: {errors:?}"

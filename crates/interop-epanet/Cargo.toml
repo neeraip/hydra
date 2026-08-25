@@ -1,5 +1,5 @@
 [package]
-name = "hydra-engine-wds"
+name = "hydra-interop-epanet"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,16 +8,13 @@ publish = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Hydra water distribution engine — data model, hydraulic solver, quality engine, session API, analytics"
-readme = "README.md"
-keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
+description = "Hydra's EPANET dialect — INP import, OUT/RPT output, and recognition for the water distribution engine"
+keywords = ["water", "hydraulics", "simulation", "epanet"]
 categories = ["science", "simulation"]
-
-[features]
-test-support = []
 
 [dependencies]
 hydra-common = { path = "../common", version = "14.0.0" }
+hydra-engine-wds = { path = "../engine-wds", version = "14.0.0" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,17 +30,3 @@ serde_json = "1"
 # pulls js-sys and wasm-bindgen into the wasm graph only.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
-
-[dev-dependencies]
-# Deliberate dev-only cycle for integration tests; unit tests use the
-# shared-source dialect mount instead (see lib.rs).
-hydra-interop-epanet = { path = "../interop-epanet" }
-approx = "0.5"
-criterion = { version = "0.8", features = ["html_reports"] }
-hydra-engine-wds = { path = ".", features = ["test-support"] }
-pretty_assertions = "1"
-rstest = "0.26"
-
-[[bench]]
-name = "solver"
-harness = false

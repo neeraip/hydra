@@ -5,8 +5,8 @@
 
 use std::fmt::Write as FmtWrite;
 
-use super::{SimWarning, WarningKind, WritableSimulation};
-use crate::{DemandModel, HeadLossFormula, LinkKind, NodeKind, QualityMode};
+use crate::dialect::{SimWarning, WarningKind, WritableSimulation};
+use crate::engine_api::{DemandModel, HeadLossFormula, LinkKind, NodeKind, QualityMode};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -534,55 +534,55 @@ fn fmt_system_time(t: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::parse;
+    use crate::dialect::parse;
     use std::path::Path;
 
     struct MockSession {
-        network: crate::Network,
-        snapshots: Vec<crate::io::HydSnapshot>,
-        warnings: Vec<crate::io::SimWarning>,
+        network: crate::engine_api::Network,
+        snapshots: Vec<crate::dialect::HydSnapshot>,
+        warnings: Vec<crate::dialect::SimWarning>,
         begun: Option<std::time::SystemTime>,
         ended: Option<std::time::SystemTime>,
-        flow_balance: Option<crate::io::FlowBalance>,
-        mass_balance: Option<crate::io::MassBalance>,
+        flow_balance: Option<crate::dialect::FlowBalance>,
+        mass_balance: Option<crate::dialect::MassBalance>,
     }
 
-    impl crate::io::WritableSimulation for MockSession {
-        fn net(&self) -> &crate::Network {
+    impl crate::dialect::WritableSimulation for MockSession {
+        fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
             &self.snapshots
         }
-        fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::dialect::MassBalance> {
             self.mass_balance.as_ref()
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::dialect::SimWarning] {
             &self.warnings
         }
-        fn pump_energy_by_id(&self, _pump_id: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _pump_id: &str) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (self.begun, self.ended)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             self.flow_balance.as_ref()
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             self.flow_balance
                 .as_ref()
                 .map(|fb| fb.summarize(fb.initial_tank_volume))
         }
     }
 
-    fn load_fixture_network(name: &str) -> crate::Network {
+    fn load_fixture_network(name: &str) -> crate::engine_api::Network {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("tests/fixtures/wds")
@@ -596,20 +596,20 @@ mod tests {
         let node_states = network
             .nodes
             .iter()
-            .map(|node| crate::NodeState {
+            .map(|node| crate::engine_api::NodeState {
                 head: node.base.elevation,
-                ..crate::NodeState::default()
+                ..crate::engine_api::NodeState::default()
             })
             .collect();
         let link_states = network
             .links
             .iter()
-            .map(|_| crate::LinkState::default())
+            .map(|_| crate::engine_api::LinkState::default())
             .collect();
 
         MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::dialect::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -617,13 +617,13 @@ mod tests {
             warnings: Vec::new(),
             begun: Some(std::time::UNIX_EPOCH),
             ended: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(3600)),
-            flow_balance: Some(crate::io::FlowBalance {
+            flow_balance: Some(crate::dialect::FlowBalance {
                 total_inflow: 10.0,
                 total_outflow: 10.0,
                 demand_deficit: 0.0,
                 initial_tank_volume: 0.0,
             }),
-            mass_balance: Some(crate::io::MassBalance::default()),
+            mass_balance: Some(crate::dialect::MassBalance::default()),
         }
     }
 

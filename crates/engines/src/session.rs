@@ -24,7 +24,7 @@
 
 use std::io::{Seek, Write};
 
-use hydra_engine_wds::io::WritableSimulation as _;
+use hydra_interop_epanet::WritableSimulation as _;
 
 /// A results sink: the writer a session persists results into. The caller
 /// opens the destination (applications own file I/O); the session owns the
@@ -117,7 +117,7 @@ struct WdsRun {
     duration: f64,
     output_units: hydra_engine_wds::FlowUnits,
     t: f64,
-    stream: Option<hydra_engine_wds::io::out_writer::OutStreamWriter<Box<dyn WriteSeek>>>,
+    stream: Option<hydra_interop_epanet::out_writer::OutStreamWriter<Box<dyn WriteSeek>>>,
 }
 
 struct UdsRun {
@@ -206,7 +206,7 @@ impl EngineSession {
         match self {
             Self::Wds(r) => {
                 let run = &mut r.0;
-                let mut stream = hydra_engine_wds::io::out_writer::OutStreamWriter::begin(
+                let mut stream = hydra_interop_epanet::out_writer::OutStreamWriter::begin(
                     sink,
                     &run.sim,
                     input_name,
@@ -282,7 +282,7 @@ impl EngineSession {
                     .iter()
                     .map(|w| {
                         let (code, message, element) =
-                            hydra_engine_wds::io::rpt_writer::describe_warning(w, sim);
+                            hydra_interop_epanet::rpt_writer::describe_warning(w, sim);
                         SessionWarning {
                             code,
                             message,
@@ -311,7 +311,7 @@ impl EngineSession {
     pub fn write_summary_text(&self, mut w: &mut dyn Write) -> std::io::Result<()> {
         match self {
             Self::Wds(r) => {
-                let text = hydra_engine_wds::io::rpt_writer::build_text_report(&r.0.sim)
+                let text = hydra_interop_epanet::rpt_writer::build_text_report(&r.0.sim)
                     .map_err(std::io::Error::other)?;
                 w.write_all(text.as_bytes())
             }
@@ -323,7 +323,7 @@ impl EngineSession {
     pub fn summary_json(&self) -> Option<std::io::Result<String>> {
         match self {
             Self::Wds(r) => Some(
-                hydra_engine_wds::io::rpt_writer::build_json_report(&r.0.sim)
+                hydra_interop_epanet::rpt_writer::build_json_report(&r.0.sim)
                     .map_err(std::io::Error::other),
             ),
             Self::Uds(_) => None,

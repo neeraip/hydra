@@ -19,8 +19,8 @@
 
 use std::fmt::Write as _;
 
-use super::units::make_ucf;
-use crate::{
+use crate::engine_api::model::units::make_ucf;
+use crate::engine_api::{
     ActionValue, CurveKind, HeadLossFormula, LinkKind, LinkStatus, LogicOp, MixModel, Network,
     NodeKind, PremiseAttribute, PremiseObject, PremiseOperator, QualityMode, ReportSelection,
     ReportStatus, SourceType, StatisticType, TriggerType, ValveType, WallOrder,
@@ -832,8 +832,8 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             }
         );
         let demand_model_str = match opts.demand_model {
-            crate::DemandModel::DemandDriven => "DDA",
-            crate::DemandModel::PressureDriven => "PDA",
+            crate::engine_api::DemandModel::DemandDriven => "DDA",
+            crate::engine_api::DemandModel::PressureDriven => "PDA",
         };
         let _ = writeln!(out, " Demand Model    {}", demand_model_str);
         if opts.demand_multiplier != 1.0 {
@@ -844,7 +844,7 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             // recognise a "Default Pattern" spelling.
             let _ = writeln!(out, " Pattern         {}", pat);
         }
-        if opts.demand_model == crate::DemandModel::PressureDriven {
+        if opts.demand_model == crate::engine_api::DemandModel::PressureDriven {
             let _ = writeln!(
                 out,
                 " Minimum Pressure {:.4}",
@@ -1330,19 +1330,19 @@ fn valve_type_str(vtype: ValveType) -> &'static str {
     }
 }
 
-fn flow_units_str(units: crate::FlowUnits) -> &'static str {
+fn flow_units_str(units: crate::engine_api::FlowUnits) -> &'static str {
     match units {
-        crate::FlowUnits::Cfs => "CFS",
-        crate::FlowUnits::Gpm => "GPM",
-        crate::FlowUnits::Mgd => "MGD",
-        crate::FlowUnits::Imgd => "IMGD",
-        crate::FlowUnits::Afd => "AFD",
-        crate::FlowUnits::Lps => "LPS",
-        crate::FlowUnits::Lpm => "LPM",
-        crate::FlowUnits::Mld => "MLD",
-        crate::FlowUnits::Cmh => "CMH",
-        crate::FlowUnits::Cmd => "CMD",
-        crate::FlowUnits::Cms => "CMS",
+        crate::engine_api::FlowUnits::Cfs => "CFS",
+        crate::engine_api::FlowUnits::Gpm => "GPM",
+        crate::engine_api::FlowUnits::Mgd => "MGD",
+        crate::engine_api::FlowUnits::Imgd => "IMGD",
+        crate::engine_api::FlowUnits::Afd => "AFD",
+        crate::engine_api::FlowUnits::Lps => "LPS",
+        crate::engine_api::FlowUnits::Lpm => "LPM",
+        crate::engine_api::FlowUnits::Mld => "MLD",
+        crate::engine_api::FlowUnits::Cmh => "CMH",
+        crate::engine_api::FlowUnits::Cmd => "CMD",
+        crate::engine_api::FlowUnits::Cms => "CMS",
     }
 }
 
@@ -1374,7 +1374,10 @@ fn premise_op_str(op: PremiseOperator) -> &'static str {
     }
 }
 
-fn convert_premise_value(prem: &crate::Premise, ucf: &super::units::Ucf) -> f64 {
+fn convert_premise_value(
+    prem: &crate::engine_api::Premise,
+    ucf: &crate::engine_api::model::units::Ucf,
+) -> f64 {
     match prem.attribute {
         PremiseAttribute::Demand | PremiseAttribute::Flow => prem.value * ucf.flow,
         PremiseAttribute::Head | PremiseAttribute::Level => prem.value * ucf.elev,
@@ -1387,8 +1390,8 @@ fn convert_premise_value(prem: &crate::Premise, ucf: &super::units::Ucf) -> f64 
 fn rule_action_str(
     value: &ActionValue,
     link_1based: usize,
-    links: &[crate::Link],
-    ucf: &super::units::Ucf,
+    links: &[crate::engine_api::Link],
+    ucf: &crate::engine_api::model::units::Ucf,
 ) -> String {
     match value {
         ActionValue::Status(LinkStatus::Open) => "STATUS IS OPEN".to_string(),
@@ -1418,7 +1421,7 @@ fn rule_action_str(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::parse;
+    use crate::dialect::parse;
 
     // Resolve a fixture path relative to the workspace root.
     fn fixture(name: &str) -> std::path::PathBuf {
@@ -1759,13 +1762,13 @@ mod tests {
 
         // Junction demand totals (per node) survive.
         for n1 in &net1.nodes {
-            if let crate::NodeKind::Junction(ref j1) = n1.kind {
+            if let crate::engine_api::NodeKind::Junction(ref j1) = n1.kind {
                 let n2 = net2
                     .nodes
                     .iter()
                     .find(|n| n.base.id == n1.base.id)
                     .expect("node checked above");
-                if let crate::NodeKind::Junction(ref j2) = n2.kind {
+                if let crate::engine_api::NodeKind::Junction(ref j2) = n2.kind {
                     assert_eq!(
                         j1.demands.len(),
                         j2.demands.len(),
@@ -1817,13 +1820,13 @@ mod tests {
                 }
             }
             // Tank overflow flag and volume-curve reference must survive.
-            if let crate::NodeKind::Tank(ref t1) = n1.kind {
+            if let crate::engine_api::NodeKind::Tank(ref t1) = n1.kind {
                 let n2 = net2
                     .nodes
                     .iter()
                     .find(|n| n.base.id == n1.base.id)
                     .expect("node checked above");
-                if let crate::NodeKind::Tank(ref t2) = n2.kind {
+                if let crate::engine_api::NodeKind::Tank(ref t2) = n2.kind {
                     assert_eq!(
                         t1.overflow, t2.overflow,
                         "{name}: tank '{}' overflow flag changed",
@@ -2633,8 +2636,8 @@ mod tests {
     /// Pipe diameter (ft → mm) and back (mm → ft) must cancel exactly.
     #[test]
     fn pipe_diameter_unit_conversion_round_trips() {
-        use super::super::units::make_ucf;
-        use crate::FlowUnits;
+        use crate::engine_api::model::units::make_ucf;
+        use crate::engine_api::FlowUnits;
 
         let ucf = make_ucf(FlowUnits::Lps, 1.0);
         // 0.5 ft diameter pipe.
@@ -2647,8 +2650,8 @@ mod tests {
     /// Elevation (ft → m) and back must cancel exactly.
     #[test]
     fn elevation_unit_conversion_round_trips() {
-        use super::super::units::make_ucf;
-        use crate::FlowUnits;
+        use crate::engine_api::model::units::make_ucf;
+        use crate::engine_api::FlowUnits;
 
         let ucf = make_ucf(FlowUnits::Lps, 1.0);
         let elev_ft = 100.0_f64;

@@ -18,4 +18,5 @@ categories = ["science", "simulation"]
 hydra-common = { path = "../common", version = "14.0.0" }
 hydra-engine-uds = { path = "../engine-uds", version = "14.0.0" }
 hydra-interop-swmm = { path = "../interop-swmm", version = "14.0.0" }
+hydra-interop-epanet = { path = "../interop-epanet", version = "14.0.0" }
 hydra-engine-wds = { path = "../engine-wds", version = "14.0.0" }

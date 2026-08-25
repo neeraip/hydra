@@ -2,7 +2,7 @@
 //! balances, snapshots, and the [`WritableSimulation`] contract every
 //! results writer reads through (format-blind extraction, phase 4).
 
-use crate::Network;
+use crate::{LinkStatus, Network};
 
 /// Non-fatal diagnostic condition attached to a simulation time step (§8.4).
 #[derive(Debug, Clone)]
@@ -268,4 +268,21 @@ pub trait WritableSimulation {
     /// Derived flow balance summary. `None` if hydraulics not yet run or
     /// if the simulation lacks the data needed to compute final tank volume.
     fn flow_balance_summary(&self) -> Option<FlowBalanceSummary>;
+}
+
+/// Map Hydra `LinkStatus` to EPANET `StatusType` enum value (0–10).
+///
+/// The result catalog (§6) declares one item per code this produces, and a
+/// test pins the two together — an undeclared code renders as no value at
+/// all, so a link in a failure state would silently vanish from the view.
+pub fn status_out_code(status: LinkStatus) -> f32 {
+    match status {
+        LinkStatus::XHead => 0.0,
+        LinkStatus::TempClosed => 1.0,
+        LinkStatus::Closed => 2.0,
+        LinkStatus::Open => 3.0,
+        LinkStatus::Active => 4.0,
+        LinkStatus::XFcv => 6.0,
+        LinkStatus::XPressure => 7.0,
+    }
 }

@@ -305,7 +305,7 @@ pub(super) fn reservoir_source_conc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::MassBalance;
+    use crate::simulation::contract::MassBalance;
     use crate::{SimulationOptions, Tank};
 
     #[test]

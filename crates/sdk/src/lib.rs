@@ -169,9 +169,10 @@ pub use hydra_engine_wds::{
 /// be run yet — which [`io::parse_tolerant`] hands back rather than rejecting,
 /// hence its narrower [`io::ReadError`] failure type.
 pub mod io {
-    pub use hydra_engine_wds::io::{
+    pub use hydra_engine_wds::model::units;
+    pub use hydra_interop_epanet::{
         compute_network_digest, control_statements, out_reader, out_writer, parse, parse_tolerant,
-        rpt_writer, rule_statements, units, write_inp, ParseError, ReadError,
+        rpt_writer, rule_statements, write_inp, ParseError, ReadError,
     };
 }
 
@@ -179,12 +180,12 @@ pub mod io {
 ///
 /// The inverse of [`io::parse`]: all values are converted from the internal
 /// unit system back to the user-declared unit system.
-pub use hydra_engine_wds::write_inp;
+pub use hydra_interop_epanet::write_inp;
 
 /// Compute the FNV-1a 64-bit network topology digest stored in `.out` result
 /// files (model spec §4.4.7). Lets consumers detect results that are stale
 /// relative to an edited network topology.
-pub use hydra_engine_wds::compute_network_digest;
+pub use hydra_interop_epanet::compute_network_digest;
 
 // ── Foundation contracts ──────────────────────────────────────────────────────
 
@@ -231,6 +232,11 @@ pub use hydra_engine_uds as uds;
 /// engine. The engine itself is format-blind; every path from text to
 /// a running `uds` session goes through here.
 pub use hydra_interop_swmm as swmm;
+
+/// The EPANET dialect (format-blind extraction): INP import, OUT/RPT
+/// output, and recognition for the water distribution engine. The
+/// legacy `hydra::io` module remains the conventional path.
+pub use hydra_interop_epanet as epanet;
 
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract, and its criteria catalog and

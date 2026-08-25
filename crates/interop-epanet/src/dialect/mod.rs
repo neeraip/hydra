@@ -32,7 +32,7 @@ use std::fmt;
 
 use hydra_common::Recognition;
 
-use crate::{Network, ValidationError};
+use crate::engine_api::{Network, ValidationError};
 
 // ── Parse entry point (§4 of crates/engine-wds/src/model/spec.md) ───────────
 

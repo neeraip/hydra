@@ -88,7 +88,7 @@ fn verdict(engine: &EngineDescriptor, bytes: &[u8]) -> Recognition {
         return Recognition::no();
     }
     match engine.key {
-        "wds" => hydra_engine_wds::io::recognize(bytes),
+        "wds" => hydra_interop_epanet::recognize(bytes),
         "uds" => hydra_interop_swmm::recognize(bytes),
         _ => Recognition::no(),
     }

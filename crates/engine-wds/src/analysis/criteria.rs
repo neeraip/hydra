@@ -293,7 +293,7 @@ mod tests {
              [PIPES]\nP1  R1  J1  1000  300  100  0  Open\n\n\
              [OPTIONS]\nUnits  {units_line}\nHeadloss  H-W\n\n[END]\n"
         );
-        crate::io::parse(inp.as_bytes()).expect("parse")
+        crate::dialect::parse(inp.as_bytes()).expect("parse")
     }
 
     fn valuation() -> serde_json::Value {

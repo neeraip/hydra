@@ -176,7 +176,7 @@ pub(super) fn effective_price(pump: &crate::Pump, network: &Network, t: f64) -> 
 mod tests {
     use super::AccountingState;
     use super::*;
-    use crate::io::{FlowBalance, PumpEnergy};
+    use crate::simulation::contract::{FlowBalance, PumpEnergy};
     use crate::{
         Curve, CurveKind, CurvePoint, DemandCategory, Junction, Link, LinkBase, LinkState,
         LinkStatus, Network, Node, NodeBase, NodeKind, NodeState, Pattern, Pump, PumpCurveType,

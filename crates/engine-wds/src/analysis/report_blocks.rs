@@ -1893,8 +1893,8 @@ mod tests {
 
     /// The path-based source the production callers build in the
     /// dialect crate; tests read fixtures the same way.
-    fn src_of(path: &Path) -> crate::io::out_reader::OutFileSource {
-        crate::io::out_reader::OutFileSource::open(path).expect("open results fixture")
+    fn src_of(path: &Path) -> crate::dialect::out_reader::OutFileSource {
+        crate::dialect::out_reader::OutFileSource::open(path).expect("open results fixture")
     }
 
     /// A source no block may touch: rejection by id must not read.
@@ -1961,7 +1961,7 @@ mod tests {
 
     #[test]
     fn unknown_block_id_is_rejected() {
-        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
         let err = produce_report_block("wds.nope", &NoSource, &network, None)
             .expect_err("unknown id must fail");
         assert!(matches!(err, BlockError::UnknownBlock { .. }));
@@ -1977,7 +1977,7 @@ mod tests {
         [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n[END]\n";
 
     fn described(id: &str, inp: &str) -> Vec<OptionDescriptor> {
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         report_block_options(id, &network)
     }
 
@@ -2069,7 +2069,7 @@ mod tests {
 
     #[test]
     fn blocks_without_options_describe_none() {
-        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
         for id in ["wds.run-summary", "wds.tank-levels", "wds.mass-balance"] {
             assert!(
                 report_block_options(id, &network).is_empty(),
@@ -2097,38 +2097,38 @@ mod tests {
 
     struct MockSession {
         network: crate::Network,
-        snapshots: Vec<crate::io::HydSnapshot>,
+        snapshots: Vec<crate::simulation::contract::HydSnapshot>,
     }
 
-    impl crate::io::WritableSimulation for MockSession {
+    impl crate::simulation::contract::WritableSimulation for MockSession {
         fn net(&self) -> &crate::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::simulation::contract::HydSnapshot] {
             &self.snapshots
         }
-        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::simulation::contract::MassBalance> {
             None
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::simulation::contract::SimWarning] {
             &[]
         }
-        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (None, None)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             None
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             None
         }
     }
@@ -2274,7 +2274,7 @@ mod tests {
     }
 
     fn with_inp_out(inp: &str, f: impl FnOnce(&Path, &crate::Network)) {
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
             .nodes
             .iter()
@@ -2292,7 +2292,7 @@ mod tests {
             .collect();
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::simulation::contract::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -2303,8 +2303,10 @@ mod tests {
         // The file carries the model's own declared units, as a real run's
         // would — the US fixtures below depend on this.
         let declared = session.network.options.flow_units;
-        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
-            .expect("write .out");
+        crate::dialect::out_writer::write_binary_output(
+            &mut buf, &session, "test.inp", "", declared,
+        )
+        .expect("write .out");
 
         let mut path = std::env::temp_dir();
         path.push(format!(
@@ -2330,7 +2332,7 @@ mod tests {
              [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
              [OPTIONS]\nUnits  LPS\nHeadloss  H-W\nQuality  {quality_line}\n\n[END]\n"
         );
-        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let network = crate::dialect::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
             .nodes
             .iter()
@@ -2349,7 +2351,7 @@ mod tests {
             .collect();
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::simulation::contract::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -2357,8 +2359,10 @@ mod tests {
         };
         let mut buf = std::io::Cursor::new(Vec::new());
         let declared = session.network.options.flow_units;
-        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
-            .expect("write .out");
+        crate::dialect::out_writer::write_binary_output(
+            &mut buf, &session, "test.inp", "", declared,
+        )
+        .expect("write .out");
         let mut path = std::env::temp_dir();
         path.push(format!(
             "hydra-quality-blocks-{}-{:?}.out",
@@ -2728,9 +2732,10 @@ mod tests {
             [CURVES]\nC1  0  100\nC1  50  80\nC1  100  0\n\n\
             [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
         with_inp_out(PUMP_INP, |path, network| {
-            let meta = read_meta(&crate::io::out_reader::OutFileSource::open(path).expect("open"))
-                .expect("meta");
-            let scan = crate::io::out_reader::scan_analytics(path, &meta).expect("scan");
+            let meta =
+                read_meta(&crate::dialect::out_reader::OutFileSource::open(path).expect("open"))
+                    .expect("meta");
+            let scan = crate::dialect::out_reader::scan_analytics(path, &meta).expect("scan");
             let pipes = pipe_max_velocities(&scan, network);
             assert_eq!(pipes.len(), 1, "only the pipe should be counted");
             let pipe_idx = pipes[0].0;

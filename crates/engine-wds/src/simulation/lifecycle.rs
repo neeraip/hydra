@@ -104,9 +104,9 @@ impl Simulation {
                 if let LinkKind::Pump(pump) = &link.kind {
                     let init = link.base.initial_setting.unwrap_or(1.0);
                     if pump.speed_pattern.is_some() && init != 1.0 {
-                        self.warnings.push(crate::io::SimWarning {
+                        self.warnings.push(crate::simulation::contract::SimWarning {
                             t: 0.0,
-                            kind: crate::io::WarningKind::PumpSpeedPatternSupersedesSetting {
+                            kind: crate::simulation::contract::WarningKind::PumpSpeedPatternSupersedesSetting {
                                 link_index: k,
                             },
                         });
@@ -864,7 +864,7 @@ Headloss  H-W
     /// different question.
     #[test]
     fn a_hand_built_networks_patterns_are_not_silently_discarded() {
-        let mut network = crate::io::parse(PATTERNED_DEMAND).expect("parses");
+        let mut network = crate::dialect::parse(PATTERNED_DEMAND).expect("parses");
         // What a caller who assembled this themselves would hand over.
         network.pattern_index = Default::default();
 
@@ -893,7 +893,7 @@ Headloss  H-W
     /// model the session is about to take ownership of.
     #[test]
     fn patterns_edited_before_load_are_not_misapplied() {
-        let mut network = crate::io::parse(PATTERNED_DEMAND).expect("parses");
+        let mut network = crate::dialect::parse(PATTERNED_DEMAND).expect("parses");
         // Insert ahead of the pattern in use. The stale index still says
         // WANTED is at position 0, which is now this one.
         network.patterns.insert(
@@ -1062,14 +1062,16 @@ Headloss  H-W
             [PATTERNS]\nSP1  1.0\n\n\
             [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n\
             [TIMES]\nDuration  1:00\nHydraulic Timestep  1:00\n\n[END]\n";
-        let net = crate::io::parse(inp).expect("parse");
+        let net = crate::dialect::parse(inp).expect("parse");
         let mut sess = Simulation::from_network(net).expect("load");
 
         // The dead SPEED field is reported once, at t=0, naming the pump.
         assert!(
             sess.warnings().iter().any(|w| matches!(
                 w.kind,
-                crate::io::WarningKind::PumpSpeedPatternSupersedesSetting { link_index: 0 }
+                crate::simulation::contract::WarningKind::PumpSpeedPatternSupersedesSetting {
+                    link_index: 0
+                }
             )),
             "expected the superseded-speed warning at load"
         );
@@ -1092,7 +1094,7 @@ Headloss  H-W
             [PATTERNS]\nSP1  1.0  0.5\n\n\
             [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n\
             [TIMES]\nDuration  1:00\nHydraulic Timestep  1:00\n\n[END]\n";
-        let net = crate::io::parse(inp).expect("parse");
+        let net = crate::dialect::parse(inp).expect("parse");
         let sess = Simulation::from_network(net).expect("load");
         assert!(sess.warnings().is_empty());
     }

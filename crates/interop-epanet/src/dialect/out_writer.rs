@@ -51,11 +51,12 @@
 //  │   INT4 n_periods, INT4 warn_flag (0=no warnings), INT4 magic (516114521)  │
 //  └───────────────────────────────────────────────────────────────────────────┘
 
+pub(crate) use crate::engine_api::simulation::contract::status_out_code;
 use std::io::{Seek, Write};
 
-use super::units::{is_si, make_ucf, Ucf};
-use super::WritableSimulation;
-use crate::{
+use crate::dialect::WritableSimulation;
+use crate::engine_api::model::units::{is_si, make_ucf, Ucf};
+use crate::engine_api::{
     FlowUnits, HeadLossFormula, LinkKind, LinkStatus, NodeKind, QualityMode, StatisticType,
     ValveType,
 };
@@ -538,7 +539,10 @@ fn write_energy<W: Write>(
     Ok(())
 }
 
-fn write_energy_placeholder<W: Write>(w: &mut W, network: &crate::Network) -> std::io::Result<()> {
+fn write_energy_placeholder<W: Write>(
+    w: &mut W,
+    network: &crate::engine_api::Network,
+) -> std::io::Result<()> {
     let n_pumps = network
         .links
         .iter()
@@ -620,8 +624,8 @@ impl PeriodStats {
 /// Build one reporting period's dynamic-results block as little-endian f32 bytes,
 /// in file order (4 node variables then 8 link variables).
 fn dynamic_snapshot_bytes(
-    network: &crate::Network,
-    snapshot: &crate::io::HydSnapshot,
+    network: &crate::engine_api::Network,
+    snapshot: &crate::dialect::HydSnapshot,
     ucf: &Ucf,
 ) -> Vec<u8> {
     let n_nodes = network.nodes.len();
@@ -880,7 +884,7 @@ fn write_epilog<W: Write>(w: &mut W, n_periods: i32, warn_flag: i32) -> std::io:
 /// The global flag is overwritten each time step that has any warning,
 /// so the final flag comes from the last time step with a warning.
 fn epanet_warn_flag(session: &impl WritableSimulation) -> i32 {
-    use super::WarningKind;
+    use crate::dialect::WarningKind;
     let warnings = session.warnings();
     if warnings.is_empty() {
         return 0;
@@ -991,7 +995,7 @@ fn flow_units_to_code(fu: FlowUnits) -> i32 {
     }
 }
 
-fn link_type_code(link: &crate::Link) -> i32 {
+fn link_type_code(link: &crate::engine_api::Link) -> i32 {
     match &link.kind {
         LinkKind::Pipe(p) => {
             if p.check_valve {
@@ -1020,72 +1024,55 @@ fn is_closed(status: LinkStatus) -> bool {
     )
 }
 
-/// Map Hydra `LinkStatus` to EPANET `StatusType` enum value (0–10).
-///
-/// The result catalog (§6) declares one item per code this produces, and a
-/// test pins the two together — an undeclared code renders as no value at
-/// all, so a link in a failure state would silently vanish from the view.
-pub(crate) fn status_out_code(status: LinkStatus) -> f32 {
-    match status {
-        LinkStatus::XHead => 0.0,
-        LinkStatus::TempClosed => 1.0,
-        LinkStatus::Closed => 2.0,
-        LinkStatus::Open => 3.0,
-        LinkStatus::Active => 4.0,
-        LinkStatus::XFcv => 6.0,
-        LinkStatus::XPressure => 7.0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::parse;
+    use crate::dialect::parse;
     use std::io::Cursor;
     use std::path::Path;
 
     struct MockSession {
-        network: crate::Network,
-        snapshots: Vec<crate::io::HydSnapshot>,
-        warnings: Vec<crate::io::SimWarning>,
+        network: crate::engine_api::Network,
+        snapshots: Vec<crate::dialect::HydSnapshot>,
+        warnings: Vec<crate::dialect::SimWarning>,
         begun: Option<std::time::SystemTime>,
         ended: Option<std::time::SystemTime>,
     }
 
-    impl crate::io::WritableSimulation for MockSession {
-        fn net(&self) -> &crate::Network {
+    impl crate::dialect::WritableSimulation for MockSession {
+        fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
             &self.snapshots
         }
-        fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::dialect::MassBalance> {
             None
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::dialect::SimWarning] {
             &self.warnings
         }
-        fn pump_energy_by_id(&self, _pump_id: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _pump_id: &str) -> Option<&crate::dialect::PumpEnergy> {
             None
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (self.begun, self.ended)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             None
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             None
         }
     }
 
-    fn load_fixture_network(name: &str) -> crate::Network {
+    fn load_fixture_network(name: &str) -> crate::engine_api::Network {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("tests/fixtures/wds")
@@ -1099,20 +1086,20 @@ mod tests {
         let node_states = network
             .nodes
             .iter()
-            .map(|node| crate::NodeState {
+            .map(|node| crate::engine_api::NodeState {
                 head: node.base.elevation,
-                ..crate::NodeState::default()
+                ..crate::engine_api::NodeState::default()
             })
             .collect();
         let link_states = network
             .links
             .iter()
-            .map(|_| crate::LinkState::default())
+            .map(|_| crate::engine_api::LinkState::default())
             .collect();
 
         MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::dialect::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -1206,17 +1193,17 @@ mod tests {
     fn epanet_warn_flag_prefers_last_step_warning_with_epanet_priority() {
         let mut session = mock_session("single_pipe_hw.inp");
         let warnings = vec![
-            crate::io::SimWarning {
+            crate::dialect::SimWarning {
                 t: 0.0,
-                kind: crate::io::WarningKind::NegativePressure { node_index: 0 },
+                kind: crate::dialect::WarningKind::NegativePressure { node_index: 0 },
             },
-            crate::io::SimWarning {
+            crate::dialect::SimWarning {
                 t: 0.0,
-                kind: crate::io::WarningKind::PumpXHead { link_index: 0 },
+                kind: crate::dialect::WarningKind::PumpXHead { link_index: 0 },
             },
-            crate::io::SimWarning {
+            crate::dialect::SimWarning {
                 t: 3600.0,
-                kind: crate::io::WarningKind::UnbalancedHydraulics,
+                kind: crate::dialect::WarningKind::UnbalancedHydraulics,
             },
         ];
         session.warnings = warnings;
@@ -1308,7 +1295,7 @@ mod tests {
             .expect("write binary output");
         let data = buf.into_inner();
 
-        let out = crate::io::out_reader::parse(&data).expect("parse .out");
+        let out = crate::dialect::out_reader::parse(&data).expect("parse .out");
         assert_eq!(out.prolog.version, 20012);
 
         // What a legacy 12-byte-tail reader sees, byte for byte.
@@ -1331,29 +1318,29 @@ mod tests {
     #[test]
     fn network_reactions_use_l_per_m3_conversion_factor() {
         struct MbSession {
-            network: crate::Network,
-            mb: crate::io::MassBalance,
+            network: crate::engine_api::Network,
+            mb: crate::dialect::MassBalance,
         }
-        impl crate::io::WritableSimulation for MbSession {
-            fn net(&self) -> &crate::Network {
+        impl crate::dialect::WritableSimulation for MbSession {
+            fn net(&self) -> &crate::engine_api::Network {
                 &self.network
             }
-            fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+            fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
                 &[]
             }
-            fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+            fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
                 None
             }
             fn peak_demand_kw(&self) -> f64 {
                 0.0
             }
-            fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+            fn mass_balance(&self) -> Option<&crate::dialect::MassBalance> {
                 Some(&self.mb)
             }
-            fn warnings(&self) -> &[crate::io::SimWarning] {
+            fn warnings(&self) -> &[crate::dialect::SimWarning] {
                 &[]
             }
-            fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+            fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
                 None
             }
             fn analysis_times(
@@ -1361,10 +1348,10 @@ mod tests {
             ) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
                 (None, None)
             }
-            fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+            fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
                 None
             }
-            fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+            fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
                 None
             }
         }
@@ -1372,9 +1359,9 @@ mod tests {
         let mut network = load_fixture_network("dead_end.inp");
         network.options.duration = 3600.0; // 1 hour → duration_hours = 1.0
 
-        let mb = crate::io::MassBalance {
+        let mb = crate::dialect::MassBalance {
             reacted_bulk: 1.0, // 1.0 mg/L × m³
-            ..crate::io::MassBalance::default()
+            ..crate::dialect::MassBalance::default()
         };
         let session = MbSession { network, mb };
 
@@ -1392,39 +1379,39 @@ mod tests {
 
     /// Session mock that supplies a fixed `PumpEnergy` record for every pump.
     struct EnergySession {
-        network: crate::Network,
-        pe: crate::io::PumpEnergy,
+        network: crate::engine_api::Network,
+        pe: crate::dialect::PumpEnergy,
     }
 
-    impl crate::io::WritableSimulation for EnergySession {
-        fn net(&self) -> &crate::Network {
+    impl crate::dialect::WritableSimulation for EnergySession {
+        fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
             &[]
         }
-        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             Some(&self.pe)
         }
         fn peak_demand_kw(&self) -> f64 {
             0.0
         }
-        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+        fn mass_balance(&self) -> Option<&crate::dialect::MassBalance> {
             None
         }
-        fn warnings(&self) -> &[crate::io::SimWarning] {
+        fn warnings(&self) -> &[crate::dialect::SimWarning] {
             &[]
         }
-        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
             Some(&self.pe)
         }
         fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
             (None, None)
         }
-        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+        fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
             None
         }
-        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+        fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
             None
         }
     }
@@ -1442,10 +1429,10 @@ mod tests {
     #[test]
     fn energy_kwh_per_flow_converts_from_m3s_accumulator() {
         let network = load_fixture_network("pump_head_curve.inp");
-        let pe = crate::io::PumpEnergy {
+        let pe = crate::dialect::PumpEnergy {
             kwh_per_flow: 12_960_000.0,
             time_online: 3600.0,
-            ..crate::io::PumpEnergy::default()
+            ..crate::dialect::PumpEnergy::default()
         };
         let session = EnergySession { network, pe };
 
@@ -1481,7 +1468,7 @@ mod tests {
         let mut buf = Cursor::new(Vec::new());
         write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Lps)
             .expect("write binary output");
-        let out = crate::io::out_reader::parse(&buf.into_inner()).expect("parse .out");
+        let out = crate::dialect::out_reader::parse(&buf.into_inner()).expect("parse .out");
 
         assert_eq!(out.periods.len(), 1);
         let setting = out.periods[0].link_setting[0];

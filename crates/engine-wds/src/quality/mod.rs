@@ -18,7 +18,7 @@ use shared::{
     qual_flow_dir, tank_outflow_conc, total_mass, PipeQuality, Segment, TankQuality, C_MAX,
 };
 
-pub use crate::io::MassBalance;
+pub use crate::simulation::contract::MassBalance;
 pub use shared::QualityError;
 pub use shared::QualityState;
 

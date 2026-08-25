@@ -4,6 +4,7 @@ members = [
     "crates/engine-wds",
     "crates/engine-uds",
     "crates/interop-swmm",
+    "crates/interop-epanet",
     "crates/engines",
     "crates/report",
     "crates/sdk",

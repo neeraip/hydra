@@ -61,18 +61,31 @@
 // The dialect sources reference the engine as `crate::engine_api` so
 // they compile both here (pre-lift / test mount) and in the interop
 // crate (format-blind extraction, phase 4).
+// Only the test build (which mounts the dialect) reads the alias.
+#[cfg(test)]
 pub(crate) use crate as engine_api;
+
+// ── Test-only dialect mount (format-blind extraction) ──────────────────
+// The engine's own tests parse models and read results, which is the
+// dialect crate's job. A dev-dependency would hand them a second build
+// of this crate with incompatible types, so the dialect sources compile
+// directly into the test build instead, against `crate::engine_api` =
+// this crate. Integration tests (tests/) use the real dependency.
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+#[path = "../../interop-epanet/src/dialect/mod.rs"]
+pub(crate) mod dialect;
 
 pub mod analysis;
 pub mod descriptors;
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 mod hydraulics;
-/// Parsing and output-writing utilities: INP parser, binary `.out` reader/writer, `.rpt` writer, and unit conversion.
-pub mod io;
 pub mod model;
 mod quality;
 pub mod simulation;
-mod wall_clock;
+/// The wasm-safe wall clock (see this module's header): public so the
+/// dialect tooling stamps reports through the same guarded door.
+pub mod wall_clock;
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
@@ -115,14 +128,3 @@ pub use analysis::{
 };
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
-
-/// Serialise a [`Network`] back to EPANET 2.3 INP bytes.
-pub fn write_inp(network: &Network) -> Vec<u8> {
-    io::write_inp(network)
-}
-
-/// Compute the FNV-1a 64-bit network topology digest (model spec §4.4.7).
-///
-/// Stored in `.out` result files so consumers can detect results that are
-/// stale relative to an edited network topology.
-pub use io::compute_network_digest;

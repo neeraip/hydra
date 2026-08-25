@@ -115,7 +115,7 @@ fn bench_network(c: &mut Criterion, name: &str) {
         }
     };
 
-    let network = hydra_engine_wds::io::parse(&bytes)
+    let network = hydra_interop_epanet::parse(&bytes)
         .unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
     let favad = network.compute_favad();
 

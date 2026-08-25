@@ -1280,8 +1280,8 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::out_writer;
-    use crate::io::WritableSimulation;
+    use crate::dialect::out_writer;
+    use crate::dialect::WritableSimulation;
     use std::io::Cursor as StdCursor;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::UNIX_EPOCH;
@@ -1436,29 +1436,29 @@ mod tests {
         use std::path::Path;
 
         struct MockSession {
-            network: crate::Network,
-            snapshots: Vec<crate::io::HydSnapshot>,
+            network: crate::engine_api::Network,
+            snapshots: Vec<crate::dialect::HydSnapshot>,
         }
         impl WritableSimulation for MockSession {
-            fn net(&self) -> &crate::Network {
+            fn net(&self) -> &crate::engine_api::Network {
                 &self.network
             }
-            fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+            fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
                 &self.snapshots
             }
-            fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+            fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
                 None
             }
             fn peak_demand_kw(&self) -> f64 {
                 0.0
             }
-            fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+            fn mass_balance(&self) -> Option<&crate::dialect::MassBalance> {
                 None
             }
-            fn warnings(&self) -> &[crate::io::SimWarning] {
+            fn warnings(&self) -> &[crate::dialect::SimWarning] {
                 &[]
             }
-            fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+            fn pump_energy_by_id(&self, _: &str) -> Option<&crate::dialect::PumpEnergy> {
                 None
             }
             fn analysis_times(
@@ -1466,10 +1466,10 @@ mod tests {
             ) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
                 (None, None)
             }
-            fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+            fn flow_balance(&self) -> Option<&crate::dialect::FlowBalance> {
                 None
             }
-            fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+            fn flow_balance_summary(&self) -> Option<crate::dialect::FlowBalanceSummary> {
                 None
             }
         }
@@ -1480,13 +1480,13 @@ mod tests {
         let Ok(bytes) = std::fs::read(&path) else {
             return;
         };
-        let network = crate::io::parse(&bytes).expect("parse network");
+        let network = crate::dialect::parse(&bytes).expect("parse network");
         let n_nodes = network.nodes.len();
         let n_links = network.links.len();
         let node_states = network
             .nodes
             .iter()
-            .map(|n| crate::NodeState {
+            .map(|n| crate::engine_api::NodeState {
                 head: n.base.elevation,
                 ..Default::default()
             })
@@ -1494,11 +1494,11 @@ mod tests {
         let link_states = network
             .links
             .iter()
-            .map(|_| crate::LinkState::default())
+            .map(|_| crate::engine_api::LinkState::default())
             .collect();
         let session = MockSession {
             network,
-            snapshots: vec![crate::io::HydSnapshot {
+            snapshots: vec![crate::dialect::HydSnapshot {
                 t: 0.0,
                 node_states,
                 link_states,
@@ -1506,8 +1506,14 @@ mod tests {
         };
 
         let mut buf = StdCursor::new(Vec::new());
-        out_writer::write_binary_output(&mut buf, &session, "test.inp", "", crate::FlowUnits::Gpm)
-            .expect("write");
+        out_writer::write_binary_output(
+            &mut buf,
+            &session,
+            "test.inp",
+            "",
+            crate::engine_api::FlowUnits::Gpm,
+        )
+        .expect("write");
         let raw = buf.into_inner();
         let out = parse(&raw).expect("parse writer output");
 
@@ -1524,7 +1530,7 @@ mod tests {
         // could read the clock directly without breaking anything, but an
         // exception here is an exception someone copies into code that
         // ships — and the crate's `clippy.toml` says so out loud.
-        let nanos = crate::wall_clock::now()
+        let nanos = crate::engine_api::wall_clock::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();

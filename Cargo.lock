@@ -2528,6 +2528,7 @@ dependencies = [
  "criterion",
  "hydra-common",
  "hydra-engine-wds",
+ "hydra-interop-epanet",
  "pretty_assertions",
  "rstest",
  "serde",
@@ -2541,6 +2542,7 @@ dependencies = [
  "hydra-common",
  "hydra-engine-uds",
  "hydra-engine-wds",
+ "hydra-interop-epanet",
  "hydra-interop-swmm",
 ]
 
@@ -2574,6 +2576,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hydra-interop-epanet"
+version = "14.0.0"
+dependencies = [
+ "chrono",
+ "hydra-common",
+ "hydra-engine-wds",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hydra-interop-swmm"
 version = "14.0.0"
 dependencies = [
@@ -2602,6 +2615,7 @@ dependencies = [
  "hydra-engine-uds",
  "hydra-engine-wds",
  "hydra-engines",
+ "hydra-interop-epanet",
  "hydra-interop-swmm",
  "hydra-report",
 ]

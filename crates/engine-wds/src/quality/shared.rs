@@ -64,7 +64,7 @@ pub enum QualityError {
     ModeNone,
 }
 
-pub use crate::io::MassBalance;
+pub use crate::simulation::contract::MassBalance;
 
 pub struct QualityState {
     pub pipe_quality: Vec<Option<PipeQuality>>,

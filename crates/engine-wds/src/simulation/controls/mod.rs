@@ -533,7 +533,7 @@ mod tests {
                    AND NODE J1 HEAD > 50\n\
                    AND NODE J1 HEAD > 30\n\
                    THEN LINK P1 STATUS IS CLOSED\n";
-        let net = crate::io::parse(inp.as_bytes()).expect("INP parses");
+        let net = crate::dialect::parse(inp.as_bytes()).expect("INP parses");
         let j1 = net
             .nodes
             .iter()

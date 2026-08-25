@@ -6,7 +6,7 @@
 //! stale after the network topology has been edited. Property edits (demands,
 //! diameters, options) intentionally do not change the digest.
 
-use crate::Network;
+use crate::engine_api::Network;
 
 /// FNV-1a 64-bit offset basis.
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -75,7 +75,7 @@ fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::parse;
+    use crate::dialect::parse;
 
     /// A two-node, one-pipe network: R1 → J1 via P1.
     ///

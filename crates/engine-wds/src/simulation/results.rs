@@ -1,5 +1,5 @@
 use super::*;
-use crate::io::{FlowBalance, FlowBalanceSummary, MassBalance, PumpEnergy};
+use crate::simulation::contract::{FlowBalance, FlowBalanceSummary, MassBalance, PumpEnergy};
 
 /// Global min/max across all timesteps for each display variable.
 ///

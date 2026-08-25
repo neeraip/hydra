@@ -99,7 +99,7 @@ pub(super) fn assemble_node_residuals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::parse;
+    use crate::dialect::parse;
     use std::collections::BTreeSet;
 
     fn load_fixture(name: &str) -> crate::Network {
