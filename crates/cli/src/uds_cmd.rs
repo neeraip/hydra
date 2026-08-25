@@ -9,8 +9,8 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use hydra::uds::io::climate::parse_any_climate_file;
-use hydra::uds::io::objects::parse_network;
+use hydra::swmm::climate::parse_any_climate_file;
+use hydra::swmm::objects::parse_network;
 use hydra::uds::model::TemperatureSource;
 use hydra::uds::simulation::engine::{OpenError, Simulation};
 
@@ -129,7 +129,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
 
     // External rain records (§14.12): one read per distinct file a gage
     // names, resolved beside the model like every auxiliary file.
-    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
+    let mut rain_files: Vec<(String, hydra::swmm::rain::RainRecords)> = Vec::new();
     for gage in &net.gages {
         if rain_iface.is_some() {
             break;
@@ -156,7 +156,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
                 return EXIT_IO;
             }
         };
-        match hydra::uds::io::rain::parse_any_rain_file(&rain_text) {
+        match hydra::swmm::rain::parse_any_rain_file(&rain_text) {
             Ok((records, notices)) => {
                 // §14.12.1: an accumulation this engine spread evenly is
                 // said out loud, because four identical hours read as a
@@ -218,35 +218,39 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
     // path needs no combination with the climate and rain paths: it
     // exists so the refusal and IGNORE_2D behaviours see the real mesh.
     let opened = match (&mesh_text, &rain_iface) {
-        (Some(mesh), _) => Simulation::open_with_overland_mesh(&text, mesh),
-        (None, Some(bytes)) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
-        (None, None) => Simulation::open_with_rain_records(&text, climate_records, rain_files),
+        (Some(mesh), _) => hydra::swmm::session::open_with_overland_mesh(&text, mesh),
+        (None, Some(bytes)) => {
+            hydra::swmm::session::open_with_rain_interface(&text, climate_records, bytes)
+        }
+        (None, None) => {
+            hydra::swmm::session::open_with_rain_records(&text, climate_records, rain_files)
+        }
     };
     let (mut sim, diags, findings) = match opened {
         Ok(session) => session,
-        Err(OpenError::Parse(diags)) => {
+        Err(hydra::swmm::session::OpenError::Parse(diags)) => {
             for d in diags.iter().filter(|d| d.kind.is_error()) {
                 emit_error("input/parse", &d.to_string(), None, None);
             }
             return EXIT_INPUT;
         }
-        Err(OpenError::Validation(findings)) => {
+        Err(hydra::swmm::session::OpenError::Build(OpenError::Validation(findings))) => {
             for v in findings.iter().filter(|v| v.kind.is_error()) {
                 emit_error("validation/network", &v.to_string(), None, None);
             }
             return EXIT_INPUT;
         }
-        Err(OpenError::Routing(r)) => {
+        Err(hydra::swmm::session::OpenError::Build(OpenError::Routing(r))) => {
             emit_error("input/unsupported", &r.to_string(), None, None);
             return EXIT_INPUT;
         }
-        Err(OpenError::Surface(s)) => {
+        Err(hydra::swmm::session::OpenError::Build(OpenError::Surface(s))) => {
             emit_error("input/unsupported", &s.to_string(), None, None);
             return EXIT_INPUT;
         }
-        Err(OpenError::Controls(msg))
-        | Err(OpenError::Transport(msg))
-        | Err(OpenError::Overland(msg)) => {
+        Err(hydra::swmm::session::OpenError::Build(
+            OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg),
+        )) => {
             emit_error("input/unsupported", &msg, None, None);
             return EXIT_INPUT;
         }
@@ -315,7 +319,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
                 return EXIT_IO;
             }
         };
-        if let Err(e) = sim.supply_routing_inflows(&inflow_text) {
+        if let Err(e) = hydra::swmm::session::supply_routing_inflows(&mut sim, &inflow_text) {
             emit_error(
                 "input/interface",
                 &format!("routing inflows file {}: {e}", path.display()),
@@ -346,7 +350,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
                 return EXIT_IO;
             }
         };
-        if let Err(e) = sim.supply_runoff(&bytes) {
+        if let Err(e) = hydra::swmm::session::supply_runoff(&mut sim, &bytes) {
             emit_error(
                 "input/interface",
                 &format!("runoff interface file {}: {e}", path.display()),
@@ -377,7 +381,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
                 return EXIT_IO;
             }
         };
-        if let Err(e) = sim.supply_rdii(&bytes) {
+        if let Err(e) = hydra::swmm::session::supply_rdii(&mut sim, &bytes) {
             emit_error(
                 "input/interface",
                 &format!("RDII interface file {}: {e}", path.display()),
@@ -454,9 +458,10 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
         if es.as_uds().is_some_and(Simulation::has_overland) {
             let p2 = two_d_results_path(out_path);
             let attach = std::fs::File::create(&p2).and_then(|f| {
-                es.as_uds_mut()
-                    .expect("checked above")
-                    .begin_overland_results(Box::new(std::io::BufWriter::new(f)))
+                hydra::swmm::session::begin_overland_results(
+                    es.as_uds_mut().expect("checked above"),
+                    Box::new(std::io::BufWriter::new(f)),
+                )
             });
             if let Err(e) = attach {
                 emit_error("io/output", &format!("{p2}: {e}"), None, None);
@@ -496,7 +501,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
             Ok(p) => p,
             Err(code) => return code,
         };
-        if let Err(e) = create_and_write(&path, |w| sim.write_routing_outflows(w)) {
+        if let Err(e) = create_and_write(&path, |w| {
+            hydra::swmm::session::write_routing_outflows(sim, w)
+        }) {
             emit_error(
                 "io/interface",
                 &format!("routing outflows file {}: {e}", path.display()),
@@ -514,7 +521,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
             Ok(p) => p,
             Err(code) => return code,
         };
-        if let Err(e) = create_and_write(&path, |w| sim.write_rdii(w).map(|_| ())) {
+        if let Err(e) = create_and_write(&path, |w| {
+            hydra::swmm::session::write_rdii(sim, w).map(|_| ())
+        }) {
             emit_error(
                 "io/interface",
                 &format!("RDII interface file {}: {e}", path.display()),
@@ -572,7 +581,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
             Ok(p) => p,
             Err(code) => return code,
         };
-        if let Err(e) = create_and_write(&path, |w| sim.write_rain(w).map(|_| ())) {
+        if let Err(e) = create_and_write(&path, |w| {
+            hydra::swmm::session::write_rain(sim, w).map(|_| ())
+        }) {
             emit_error(
                 "io/interface",
                 &format!("rainfall interface file {}: {e}", path.display()),
@@ -589,7 +600,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
             Ok(p) => p,
             Err(code) => return code,
         };
-        if let Err(e) = create_and_write(&path, |w| sim.write_runoff(w).map(|_| ())) {
+        if let Err(e) = create_and_write(&path, |w| {
+            hydra::swmm::session::write_runoff(sim, w).map(|_| ())
+        }) {
             emit_error(
                 "io/interface",
                 &format!("runoff interface file {}: {e}", path.display()),
