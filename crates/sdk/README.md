@@ -13,7 +13,7 @@ Water infrastructure simulation: EPANET-compatible water distribution and SWMM-c
 
 ```toml
 [dependencies]
-hydra-sdk = "14"
+hydra-sdk = "15"
 ```
 
 ## Quick start
