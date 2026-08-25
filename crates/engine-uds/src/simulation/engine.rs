@@ -351,6 +351,9 @@ pub struct Simulation {
     /// §15.5 driven boundary slots: (marcher boundary, series index,
     /// stage?), resolved once at attach.
     overland_driven: Vec<(usize, usize, bool)>,
+    /// §14.16: the overland results stream, when a sink is attached.
+    overland_out: Option<crate::io::overland_out::OverlandStream<Box<dyn std::io::Write + Send>>>,
+    overland_out_error: Option<std::io::Error>,
     /// §12.4: injected outfall stages and link settings, held so a rule
     /// cannot move an element a caller has taken over, and so a restored
     /// checkpoint takes it over again.
@@ -828,6 +831,8 @@ impl Simulation {
                 overland_sync: 0.0,
                 overland_accrued: 0.0,
                 overland_driven: Vec::new(),
+                overland_out: None,
+                overland_out_error: None,
                 stage_override: HashMap::new(),
                 setting_override: HashMap::new(),
                 loss_override: HashMap::new(),
@@ -1867,11 +1872,11 @@ impl Simulation {
     )]
     pub(crate) fn attach_overland(
         &mut self,
-        mesh: &crate::overland::OverlandMesh,
+        mesh: crate::overland::OverlandMesh,
     ) -> Result<(), super::coupled::AttachError> {
         let topo =
-            crate::overland::Topology::build(mesh).map_err(super::coupled::AttachError::Mesh)?;
-        let marcher = crate::overland::marcher::Marcher::build(mesh, &topo);
+            crate::overland::Topology::build(&mesh).map_err(super::coupled::AttachError::Mesh)?;
+        let marcher = crate::overland::marcher::Marcher::build(&mesh, &topo);
         let cs = super::coupled::CoupledSurface::new(marcher, &self.net, &mut self.router)
             .map_err(|e| super::coupled::AttachError::UnknownNode(e.node))?;
         let positions: Vec<Option<(f64, f64)>> =
@@ -1897,6 +1902,36 @@ impl Simulation {
             cs.marcher.set_rating_curve(slot, curve.points.clone());
         }
         self.coupled = Some(cs);
+        // The mesh is the model's; the §14.16 stream reads its geometry.
+        self.net.overland = Some(mesh);
+        Ok(())
+    }
+
+    /// §14.16: stream the overland results to `sink` as the run
+    /// produces them, alongside the §14.9 stream. Attach after the
+    /// mesh and before stepping; refused without a mesh.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the §1.8 serving gate's wiring")
+    )]
+    pub(crate) fn begin_overland_results(
+        &mut self,
+        sink: Box<dyn std::io::Write + Send>,
+    ) -> std::io::Result<()> {
+        let (Some(mesh), Some(cs)) = (self.net.overland.as_ref(), self.coupled.as_ref()) else {
+            return Err(std::io::Error::other(
+                "this run has no overland mesh to record",
+            ));
+        };
+        let out = crate::io::overland_out::OverlandStream::begin(
+            sink,
+            mesh,
+            &cs.marcher,
+            self.start_epoch,
+            self.report_step,
+            self.next_report,
+        )?;
+        self.overland_out = Some(out);
         Ok(())
     }
 
@@ -2179,6 +2214,14 @@ impl Simulation {
             // instants alone, which is what a reader finds in the
             // results file.
             self.router.record_reported_depths();
+            // §14.16: the overland record rides the same instants.
+            if let (Some(cs), Some(out)) = (self.coupled.as_mut(), self.overland_out.as_mut()) {
+                let vols = cs.take_report_exchange();
+                let rates: Vec<f64> = vols.iter().map(|v| v / self.report_step).collect();
+                if let Err(e) = out.append(self.next_report, &cs.marcher, &rates) {
+                    self.overland_out_error.get_or_insert(e);
+                }
+            }
             self.next_report += self.report_step;
         }
         true
@@ -3051,6 +3094,10 @@ impl Simulation {
             overland_sync: _,
             overland_accrued: _,
             overland_driven: _,
+            // §14.16 stream state: possible only on a coupled run, and
+            // the mesh refusal above covers those.
+            overland_out: _,
+            overland_out_error: _,
             stage_override,
             setting_override,
             loss_override,
@@ -4060,6 +4107,16 @@ impl Simulation {
         crate::io::rpt_writer::write_rpt(
             &crate::io::rpt_writer::ReportInputs {
                 net: &self.net,
+                overland: self
+                    .coupled
+                    .as_ref()
+                    .map(|cs| crate::io::rpt_writer::OverlandRpt {
+                        ledger: crate::io::overland_out::LedgerRow::of(&cs.marcher),
+                        initial_storage: cs.marcher.initial_storage(),
+                        delivered_in: cs.delivered_in,
+                        delivered_out: cs.delivered_out,
+                        march: cs.marcher.statistics(),
+                    }),
                 surface,
                 subsurface,
                 flow,
@@ -4149,6 +4206,14 @@ impl Simulation {
         if let Some(e) = self.out_error.take() {
             self.out = None;
             return Err(e);
+        }
+        if let Some(e) = self.overland_out_error.take() {
+            self.overland_out = None;
+            self.out = None;
+            return Err(e);
+        }
+        if let Some(ov) = self.overland_out.take() {
+            ov.finish()?;
         }
         match self.out.take() {
             Some(out) => out.finish().map(|_| ()),

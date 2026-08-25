@@ -146,6 +146,14 @@ pub struct Marcher {
     /// A face fires at the finer of its two cells' cadences.
     face_tier: Vec<u8>,
     macro_cycles: u64,
+    /// §15.4.4 whole-run counts for the §14.9 time-step summary.
+    substeps: u64,
+    rebuilds: u64,
+    min_dt0: f64,
+    advanced: f64,
+    peak_active: usize,
+    /// Initial storage (m³), the §15.8 ledger's opening term.
+    storage0: f64,
 
     // ── Sources, set by the caller before an advance (m/s) ─────────
     pub rain: Vec<f64>,
@@ -485,6 +493,12 @@ impl Marcher {
             tier: vec![0; nc],
             face_tier: Vec::new(),
             macro_cycles: 0,
+            substeps: 0,
+            rebuilds: 0,
+            min_dt0: f64::INFINITY,
+            advanced: 0.0,
+            peak_active: 0,
+            storage0: 0.0,
             rain: vec![0.0; nc],
             evap: vec![0.0; nc],
             coupling: vec![0.0; nc],
@@ -515,6 +529,8 @@ impl Marcher {
         m.face_tier = vec![0; m.faces.len()];
         m.refresh_perot();
         m.rebuild_active();
+        m.rebuilds = 0;
+        m.storage0 = m.storage();
         m
     }
 
@@ -602,6 +618,8 @@ impl Marcher {
                 next[ci] = true;
             }
         }
+        self.rebuilds += 1;
+        self.peak_active = self.peak_active.max(next.iter().filter(|a| **a).count());
         self.active = next;
     }
 
@@ -1185,6 +1203,9 @@ impl Marcher {
                     self.fire_cells(dt, 0);
                     self.fire_boundaries(dt);
                     self.fire_couplings(dt);
+                    self.substeps += 1;
+                    self.min_dt0 = self.min_dt0.min(dt);
+                    self.advanced += dt;
                     remaining -= dt;
                 }
                 self.macro_cycles += 1;
@@ -1196,9 +1217,59 @@ impl Marcher {
                 self.fire_boundaries(dt0);
                 self.fire_couplings(dt0);
             }
+            self.substeps += nsub;
+            self.min_dt0 = self.min_dt0.min(dt0);
+            self.advanced += dt0 * nsub as f64;
             remaining -= dt0 * nsub as f64;
             self.macro_cycles += 1;
         }
+    }
+
+    /// §15.4.4 whole-run march counts for the §14.9 time-step summary:
+    /// (base substeps, macro cycles, active-set rebuilds, minimum base
+    /// step (s), average base step (s), peak active cells). The minimum
+    /// and average read zero before any substep has fired.
+    pub fn statistics(&self) -> (u64, u64, u64, f64, f64, usize) {
+        let min = if self.substeps == 0 {
+            0.0
+        } else {
+            self.min_dt0
+        };
+        let avg = if self.substeps == 0 {
+            0.0
+        } else {
+            self.advanced / self.substeps as f64
+        };
+        (
+            self.substeps,
+            self.macro_cycles,
+            self.rebuilds,
+            min,
+            avg,
+            self.peak_active,
+        )
+    }
+
+    /// A cell's §15.4.3 Perot flow proxy $\mathbf{q}_c$ (m²/s); its
+    /// velocity is this over the depth.
+    pub fn cell_velocity_proxy(&self, ci: usize) -> (f64, f64) {
+        (self.qcx[ci], self.qcy[ci])
+    }
+
+    /// The §15.8 ledger's opening storage (m³).
+    pub fn initial_storage(&self) -> f64 {
+        self.storage0
+    }
+
+    /// §15.8 continuity error as a signed volume (m³): storage now
+    /// against everything the ledger says arrived and left.
+    pub fn ledger_error(&self) -> f64 {
+        self.storage()
+            - (self.storage0 + self.rain_in + self.coupling_in + self.outfall_in + self.boundary_in
+                - self.evap_out
+                - self.coupling_out
+                - self.outfall_out
+                - self.boundary_out)
     }
 
     /// Total stored volume (m³), the conservation ledger's storage term.

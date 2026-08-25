@@ -572,13 +572,11 @@ to round-trip precision.
 
 Typed, per §1.8 — each is a named absence, not an approximation:
 
-- **Time-series results for the mesh.** The predecessor writes
-  CF/UGRID HDF5. This engine's overland results surface — format,
-  cadence, and its relation to §14.9's results stream — is a recorded
-  gap, to be specified before the output phase implements anything. A
-  heavyweight native-library dependency conflicts with the browser
-  build's constraints (§1.4), and the resolution is a specification
-  decision, not an implementation one.
+- **Time-series results for the mesh: resolved.** §14.16 specifies the
+  sidecar results stream — this engine's own framed layout at the
+  §14.9 reporting instants — chosen over the predecessor's CF/UGRID
+  HDF5 because a native-library dependency conflicts with the browser
+  build's constraints (§1.4).
 - **Checkpoint carriage.** §12.3 checkpoints do not yet carry overland
   state; a run with a mesh refuses checkpointing until they do (format
   version bump when it lands). The predecessor's hotstart files have the
@@ -589,10 +587,9 @@ Typed, per §1.8 — each is a named absence, not an approximation:
 - **Runoff-to-mesh.** Parcel runoff routes to nodes only.
 - **Mesh infiltration**, **overland constituent transport**, **mesh
   adaptivity**: absent here as in the predecessor.
-- **Report additions.** The §14.9 run summary gains the overland
-  continuity block and solver statistics when §15 is served; their
-  layout is specified with the §15.8 accounting's implementation, not
-  before.
+- **Report additions: resolved.** §14.9 specifies the overland flow
+  continuity balance, the overland time-step summary, and the flow
+  routing balance's §15.8 named pair.
 - **Device compute.** The marcher's kernels are specified as pure
   per-element maps over flat state, which is deliberately the shape a
   GPU backend could lift without restructuring. None is planned: the

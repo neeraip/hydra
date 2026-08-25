@@ -18,6 +18,7 @@ pub mod options;
 pub mod out_reader;
 pub mod out_writer;
 pub mod overland;
+pub mod overland_out;
 pub mod quality;
 pub mod rain;
 pub mod rpt_writer;

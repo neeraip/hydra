@@ -45,6 +45,9 @@ pub struct CoupledSurface {
     /// ledger: surface drainage in, surface spill drawn back out (m³).
     pub delivered_in: f64,
     pub delivered_out: f64,
+    /// §14.16: per-point exchanged volume since the last reporting
+    /// instant (m³).
+    report_exchange: Vec<f64>,
 }
 
 impl CoupledSurface {
@@ -93,6 +96,7 @@ impl CoupledSurface {
             outfall_pending,
             delivered_in: 0.0,
             delivered_out: 0.0,
+            report_exchange: Vec::new(),
         })
     }
 
@@ -186,9 +190,13 @@ impl CoupledSurface {
                 .set_node_drive(slot, invert + y, y, rim, router.vertex_volume_now(vi));
         }
         self.marcher.advance(period);
+        if self.report_exchange.len() != self.marcher.exchanged().len() {
+            self.report_exchange = vec![0.0; self.marcher.exchanged().len()];
+        }
         for (k, &dv) in self.marcher.exchanged().iter().enumerate() {
             let slot = self.marcher.coupling_points()[k].node_slot as usize;
             self.pending[slot] += dv;
+            self.report_exchange[k] += dv;
         }
         // Damping for the coming period, §6.4: the summed conductance of
         // every point naming the vertex, against the live surface.
@@ -226,6 +234,18 @@ impl CoupledSurface {
         }
         // The surface the network sees next period.
         self.set_outfall_tailwaters(router);
+    }
+
+    /// §14.16: the per-point exchanged volumes since the last take
+    /// (m³); taking resets the accumulator.
+    pub fn take_report_exchange(&mut self) -> Vec<f64> {
+        if self.report_exchange.is_empty() {
+            self.report_exchange = vec![0.0; self.marcher.coupling_points().len()];
+        }
+        std::mem::replace(
+            &mut self.report_exchange,
+            vec![0.0; self.marcher.coupling_points().len()],
+        )
     }
 }
 
@@ -481,7 +501,7 @@ C1  CIRCULAR  0.5  0  0  0
 ";
         let (mut sim, _, findings) = crate::simulation::Simulation::open(inp).expect("open");
         assert!(findings.iter().all(|f| !f.kind.is_error()));
-        sim.attach_overland(&pond_mesh(0.3, "J1")).expect("attach");
+        sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
         let v0 = sim.overland().expect("attached").marcher.storage();
 
         // §15.10: a mesh run refuses checkpointing, by name.
@@ -500,6 +520,95 @@ C1  CIRCULAR  0.5  0  0  0
             (v0 - m.storage() - (m.coupling_out - m.coupling_in)).abs() < 1e-9,
             "surface ledger"
         );
+    }
+
+    /// §14.16 round trip through a live session: the sidecar streams at
+    /// the reporting instants, the reader validates and serves it back,
+    /// and the §14.9 report carries the overland blocks.
+    #[test]
+    fn the_overland_results_stream_round_trips() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+";
+        let (mut sim, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
+
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "hydra-uds-overland-{}-{}.h2o",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        let sink = Box::new(std::fs::File::create(&path).expect("create"));
+        sim.begin_overland_results(sink).expect("begin");
+        sim.run();
+        sim.finish_results().expect("finish");
+
+        let r = crate::io::out_reader::OverlandResults::open(&path).expect("open results");
+        assert_eq!(r.periods, 4, "20 min at 5-min reporting");
+        assert_eq!(r.cells.len(), 32);
+        assert_eq!(r.verts.len(), 25);
+        assert_eq!(r.point_cells, [0]);
+        assert!((r.report_step - 300.0).abs() < 1e-9);
+        // The pond drains across the records: depth at the coupled cell
+        // falls, the exchange rate is a drain, the ledger closes.
+        let first = r.record(0).expect("first");
+        let last = r.record(3).expect("last");
+        assert!(last.t > first.t);
+        assert!(
+            f64::from(last.cells[0][0]) < f64::from(first.cells[0][0]),
+            "depth must fall as the pond drains"
+        );
+        assert!(first.exchange[0] > 0.0, "the point drains into the node");
+        assert!(last.ledger.junction_out > 0.0);
+        assert!(last.ledger.error.abs() < 1e-6, "ledger closes");
+        // A cell series is the records' own values re-cut.
+        let series = r.cell_series(0).expect("series");
+        assert_eq!(series.len(), 4);
+        assert_eq!(series[0].1, first.cells[0]);
+        assert_eq!(series[3].1, last.cells[0]);
+        // A torso without its epilog is refused as unfinished.
+        let bytes = std::fs::read(&path).expect("read");
+        std::fs::write(&path, &bytes[..bytes.len() - 8]).expect("truncate");
+        let err = crate::io::out_reader::OverlandResults::open(&path).unwrap_err();
+        assert!(err.contains("did not finish"), "{err}");
+        std::fs::remove_file(&path).ok();
+
+        // §14.9: the report carries the overland blocks and the §15.8
+        // named pair.
+        let mut rpt = Vec::new();
+        sim.write_report(&mut rpt).expect("report");
+        let rpt = String::from_utf8(rpt).expect("utf8");
+        for needle in [
+            "Overland Flow Continuity",
+            "Junction Drainage",
+            "Surface Drainage",
+            "Surface Spill",
+            "Overland Time Step Summary",
+            "Peak Active Cells",
+        ] {
+            assert!(rpt.contains(needle), "report lacks {needle}");
+        }
     }
 
     /// §15.6 the other direction: a surcharged node spills onto the

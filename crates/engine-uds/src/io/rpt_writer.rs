@@ -350,8 +350,28 @@ fn link_kind(l: &crate::model::Link) -> &'static str {
 }
 
 /// The inputs the report draws on, gathered by the session.
+/// §14.9's overland additions, present only when a run served a mesh
+/// (§15): the §15.8 ledger, the §15.8 delivered pair on the network
+/// side, and the §15.4.4 march counts.
+#[derive(Debug, Clone)]
+pub struct OverlandRpt {
+    /// The §15.8 ledger, cumulative over the run (m³).
+    pub ledger: crate::io::overland_out::LedgerRow,
+    /// Opening surface storage (m³).
+    pub initial_storage: f64,
+    /// Exchange as delivered to the network ledger (m³): surface
+    /// drainage in, surface spill drawn back out.
+    pub delivered_in: f64,
+    pub delivered_out: f64,
+    /// (base substeps, macro cycles, rebuilds, min base step s,
+    /// average base step s, peak active cells).
+    pub march: (u64, u64, u64, f64, f64, usize),
+}
+
 pub struct ReportInputs<'a> {
     pub net: &'a Network,
+    /// The §15 overland additions, when a mesh was served.
+    pub overland: Option<OverlandRpt>,
     /// The §11.1 surface ledger parts, when a surface exists:
     /// (precipitation, run-on, evaporation, infiltration, runoff,
     /// ploughed snow, initial storage, final storage, error %).
@@ -427,6 +447,11 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
         write_continuity(inp, &rv, w)?;
     }
     if rpt.flow_stats {
+        // §14.9: the overland time-step summary sits between the
+        // continuity balances and the diagnostics.
+        if let Some(ov) = &inp.overland {
+            write_overland_step_summary(ov, w)?;
+        }
         write_diagnostics(inp, w)?;
         write_step_summary(inp, w)?;
     }
@@ -676,7 +701,15 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         line(w, "Groundwater Inflow", &row(gw))?;
         line(w, "RDII Inflow", &row(rdii))?;
         line(w, "External Inflow", &row(ext))?;
+        // §15.8: the exchange is its own named pair, never folded into
+        // the external terms.
+        if let Some(ov) = &inp.overland {
+            line(w, "Surface Drainage", &row(ov.delivered_in))?;
+        }
         line(w, "External Outflow", &row(out))?;
+        if let Some(ov) = &inp.overland {
+            line(w, "Surface Spill", &row(ov.delivered_out))?;
+        }
         line(w, "Flooding Loss", &row(flood))?;
         line(w, "Evaporation Loss", &row(evap))?;
         line(w, "Exfiltration Loss", &row(exfil))?;
@@ -722,6 +755,52 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         let errs: Vec<f64> = inp.quality.iter().map(|(_, v)| v[11]).collect();
         line(w, "Continuity Error (%)", &errs)?;
     }
+
+    // §14.9: the overland flow continuity balance, for a run that
+    // served a mesh — the §15.8 ledger as volume rows in the house
+    // style of its neighbours.
+    if let Some(ov) = &inp.overland {
+        let l = &ov.ledger;
+        continuity_head(
+            w,
+            "Overland Flow Continuity",
+            &["Volume", "Volume"],
+            &[rv.big_word(), rv.mgal_word()],
+            &[9, 9],
+        )?;
+        let row = |v: f64| [rv.big(v), rv.mgal(v)];
+        line(w, "Initial Surface Storage", &row(ov.initial_storage))?;
+        line(w, "Rainfall", &row(l.rain_in))?;
+        line(w, "Evaporation", &row(l.evap_out))?;
+        line(w, "Junction Drainage", &row(l.junction_out))?;
+        line(w, "Junction Spill", &row(l.junction_in))?;
+        line(w, "Outfall Injection", &row(l.outfall_in))?;
+        line(w, "Outfall Withdrawal", &row(l.outfall_out))?;
+        line(w, "Boundary Inflow", &row(l.boundary_in))?;
+        line(w, "Boundary Outflow", &row(l.boundary_out))?;
+        line(w, "Final Surface Storage", &row(l.storage))?;
+        let inflow = ov.initial_storage + l.rain_in + l.junction_in + l.outfall_in + l.boundary_in;
+        let err = if inflow > 1e-9 {
+            100.0 * l.error / inflow
+        } else {
+            0.0
+        };
+        line(w, "Continuity Error (%)", &[err])?;
+    }
+    Ok(())
+}
+
+/// §14.9: the overland time-step summary — the march's whole-run
+/// counts (§15.4.4).
+fn write_overland_step_summary(ov: &OverlandRpt, w: &mut impl Write) -> io::Result<()> {
+    let (substeps, cycles, rebuilds, min_dt, avg_dt, peak) = ov.march;
+    heading(w, "Overland Time Step Summary")?;
+    writeln!(w, "  Base Substeps               : {substeps:>8}")?;
+    writeln!(w, "  Macro Cycles                : {cycles:>8}")?;
+    writeln!(w, "  Active-Set Rebuilds         : {rebuilds:>8}")?;
+    writeln!(w, "  Minimum Base Step           : {min_dt:>8.4} sec")?;
+    writeln!(w, "  Average Base Step           : {avg_dt:>8.4} sec")?;
+    writeln!(w, "  Peak Active Cells           : {peak:>8}")?;
     Ok(())
 }
 

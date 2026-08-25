@@ -746,7 +746,12 @@ including the process-model checklist; the control-actions log; the runoff
 quantity and quality continuity balances; the flow routing and quality
 routing continuity balances; the highest continuity errors, time-step
 critical elements, flow instability indexes, and non-converging vertices;
-the routing time-step summary; then the per-object summary tables —
+the routing time-step summary; for a run serving an overland mesh
+(§15), the overland flow continuity balance and the overland time-step
+summary, in that order, between the routing continuity balances and the
+highest-continuity-errors list — blocks the predecessor never prints
+because it cannot run a mesh model, laid out in the house style of
+their neighbours; then the per-object summary tables —
 subcatchment runoff, control-measure performance, subcatchment washoff,
 node depth, node inflow, node
 surcharge, node flooding, storage volume, outfall loading, link flow, flow
@@ -771,9 +776,20 @@ predecessor's must never mistake bookkeeping for physics.
 
 **`[REPORT]` gates the body**, as it does in the predecessor. `DISABLED`
 suppresses everything the run produced, leaving the banner. `CONTINUITY`
-gates the four continuity balances, `FLOWSTATS` the diagnostics and the
-routing time-step summary together, and `CONTROLS` the control-actions
-log. The highest continuity errors list names the vertices whose own §11.1
+gates the four continuity balances (and the overland one with them),
+`FLOWSTATS` the diagnostics and the routing time-step summary together
+(and the overland time-step summary with them), and `CONTROLS` the
+control-actions log. The overland flow continuity balance prints the
+§15.8 ledger as volume rows — initial storage, rainfall, evaporation,
+junction drainage, junction spill, outfall injection, outfall
+withdrawal, boundary inflow, boundary outflow, final storage — and its
+closure as the continuity error, in the report's volume units. The
+flow routing continuity balance of a coupled run additionally carries
+the §15.8 named pair, surface drainage among its inflows and surface
+spill among its outflows, and its error term accounts for both. The
+overland time-step summary prints the march's whole-run counts: base
+substeps, macro cycles, active-set rebuilds, the minimum and average
+base step, and the peak active-cell count (§15.4.4). The highest continuity errors list names the vertices whose own §11.1
 balance closes worst, skipping terminal vertices — with nothing leaving by
 a link the balance says nothing about the solver — and vertices that barely
 saw water, below the predecessor's threshold of a tenth of a cubic foot,
@@ -1502,3 +1518,58 @@ when they carry a tag, so the fifth column stays unambiguous
 (§14.13's columns rule). An external mesh file is not re-created:
 export inlines the mesh it holds, and the `[2D_MESH_FILE]` declaration
 is not written.
+
+### 14.16 The Overland Results Stream
+
+The §14.9 binary results file is the predecessor's format, and the
+predecessor's format has no vocabulary for a mesh: its object classes
+are fixed, its readers are third parties, and nothing may be appended
+to it. Overland results therefore stream to a **sidecar file** in this
+engine's own format, written alongside the §14.9 file at the same
+reporting instants. The predecessor writes CF/UGRID HDF5 instead; that
+choice needs a native library this engine's browser constraint (§1.4)
+refuses, and a reader for it is a foreign dependency either way, so
+the sidecar is this engine's own framed layout, fully specified here.
+One engine writes it and the same engine reads it back; nothing about
+it is a compatibility surface with the predecessor.
+
+Everything is little-endian. The clock, the geometry and the ledger
+are eight-byte floats; per-cell record values are four-byte floats,
+the resolution every reported result in §14.9 already has. All values
+are SI (§14.15): metres, seconds, cubic metres per second. The file
+has three parts:
+
+**Header.** Leading magic `1214727218`, format version `1`, then the
+counts — vertices, cells, coupling points — as four-byte unsigned
+integers; the reporting clock (start epoch seconds, report step
+seconds, first instant's run time seconds) as floats; then the mesh
+geometry a viewer renders without the model: each vertex's $x, y, z$,
+then each cell's three vertex indices, then each coupling point's
+cell index.
+
+**Records**, one per reporting instant, fixed size:
+
+- the instant's run time (s, eight-byte float);
+- per cell, in index order: depth (m), surface elevation (m), and the
+  velocity components $u, v$ (m/s) from the §15.4.3 reconstruction,
+  zero where the cell holds less than the drying depth;
+- per coupling point, in point order: the exchange rate over the
+  reporting period (m³/s, positive draining into the network);
+- the §15.8 ledger, cumulative since the start of the run, as ten
+  eight-byte floats: surface storage now, rainfall in, evaporation
+  out, junction drainage out, junction spill in, outfall injection
+  in, outfall withdrawal out, boundary in, boundary out, and the
+  continuity error as a signed volume.
+
+**Epilog.** The record count as a four-byte signed integer, then the
+closing magic. A file without its epilog is a run that did not finish,
+and a reader says so rather than serving the torso as complete.
+
+**Reading** follows §14.9's carve-out for the same reason: a mesh
+run's results dwarf everything else the run owns, so the reader
+operates on an explicitly supplied path and seeks — the header, one
+record, one cell's series across all records, or a sequential scan —
+rather than requiring the whole file in memory. Opening validates the
+leading and closing magic, the version, and that header, fixed-size
+records and epilog tile the file exactly.
+
