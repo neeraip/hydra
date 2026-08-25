@@ -622,6 +622,7 @@ pub(crate) fn create_uds_gage(net: &mut Network, id: &str, series_id: &str) -> R
         .position(|t| t.id.eq_ignore_ascii_case(series_id))
         .ok_or_else(|| format!("'{series_id}' is not a time series in this model"))?;
     net.gages.push(hydra::uds::model::Gage {
+        position: None,
         id: id.to_string(),
         // Intensity at an hourly interval, which is how a rainfall
         // record is most often written and what the series it reads

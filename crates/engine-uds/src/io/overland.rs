@@ -76,6 +76,93 @@ pub(crate) fn units_header_si(text: &str) -> bool {
     si
 }
 
+/// §14.15's external mesh file: re-parse the mesh from the model's own
+/// 2D sections continued by the external file's, under the combined SI
+/// header. The model text's non-2D lines are blanked rather than
+/// removed, so inline diagnostics keep their line numbers; the inline
+/// 2D sections were already parsed once by the ordinary pass, so their
+/// warnings may repeat here — a cosmetic cost the combined numbering is
+/// worth.
+pub(crate) fn reparse_with_external(
+    input: &str,
+    external: &str,
+    options: &super::options::AnalysisOptions,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<OverlandMesh> {
+    let inline_2d = two_d_lines_only(input);
+    let s1 = super::survey::survey(&inline_2d);
+    let s2 = super::survey::survey(external);
+    let mut sections: Vec<(Section, Vec<TokenLine<'_>>)> = Vec::new();
+    for (sec, lines) in s1.sections.iter().chain(s2.sections.iter()) {
+        if is_two_d(*sec) && *sec != Section::TwoDMeshFile {
+            sections.push((*sec, lines.clone()));
+        }
+    }
+    let units_si = units_header_si(input) || units_header_si(external);
+    let cv = super::objects::UnitConverter::new(options.flow_units, options.link_offsets);
+    let mut mesh = parse_overland(&sections, units_si, cv.len, cv.flow, diags)?;
+    // The declaration survives for writers and refusals even though the
+    // combined parse no longer sees the section.
+    mesh.mesh_file = two_d_mesh_file_name(input);
+    Some(mesh)
+}
+
+fn is_two_d(sec: Section) -> bool {
+    matches!(
+        sec,
+        Section::TwoDOptions
+            | Section::TwoDVertices
+            | Section::TwoDTriangles
+            | Section::TwoDInitialVelocity
+            | Section::TwoDVertexNodeMap
+            | Section::TwoDTriangleNodeMap
+            | Section::TwoDBoundaryConditions
+            | Section::TwoDEdgeConveyance
+            | Section::TwoDMeshFile
+    )
+}
+
+/// The model text with every line outside a 2D section blanked, so a
+/// re-survey sees only the mesh and every diagnostic keeps its line.
+fn two_d_lines_only(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut keep = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            keep = t.to_ascii_uppercase().starts_with("[2D_");
+        }
+        if keep {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn two_d_mesh_file_name(text: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t.to_ascii_uppercase().starts_with("[2D_MESH_FILE");
+            continue;
+        }
+        if in_section {
+            let mut tokens = t.split_whitespace();
+            if tokens
+                .next()
+                .is_some_and(|w| w.eq_ignore_ascii_case("FILE"))
+            {
+                if let Some(name) = tokens.next() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Parse every §14.15 section into the §15.2 mesh model. `None` when the
 /// model carries no overland input at all. `len` is the display-length
 /// factor (m per file length unit) and `flow` the display-flow factor
@@ -126,15 +213,16 @@ pub(crate) fn parse_overland(
     for (sec, lines) in sections {
         match sec {
             Section::TwoDInitialVelocity => {
-                parse_init_velocity(lines, mesh.cells.len(), &mut mesh.init_velocity, diags);
+                parse_init_velocity(lines, &mut mesh.init_velocity, diags);
             }
             Section::TwoDVertexNodeMap => {
-                parse_couplings(lines, Addr::Vertex, &mesh, vlen, diags)
-                    .into_iter()
-                    .for_each(|row| upsert_vertex_coupling(&mut mesh.vertex_couplings, row));
+                let cd = mesh.options.coupling_cd;
+                let rows = parse_couplings(lines, cd, vlen, diags);
+                mesh.vertex_couplings.extend(rows);
             }
             Section::TwoDTriangleNodeMap => {
-                let rows = parse_couplings(lines, Addr::Cell, &mesh, vlen, diags);
+                let cd = mesh.options.coupling_cd;
+                let rows = parse_couplings(lines, cd, vlen, diags);
                 mesh.cell_couplings.extend(rows);
             }
             Section::TwoDBoundaryConditions => {
@@ -147,14 +235,6 @@ pub(crate) fn parse_overland(
         }
     }
     Some(mesh)
-}
-
-/// §14.15: one coupling per vertex — a later row replaces the earlier.
-fn upsert_vertex_coupling(rows: &mut Vec<CouplingRow>, row: CouplingRow) {
-    match rows.iter_mut().find(|r| r.mesh_index == row.mesh_index) {
-        Some(existing) => *existing = row,
-        None => rows.push(row),
-    }
 }
 
 fn parse_vertices(
@@ -231,7 +311,6 @@ fn parse_cells(
 
 fn parse_init_velocity(
     lines: &[TokenLine<'_>],
-    n_cells: usize,
     out: &mut Vec<InitVelocityRow>,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -241,14 +320,12 @@ fn parse_init_velocity(
             diags.push(err(line.line, DiagnosticKind::MissingItems));
             continue;
         }
+        // Range is a whole-mesh question — an external file may still
+        // add cells — so it belongs to Topology::build, not here.
         let Ok(cell) = t[0].parse::<u32>() else {
             diags.push(bad(line.line, t[0]));
             continue;
         };
-        if cell as usize >= n_cells {
-            diags.push(bad(line.line, t[0]));
-            continue;
-        }
         let (Ok(u), Ok(v)) = (t[1].finite_f64(), t[2].finite_f64()) else {
             diags.push(bad(line.line, t[1]));
             continue;
@@ -257,36 +334,9 @@ fn parse_init_velocity(
     }
 }
 
-/// Which list a coupling row addresses.
-enum Addr {
-    Vertex,
-    Cell,
-}
-
-/// §14.15's addressing rule: the first token is an index where numeric
-/// and in range, else a tag — so purely numeric tags still resolve.
-fn resolve_addr(token: &str, addr: &Addr, mesh: &OverlandMesh) -> Option<u32> {
-    let count = match addr {
-        Addr::Vertex => mesh.verts.len(),
-        Addr::Cell => mesh.cells.len(),
-    };
-    if let Ok(i) = token.parse::<u32>() {
-        if (i as usize) < count {
-            return Some(i);
-        }
-    }
-    let by_tag = |tag: &Option<String>| tag.as_deref() == Some(token);
-    match addr {
-        Addr::Vertex => mesh.verts.iter().position(|v| by_tag(&v.tag)),
-        Addr::Cell => mesh.cells.iter().position(|c| by_tag(&c.tag)),
-    }
-    .map(|i| i as u32)
-}
-
 fn parse_couplings(
     lines: &[TokenLine<'_>],
-    addr: Addr,
-    mesh: &OverlandMesh,
+    default_cd: f64,
     vlen: f64,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<CouplingRow> {
@@ -297,12 +347,8 @@ fn parse_couplings(
             diags.push(err(line.line, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(mesh_index) = resolve_addr(t[0], &addr, mesh) else {
-            diags.push(bad(line.line, t[0]));
-            continue;
-        };
         let cd = match t.get(2) {
-            None => mesh.options.coupling_cd,
+            None => default_cd,
             Some(tok) => match tok.finite_f64() {
                 Ok(v) => v,
                 Err(()) => {
@@ -322,7 +368,7 @@ fn parse_couplings(
             },
         };
         rows.push(CouplingRow {
-            mesh_index,
+            address: t[0].to_string(),
             node: t[1].to_string(),
             cd,
             area,
@@ -647,10 +693,11 @@ mod tests {
         assert!(mesh.units_si);
     }
 
-    /// §14.15 addressing: numeric index first, tag fallback — including
-    /// a purely numeric tag shadowed by no in-range index.
+    /// §14.15 addressing is derivation: rows carry their authored
+    /// address, and resolution — numeric index first, tag fallback —
+    /// happens against the full mesh.
     #[test]
-    fn couplings_resolve_by_index_then_tag() {
+    fn couplings_carry_addresses_and_resolve_at_build() {
         let extra = format!(
             "{MESH}[2D_VERTEX_NODE_MAP]\nVA J1\n\
              [2D_TRIANGLE_NODE_MAP]\nTB J1 0.7\n1 O1\n"
@@ -659,26 +706,25 @@ mod tests {
         assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
         let mesh = net.overland.expect("mesh");
         assert_eq!(mesh.vertex_couplings.len(), 1);
-        assert_eq!(mesh.vertex_couplings[0].mesh_index, 1, "tag VA is vertex 1");
+        assert_eq!(mesh.vertex_couplings[0].address, "VA");
+        assert_eq!(mesh.resolve_vertex("VA"), Some(1), "tag VA is vertex 1");
         assert_eq!(mesh.vertex_couplings[0].cd, 0.65, "default coefficient");
         assert!(!mesh.vertex_couplings[0].area_authored);
-        // Triangle rows accumulate; tag TB is cell 1, and the numeric row
-        // addresses the same cell — both rows stand.
+        // Triangle rows accumulate; tag TB and the numeric row address
+        // the same cell — both rows stand.
         assert_eq!(mesh.cell_couplings.len(), 2);
-        assert_eq!(mesh.cell_couplings[0].mesh_index, 1);
+        assert_eq!(mesh.resolve_cell("TB"), Some(1));
         assert_eq!(mesh.cell_couplings[0].cd, 0.7);
-        assert_eq!(mesh.cell_couplings[1].mesh_index, 1);
-    }
-
-    /// One coupling per vertex: a later row replaces the earlier.
-    #[test]
-    fn a_later_vertex_coupling_replaces_the_earlier() {
-        let extra = format!("{MESH}[2D_VERTEX_NODE_MAP]\n0 J1 0.5\n0 O1 0.9\n");
-        let (net, _) = parse_network(&model(&extra));
-        let mesh = net.overland.expect("mesh");
-        assert_eq!(mesh.vertex_couplings.len(), 1);
-        assert_eq!(mesh.vertex_couplings[0].node, "O1");
-        assert_eq!(mesh.vertex_couplings[0].cd, 0.9);
+        assert_eq!(mesh.resolve_cell(&mesh.cell_couplings[1].address), Some(1));
+        // The full mesh validates: every address is known.
+        assert!(crate::overland::Topology::build(&mesh).is_ok());
+        // An address matching nothing is a named build defect.
+        let mut broken = mesh.clone();
+        broken.vertex_couplings[0].address = "NOWHERE".into();
+        let errors = crate::overland::Topology::build(&broken).expect_err("bad address");
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, crate::overland::MeshError::UnknownAddress { .. })));
     }
 
     #[test]
@@ -768,6 +814,60 @@ mod tests {
         let (net, _) = parse_network(&model(extra));
         let mesh = net.overland.expect("mesh");
         assert_eq!(mesh.mesh_file.as_deref(), Some("terrain.2dm"));
+    }
+
+    /// §14.15 export: a written mesh re-imports as the same mesh — the
+    /// SI header makes the round trip unit-exact, and the always-written
+    /// depth keeps a tagged cell's fifth column unambiguous.
+    #[test]
+    fn a_written_mesh_reimports_identically() {
+        let extra = format!(
+            "{MESH}[2D_OPTIONS]
+CFL_NUMBER 0.5
+CELL_CLOSURE VFR
+COUPLING_CD 0.8
+             [2D_INITIAL_VELOCITY]
+0 0.1 -0.2
+             [2D_VERTEX_NODE_MAP]
+0 J1
+             [2D_TRIANGLE_NODE_MAP]
+TB O1 0.7 2.5
+             [2D_BOUNDARY_CONDITIONS]
+0 0 WALL
+1 1 TS_STAGE TIDE * G1
+             [2D_EDGE_CONVEYANCE]
+0 2 0.3
+"
+        );
+        let (net, _) = parse_network(&model(&extra));
+        let text = crate::io::inp_writer::write_inp(&net).expect("writable");
+        let (net2, diags) = parse_network(&text);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let (a, b) = (net.overland.expect("mesh"), net2.overland.expect("mesh"));
+        // The reimport asserts SI, whatever the original said.
+        assert!(b.units_si);
+        assert_eq!(a.verts, b.verts);
+        assert_eq!(a.cells, b.cells);
+        assert_eq!(a.init_velocity, b.init_velocity);
+        assert_eq!(a.vertex_couplings, b.vertex_couplings);
+        assert_eq!(a.cell_couplings, b.cell_couplings);
+        assert_eq!(a.boundaries, b.boundaries);
+        assert_eq!(a.conveyance, b.conveyance);
+        assert_eq!(a.options, b.options);
+    }
+
+    /// §15.7: `[SYMBOLS]` feeds gauge positions exactly when a mesh is
+    /// present, in the mesh's own unit handling.
+    #[test]
+    fn symbols_position_gauges_only_when_a_mesh_is_present() {
+        let gage = "[RAINGAGES]\nG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                    [TIMESERIES]\nTS1 0:00 0\n[SYMBOLS]\nG1 300 400\n";
+        let with_mesh = format!("{MESH}{gage}");
+        let (net, _) = parse_network(&model(&with_mesh));
+        assert_eq!(net.gages[0].position, Some((300.0, 400.0)));
+
+        let (net, _) = parse_network(&model(gage));
+        assert_eq!(net.gages[0].position, None, "no mesh, no exception");
     }
 
     #[test]

@@ -40,6 +40,34 @@ pub struct OverlandMesh {
     pub mesh_file: Option<String>,
 }
 
+impl OverlandMesh {
+    /// Resolve a §14.15 address against the vertices: an index where
+    /// numeric and in range, else a tag.
+    pub fn resolve_vertex(&self, address: &str) -> Option<u32> {
+        resolve(address, self.verts.len(), |i| self.verts[i].tag.as_deref())
+    }
+
+    /// Resolve a §14.15 address against the cells, the same rule.
+    pub fn resolve_cell(&self, address: &str) -> Option<u32> {
+        resolve(address, self.cells.len(), |i| self.cells[i].tag.as_deref())
+    }
+}
+
+fn resolve<'a>(
+    address: &str,
+    count: usize,
+    tag_of: impl Fn(usize) -> Option<&'a str>,
+) -> Option<u32> {
+    if let Ok(i) = address.parse::<u32>() {
+        if (i as usize) < count {
+            return Some(i);
+        }
+    }
+    (0..count)
+        .position(|i| tag_of(i) == Some(address))
+        .map(|i| i as u32)
+}
+
 /// One §14.15 initial-velocity row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InitVelocityRow {
@@ -76,8 +104,11 @@ pub struct MeshCell {
 /// vertex, with its discharge coefficient and exchange area.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CouplingRow {
-    /// Mesh vertex or cell index (per the owning list).
-    pub mesh_index: u32,
+    /// The mesh vertex or cell as authored: an index where numeric and
+    /// in range, else a tag (§14.15). Resolution is derivation — an
+    /// external mesh file may author the vertices a row in the model
+    /// addresses — so it happens at [`Topology::build`], never at parse.
+    pub address: String,
     /// The coupled network vertex, as the model names it; resolved at
     /// build against §2.6 identifiers.
     pub node: String,
@@ -261,6 +292,10 @@ pub enum MeshError {
     /// A boundary row addresses a cell or edge that does not exist, or
     /// an interior edge.
     BadBoundary { cell: u32, edge: u8 },
+    /// A coupling row's address matches no index and no tag.
+    UnknownAddress { address: String },
+    /// An initial-velocity row names a cell that does not exist.
+    BadInitVelocity { cell: u32 },
 }
 
 impl std::fmt::Display for MeshError {
@@ -312,6 +347,16 @@ impl std::fmt::Display for MeshError {
                 "boundary condition at triangle {cell} edge {edge}: no such \
                  boundary edge"
             ),
+            MeshError::UnknownAddress { address } => write!(
+                f,
+                "coupling address {address:?} matches no index and no tag"
+            ),
+            MeshError::BadInitVelocity { cell } => {
+                write!(
+                    f,
+                    "initial velocity names triangle {cell}, which does not exist"
+                )
+            }
         }
     }
 }
@@ -488,6 +533,29 @@ impl Topology {
                     from: row.from,
                     to: row.to,
                 }),
+            }
+        }
+
+        // Coupling addresses resolve against the full mesh; §14.15's
+        // last-wins rule for vertex rows applies at resolution, so two
+        // spellings of one vertex are one coupling.
+        for row in &mesh.vertex_couplings {
+            if mesh.resolve_vertex(&row.address).is_none() {
+                errors.push(MeshError::UnknownAddress {
+                    address: row.address.clone(),
+                });
+            }
+        }
+        for row in &mesh.cell_couplings {
+            if mesh.resolve_cell(&row.address).is_none() {
+                errors.push(MeshError::UnknownAddress {
+                    address: row.address.clone(),
+                });
+            }
+        }
+        for row in &mesh.init_velocity {
+            if row.cell as usize >= nc {
+                errors.push(MeshError::BadInitVelocity { cell: row.cell });
             }
         }
 

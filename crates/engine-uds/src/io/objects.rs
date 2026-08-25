@@ -372,6 +372,36 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         &mut diagnostics,
     );
 
+    // §15.7: with a mesh present, `[SYMBOLS]` supplies the rain-gauge
+    // positions the rainfall interpolation reads — the one recorded
+    // exception to display metadata's semantics-free rule (§14.5). The
+    // coordinates share the mesh's unit handling: display units unless
+    // the SI header asserted otherwise.
+    if net.overland.is_some() {
+        let vlen = if overland_units_si { 1.0 } else { cv.len };
+        for (sec, lines) in &s.sections {
+            if *sec != Section::Symbols {
+                continue;
+            }
+            for line in lines {
+                let t = &line.tokens;
+                if t.len() < 3 {
+                    continue;
+                }
+                let (Ok(x), Ok(y)) = (t[1].finite_f64(), t[2].finite_f64()) else {
+                    continue;
+                };
+                if let Some(g) = net
+                    .gages
+                    .iter_mut()
+                    .find(|g| g.id.eq_ignore_ascii_case(t[0]))
+                {
+                    g.position = Some((x * vlen, y * vlen));
+                }
+            }
+        }
+    }
+
     (net, diagnostics)
 }
 
@@ -397,7 +427,7 @@ pub(crate) struct UnitConverter {
 }
 
 impl UnitConverter {
-    fn new(units: FlowUnits, offsets: LinkOffsets) -> Self {
+    pub(crate) fn new(units: FlowUnits, offsets: LinkOffsets) -> Self {
         let us = units.is_us();
         UnitConverter {
             len: units.m_per_length_unit(),

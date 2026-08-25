@@ -115,6 +115,7 @@ pub(crate) fn parse_gages(
             continue;
         };
         gages.push(Gage {
+            position: None,
             id: t[0].to_string(),
             form,
             interval,

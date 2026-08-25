@@ -6548,6 +6548,60 @@ fn the_highest_continuity_errors_list_skips_terminal_and_quiet_vertices() {
     assert!(listed.len() <= 5, "more than five listed: {listed:?}");
 }
 
+/// §14.15: an external mesh file's sections continue the model's own —
+/// indices, units header and all — and a declared-but-unsupplied file
+/// is a named refusal, or a named warning under IGNORE_2D.
+#[test]
+fn an_external_mesh_file_continues_the_inline_sections() {
+    let model = "[OPTIONS]
+FLOW_UNITS CMS
+END_TIME 00:10:00
+        [JUNCTIONS]
+J1 10 4 0 0 0
+[OUTFALLS]
+O1 9 FREE NO
+        [CONDUITS]
+C1 J1 O1 100 0.013 0 0 0 0
+        [XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+        [2D_MESH_FILE]
+FILE terrain.2dm
+        [2D_VERTEX_NODE_MAP]
+VA J1
+";
+    let external = ";; UNITS: SI (m)
+[2D_VERTICES]
+0 0 10
+1 0 10 VA
+0 1 10
+        [2D_TRIANGLES]
+0 1 2 0.02
+";
+
+    // Supplied: the coupling row in the model resolves against a vertex
+    // the external file authors, and the refusal is the not-served one.
+    let Err(err) = Simulation::open_with_overland_mesh(model, external) else {
+        panic!("mesh models refuse until served");
+    };
+    assert!(err.to_string().contains("IGNORE_2D"), "{err}");
+
+    // Not supplied: the refusal names the file instead.
+    let Err(err) = Simulation::open(model) else {
+        panic!("missing mesh file refuses");
+    };
+    assert!(err.to_string().contains("terrain.2dm"), "{err}");
+
+    // Ignored and not supplied: the 1D half runs, warned.
+    let ignored = model.replace(
+        "FLOW_UNITS CMS",
+        "FLOW_UNITS CMS
+IGNORE_2D YES",
+    );
+    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    assert!(diags.iter().any(|d| d.to_string().contains("terrain.2dm")));
+    sim.run();
+}
+
 /// §1.8: a mesh model refuses with the campaign named; `IGNORE_2D YES`
 /// runs its one-dimensional half; and an ignored mesh is still
 /// validated, so an authoring defect is heard now rather than on the

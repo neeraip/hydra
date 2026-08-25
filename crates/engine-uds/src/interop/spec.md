@@ -1493,3 +1493,12 @@ an amendment to this table.
 the §15.7 double count. A coupling area more than ten times the node's
 largest connected conduit warns. A node whose rim sits outside the mesh's
 elevation envelope by more than a sanity margin warns of a datum mismatch.
+
+**Export.** A model carrying a mesh writes every 2D section it holds,
+always in SI under a `;; UNITS: SI (m)` header — the one representation
+that round-trips losslessly whatever units the model was authored in,
+and one the predecessor reads. Cells always write their initial depth
+when they carry a tag, so the fifth column stays unambiguous
+(§14.13's columns rule). An external mesh file is not re-created:
+export inlines the mesh it holds, and the `[2D_MESH_FILE]` declaration
+is not written.

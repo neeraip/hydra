@@ -187,12 +187,40 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
     // beside the one the open is about to build. Two parsed networks of a
     // large model is tens of megabytes for no reason.
     let iface = net.interface_files.clone();
+    // §14.15: a declared external mesh file is the caller's to read,
+    // like every auxiliary.
+    let mesh_file = net.overland.as_ref().and_then(|m| m.mesh_file.clone());
     drop(net);
+    let mesh_text = match &mesh_file {
+        Some(name) => {
+            let path = match resolve_aux_path(&args.model, name) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    emit_error(
+                        "io/mesh",
+                        &format!("mesh file {}: {e}", path.display()),
+                        None,
+                        None,
+                    );
+                    return EXIT_IO;
+                }
+            }
+        }
+        None => None,
+    };
 
     // ── Open: parse, validate, build ──────────────────────────────────────────
-    let opened = match &rain_iface {
-        Some(bytes) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
-        None => Simulation::open_with_rain_records(&text, climate_records, rain_files),
+    // A model with an external mesh cannot run yet (§1.8), so the mesh
+    // path needs no combination with the climate and rain paths: it
+    // exists so the refusal and IGNORE_2D behaviours see the real mesh.
+    let opened = match (&mesh_text, &rain_iface) {
+        (Some(mesh), _) => Simulation::open_with_overland_mesh(&text, mesh),
+        (None, Some(bytes)) => Simulation::open_with_rain_interface(&text, climate_records, bytes),
+        (None, None) => Simulation::open_with_rain_records(&text, climate_records, rain_files),
     };
     let (mut sim, diags, findings) = match opened {
         Ok(session) => session,
@@ -583,7 +611,13 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
 /// would change line numbers in a diagnostic the survey never emits but a
 /// reader might still compare against.
 fn survey_sections(text: &str) -> String {
-    const WANTED: [&str; 4] = ["[OPTIONS]", "[TEMPERATURE]", "[FILES]", "[RAINGAGES]"];
+    const WANTED: [&str; 5] = [
+        "[OPTIONS]",
+        "[TEMPERATURE]",
+        "[FILES]",
+        "[RAINGAGES]",
+        "[2D_MESH_FILE",
+    ];
     let mut out = String::new();
     let mut keep = true;
     for line in text.lines() {

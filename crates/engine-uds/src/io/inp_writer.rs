@@ -315,6 +315,7 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_tables(network, &u, &mut out);
     write_timeseries(network, &mut out);
     write_admin(network, &mut out);
+    write_overland(network, &mut out);
     write_display(network, &mut out);
     out.trim_start_matches('\n')
         .to_string()
@@ -2527,6 +2528,198 @@ fn write_tables(network: &Network, u: &Units, out: &mut String) {
 /// The nine display-metadata sections, written from what import
 /// preserved (§14.5): verbatim, in their original order, neither
 /// validated nor normalised.
+/// §14.15 export: every 2D section the model holds, always in SI under
+/// the `;; UNITS: SI (m)` header — the one representation that
+/// round-trips losslessly whatever units the model was authored in. An
+/// external mesh file is inlined, never re-created.
+fn write_overland(network: &Network, out: &mut String) {
+    use crate::overland::{
+        BoundaryCondition, CellClosure, FaceReconstruction, OverlandOptions, RainfallMode,
+        SeriesOrValue,
+    };
+    let Some(mesh) = &network.overland else {
+        return;
+    };
+    let defaults = OverlandOptions::default();
+    let o = &mesh.options;
+    let _ = writeln!(out, "\n[2D_OPTIONS]\n;; UNITS: SI (m)");
+    let mut opt = |key: &str, val: String| {
+        let _ = writeln!(out, "{key:<20} {val}");
+    };
+    if o.cfl_number != defaults.cfl_number {
+        opt("CFL_NUMBER", format!("{}", o.cfl_number));
+    }
+    if o.max_timestep != defaults.max_timestep {
+        opt("MAX_TIMESTEP", format!("{}", o.max_timestep));
+    }
+    if o.theta != defaults.theta {
+        opt("THETA", format!("{}", o.theta));
+    }
+    if o.froude_max != defaults.froude_max {
+        opt("FROUDE_MAX", format!("{}", o.froude_max));
+    }
+    if o.lts_tiers != defaults.lts_tiers {
+        opt("LTS_TIERS", format!("{}", o.lts_tiers));
+    }
+    if o.h_move != defaults.h_move {
+        opt("H_MOVE", format!("{}", o.h_move));
+    }
+    if o.dry_depth != defaults.dry_depth {
+        opt("DRY_DEPTH", format!("{}", o.dry_depth));
+    }
+    if o.cell_closure != defaults.cell_closure {
+        opt(
+            "CELL_CLOSURE",
+            match o.cell_closure {
+                CellClosure::Flat => "FLAT".into(),
+                CellClosure::Vfr => "VFR".into(),
+            },
+        );
+    }
+    if o.face_reconstruction != defaults.face_reconstruction {
+        opt(
+            "FACE_RECONSTRUCTION",
+            match o.face_reconstruction {
+                FaceReconstruction::Mean => "MEAN".into(),
+                FaceReconstruction::VfrFace => "VFR_FACE".into(),
+            },
+        );
+    }
+    if o.vfr_min_wet_frac != defaults.vfr_min_wet_frac {
+        opt("VFR_MIN_WET_FRAC", format!("{}", o.vfr_min_wet_frac));
+    }
+    if o.advection != defaults.advection {
+        opt(
+            "ADVECTION",
+            if o.advection {
+                "YES".into()
+            } else {
+                "NO".into()
+            },
+        );
+    }
+    if o.rainfall_mode != defaults.rainfall_mode {
+        opt(
+            "RAINFALL_MODE",
+            match o.rainfall_mode {
+                RainfallMode::NaturalNeighbour => "NATURAL_NEIGHBOUR".into(),
+                RainfallMode::System => "SYSTEM".into(),
+                RainfallMode::None => "NONE".into(),
+            },
+        );
+    }
+    if o.coupling_area_auto != defaults.coupling_area_auto {
+        opt("COUPLING_AREA", "AUTO".into());
+    }
+    if o.coupling_cd != defaults.coupling_cd {
+        opt("COUPLING_CD", format!("{}", o.coupling_cd));
+    }
+    if o.coupling_sync != defaults.coupling_sync {
+        opt("COUPLING_SYNC", format!("{}", o.coupling_sync));
+    }
+    if o.report_2d != defaults.report_2d {
+        opt(
+            "REPORT_2D",
+            if o.report_2d {
+                "YES".into()
+            } else {
+                "NO".into()
+            },
+        );
+    }
+    if let Some(file) = &o.output_file {
+        opt("OUTPUT_FILE", file.clone());
+    }
+
+    let _ = writeln!(out, "\n[2D_VERTICES]");
+    for v in &mesh.verts {
+        match &v.tag {
+            Some(tag) => {
+                let _ = writeln!(out, "{} {} {} {tag}", v.x, v.y, v.z);
+            }
+            None => {
+                let _ = writeln!(out, "{} {} {}", v.x, v.y, v.z);
+            }
+        }
+    }
+
+    let _ = writeln!(out, "\n[2D_TRIANGLES]");
+    for c in &mesh.cells {
+        // §14.15: the depth always writes when a tag follows it, so the
+        // fifth column stays unambiguous.
+        match (&c.tag, c.h0 != 0.0) {
+            (Some(tag), _) => {
+                let _ = writeln!(
+                    out,
+                    "{} {} {} {} {} {tag}",
+                    c.v[0], c.v[1], c.v[2], c.n, c.h0
+                );
+            }
+            (None, true) => {
+                let _ = writeln!(out, "{} {} {} {} {}", c.v[0], c.v[1], c.v[2], c.n, c.h0);
+            }
+            (None, false) => {
+                let _ = writeln!(out, "{} {} {} {}", c.v[0], c.v[1], c.v[2], c.n);
+            }
+        }
+    }
+
+    if !mesh.init_velocity.is_empty() {
+        let _ = writeln!(out, "\n[2D_INITIAL_VELOCITY]");
+        for r in &mesh.init_velocity {
+            let _ = writeln!(out, "{} {} {}", r.cell, r.u, r.v);
+        }
+    }
+    // An unauthored exchange area stays unwritten: baking the default in
+    // would pin a row that COUPLING_AREA AUTO is entitled to derive
+    // (§15.6), and the grammar carries a coefficient without an area.
+    let coupling_line = |out: &mut String, r: &crate::overland::CouplingRow| {
+        if r.area_authored {
+            let _ = writeln!(out, "{} {} {} {}", r.address, r.node, r.cd, r.area);
+        } else {
+            let _ = writeln!(out, "{} {} {}", r.address, r.node, r.cd);
+        }
+    };
+    if !mesh.vertex_couplings.is_empty() {
+        let _ = writeln!(out, "\n[2D_VERTEX_NODE_MAP]");
+        for r in &mesh.vertex_couplings {
+            coupling_line(out, r);
+        }
+    }
+    if !mesh.cell_couplings.is_empty() {
+        let _ = writeln!(out, "\n[2D_TRIANGLE_NODE_MAP]");
+        for r in &mesh.cell_couplings {
+            coupling_line(out, r);
+        }
+    }
+    if !mesh.boundaries.is_empty() {
+        let _ = writeln!(out, "\n[2D_BOUNDARY_CONDITIONS]");
+        for b in &mesh.boundaries {
+            let (ty, p1) = match &b.condition {
+                BoundaryCondition::Wall => ("WALL", "*".to_string()),
+                BoundaryCondition::NormalFlow { slope } => ("NORMAL_FLOW", format!("{slope}")),
+                BoundaryCondition::Stage(SeriesOrValue::Value(v)) => {
+                    ("SPECIFIED_STAGE", format!("{v}"))
+                }
+                BoundaryCondition::Stage(SeriesOrValue::Series(name)) => ("TS_STAGE", name.clone()),
+                BoundaryCondition::Flow(SeriesOrValue::Value(v)) => {
+                    ("SPECIFIED_FLOW", format!("{v}"))
+                }
+                BoundaryCondition::Flow(SeriesOrValue::Series(name)) => ("TS_FLOW", name.clone()),
+                BoundaryCondition::RatingCurve { curve } => ("RATING_CURVE", curve.clone()),
+            };
+            let group = b.group.as_deref().unwrap_or("*");
+            let _ = writeln!(out, "{} {} {ty} {p1} * {group}", b.cell, b.edge);
+        }
+    }
+    if !mesh.conveyance.is_empty() {
+        let _ = writeln!(out, "\n[2D_EDGE_CONVEYANCE]");
+        for r in &mesh.conveyance {
+            let _ = writeln!(out, "{} {} {}", r.from, r.to, r.factor);
+        }
+    }
+}
+
 fn write_display(network: &Network, out: &mut String) {
     for section in &network.display {
         if section.lines.is_empty() {

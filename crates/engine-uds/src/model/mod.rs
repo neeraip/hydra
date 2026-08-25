@@ -622,6 +622,10 @@ pub struct Gage {
     pub catch_factor: f64,
     /// Where the record comes from.
     pub source: GageSource,
+    /// Map position (m, SI), from `[SYMBOLS]` — populated only when the
+    /// model carries an overland mesh, the one recorded exception to
+    /// display metadata's semantics-free rule (§14.5, §15.7).
+    pub position: Option<(f64, f64)>,
 }
 
 /// Precipitation record forms.

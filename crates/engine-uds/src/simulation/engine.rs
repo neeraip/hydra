@@ -497,7 +497,7 @@ impl Simulation {
             .into_iter()
             .map(|(name, readings)| (name, crate::io::rain::RainRecords::Station(readings)))
             .collect();
-        Simulation::open_inner(input, climate_records, records, None)
+        Simulation::open_inner(input, climate_records, records, None, None)
     }
 
     /// Load a model together with rain files in whichever layout each was
@@ -509,7 +509,7 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, crate::io::rain::RainRecords)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_inner(input, climate_records, rain_files, None)
+        Simulation::open_inner(input, climate_records, rain_files, None, None)
     }
 
     /// Load a model whose file-sourced gages read a rainfall interface
@@ -526,7 +526,19 @@ impl Simulation {
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let iface = crate::io::iface::parse_rain_iface(rain_interface)
             .map_err(|e| OpenError::Transport(format!("rainfall interface file: {e}")))?;
-        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface))
+        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface), None)
+    }
+
+    /// Load a model together with the external mesh file its
+    /// `[2D_MESH_FILE]` declares (§14.15) — the caller owns reading it,
+    /// like every auxiliary. The external file's sections continue the
+    /// model's own: its vertices and cells extend the inline numbering,
+    /// and either file's SI header governs the whole mesh.
+    pub fn open_with_overland_mesh(
+        input: &str,
+        mesh_text: &str,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        Simulation::open_inner(input, Vec::new(), Vec::new(), None, Some(mesh_text))
     }
 
     fn open_inner(
@@ -534,11 +546,47 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, crate::io::rain::RainRecords)>,
         rain_interface: Option<crate::io::iface::RainInterface>,
+        overland_mesh: Option<&str>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        let (mut net, diags) = parse_network(input);
+        let (mut net, mut diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
         }
+        // §14.15: a declared external mesh file carries the mesh's own
+        // sections; supplied, they continue the inline ones — indices,
+        // units header and all — through one combined parse. Declared
+        // and not supplied, the mesh cannot be read: under IGNORE_2D
+        // the run warns and proceeds without it, and otherwise the
+        // refusals below name what is missing.
+        let mesh_file = net.overland.as_ref().and_then(|m| m.mesh_file.clone());
+        match (&mesh_file, overland_mesh) {
+            (Some(_), Some(external)) => {
+                net.overland = crate::io::overland::reparse_with_external(
+                    input,
+                    external,
+                    &net.options,
+                    &mut diags,
+                );
+            }
+            (Some(name), None) if net.options.ignore_overland => {
+                // The 1D half runs, but the author should hear that the
+                // unreadable mesh was dropped, file named.
+                diags.push(Diagnostic {
+                    line: 0,
+                    kind: crate::io::survey::DiagnosticKind::UnknownOverlandOption {
+                        key: format!("mesh file {name:?} not supplied; mesh ignored"),
+                    },
+                });
+                net.overland = None;
+            }
+            (Some(name), None) => {
+                return Err(OpenError::Overland(format!(
+                    "this model reads its mesh from {name:?}, which was not                      supplied (§14.15)"
+                )));
+            }
+            (None, _) => {}
+        }
+
         // §1.8: the overland sections are specified (§15) and not yet
         // served. A mesh model refuses with the campaign named rather
         // than silently running its one-dimensional half; `IGNORE_2D
