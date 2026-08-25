@@ -781,9 +781,9 @@ gates the four continuity balances (and the overland one with them),
 (and the overland time-step summary with them), and `CONTROLS` the
 control-actions log. The overland flow continuity balance prints the
 §15.8 ledger as volume rows — initial storage, rainfall, evaporation,
-junction drainage, junction spill, outfall injection, outfall
-withdrawal, boundary inflow, boundary outflow, final storage — and its
-closure as the continuity error, in the report's volume units. The
+infiltration, junction drainage, junction spill, outfall injection,
+outfall withdrawal, boundary inflow, boundary outflow, final storage —
+and its closure as the continuity error, in the report's volume units. The
 flow routing continuity balance of a coupled run additionally carries
 the §15.8 named pair, surface drainage among its inflows and surface
 spill among its outflows, and its error term accounts for both. The
@@ -1447,6 +1447,15 @@ implicitly indexed from zero in file order.
   per metre) and `TS_FLOW` (series name), `RATING_CURVE` (curve of stage
   above the edge bed against per-metre discharge). `PARAM_2` is reserved
   and written `*`. Unaddressed boundary edges are walls.
+- `[2D_INFILTRATION]` — `INDEX_OR_TAG IL CL`: the §15.7 losses for a
+  cell — initial loss as a depth, continuing loss as a rate, both
+  non-negative, in the model's rain conventions (millimetres and
+  millimetres per hour under SI units, inches and inches per hour under
+  US) — and always millimetres under the `;; UNITS: SI (m)` header,
+  which governs this section as it governs the geometry, so an SI
+  export re-imports into a US model unchanged. The first token is a
+  cell index where numeric and in range, else a tag; a later row for
+  the same cell replaces the earlier. Unlisted cells lose nothing.
 - `[2D_EDGE_CONVEYANCE]` — `FROM_VERTEX TO_VERTEX FACTOR`: the §15.2
   conveyance ψ ∈ [0, 1] of the undirected interior edge between two
   vertices.
@@ -1458,7 +1467,8 @@ implicitly indexed from zero in file order.
   format of that name.
 
 **Units.** Mesh coordinates, elevations, depths and areas are authored in
-the model's display units and convert at import, unless the mesh carries
+the model's display units and convert at import — infiltration losses in
+the rain conventions above, as every rate in the host format is — unless the mesh carries
 the header comment `;; UNITS: SI (m)` (either in the model or the
 external file), which declares it SI already. The header can only assert
 SI: a US declaration is ignored, as the predecessor's is. Boundary stages
@@ -1555,11 +1565,11 @@ cell index.
   zero where the cell holds less than the drying depth;
 - per coupling point, in point order: the exchange rate over the
   reporting period (m³/s, positive draining into the network);
-- the §15.8 ledger, cumulative since the start of the run, as ten
+- the §15.8 ledger, cumulative since the start of the run, as eleven
   eight-byte floats: surface storage now, rainfall in, evaporation
-  out, junction drainage out, junction spill in, outfall injection
-  in, outfall withdrawal out, boundary in, boundary out, and the
-  continuity error as a signed volume.
+  out, infiltration out, junction drainage out, junction spill in,
+  outfall injection in, outfall withdrawal out, boundary in, boundary
+  out, and the continuity error as a signed volume.
 
 **Epilog.** The record count as a four-byte signed integer, then the
 closing magic. A file without its epilog is a run that did not finish,

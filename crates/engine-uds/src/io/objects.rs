@@ -369,6 +369,8 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         overland_units_si,
         cv.len,
         cv.flow,
+        cv.suction,
+        cv.conductivity,
         &mut diagnostics,
     );
 

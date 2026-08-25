@@ -104,6 +104,7 @@ pub enum Section {
     TwoDOptions,
     TwoDVertices,
     TwoDTriangles,
+    TwoDInfiltration,
     TwoDInitialVelocity,
     TwoDVertexNodeMap,
     TwoDTriangleNodeMap,
@@ -219,6 +220,11 @@ pub const SECTIONS: &[(&str, &str, Section)] = &[
         Section::TwoDVertexNodeMap,
     ),
     ("[2D_VERTICES", "[2D_VERTICES]", Section::TwoDVertices),
+    (
+        "[2D_INFILTRATION",
+        "[2D_INFILTRATION]",
+        Section::TwoDInfiltration,
+    ),
     (
         "[2D_TRIANGLE_NODE_MAP",
         "[2D_TRIANGLE_NODE_MAP]",
@@ -373,6 +379,6 @@ mod tests {
             .position(|(p, _, _)| *p == "[2D_TRIANGLES")
             .unwrap();
         assert!(tm < t, "[2D_TRIANGLE_NODE_MAP must precede [2D_TRIANGLES");
-        assert_eq!(SECTIONS.len(), 66);
+        assert_eq!(SECTIONS.len(), 67);
     }
 }

@@ -2718,6 +2718,14 @@ fn write_overland(network: &Network, out: &mut String) {
             let _ = writeln!(out, "{} {} {}", r.from, r.to, r.factor);
         }
     }
+    if !mesh.infiltration.is_empty() {
+        // §14.15: SI export writes losses in millimetres and
+        // millimetres per hour, the SI rain conventions.
+        let _ = writeln!(out, "\n[2D_INFILTRATION]");
+        for r in &mesh.infiltration {
+            let _ = writeln!(out, "{} {} {}", r.address, r.il * 1000.0, r.cl * 3.6e6);
+        }
+    }
 }
 
 fn write_display(network: &Network, out: &mut String) {

@@ -21,6 +21,7 @@ pub struct LedgerRow {
     pub storage: f64,
     pub rain_in: f64,
     pub evap_out: f64,
+    pub infiltration_out: f64,
     pub junction_out: f64,
     pub junction_in: f64,
     pub outfall_in: f64,
@@ -37,6 +38,7 @@ impl LedgerRow {
             storage: m.storage(),
             rain_in: m.rain_in,
             evap_out: m.evap_out,
+            infiltration_out: m.infiltration_out,
             junction_out: m.coupling_out,
             junction_in: m.coupling_in,
             outfall_in: m.outfall_in,
@@ -47,11 +49,12 @@ impl LedgerRow {
         }
     }
 
-    pub(crate) fn to_array(self) -> [f64; 10] {
+    pub(crate) fn to_array(self) -> [f64; 11] {
         [
             self.storage,
             self.rain_in,
             self.evap_out,
+            self.infiltration_out,
             self.junction_out,
             self.junction_in,
             self.outfall_in,
@@ -62,25 +65,26 @@ impl LedgerRow {
         ]
     }
 
-    pub(crate) fn from_array(a: [f64; 10]) -> LedgerRow {
+    pub(crate) fn from_array(a: [f64; 11]) -> LedgerRow {
         LedgerRow {
             storage: a[0],
             rain_in: a[1],
             evap_out: a[2],
-            junction_out: a[3],
-            junction_in: a[4],
-            outfall_in: a[5],
-            outfall_out: a[6],
-            boundary_in: a[7],
-            boundary_out: a[8],
-            error: a[9],
+            infiltration_out: a[3],
+            junction_out: a[4],
+            junction_in: a[5],
+            outfall_in: a[6],
+            outfall_out: a[7],
+            boundary_in: a[8],
+            boundary_out: a[9],
+            error: a[10],
         }
     }
 }
 
 /// The size of one record (bytes) for `nc` cells and `np` points.
 pub(crate) fn record_len(nc: usize, np: usize) -> u64 {
-    8 + 4 * 4 * nc as u64 + 4 * np as u64 + 8 * 10
+    8 + 4 * 4 * nc as u64 + 4 * np as u64 + 8 * 11
 }
 
 /// The header's size (bytes) for `nv` vertices, `nc` cells, `np`

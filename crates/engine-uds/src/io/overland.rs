@@ -10,8 +10,8 @@ use super::lex::FiniteParse;
 use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
 use crate::overland::{
     BoundaryCondition, BoundaryRow, CellClosure, ConveyanceRow, CouplingRow, FaceReconstruction,
-    InitVelocityRow, MeshCell, MeshVertex, OverlandMesh, OverlandOptions, RainfallMode,
-    SeriesOrValue,
+    InfiltrationRow, InitVelocityRow, MeshCell, MeshVertex, OverlandMesh, OverlandOptions,
+    RainfallMode, SeriesOrValue,
 };
 
 fn err(line: usize, kind: DiagnosticKind) -> Diagnostic {
@@ -100,7 +100,15 @@ pub(crate) fn reparse_with_external(
     }
     let units_si = units_header_si(input) || units_header_si(external);
     let cv = super::objects::UnitConverter::new(options.flow_units, options.link_offsets);
-    let mut mesh = parse_overland(&sections, units_si, cv.len, cv.flow, diags)?;
+    let mut mesh = parse_overland(
+        &sections,
+        units_si,
+        cv.len,
+        cv.flow,
+        cv.suction,
+        cv.conductivity,
+        diags,
+    )?;
     // The declaration survives for writers and refusals even though the
     // combined parse no longer sees the section.
     mesh.mesh_file = two_d_mesh_file_name(input);
@@ -173,6 +181,8 @@ pub(crate) fn parse_overland(
     units_si: bool,
     len: f64,
     flow: f64,
+    suction: f64,
+    conductivity: f64,
     diags: &mut Vec<Diagnostic>,
 ) -> Option<OverlandMesh> {
     let present = sections.iter().any(|(sec, _)| {
@@ -181,6 +191,7 @@ pub(crate) fn parse_overland(
             Section::TwoDOptions
                 | Section::TwoDVertices
                 | Section::TwoDTriangles
+                | Section::TwoDInfiltration
                 | Section::TwoDInitialVelocity
                 | Section::TwoDVertexNodeMap
                 | Section::TwoDTriangleNodeMap
@@ -230,6 +241,16 @@ pub(crate) fn parse_overland(
             }
             Section::TwoDEdgeConveyance => {
                 parse_conveyance(lines, &mut mesh.conveyance, diags);
+            }
+            Section::TwoDInfiltration => {
+                // §14.15: the SI header governs this section like the
+                // geometry — millimetres and millimetres per hour.
+                let (suc, cond) = if units_si {
+                    (1e-3, 1e-3 / 3600.0)
+                } else {
+                    (suction, conductivity)
+                };
+                parse_infiltration(lines, suc, cond, &mut mesh.infiltration, diags);
             }
             _ => {}
         }
@@ -493,6 +514,39 @@ fn parse_conveyance(
     }
 }
 
+/// §14.15 `[2D_INFILTRATION]`: `INDEX_OR_TAG IL CL`, losses in the
+/// model's rain conventions (mm and mm/h under SI, inches and in/h
+/// under US), converted here to metres and metres per second. A later
+/// row for the same cell replaces the earlier at resolution (§15.7).
+fn parse_infiltration(
+    lines: &[TokenLine<'_>],
+    suction: f64,
+    conductivity: f64,
+    out: &mut Vec<InfiltrationRow>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for line in lines {
+        let t = &line.tokens;
+        if t.len() < 3 {
+            diags.push(err(line.line, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let Ok(il) = t[1].finite_f64() else {
+            diags.push(bad(line.line, t[1]));
+            continue;
+        };
+        let Ok(cl) = t[2].finite_f64() else {
+            diags.push(bad(line.line, t[2]));
+            continue;
+        };
+        out.push(InfiltrationRow {
+            address: t[0].to_string(),
+            il: il * suction,
+            cl: cl * conductivity,
+        });
+    }
+}
+
 fn parse_mesh_file(lines: &[TokenLine<'_>], out: &mut Option<String>, diags: &mut Vec<Diagnostic>) {
     for line in lines {
         let t = &line.tokens;
@@ -643,6 +697,49 @@ mod tests {
 
     const MESH: &str = "[2D_VERTICES]\n0 0 10.0\n1 0 10.2 VA\n1 1 10.4\n0 1 10.6\n\
                         [2D_TRIANGLES]\n0 1 2 0.02\n0 2 3 0.03 0.05 TB\n";
+
+    /// §14.15 `[2D_INFILTRATION]`: losses author in the model's rain
+    /// conventions and convert to SI — millimetres under CMS, inches
+    /// under CFS — and export writes them back in millimetres.
+    #[test]
+    fn infiltration_rows_convert_per_the_rain_conventions() {
+        let extra = format!("{MESH}[2D_INFILTRATION]\n0 20 10\nTB 5 2.5\n");
+        let (net, diags) = parse_network(&model(&extra));
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let mesh = net.overland.expect("mesh present");
+        assert_eq!(mesh.infiltration.len(), 2);
+        // 20 mm and 10 mm/h, SI.
+        assert!((mesh.infiltration[0].il - 0.020).abs() < 1e-12);
+        assert!((mesh.infiltration[0].cl - 0.010 / 3600.0).abs() < 1e-15);
+        assert_eq!(mesh.infiltration[1].address, "TB");
+
+        // The same rows under US units: inches and inches per hour.
+        let us = model(&extra).replace("FLOW_UNITS CMS", "FLOW_UNITS CFS");
+        let (net, diags) = parse_network(&us);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let mesh = net.overland.clone().expect("mesh present");
+        assert!((mesh.infiltration[0].il - 20.0 * 0.0254).abs() < 1e-12);
+        assert!((mesh.infiltration[0].cl - 10.0 * 0.0254 / 3600.0).abs() < 1e-15);
+
+        // Export writes SI millimetres, and re-imports to the same
+        // values under the SI header.
+        let out = crate::io::inp_writer::write_inp(&net).expect("export");
+        assert!(out.contains("[2D_INFILTRATION]"), "section exported");
+        let (net2, diags) = parse_network(&out);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let mesh2 = net2.overland.expect("mesh present");
+        assert!((mesh2.infiltration[0].il - mesh.infiltration[0].il).abs() < 1e-12);
+        assert!((mesh2.infiltration[0].cl - mesh.infiltration[0].cl).abs() < 1e-15);
+
+        // A negative loss is a §15.2 refusal with the cell named.
+        let bad = format!("{MESH}[2D_INFILTRATION]\n0 -5 0\n");
+        let (net, _) = parse_network(&model(&bad));
+        let errors = crate::overland::Topology::build(&net.overland.expect("mesh"))
+            .expect_err("negative losses refuse");
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, crate::overland::MeshError::BadInfiltration { .. })));
+    }
 
     #[test]
     fn a_mesh_parses_with_indices_in_file_order() {

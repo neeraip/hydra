@@ -280,6 +280,7 @@ impl CoupledSurface {
         for &t in &m.tier {
             cp::put_u(w, u64::from(t))?;
         }
+        cp::put_fs(w, &m.il_left)?;
         for v in [
             m.lazy_owed,
             m.storage0,
@@ -287,6 +288,7 @@ impl CoupledSurface {
             m.advanced,
             m.rain_in,
             m.evap_out,
+            m.infiltration_out,
             m.boundary_in,
             m.boundary_out,
             m.coupling_in,
@@ -350,6 +352,11 @@ impl CoupledSurface {
         for ci in 0..nc {
             m.tier[ci] = u8::try_from(r.u()?).map_err(|_| "overland tier out of range")?;
         }
+        let il_left = r.fs()?;
+        if il_left.len() != nc {
+            return Err("checkpoint overland state does not fit this mesh".into());
+        }
+        m.il_left = il_left;
         for slot in [
             &mut m.lazy_owed,
             &mut m.storage0,
@@ -357,6 +364,7 @@ impl CoupledSurface {
             &mut m.advanced,
             &mut m.rain_in,
             &mut m.evap_out,
+            &mut m.infiltration_out,
             &mut m.boundary_in,
             &mut m.boundary_out,
             &mut m.coupling_in,
@@ -473,6 +481,13 @@ C1  CIRCULAR  0.5  0  0  0
             area: 0.05,
             area_authored: true,
         });
+        // §15.7 losses on one cell, so the checkpoint and report gates
+        // exercise the infiltration state alongside everything else.
+        mesh.infiltration.push(crate::overland::InfiltrationRow {
+            address: "5".into(),
+            il: 0.02,
+            cl: 2.5e-6,
+        });
         mesh
     }
 
@@ -523,12 +538,13 @@ C1  CIRCULAR  0.5  0  0  0
             cs.marcher.storage()
         );
         // Surface ledger: what left the surface is what the coupling
-        // booked.
+        // and the §15.7 losses booked.
         let drained = cs.marcher.coupling_out - cs.marcher.coupling_in;
         assert!(
-            (v0 - cs.marcher.storage() - drained).abs() < 1e-9,
+            (v0 - cs.marcher.storage() - drained - cs.marcher.infiltration_out).abs() < 1e-9,
             "surface ledger"
         );
+        assert!(cs.marcher.infiltration_out > 0.0, "the losses engaged");
         // Delivery: everything banked was delivered (the last period's
         // pending may still be in flight).
         assert!(
@@ -586,9 +602,11 @@ C1  CIRCULAR  0.5  0  0  0
         // exchange, and the surface holds what it says.
         assert_eq!(cs.marcher.coupling_in, 0.0);
         assert!(
-            (cs.marcher.storage() - cs.marcher.outfall_in).abs() < 1e-9,
-            "surface {} vs injected {}",
+            (cs.marcher.storage() + cs.marcher.infiltration_out - cs.marcher.outfall_in).abs()
+                < 1e-9,
+            "surface {} + losses {} vs injected {}",
             cs.marcher.storage(),
+            cs.marcher.infiltration_out,
             cs.marcher.outfall_in
         );
         // And what was injected tracks what the network discharged
@@ -663,7 +681,7 @@ C1  CIRCULAR  0.5  0  0  0
             m.storage()
         );
         assert!(
-            (v0 - m.storage() - (m.coupling_out - m.coupling_in)).abs() < 1e-9,
+            (v0 - m.storage() - (m.coupling_out - m.coupling_in) - m.infiltration_out).abs() < 1e-9,
             "surface ledger"
         );
     }
@@ -820,6 +838,7 @@ C1  CIRCULAR  0.5  0  0  0
         let rpt = String::from_utf8(rpt).expect("utf8");
         for needle in [
             "Overland Flow Continuity",
+            "Infiltration",
             "Junction Drainage",
             "Surface Drainage",
             "Surface Spill",
@@ -886,6 +905,17 @@ C1  CIRCULAR  0.5  0  0  0
         assert_eq!(bits(&a.eta), bits(&b.eta), "surfaces");
         assert_eq!(bits(&a.q), bits(&b.q), "discharges");
         assert_eq!(a.coupling_out.to_bits(), b.coupling_out.to_bits(), "ledger");
+        assert_eq!(
+            a.infiltration_out.to_bits(),
+            b.infiltration_out.to_bits(),
+            "infiltration ledger"
+        );
+        let il_bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(
+            il_bits(&a.il_left),
+            il_bits(&b.il_left),
+            "initial-loss capacity"
+        );
         assert_eq!(a.storage().to_bits(), b.storage().to_bits());
         let ca = whole.overland().expect("attached");
         let cb = resumed.overland().expect("attached");
@@ -934,9 +964,11 @@ C1  CIRCULAR  0.5  0  0  0
             "the node never reached the surface"
         );
         assert!(
-            (cs.marcher.storage() - cs.marcher.coupling_in).abs() < 1e-9,
-            "surface gained {} but the ledger says {}",
+            (cs.marcher.storage() + cs.marcher.infiltration_out - cs.marcher.coupling_in).abs()
+                < 1e-9,
+            "surface gained {} + losses {} but the ledger says {}",
             cs.marcher.storage(),
+            cs.marcher.infiltration_out,
             cs.marcher.coupling_in
         );
         // What spilled was drawn back off the node as negative lateral.

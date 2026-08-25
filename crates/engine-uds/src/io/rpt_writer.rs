@@ -772,6 +772,7 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         line(w, "Initial Surface Storage", &row(ov.initial_storage))?;
         line(w, "Rainfall", &row(l.rain_in))?;
         line(w, "Evaporation", &row(l.evap_out))?;
+        line(w, "Infiltration", &row(l.infiltration_out))?;
         line(w, "Junction Drainage", &row(l.junction_out))?;
         line(w, "Junction Spill", &row(l.junction_in))?;
         line(w, "Outfall Injection", &row(l.outfall_in))?;

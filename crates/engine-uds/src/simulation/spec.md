@@ -484,7 +484,7 @@ therefore also carries:
 | Position in supplied records | How far each supplied interface file has been read, and the day of the climate record in force |
 | Latches | Every warning issued at most once per run, so a restored run neither repeats one nor swallows one |
 | Output so far | The reporting snapshots and runtime notices already produced, and the interface-file records already collected |
-| Overland surface | For a §15 mesh run: cell volumes, prognostic face and boundary discharges, the pending face accumulators, the active set and tier assignment (hysteresis and cadence are history, not derivable from depths), the lazy-source clock, the §15.8 ledger and march counters, and the §15.6 exchange bookkeeping — pending deliveries, banked outfall injection, delivered totals, per-point report accumulation, and the batch time accrued toward `COUPLING_SYNC` |
+| Overland surface | For a §15 mesh run: cell volumes, prognostic face and boundary discharges, the pending face accumulators, the active set and tier assignment (hysteresis and cadence are history, not derivable from depths), the lazy-source clock, each cell's remaining initial-loss capacity, the §15.8 ledger and march counters, and the §15.6 exchange bookkeeping — pending deliveries, banked outfall injection, delivered totals, per-point report accumulation, and the batch time accrued toward `COUPLING_SYNC` |
 
 The last of those is what makes a checkpoint large: a restored run must be
 able to write the whole run's results, not the part after the checkpoint.

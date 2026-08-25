@@ -510,16 +510,40 @@ onto the mesh (§15.10): parcels drain to nodes exactly as without a
 mesh, and reach the surface only through a coupled node's exchange.
 
 **Evaporation** applies the §3 potential rate through the §15.4.3 ramp.
-**Infiltration on the mesh is not modelled** (§15.10): the mesh has no
-soil column, and water on the surface leaves only by evaporation,
-conveyance, boundaries, or the network.
+
+**Infiltration** is the initial-loss/continuing-loss model of
+established two-dimensional practice, per cell and default zero
+(an unlisted cell is impermeable, which is the right reading of an
+urban mesh):
+
+- The **initial loss** $IL$ (m of depth) is a one-time absorbing
+  capacity: the first $IL \cdot A$ cubic metres of water on the cell are
+  taken, whatever their source — rain, inundation, a spill — and the
+  remaining capacity is state, drawn down monotonically over the run
+  and never restored.
+- The **continuing loss** $CL$ (m/s) is a constant rate while the cell
+  is wet, applied through the §15.4.3 ramp so a drying film shuts it
+  off $C^1$, and capped at what the cell holds.
+
+Losses apply in a fixed order at each cell firing — initial loss, then
+continuing loss, then evaporation, each from what remains — and
+identically in the lazy path for inactive cells. Both book to the
+§15.8 ledger as infiltration out.
+
+> **CORRESPONDENCE:** the predecessor's 2D engine has no infiltration
+> at all; the correspondence here is to the wider field's standard
+> (TUFLOW's IL/CL soil model), adopted because it is what practising
+> modellers calibrate against. A soil-column model (Green–Ampt with
+> recovery) remains a recorded absence (§15.10): the initial loss never
+> recovers, which is the conservative reading for single-event runs and
+> wrong for multi-week ones.
 
 ### 15.8 Conservation
 
 The overland ledger carries, in cubic metres over the reporting window:
 initial and final surface storage, rainfall in, evaporation out,
-exchange in and out with the network (junctions and outfalls
-separately), and boundary in and out. Interior conveyance never appears:
+infiltration out, exchange in and out with the network (junctions and
+outfalls separately), and boundary in and out. Interior conveyance never appears:
 each interior edge books one antisymmetric mass pair, so interior
 transport conserves exactly, at every tier interface, by construction —
 and the continuity report measures only what crosses the subsystem's
@@ -588,8 +612,11 @@ Typed, per §1.8 — each is a named absence, not an approximation:
   rim; a surface film over a node whose water stands below ground does
   not drain into it.
 - **Runoff-to-mesh.** Parcel runoff routes to nodes only.
-- **Mesh infiltration**, **overland constituent transport**, **mesh
-  adaptivity**: absent here as in the predecessor.
+- **Mesh infiltration: resolved** as §15.7's initial-loss/continuing-
+  loss model. A soil column (Green–Ampt with recovery) remains absent;
+  the initial loss never recovers.
+- **Overland constituent transport**, **mesh adaptivity**: absent here
+  as in the predecessor.
 - **Report additions: resolved.** §14.9 specifies the overland flow
   continuity balance, the overland time-step summary, and the flow
   routing balance's §15.8 named pair.

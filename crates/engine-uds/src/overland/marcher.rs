@@ -159,6 +159,11 @@ pub struct Marcher {
     /// (the scan was measured as the sparse case's whole cost).
     cells_by_tier: Vec<Vec<u32>>,
     faces_by_tier: Vec<Vec<u32>>,
+    /// §15.7 losses: remaining initial-loss capacity (m of depth,
+    /// drawn down monotonically, never restored) and the continuing
+    /// rate (m/s). Capacity is state; §12.3 carries it.
+    pub(crate) il_left: Vec<f64>,
+    cl: Vec<f64>,
     /// The active cells, index-sorted — the §15.4.4 stable-step scan
     /// and the accumulator settle walk this instead of the mesh.
     active_list: Vec<u32>,
@@ -175,9 +180,9 @@ pub struct Marcher {
     /// Initial storage (m³), the §15.8 ledger's opening term.
     pub(crate) storage0: f64,
     /// Per-cell ledger scratch for the ∥ cell phase: (rain, coupling,
-    /// evaporation take), reduced serially in index order so the sums
-    /// are byte-identical at every width (§15.4.5).
-    led: Vec<[f64; 3]>,
+    /// evaporation take, infiltration take), reduced serially in index
+    /// order so the sums are byte-identical at every width (§15.4.5).
+    led: Vec<[f64; 4]>,
     /// §15.4.5: the worker team, when the model asked for width.
     #[cfg(feature = "threads")]
     team: Option<crate::hydraulics::team::Team>,
@@ -228,6 +233,8 @@ pub struct Marcher {
     /// withdrawals out — booked separately per §15.8.
     pub outfall_in: f64,
     pub outfall_out: f64,
+    /// §15.7 losses out (m³), the §15.8 infiltration term.
+    pub infiltration_out: f64,
 }
 
 /// §15.5: a boundary slot whose law the session resolves per advance
@@ -275,7 +282,7 @@ struct CellPtrs {
     qcy: *mut f64,
     fl: *mut f64,
     fr: *mut f64,
-    led: *mut [f64; 3],
+    led: *mut [f64; 4],
 }
 
 // SAFETY: the cell phase's writes are per-cell disjoint (see
@@ -503,6 +510,16 @@ impl Marcher {
         let ns = node_names.len();
         let np = couplings.len();
 
+        // §15.7: per-cell losses, last row per cell winning.
+        let mut il0 = vec![0.0; nc];
+        let mut cl = vec![0.0; nc];
+        for row in &mesh.infiltration {
+            if let Some(ci) = mesh.resolve_cell(&row.address) {
+                il0[ci as usize] = row.il;
+                cl[ci as usize] = row.cl;
+            }
+        }
+
         let nf = faces.len();
         let mut m = Marcher {
             cx: topo.centroid.iter().map(|c| c[0]).collect(),
@@ -539,6 +556,8 @@ impl Marcher {
             face_tier: Vec::new(),
             cells_by_tier: Vec::new(),
             faces_by_tier: Vec::new(),
+            il_left: il0,
+            cl,
             active_list: Vec::new(),
             lazy_owed: 0.0,
             macro_cycles: 0,
@@ -548,7 +567,7 @@ impl Marcher {
             advanced: 0.0,
             peak_active: 0,
             storage0: 0.0,
-            led: vec![[0.0; 3]; nc],
+            led: vec![[0.0; 4]; nc],
             #[cfg(feature = "threads")]
             team: None,
             rain: vec![0.0; nc],
@@ -574,6 +593,7 @@ impl Marcher {
             coupling_out: 0.0,
             outfall_in: 0.0,
             outfall_out: 0.0,
+            infiltration_out: 0.0,
         };
         for ci in 0..nc {
             m.reclose(ci);
@@ -1102,12 +1122,19 @@ impl Marcher {
             let coup = self.coupling[ci] * a * dt;
             let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
             let ramp = t * t * (3.0 - 2.0 * t);
-            let want = self.evap[ci] * ramp * a * dt;
-            if rain == 0.0 && coup == 0.0 && want == 0.0 {
+            let want_evap = self.evap[ci] * ramp * a * dt;
+            let losses = self.il_left[ci] > 0.0 || self.cl[ci] > 0.0;
+            if rain == 0.0 && coup == 0.0 && want_evap == 0.0 && !(losses && self.vol[ci] > 0.0) {
                 continue;
             }
-            let before = self.vol[ci] + rain + coup;
-            let take = want.min(before.max(0.0));
+            let mut avail = (self.vol[ci] + rain + coup).max(0.0);
+            // §15.7 losses in the firing path's order: initial,
+            // continuing, evaporation, each from what remains.
+            let il_take = (self.il_left[ci] * a).min(avail);
+            avail -= il_take;
+            let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
+            avail -= cl_take;
+            let take = want_evap.min(avail);
             self.rain_in += rain;
             if coup >= 0.0 {
                 self.outfall_in += coup;
@@ -1115,7 +1142,12 @@ impl Marcher {
                 self.outfall_out += -coup;
             }
             self.evap_out += take;
-            self.vol[ci] = (before - take).max(0.0);
+            let infil = il_take + cl_take;
+            if infil > 0.0 {
+                self.infiltration_out += infil;
+                self.draw_initial_loss(ci, infil);
+            }
+            self.vol[ci] = avail - take;
             self.reclose(ci);
         }
     }
@@ -1280,14 +1312,21 @@ impl Marcher {
         let a = self.area[ci];
         let rain = self.rain[ci] * a * dt;
         let coup = self.coupling[ci] * a * dt;
-        // §15.4.3: evaporation shuts off C¹ as the cell dries, and
-        // takes no more than the cell holds.
         let t = (*p.depth.add(ci) / self.dry_depth).clamp(0.0, 1.0);
         let ramp = t * t * (3.0 - 2.0 * t);
-        let want = self.evap[ci] * ramp * a * dt;
-        let before = *p.vol.add(ci) + flux + rain + coup;
-        let take = want.min(before.max(0.0));
-        let v_new = (before - take).max(0.0);
+        let mut avail = (*p.vol.add(ci) + flux + rain + coup).max(0.0);
+        // §15.7 losses, in order: the initial capacity absorbs first
+        // (whatever the water's source), then the continuing rate
+        // through the ramp, then evaporation — each from what remains.
+        let il_take = (self.il_left[ci] * a).min(avail);
+        avail -= il_take;
+        let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
+        avail -= cl_take;
+        let infil = il_take + cl_take;
+        // §15.4.3: evaporation shuts off C¹ as the cell dries, and
+        // takes no more than the cell holds.
+        let take = (self.evap[ci] * ramp * a * dt).min(avail);
+        let v_new = avail - take;
         *p.vol.add(ci) = v_new;
         let (h, eta) = self.close_of(ci, v_new);
         *p.depth.add(ci) = h;
@@ -1295,7 +1334,17 @@ impl Marcher {
         let (qx, qy) = self.perot_of(ci);
         *p.qcx.add(ci) = qx;
         *p.qcy.add(ci) = qy;
-        *p.led.add(ci) = [rain, coup, take];
+        *p.led.add(ci) = [rain, coup, take, infil];
+    }
+
+    /// §15.7: draw down a cell's initial-loss capacity by the depth a
+    /// take represents. Separate from the take itself because the ∥
+    /// cell phase must not write shared parameter state — the capacity
+    /// update rides the serial ledger reduction.
+    fn draw_initial_loss(&mut self, ci: usize, infil_vol: f64) {
+        let il_vol = self.il_left[ci] * self.area[ci];
+        let drawn = infil_vol.min(il_vol);
+        self.il_left[ci] = ((il_vol - drawn) / self.area[ci]).max(0.0);
     }
 
     /// §15.4.3 ∥ cell phase: every cell whose tier is due at base
@@ -1375,7 +1424,7 @@ impl Marcher {
             }
             for i in 0..self.cells_by_tier[k].len() {
                 let ci = self.cells_by_tier[k][i] as usize;
-                let [rain, coup, take] = self.led[ci];
+                let [rain, coup, take, infil] = self.led[ci];
                 self.rain_in += rain;
                 // The injection path books separately from the
                 // junction orifice exchange.
@@ -1385,6 +1434,10 @@ impl Marcher {
                     self.outfall_out += -coup;
                 }
                 self.evap_out += take;
+                if infil > 0.0 {
+                    self.infiltration_out += infil;
+                    self.draw_initial_loss(ci, infil);
+                }
             }
         }
     }
@@ -1618,6 +1671,7 @@ impl Marcher {
         self.storage()
             - (self.storage0 + self.rain_in + self.coupling_in + self.outfall_in + self.boundary_in
                 - self.evap_out
+                - self.infiltration_out
                 - self.coupling_out
                 - self.outfall_out
                 - self.boundary_out)
@@ -2590,6 +2644,84 @@ mod tests {
             assert_eq!(serial.evap_out.to_bits(), teamed.evap_out.to_bits());
             assert_eq!(serial.boundary_out.to_bits(), teamed.boundary_out.to_bits());
         }
+    }
+
+    /// §15.7: the initial loss absorbs exactly its capacity — whatever
+    /// the water's source — and never more; the ledger closes around
+    /// it.
+    #[test]
+    fn the_initial_loss_absorbs_exactly_its_capacity() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        for ci in 0..mesh.cells.len() {
+            mesh.infiltration.push(crate::overland::InfiltrationRow {
+                address: ci.to_string(),
+                il: 0.1,
+                cl: 0.0,
+            });
+        }
+        // Last row per cell wins: cell 0 re-authored with half the loss.
+        mesh.infiltration.push(crate::overland::InfiltrationRow {
+            address: "0".into(),
+            il: 0.05,
+            cl: 0.0,
+        });
+        let mut m = build(&mesh);
+        let v0 = m.storage();
+        let a_total: f64 = m.area.iter().sum();
+        let expected = 0.1 * (a_total - m.area[0]) + 0.05 * m.area[0];
+        m.advance(60.0);
+        assert!(
+            (m.infiltration_out - expected).abs() < 1e-12,
+            "absorbed {} of {expected}",
+            m.infiltration_out
+        );
+        assert!((v0 - m.storage() - expected).abs() < 1e-12, "storage");
+        assert!(m.il_left.iter().all(|&c| c == 0.0), "capacity exhausted");
+        // Exhausted capacity takes nothing more.
+        let before = m.infiltration_out;
+        m.advance(60.0);
+        assert_eq!(m.infiltration_out, before);
+        assert!(m.ledger_error().abs() < 1e-12);
+    }
+
+    /// §15.7: the continuing loss is a constant rate while wet, shuts
+    /// off on a dry cell, and books to the ledger exactly.
+    #[test]
+    fn the_continuing_loss_is_a_rate_while_wet() {
+        let cl = 0.01 / 3600.0; // 10 mm/h in m/s
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        for ci in 0..mesh.cells.len() {
+            mesh.infiltration.push(crate::overland::InfiltrationRow {
+                address: ci.to_string(),
+                il: 0.0,
+                cl,
+            });
+        }
+        let mut m = build(&mesh);
+        let a_total: f64 = m.area.iter().sum();
+        m.advance(3600.0);
+        let expected = cl * a_total * 3600.0;
+        assert!(
+            (m.infiltration_out - expected).abs() < 1e-9 * expected,
+            "lost {} of {expected}",
+            m.infiltration_out
+        );
+        assert!(m.ledger_error().abs() < 1e-9);
+
+        // Bone dry: the ramp holds the rate at zero.
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        for ci in 0..mesh.cells.len() {
+            mesh.infiltration.push(crate::overland::InfiltrationRow {
+                address: ci.to_string(),
+                il: 0.0,
+                cl,
+            });
+        }
+        let mut m = build(&mesh);
+        m.advance(3600.0);
+        assert_eq!(m.infiltration_out, 0.0, "a dry cell loses nothing");
     }
 
     /// §15.6: a vertex row collapses to the lowest-bed incident cell,

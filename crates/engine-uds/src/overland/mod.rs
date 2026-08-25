@@ -32,6 +32,8 @@ pub struct OverlandMesh {
     pub cell_couplings: Vec<CouplingRow>,
     /// Boundary-condition rows (§15.5), in file order.
     pub boundaries: Vec<BoundaryRow>,
+    /// §15.7 per-cell losses; unlisted cells lose nothing.
+    pub infiltration: Vec<InfiltrationRow>,
     /// Edge-conveyance rows (§15.2): undirected vertex pair and ψ.
     pub conveyance: Vec<ConveyanceRow>,
     /// Initial cell velocities (§14.15): cell index and (u, v) in m/s.
@@ -103,6 +105,21 @@ pub struct MeshCell {
     /// Initial depth (m, ≥ 0).
     pub h0: f64,
     pub tag: Option<String>,
+}
+
+/// §15.7: a cell's authored infiltration losses (§14.15), SI after
+/// import — initial loss in metres of depth, continuing loss in metres
+/// per second. Resolution is derivation, so it happens at
+/// [`Topology::build`] and the marcher, never at parse.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfiltrationRow {
+    /// The cell as authored: an index where numeric and in range, else
+    /// a tag.
+    pub address: String,
+    /// Initial loss (m of depth), one-time absorbing capacity.
+    pub il: f64,
+    /// Continuing loss (m/s) while the cell is wet.
+    pub cl: f64,
 }
 
 /// One §15.6 coupling row: a mesh vertex or cell joined to a network
@@ -299,6 +316,8 @@ pub enum MeshError {
     BadBoundary { cell: u32, edge: u8 },
     /// A coupling row's address matches no index and no tag.
     UnknownAddress { address: String },
+    /// §15.7: infiltration losses must be non-negative and finite.
+    BadInfiltration { address: String, il: f64, cl: f64 },
     /// An initial-velocity row names a cell that does not exist.
     BadInitVelocity { cell: u32 },
 }
@@ -355,6 +374,11 @@ impl std::fmt::Display for MeshError {
             MeshError::UnknownAddress { address } => write!(
                 f,
                 "coupling address {address:?} matches no index and no tag"
+            ),
+            MeshError::BadInfiltration { address, il, cl } => write!(
+                f,
+                "cell {address:?} authors infiltration losses {il} and {cl}, \
+                 which must be non-negative"
             ),
             MeshError::BadInitVelocity { cell } => {
                 write!(
@@ -555,6 +579,21 @@ impl Topology {
             if mesh.resolve_cell(&row.address).is_none() {
                 errors.push(MeshError::UnknownAddress {
                     address: row.address.clone(),
+                });
+            }
+        }
+        for row in &mesh.infiltration {
+            if mesh.resolve_cell(&row.address).is_none() {
+                errors.push(MeshError::UnknownAddress {
+                    address: row.address.clone(),
+                });
+            }
+            // NaN must land in the refusal too.
+            if row.il < 0.0 || row.cl < 0.0 || row.il.is_nan() || row.cl.is_nan() {
+                errors.push(MeshError::BadInfiltration {
+                    address: row.address.clone(),
+                    il: row.il,
+                    cl: row.cl,
                 });
             }
         }

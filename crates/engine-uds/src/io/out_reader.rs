@@ -543,7 +543,7 @@ impl OverlandResults {
         for _ in 0..np {
             exchange.push(ov_read_f32(&mut f).map_err(ctx)?);
         }
-        let mut ledger = [0.0f64; 10];
+        let mut ledger = [0.0f64; 11];
         for v in &mut ledger {
             *v = ov_read_f64(&mut f).map_err(ctx)?;
         }
