@@ -79,7 +79,7 @@ jobs:
       # rather than left to wasm-pack, which fetches the newest one and 404s
       # whenever the runner image lags a Chrome major.
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.21.1
+        uses: cargo-bins/cargo-binstall@v1.22.0
 
       # `command -v` first, and `--force` when it misses: the rust-cache
       # restore can carry binstall's install manifest from a main run without

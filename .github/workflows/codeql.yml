@@ -21,15 +21,15 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.37.7
+        uses: github/codeql-action/init@v4.37.8
         with:
           languages: javascript-typescript
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v4.37.7
+        uses: github/codeql-action/autobuild@v4.37.8
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4.37.7
+        uses: github/codeql-action/analyze@v4.37.8
         with:
           category: /language:javascript-typescript
 
@@ -59,7 +59,7 @@ jobs:
       # weekly, so the extra build time is worth it for a complete trace.
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.37.7
+        uses: github/codeql-action/init@v4.37.8
         with:
           languages: rust
 
@@ -67,6 +67,6 @@ jobs:
         run: cargo build --workspace
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4.37.7
+        uses: github/codeql-action/analyze@v4.37.8
         with:
           category: /language:rust
