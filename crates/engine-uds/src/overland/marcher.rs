@@ -164,6 +164,10 @@ pub struct Marcher {
     /// rate (m/s). Capacity is state; §12.3 carries it.
     pub(crate) il_left: Vec<f64>,
     cl: Vec<f64>,
+    /// Whether any cell authors a loss. When false the §15.7 take
+    /// arithmetic is elided wholesale, which is exact: every take is
+    /// 0.0 by construction, so the elision changes no result bit.
+    has_losses: bool,
     /// The active cells, index-sorted — the §15.4.4 stable-step scan
     /// and the accumulator settle walk this instead of the mesh.
     active_list: Vec<u32>,
@@ -556,6 +560,7 @@ impl Marcher {
             face_tier: Vec::new(),
             cells_by_tier: Vec::new(),
             faces_by_tier: Vec::new(),
+            has_losses: il0.iter().any(|&v| v > 0.0) || cl.iter().any(|&v| v > 0.0),
             il_left: il0,
             cl,
             active_list: Vec::new(),
@@ -1123,17 +1128,22 @@ impl Marcher {
             let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
             let ramp = t * t * (3.0 - 2.0 * t);
             let want_evap = self.evap[ci] * ramp * a * dt;
-            let losses = self.il_left[ci] > 0.0 || self.cl[ci] > 0.0;
+            let losses = self.has_losses && (self.il_left[ci] > 0.0 || self.cl[ci] > 0.0);
             if rain == 0.0 && coup == 0.0 && want_evap == 0.0 && !(losses && self.vol[ci] > 0.0) {
                 continue;
             }
             let mut avail = (self.vol[ci] + rain + coup).max(0.0);
             // §15.7 losses in the firing path's order: initial,
             // continuing, evaporation, each from what remains.
-            let il_take = (self.il_left[ci] * a).min(avail);
-            avail -= il_take;
-            let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
-            avail -= cl_take;
+            let infil = if self.has_losses {
+                let il_take = (self.il_left[ci] * a).min(avail);
+                avail -= il_take;
+                let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
+                avail -= cl_take;
+                il_take + cl_take
+            } else {
+                0.0
+            };
             let take = want_evap.min(avail);
             self.rain_in += rain;
             if coup >= 0.0 {
@@ -1142,7 +1152,6 @@ impl Marcher {
                 self.outfall_out += -coup;
             }
             self.evap_out += take;
-            let infil = il_take + cl_take;
             if infil > 0.0 {
                 self.infiltration_out += infil;
                 self.draw_initial_loss(ci, infil);
@@ -1318,11 +1327,17 @@ impl Marcher {
         // §15.7 losses, in order: the initial capacity absorbs first
         // (whatever the water's source), then the continuing rate
         // through the ramp, then evaporation — each from what remains.
-        let il_take = (self.il_left[ci] * a).min(avail);
-        avail -= il_take;
-        let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
-        avail -= cl_take;
-        let infil = il_take + cl_take;
+        // A loss-free mesh skips the takes wholesale; they are 0.0 by
+        // construction, so the skip changes no result bit.
+        let infil = if self.has_losses {
+            let il_take = (self.il_left[ci] * a).min(avail);
+            avail -= il_take;
+            let cl_take = (self.cl[ci] * ramp * a * dt).min(avail);
+            avail -= cl_take;
+            il_take + cl_take
+        } else {
+            0.0
+        };
         // §15.4.3: evaporation shuts off C¹ as the cell dries, and
         // takes no more than the cell holds.
         let take = (self.evap[ci] * ramp * a * dt).min(avail);
@@ -2644,6 +2659,43 @@ mod tests {
             assert_eq!(serial.evap_out.to_bits(), teamed.evap_out.to_bits());
             assert_eq!(serial.boundary_out.to_bits(), teamed.boundary_out.to_bits());
         }
+    }
+
+    /// The §15.7 loss gate elides arithmetic, never results: a
+    /// loss-free mesh marched with the gate forced on is bit-identical
+    /// to the gated run, on flowing cells (firing path) and dry rained
+    /// cells (lazy path) alike.
+    #[test]
+    fn the_loss_gate_changes_no_bit_on_a_loss_free_mesh() {
+        let build_case = || {
+            // A rising bed dries the high cells, so both source paths run.
+            let mut mesh = grid(4, 4, 1.0, |x, _| 10.0 + 0.5 * x);
+            fill_to_stage(&mut mesh, 10.6);
+            let mut m = build(&mesh);
+            for r in m.rain.iter_mut() {
+                *r = 1e-6;
+            }
+            m
+        };
+        let mut gated = build_case();
+        assert!(!gated.has_losses, "a loss-free mesh must not arm the gate");
+        let mut forced = build_case();
+        forced.has_losses = true;
+        for _ in 0..8 {
+            gated.advance(5.0);
+            forced.advance(5.0);
+        }
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&gated.vol), bits(&forced.vol), "vol");
+        assert_eq!(bits(&gated.eta), bits(&forced.eta), "eta");
+        assert_eq!(bits(&gated.q), bits(&forced.q), "q");
+        assert_eq!(gated.rain_in.to_bits(), forced.rain_in.to_bits());
+        assert_eq!(
+            gated.infiltration_out.to_bits(),
+            forced.infiltration_out.to_bits()
+        );
+        assert_eq!(gated.infiltration_out, 0.0);
+        assert!(gated.ledger_error().abs() < 1e-12);
     }
 
     /// §15.7: the initial loss absorbs exactly its capacity — whatever
