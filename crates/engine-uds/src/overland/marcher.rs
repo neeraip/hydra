@@ -151,6 +151,17 @@ pub struct Marcher {
     tier: Vec<u8>,
     /// A face fires at the finer of its two cells' cadences.
     face_tier: Vec<u8>,
+    /// §15.4.4: the members of each tier, index-sorted — a substep
+    /// touches only the due tiers' lists instead of scanning the mesh
+    /// (the scan was measured as the sparse case's whole cost).
+    cells_by_tier: Vec<Vec<u32>>,
+    faces_by_tier: Vec<Vec<u32>>,
+    /// The active cells, index-sorted — the §15.4.4 stable-step scan
+    /// and the accumulator settle walk this instead of the mesh.
+    active_list: Vec<u32>,
+    /// §15.4.4: seconds of source integration owed to inactive cells
+    /// since their last lazy sync.
+    lazy_owed: f64,
     macro_cycles: u64,
     /// §15.4.4 whole-run counts for the §14.9 time-step summary.
     substeps: u64,
@@ -523,6 +534,10 @@ impl Marcher {
             active: vec![false; nc],
             tier: vec![0; nc],
             face_tier: Vec::new(),
+            cells_by_tier: Vec::new(),
+            faces_by_tier: Vec::new(),
+            active_list: Vec::new(),
+            lazy_owed: 0.0,
             macro_cycles: 0,
             substeps: 0,
             rebuilds: 0,
@@ -563,6 +578,7 @@ impl Marcher {
         m.face_tier = vec![0; m.faces.len()];
         m.refresh_perot();
         m.rebuild_active();
+        m.rebuild_tier_lists();
         m.rebuilds = 0;
         m.storage0 = m.storage();
         m
@@ -666,7 +682,13 @@ impl Marcher {
             }
         }
         self.rebuilds += 1;
-        self.peak_active = self.peak_active.max(next.iter().filter(|a| **a).count());
+        self.active_list.clear();
+        for (ci, on) in next.iter().enumerate() {
+            if *on {
+                self.active_list.push(ci as u32);
+            }
+        }
+        self.peak_active = self.peak_active.max(self.active_list.len());
         self.active = next;
     }
 
@@ -687,8 +709,9 @@ impl Marcher {
 
     /// §15.4.4: the stable base step over active cells.
     fn stable_dt(&self) -> f64 {
-        (0..self.area.len())
-            .map(|ci| self.cell_dt(ci))
+        self.active_list
+            .iter()
+            .map(|&ci| self.cell_dt(ci as usize))
             .fold(self.max_dt, f64::min)
     }
 
@@ -933,7 +956,11 @@ impl Marcher {
     /// in-flight accumulators, so gather every pending side into its
     /// cell first, and re-close the cells that changed.
     fn settle_accumulators(&mut self) {
-        for ci in 0..self.area.len() {
+        // §15.4.2's both-active rule means deposits land only in cells
+        // that were active when their faces fired — the current list,
+        // since settling precedes every re-activation.
+        for li in 0..self.active_list.len() {
+            let ci = self.active_list[li] as usize;
             let lo = self.cf_off[ci] as usize;
             let hi = self.cf_off[ci + 1] as usize;
             let mut pending = 0.0;
@@ -987,6 +1014,73 @@ impl Marcher {
             if !(self.active[f.cl as usize] && self.active[f.cr as usize]) {
                 self.q[fi] = 0.0;
             }
+        }
+        self.rebuild_tier_lists();
+    }
+
+    /// Rebuild the per-tier membership lists from the current tiers.
+    /// Only active cells march (§15.4.4 — inactive cells integrate
+    /// their sources lazily as pure storage between rebuilds), and only
+    /// both-active faces convey. Index order within each list keeps
+    /// every downstream traversal deterministic.
+    fn rebuild_tier_lists(&mut self) {
+        let k = self.lts_tiers.saturating_sub(1).min(7) as usize + 1;
+        // Reuse the buffers: a coupled run rebuilds every advance, and
+        // the reallocation was measurable churn.
+        self.cells_by_tier.resize(k, Vec::new());
+        self.faces_by_tier.resize(k, Vec::new());
+        for l in &mut self.cells_by_tier {
+            l.clear();
+        }
+        for l in &mut self.faces_by_tier {
+            l.clear();
+        }
+        for &ci in &self.active_list {
+            self.cells_by_tier[self.tier[ci as usize] as usize].push(ci);
+        }
+        for (fi, &t) in self.face_tier.iter().enumerate() {
+            let f = &self.faces[fi];
+            if self.active[f.cl as usize] && self.active[f.cr as usize] {
+                self.faces_by_tier[t as usize].push(fi as u32);
+            }
+        }
+    }
+
+    /// §15.4.4: integrate the sources owed to inactive cells as pure
+    /// storage — rain and held injection in, ramped evaporation out —
+    /// booking exactly as the firing path books. Runs at every rebuild
+    /// (before the active set is recomputed, so an accumulating film
+    /// activates on schedule) and at the end of every advance.
+    fn integrate_lazy_sources(&mut self) {
+        if self.lazy_owed <= 0.0 {
+            return;
+        }
+        let dt = self.lazy_owed;
+        self.lazy_owed = 0.0;
+        for ci in 0..self.area.len() {
+            if self.active[ci] {
+                continue;
+            }
+            let a = self.area[ci];
+            let rain = self.rain[ci] * a * dt;
+            let coup = self.coupling[ci] * a * dt;
+            let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
+            let ramp = t * t * (3.0 - 2.0 * t);
+            let want = self.evap[ci] * ramp * a * dt;
+            if rain == 0.0 && coup == 0.0 && want == 0.0 {
+                continue;
+            }
+            let before = self.vol[ci] + rain + coup;
+            let take = want.min(before.max(0.0));
+            self.rain_in += rain;
+            if coup >= 0.0 {
+                self.outfall_in += coup;
+            } else {
+                self.outfall_out += -coup;
+            }
+            self.evap_out += take;
+            self.vol[ci] = (before - take).max(0.0);
+            self.reclose(ci);
         }
     }
 
@@ -1071,32 +1165,47 @@ impl Marcher {
         let mut q = std::mem::take(&mut self.q);
         let mut fl = std::mem::take(&mut self.facc_l);
         let mut fr = std::mem::take(&mut self.facc_r);
+        let lists = std::mem::take(&mut self.faces_by_tier);
         let (qp, flp, frp) = (q.as_mut_ptr(), fl.as_mut_ptr(), fr.as_mut_ptr());
-        #[cfg(feature = "threads")]
-        {
-            if let Some(mut team) = self.team.take() {
-                if self.faces.len() >= PAR_GRAIN * team.width() {
-                    use crate::hydraulics::team::SendPtr;
-                    let (qs, fls, frs) = (SendPtr::new(qp), SendPtr::new(flp), SendPtr::new(frp));
-                    let me = &*self;
-                    // SAFETY: per-face disjoint reads/writes, as the
-                    // body's contract states.
-                    team.run(me.faces.len(), |fi| unsafe {
-                        me.fire_face_at(fi, dt0, s, qs.get(), fls.get(), frs.get());
-                    });
+        for (k, list) in lists.iter().enumerate() {
+            if !s.is_multiple_of(1u64 << k) || list.is_empty() {
+                continue;
+            }
+            #[cfg(feature = "threads")]
+            {
+                let mut teamed = false;
+                if let Some(mut team) = self.team.take() {
+                    if list.len() >= PAR_GRAIN * team.width() {
+                        use crate::hydraulics::team::SendPtr;
+                        let (qs, fls, frs) =
+                            (SendPtr::new(qp), SendPtr::new(flp), SendPtr::new(frp));
+                        let me = &*self;
+                        // SAFETY: per-face disjoint reads/writes, as
+                        // the body's contract states.
+                        team.run(list.len(), |i| unsafe {
+                            me.fire_face_at(
+                                list[i] as usize,
+                                dt0,
+                                s,
+                                qs.get(),
+                                fls.get(),
+                                frs.get(),
+                            );
+                        });
+                        teamed = true;
+                    }
                     self.team = Some(team);
-                    self.q = q;
-                    self.facc_l = fl;
-                    self.facc_r = fr;
-                    return;
                 }
-                self.team = Some(team);
+                if teamed {
+                    continue;
+                }
+            }
+            for &fi in list {
+                // SAFETY: serial — the pointers are exclusive here.
+                unsafe { self.fire_face_at(fi as usize, dt0, s, qp, flp, frp) };
             }
         }
-        for fi in 0..self.faces.len() {
-            // SAFETY: serial — the pointers are exclusive here.
-            unsafe { self.fire_face_at(fi, dt0, s, qp, flp, frp) };
-        }
+        self.faces_by_tier = lists;
         self.q = q;
         self.facc_l = fl;
         self.facc_r = fr;
@@ -1180,32 +1289,39 @@ impl Marcher {
             fr: fr.as_mut_ptr(),
             led: led.as_mut_ptr(),
         };
-        // `mut` only when the team path can set it.
-        #[cfg_attr(not(feature = "threads"), allow(unused_mut))]
-        let mut ran = false;
-        #[cfg(feature = "threads")]
-        {
-            if let Some(mut team) = self.team.take() {
-                if nc >= PAR_GRAIN * team.width() {
-                    let shared = &ptrs;
-                    let me = &*self;
-                    // SAFETY: per-cell disjoint reads/writes — a cell
-                    // touches only its own slots and its own sides of
-                    // its incident faces' accumulators.
-                    team.run(nc, |ci| unsafe {
-                        me.fire_cell_at(ci, dt0, s, shared);
-                    });
-                    ran = true;
+        let _ = nc;
+        let lists = std::mem::take(&mut self.cells_by_tier);
+        for (k, list) in lists.iter().enumerate() {
+            if !s.is_multiple_of(1u64 << k) || list.is_empty() {
+                continue;
+            }
+            #[cfg(feature = "threads")]
+            {
+                let mut teamed = false;
+                if let Some(mut team) = self.team.take() {
+                    if list.len() >= PAR_GRAIN * team.width() {
+                        let shared = &ptrs;
+                        let me = &*self;
+                        // SAFETY: per-cell disjoint reads/writes — a
+                        // cell touches only its own slots and its own
+                        // sides of its incident faces' accumulators.
+                        team.run(list.len(), |i| unsafe {
+                            me.fire_cell_at(list[i] as usize, dt0, s, shared);
+                        });
+                        teamed = true;
+                    }
+                    self.team = Some(team);
                 }
-                self.team = Some(team);
+                if teamed {
+                    continue;
+                }
             }
-        }
-        if !ran {
-            for ci in 0..nc {
+            for &ci in list {
                 // SAFETY: serial — the pointers are exclusive here.
-                unsafe { self.fire_cell_at(ci, dt0, s, &ptrs) };
+                unsafe { self.fire_cell_at(ci as usize, dt0, s, &ptrs) };
             }
         }
+        self.cells_by_tier = lists;
         self.vol = vol;
         self.depth = depth;
         self.eta = eta;
@@ -1214,21 +1330,26 @@ impl Marcher {
         self.facc_l = fl;
         self.facc_r = fr;
         self.led = led;
-        // §15.8: the ledger reduction, serial and in index order.
-        for ci in 0..nc {
-            if !s.is_multiple_of(1u64 << self.tier[ci]) {
+        // §15.8: the ledger reduction — serial, tiers ascending, index
+        // order within each tier, so the sums are deterministic at any
+        // width.
+        for k in 0..self.cells_by_tier.len() {
+            if !s.is_multiple_of(1u64 << k) {
                 continue;
             }
-            let [rain, coup, take] = self.led[ci];
-            self.rain_in += rain;
-            // The injection path books separately from the junction
-            // orifice exchange.
-            if coup >= 0.0 {
-                self.outfall_in += coup;
-            } else {
-                self.outfall_out += -coup;
+            for i in 0..self.cells_by_tier[k].len() {
+                let ci = self.cells_by_tier[k][i] as usize;
+                let [rain, coup, take] = self.led[ci];
+                self.rain_in += rain;
+                // The injection path books separately from the
+                // junction orifice exchange.
+                if coup >= 0.0 {
+                    self.outfall_in += coup;
+                } else {
+                    self.outfall_out += -coup;
+                }
+                self.evap_out += take;
             }
-            self.evap_out += take;
         }
     }
 
@@ -1368,6 +1489,7 @@ impl Marcher {
             // integrates exactly nsub·dt0 per cycle.
             if self.macro_cycles.is_multiple_of(4) {
                 self.settle_accumulators();
+                self.integrate_lazy_sources();
                 self.rebuild_active();
                 dt0 = self.stable_dt();
                 self.assign_tiers(dt0);
@@ -1384,6 +1506,7 @@ impl Marcher {
                 for t in &mut self.face_tier {
                     *t = 0;
                 }
+                self.rebuild_tier_lists();
                 while remaining > 1e-12 {
                     let dt = dt0.min(remaining);
                     self.fire_faces(dt, 0);
@@ -1393,6 +1516,7 @@ impl Marcher {
                     self.substeps += 1;
                     self.min_dt0 = self.min_dt0.min(dt);
                     self.advanced += dt;
+                    self.lazy_owed += dt;
                     remaining -= dt;
                 }
                 self.macro_cycles += 1;
@@ -1407,9 +1531,13 @@ impl Marcher {
             self.substeps += nsub;
             self.min_dt0 = self.min_dt0.min(dt0);
             self.advanced += dt0 * nsub as f64;
+            self.lazy_owed += dt0 * nsub as f64;
             remaining -= dt0 * nsub as f64;
             self.macro_cycles += 1;
         }
+        // §15.4.4: an advance returns with every cell at the target
+        // time, the lazily integrated ones included.
+        self.integrate_lazy_sources();
     }
 
     /// §15.4.4 whole-run march counts for the §14.9 time-step summary:
@@ -2282,6 +2410,74 @@ mod tests {
         assert!(
             (out / expect - 1.0).abs() < 0.10,
             "clamped outflow {out} vs {expect}"
+        );
+    }
+
+    /// Not a gate: a coarse wall-clock probe for performance passes.
+    /// Run with `cargo test --release -- --ignored marcher_performance`.
+    #[test]
+    #[ignore = "manual performance probe"]
+    fn marcher_performance_probe() {
+        let (nx, ny) = (250usize, 240usize);
+        // A: a dam break engaging most of the mesh.
+        let mut mesh = grid(nx, ny, 1.0, |x, _| 10.0 + 0.002 * x);
+        let topo = Topology::build(&mesh).expect("valid");
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ci, mut c)| {
+                if topo.centroid[ci][0] < 20.0 {
+                    c.h0 = 1.0;
+                }
+                c
+            })
+            .collect();
+        let mut m = build(&mesh);
+        let t0 = std::time::Instant::now();
+        m.advance(60.0);
+        let (sub, cyc, reb, mn, av, peak) = m.statistics();
+        println!(
+            "A dam-break {}c {}f: {:.2?}  substeps {sub} cycles {cyc} rebuilds {reb} dt {mn:.4}/{av:.4} peak {peak}",
+            m.area.len(),
+            m.faces.len(),
+            t0.elapsed()
+        );
+        #[cfg(feature = "threads")]
+        for width in [4usize, 8] {
+            let mut m = build(&mesh);
+            m.set_width(width);
+            let t0 = std::time::Instant::now();
+            m.advance(60.0);
+            println!("A dam-break width {width}: {:.2?}", t0.elapsed());
+        }
+
+        // B: a small pond on a large dry mesh — the sparse case the
+        // active set exists for.
+        let mut mesh = grid(nx, ny, 1.0, |x, y| {
+            10.0 + 0.002 * x + ((x - 20.0).hypot(y - 20.0) / 10.0).min(3.0) * 0.0
+        });
+        let topo = Topology::build(&mesh).expect("valid");
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ci, mut c)| {
+                let (x, y) = (topo.centroid[ci][0], topo.centroid[ci][1]);
+                if (x - 20.0).hypot(y - 20.0) < 10.0 {
+                    c.h0 = 0.3;
+                }
+                c
+            })
+            .collect();
+        let mut m = build(&mesh);
+        let t0 = std::time::Instant::now();
+        m.advance(600.0);
+        let (sub, cyc, reb, mn, av, peak) = m.statistics();
+        println!(
+            "B sparse {}c: {:.2?}  substeps {sub} cycles {cyc} rebuilds {reb} dt {mn:.4}/{av:.4} peak {peak}",
+            m.area.len(),
+            t0.elapsed()
         );
     }
 
