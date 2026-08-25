@@ -20,8 +20,8 @@
 
 use std::collections::HashMap;
 
-use super::keywords::{match_section, Section};
-use super::lex::{check_line_length, effective_content, tokenize, LexError};
+use crate::dialect::keywords::{match_section, Section};
+use crate::dialect::lex::{check_line_length, effective_content, tokenize, LexError};
 
 /// Which identifier namespace an object registers in (§2.2's kinds, at the
 /// granularity the file format distinguishes).
@@ -239,7 +239,7 @@ impl std::fmt::Display for Diagnostic {
 
 impl std::fmt::Display for DiagnosticKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use crate::io::keywords::canonical_header;
+        use crate::dialect::keywords::canonical_header;
         match self {
             DiagnosticKind::NonCanonicalSectionHeader { token, section } => write!(
                 f,
@@ -254,7 +254,7 @@ impl std::fmt::Display for DiagnosticKind {
                 "unrecognised section header {token:?}: {lines_discarded} line(s) discarded"
             ),
             DiagnosticKind::Lex(e) => match e {
-                crate::io::lex::LexError::LineTooLong { effective_len } => {
+                crate::dialect::lex::LexError::LineTooLong { effective_len } => {
                     write!(f, "line too long ({effective_len} characters)")
                 }
             },
@@ -968,7 +968,7 @@ THEN PUMP P1 STATUS = ON
         };
         assert!(repairable.is_error() && repairable.repairable_by_omission());
         // Every other refusal carries meaning omission would change.
-        let not = DiagnosticKind::Lex(crate::io::lex::LexError::LineTooLong {
+        let not = DiagnosticKind::Lex(crate::dialect::lex::LexError::LineTooLong {
             effective_len: 5000,
         });
         assert!(not.is_error() && !not.repairable_by_omission());

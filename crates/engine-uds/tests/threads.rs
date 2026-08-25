@@ -5,7 +5,6 @@
 //! test between them.
 #![cfg(feature = "threads")]
 
-use hydra_engine_uds::simulation::engine::Simulation;
 use std::fmt::Write as _;
 
 /// An inflow surge down a long junction chain, with a regulator pocket
@@ -123,7 +122,7 @@ fn comparable_report(report: Vec<u8>) -> Vec<u8> {
 }
 
 fn results_bytes(model: &str) -> (Vec<u8>, Vec<u8>) {
-    let (mut sim, _, _) = Simulation::open(model).expect("open");
+    let (mut sim, _, _) = hydra_interop_swmm::session::open(model).expect("open");
     let held = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     struct Shared(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Shared {
@@ -135,13 +134,13 @@ fn results_bytes(model: &str) -> (Vec<u8>, Vec<u8>) {
             Ok(())
         }
     }
-    sim.begin_results(Box::new(Shared(held.clone())), false)
+    hydra_interop_swmm::session::begin_results(&mut sim, Box::new(Shared(held.clone())), false)
         .expect("attach");
     sim.run();
     sim.finish_results().expect("finish");
     let out = held.lock().expect("lock").clone();
     let mut report = Vec::new();
-    sim.write_report(&mut report).expect("report");
+    hydra_interop_swmm::session::write_report(&sim, &mut report).expect("report");
     (out, comparable_report(report))
 }
 

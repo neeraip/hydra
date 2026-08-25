@@ -3,11 +3,11 @@
 //! including the legacy nine-value unit-hydrograph line format its reader
 //! still accepts.
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     RdiiInflow, SnowRemoval, SnowSurface, Snowpack, Treatment, TreatmentKind, UhResponse,
     UnitHydrographGroup,
 };
@@ -418,8 +418,8 @@ pub(crate) fn parse_treatment(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::TreatmentKind;
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::TreatmentKind;
 
     const FIXTURE: &str = "\
 [OPTIONS]

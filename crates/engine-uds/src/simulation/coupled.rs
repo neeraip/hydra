@@ -411,7 +411,7 @@ impl CoupledSurface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
     use crate::model::validate::validate;
     use crate::overland::{CouplingRow, MeshCell, MeshVertex, OverlandMesh, Topology};
 
@@ -668,7 +668,7 @@ C1  J1  O1  100  0.013  0  0
 [XSECTIONS]
 C1  CIRCULAR  0.5  0  0  0
 ";
-        let (mut sim, _, findings) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut sim, _, findings) = crate::dialect::session::open(inp).expect("open");
         assert!(findings.iter().all(|f| !f.kind.is_error()));
         sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
         let v0 = sim.overland().expect("attached").marcher.storage();
@@ -692,7 +692,7 @@ C1  CIRCULAR  0.5  0  0  0
     #[test]
     fn si_and_us_authorings_agree() {
         let run = |inp: &str| {
-            let (mut sim, _, findings) = crate::simulation::Simulation::open(inp).expect("open");
+            let (mut sim, _, findings) = crate::dialect::session::open(inp).expect("open");
             assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
             sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
             sim.run();
@@ -786,7 +786,7 @@ C1  J1  O1  100  0.013  0  0
 [XSECTIONS]
 C1  CIRCULAR  0.5  0  0  0
 ";
-        let (mut sim, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut sim, _, _) = crate::dialect::session::open(inp).expect("open");
         sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
 
         static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -797,11 +797,11 @@ C1  CIRCULAR  0.5  0  0  0
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
         let sink = Box::new(std::fs::File::create(&path).expect("create"));
-        sim.begin_overland_results(sink).expect("begin");
+        crate::dialect::session::begin_overland_results(&mut sim, sink).expect("begin");
         sim.run();
         sim.finish_results().expect("finish");
 
-        let r = crate::io::out_reader::OverlandResults::open(&path).expect("open results");
+        let r = crate::dialect::out_reader::OverlandResults::open(&path).expect("open results");
         assert_eq!(r.periods, 4, "20 min at 5-min reporting");
         assert_eq!(r.cells.len(), 32);
         assert_eq!(r.verts.len(), 25);
@@ -827,14 +827,14 @@ C1  CIRCULAR  0.5  0  0  0
         // A torso without its epilog is refused as unfinished.
         let bytes = std::fs::read(&path).expect("read");
         std::fs::write(&path, &bytes[..bytes.len() - 8]).expect("truncate");
-        let err = crate::io::out_reader::OverlandResults::open(&path).unwrap_err();
+        let err = crate::dialect::out_reader::OverlandResults::open(&path).unwrap_err();
         assert!(err.contains("did not finish"), "{err}");
         std::fs::remove_file(&path).ok();
 
         // §14.9: the report carries the overland blocks and the §15.8
         // named pair.
         let mut rpt = Vec::new();
-        sim.write_report(&mut rpt).expect("report");
+        crate::dialect::session::write_report(&sim, &mut rpt).expect("report");
         let rpt = String::from_utf8(rpt).expect("utf8");
         for needle in [
             "Overland Flow Continuity",
@@ -878,12 +878,12 @@ C1  J1  O1  100  0.013  0  0
 C1  CIRCULAR  0.5  0  0  0
 ";
         // The uninterrupted reference.
-        let (mut whole, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut whole, _, _) = crate::dialect::session::open(inp).expect("open");
         whole.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
         whole.run();
 
         // The same run, checkpointed midway and resumed elsewhere.
-        let (mut first, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut first, _, _) = crate::dialect::session::open(inp).expect("open");
         first.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
         for _ in 0..120 {
             first.step();
@@ -891,7 +891,7 @@ C1  CIRCULAR  0.5  0  0  0
         let mut held = Vec::new();
         first.save_checkpoint(&mut held).expect("save");
 
-        let (mut resumed, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut resumed, _, _) = crate::dialect::session::open(inp).expect("open");
         resumed
             .attach_overland(pond_mesh(0.3, "J1"))
             .expect("attach");
@@ -923,7 +923,7 @@ C1  CIRCULAR  0.5  0  0  0
 
         // A different terrain is a different model: the mesh
         // fingerprint refuses.
-        let (mut other, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let (mut other, _, _) = crate::dialect::session::open(inp).expect("open");
         let mut mesh = pond_mesh(0.3, "J1");
         for v in &mut mesh.verts {
             v.z += 0.5;

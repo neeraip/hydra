@@ -5,10 +5,10 @@
 //! the one-way SI header, and display-unit conversion. Semantics live in
 //! §15; this module never interprets the mesh, only reads it.
 
-use super::keywords::{match_keyword, Section};
-use super::lex::FiniteParse;
-use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
-use crate::overland::{
+use crate::dialect::keywords::{match_keyword, Section};
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::engine_api::overland::{
     BoundaryCondition, BoundaryRow, CellClosure, ConveyanceRow, CouplingRow, FaceReconstruction,
     InfiltrationRow, InitVelocityRow, MeshCell, MeshVertex, OverlandMesh, OverlandOptions,
     RainfallMode, SeriesOrValue,
@@ -86,12 +86,12 @@ pub(crate) fn units_header_si(text: &str) -> bool {
 pub(crate) fn reparse_with_external(
     input: &str,
     external: &str,
-    options: &super::options::AnalysisOptions,
+    options: &crate::dialect::options::AnalysisOptions,
     diags: &mut Vec<Diagnostic>,
 ) -> Option<OverlandMesh> {
     let inline_2d = two_d_lines_only(input);
-    let s1 = super::survey::survey(&inline_2d);
-    let s2 = super::survey::survey(external);
+    let s1 = crate::dialect::survey::survey(&inline_2d);
+    let s2 = crate::dialect::survey::survey(external);
     let mut sections: Vec<(Section, Vec<TokenLine<'_>>)> = Vec::new();
     for (sec, lines) in s1.sections.iter().chain(s2.sections.iter()) {
         if is_two_d(*sec) && *sec != Section::TwoDMeshFile {
@@ -99,7 +99,7 @@ pub(crate) fn reparse_with_external(
         }
     }
     let units_si = units_header_si(input) || units_header_si(external);
-    let cv = super::objects::UnitConverter::new(options.flow_units, options.link_offsets);
+    let cv = crate::dialect::objects::UnitConverter::new(options.flow_units, options.link_offsets);
     let mut mesh = parse_overland(
         &sections,
         units_si,
@@ -685,7 +685,7 @@ fn parse_options(lines: &[TokenLine<'_>], opts: &mut OverlandOptions, diags: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     fn model(extra: &str) -> String {
         format!(
@@ -723,7 +723,7 @@ mod tests {
 
         // Export writes SI millimetres, and re-imports to the same
         // values under the SI header.
-        let out = crate::io::inp_writer::write_inp(&net).expect("export");
+        let out = crate::dialect::inp_writer::write_inp(&net).expect("export");
         assert!(out.contains("[2D_INFILTRATION]"), "section exported");
         let (net2, diags) = parse_network(&out);
         assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
@@ -734,11 +734,12 @@ mod tests {
         // A negative loss is a §15.2 refusal with the cell named.
         let bad = format!("{MESH}[2D_INFILTRATION]\n0 -5 0\n");
         let (net, _) = parse_network(&model(&bad));
-        let errors = crate::overland::Topology::build(&net.overland.expect("mesh"))
+        let errors = crate::engine_api::overland::Topology::build(&net.overland.expect("mesh"))
             .expect_err("negative losses refuse");
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, crate::overland::MeshError::BadInfiltration { .. })));
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            crate::engine_api::overland::MeshError::BadInfiltration { .. }
+        )));
     }
 
     #[test]
@@ -814,14 +815,16 @@ mod tests {
         assert_eq!(mesh.cell_couplings[0].cd, 0.7);
         assert_eq!(mesh.resolve_cell(&mesh.cell_couplings[1].address), Some(1));
         // The full mesh validates: every address is known.
-        assert!(crate::overland::Topology::build(&mesh).is_ok());
+        assert!(crate::engine_api::overland::Topology::build(&mesh).is_ok());
         // An address matching nothing is a named build defect.
         let mut broken = mesh.clone();
         broken.vertex_couplings[0].address = "NOWHERE".into();
-        let errors = crate::overland::Topology::build(&broken).expect_err("bad address");
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, crate::overland::MeshError::UnknownAddress { .. })));
+        let errors =
+            crate::engine_api::overland::Topology::build(&broken).expect_err("bad address");
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            crate::engine_api::overland::MeshError::UnknownAddress { .. }
+        )));
     }
 
     #[test]
@@ -937,7 +940,7 @@ TB O1 0.7 2.5
 "
         );
         let (net, _) = parse_network(&model(&extra));
-        let text = crate::io::inp_writer::write_inp(&net).expect("writable");
+        let text = crate::dialect::inp_writer::write_inp(&net).expect("writable");
         let (net2, diags) = parse_network(&text);
         assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
         let (a, b) = (net.overland.expect("mesh"), net2.overland.expect("mesh"));

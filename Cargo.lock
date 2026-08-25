@@ -2515,6 +2515,7 @@ name = "hydra-engine-uds"
 version = "14.0.0"
 dependencies = [
  "hydra-common",
+ "hydra-interop-swmm",
  "serde_json",
 ]
 
@@ -2540,6 +2541,7 @@ dependencies = [
  "hydra-common",
  "hydra-engine-uds",
  "hydra-engine-wds",
+ "hydra-interop-swmm",
 ]
 
 [[package]]
@@ -2572,6 +2574,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hydra-interop-swmm"
+version = "14.0.0"
+dependencies = [
+ "hydra-common",
+ "hydra-engine-uds",
+]
+
+[[package]]
 name = "hydra-report"
 version = "14.0.0"
 dependencies = [
@@ -2592,6 +2602,7 @@ dependencies = [
  "hydra-engine-uds",
  "hydra-engine-wds",
  "hydra-engines",
+ "hydra-interop-swmm",
  "hydra-report",
 ]
 

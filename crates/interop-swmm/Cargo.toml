@@ -1,21 +1,17 @@
 [package]
-name = "hydra-engines"
+name = "hydra-interop-swmm"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 publish = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Hydra engine dispatch — routes a model of unknown provenance to the engine that owns it"
-readme = "README.md"
-keywords = ["water", "hydraulics", "simulation", "engine"]
+description = "Hydra's SWMM dialect — INP import, OUT/RPT output, interface files, and recognition for the urban drainage engine"
+keywords = ["water", "hydraulics", "simulation", "swmm"]
 categories = ["science", "simulation"]
 
 [dependencies]
 hydra-common = { path = "../common", version = "14.0.0" }
 hydra-engine-uds = { path = "../engine-uds", version = "14.0.0" }
-hydra-interop-swmm = { path = "../interop-swmm", version = "14.0.0" }
-hydra-engine-wds = { path = "../engine-wds", version = "14.0.0" }

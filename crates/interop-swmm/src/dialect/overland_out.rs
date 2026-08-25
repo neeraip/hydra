@@ -7,9 +7,9 @@
 
 use std::io::{self, Write};
 
-use crate::overland::marcher::Marcher;
-pub use crate::overland::LedgerRow;
-use crate::overland::OverlandMesh;
+use crate::engine_api::overland::marcher::Marcher;
+pub use crate::engine_api::overland::LedgerRow;
+use crate::engine_api::overland::OverlandMesh;
 
 /// §14.16 leading and closing magic.
 pub const MAGIC: u32 = 1_214_727_218;
@@ -118,7 +118,7 @@ impl<W: Write> OverlandStream<W> {
 }
 
 /// §14.16 as a destination: the sidecar stream is the sink.
-impl crate::simulation::sinks::OverlandSink for OverlandStream<Box<dyn Write + Send>> {
+impl crate::engine_api::simulation::sinks::OverlandSink for OverlandStream<Box<dyn Write + Send>> {
     fn append(&mut self, t: f64, marcher: &Marcher, exchange_rate: &[f64]) -> io::Result<()> {
         OverlandStream::append(self, t, marcher, exchange_rate)
     }

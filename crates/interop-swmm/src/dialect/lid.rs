@@ -7,11 +7,11 @@
 //! form per its exponent (§14.6); its multiplier curve stays in file units,
 //! looked up at file-unit head by the §3 evaluation.
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     LidControl, LidDrain, LidDrainMat, LidKind, LidPavement, LidSoil, LidStorage, LidSurface,
     LidUsage, ParcelOutlet,
 };
@@ -442,8 +442,8 @@ pub(crate) fn parse_lid_usage(
 #[cfg(test)]
 mod tests {
     use super::atoi;
-    use crate::io::objects::parse_network;
-    use crate::model::{LidKind, ParcelOutlet};
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{LidKind, ParcelOutlet};
 
     const FIXTURE: &str = "\
 [OPTIONS]
@@ -504,7 +504,7 @@ S1  PPV  0  100  5   0  0   0
 S2  GRF  1  200  8   0  0   0  rpt.txt
 ";
 
-    fn net_ok() -> crate::model::Network {
+    fn net_ok() -> crate::engine_api::model::Network {
         let (net, diags) = parse_network(FIXTURE);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),

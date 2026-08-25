@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use super::options::FlowUnits;
+use crate::dialect::options::FlowUnits;
 
 const MAGIC: i32 = 516_114_522;
 const VERSION: i32 = 52_004;
@@ -374,7 +374,7 @@ pub fn read_element_series(
 // run owns, so this reader seeks an explicitly supplied path.
 // ═══════════════════════════════════════════════════════════════════
 
-use super::overland_out::{
+use crate::dialect::overland_out::{
     header_len, record_len, LedgerRow, MAGIC as OV_MAGIC, VERSION as OV_VERSION,
 };
 

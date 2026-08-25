@@ -9,10 +9,10 @@
 //! so the $\sqrt{L}$ roughness inflation cannot compound into later
 //! transects (§5.6's CORRESPONDENCE notes).
 
-use super::objects::UnitConverter;
-use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::Transect;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::engine_api::model::Transect;
 
 /// The predecessor's station cap per transect.
 const MAX_STATIONS: usize = 1500;
@@ -154,7 +154,7 @@ pub(crate) fn parse_transects(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     const FIXTURE: &str = "\
 [OPTIONS]

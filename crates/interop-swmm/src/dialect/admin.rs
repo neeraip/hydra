@@ -2,11 +2,11 @@
 //! it later), `[FILES]` interface declarations (§14.8), `[REPORT]`
 //! selections (§14.5), and `[EVENTS]` windows (§10.3).
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::options::{clock_or_hours_to_seconds, parse_date_token};
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::options::{clock_or_hours_to_seconds, parse_date_token};
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     ControlRule, ControlText, EventWindow, FileMode, InterfaceFiles, ReportOptions, ReportSelection,
 };
 
@@ -337,9 +337,9 @@ pub(crate) fn parse_events(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::io::options::Date;
-    use crate::model::ReportSelection;
+    use crate::dialect::objects::parse_network;
+    use crate::dialect::options::Date;
+    use crate::engine_api::model::ReportSelection;
 
     const FIXTURE: &str = "\
 [OPTIONS]
@@ -390,7 +390,7 @@ J1  10.5  20.5
 J2  30.0  40.0
 ";
 
-    fn net_ok() -> crate::model::Network {
+    fn net_ok() -> crate::engine_api::model::Network {
         let (net, diags) = parse_network(FIXTURE);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),
@@ -446,7 +446,7 @@ J2  30.0  40.0
         // NODE list holding an identifier "YES".
         assert!(diags.iter().any(|d| matches!(
             &d.kind,
-            crate::io::survey::DiagnosticKind::IgnoredOption { keyword }
+            crate::dialect::survey::DiagnosticKind::IgnoredOption { keyword }
                 if *keyword == "NODESTATS"
         )));
     }

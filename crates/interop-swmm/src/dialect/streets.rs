@@ -4,11 +4,11 @@
 //! Lengths convert from feet, capture caps from the flow unit; slopes are
 //! written as percentages and stored as fractions.
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     CurbInlet, GrateInlet, GrateKind, InletDesign, InletPlacement, InletUsage, SlottedInlet,
     Street, ThroatAngle,
 };
@@ -432,8 +432,8 @@ pub(crate) fn parse_inlet_usage(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::{GrateKind, InletPlacement, ThroatAngle, XsectReferent};
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{GrateKind, InletPlacement, ThroatAngle, XsectReferent};
 
     const FIXTURE: &str = "\
 [OPTIONS]
@@ -472,7 +472,7 @@ GUT1  CB1  SEW  2  25  1.5  0.1  1  ON_GRADE
 GUT1  GEN  SEW
 ";
 
-    fn net_ok() -> crate::model::Network {
+    fn net_ok() -> crate::engine_api::model::Network {
         let (net, diags) = parse_network(FIXTURE);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),

@@ -1,6 +1,6 @@
 //! Model export (§14.13): a §2 model written as predecessor input text.
 //!
-//! The columns written here are the columns [`super::objects`] and its
+//! The columns written here are the columns [`crate::dialect::objects`] and its
 //! siblings read, so this module defines only what the direction itself
 //! decides. Three properties define correctness, in ascending strength
 //! (§14.13.2): import-export-import yields an identical model; the
@@ -14,8 +14,8 @@
 
 use std::fmt::Write as _;
 
-use crate::io::options::{AnalysisOptions, Date, FlowUnits};
-use crate::model::Network;
+use crate::dialect::options::{AnalysisOptions, Date, FlowUnits};
+use crate::engine_api::model::Network;
 
 /// ft → m, the same exact factor import uses (§14.13.3 inverts it).
 const FT: f64 = 0.3048;
@@ -443,11 +443,11 @@ fn write_options(network: &Network, u: &Units, out: &mut String) {
     put(
         "INFILTRATION",
         match o.infiltration {
-            crate::io::options::InfiltrationModel::Horton => "HORTON",
-            crate::io::options::InfiltrationModel::ModifiedHorton => "MODIFIED_HORTON",
-            crate::io::options::InfiltrationModel::GreenAmpt => "GREEN_AMPT",
-            crate::io::options::InfiltrationModel::ModifiedGreenAmpt => "MODIFIED_GREEN_AMPT",
-            crate::io::options::InfiltrationModel::CurveNumber => "CURVE_NUMBER",
+            crate::dialect::options::InfiltrationModel::Horton => "HORTON",
+            crate::dialect::options::InfiltrationModel::ModifiedHorton => "MODIFIED_HORTON",
+            crate::dialect::options::InfiltrationModel::GreenAmpt => "GREEN_AMPT",
+            crate::dialect::options::InfiltrationModel::ModifiedGreenAmpt => "MODIFIED_GREEN_AMPT",
+            crate::dialect::options::InfiltrationModel::CurveNumber => "CURVE_NUMBER",
         }
         .to_string(),
     );
@@ -457,9 +457,9 @@ fn write_options(network: &Network, u: &Units, out: &mut String) {
     put(
         "FLOW_ROUTING",
         match o.routing_request {
-            crate::io::options::RoutingRequest::Steady => "STEADY",
-            crate::io::options::RoutingRequest::KinematicWave => "KINWAVE",
-            crate::io::options::RoutingRequest::DynamicWave => "DYNWAVE",
+            crate::dialect::options::RoutingRequest::Steady => "STEADY",
+            crate::dialect::options::RoutingRequest::KinematicWave => "KINWAVE",
+            crate::dialect::options::RoutingRequest::DynamicWave => "DYNWAVE",
         }
         .to_string(),
     );
@@ -492,8 +492,8 @@ fn write_options(network: &Network, u: &Units, out: &mut String) {
     put(
         "LINK_OFFSETS",
         match o.link_offsets {
-            crate::io::options::LinkOffsets::Depth => "DEPTH",
-            crate::io::options::LinkOffsets::Elevation => "ELEVATION",
+            crate::dialect::options::LinkOffsets::Depth => "DEPTH",
+            crate::dialect::options::LinkOffsets::Elevation => "ELEVATION",
         }
         .to_string(),
     );
@@ -559,7 +559,7 @@ fn yes_no(b: bool) -> String {
 // ── Vertices ────────────────────────────────────────────────────────────
 
 fn write_vertices(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::VertexKind as K;
+    use crate::engine_api::model::VertexKind as K;
     let mut junctions = Rows::new(
         "[JUNCTIONS]",
         &[
@@ -706,11 +706,11 @@ fn write_vertices(network: &Network, u: &Units, out: &mut String) {
 }
 
 fn outfall_stage(
-    stage: &crate::model::OutfallStage,
+    stage: &crate::engine_api::model::OutfallStage,
     network: &Network,
     u: &Units,
 ) -> (String, String) {
-    use crate::model::OutfallStage as S;
+    use crate::engine_api::model::OutfallStage as S;
     match stage {
         S::Free => ("FREE".into(), String::new()),
         S::Normal => ("NORMAL".into(), String::new()),
@@ -737,12 +737,12 @@ fn outfall_stage(
 /// storage unit as far as the engine is concerned, and the round trip is
 /// exact because the coefficients recompile unchanged (§14.13.2).
 fn storage_shape(
-    geometry: &crate::model::StorageGeometry,
+    geometry: &crate::engine_api::model::StorageGeometry,
     network: &Network,
     u: &Units,
 ) -> (String, String, String, String) {
-    use crate::model::StorageGeometry as G;
-    use crate::model::StorageShapeKind as K;
+    use crate::engine_api::model::StorageGeometry as G;
+    use crate::engine_api::model::StorageShapeKind as K;
     use std::f64::consts::PI;
     match geometry {
         G::Tabular { curve } => (
@@ -821,11 +821,11 @@ fn functional_area_coeff(coeff: f64, exponent: f64, u: &Units) -> f64 {
 }
 
 fn divider_rule(
-    rule: &crate::model::DividerRule,
+    rule: &crate::engine_api::model::DividerRule,
     network: &Network,
     u: &Units,
 ) -> (String, String, String, String) {
-    use crate::model::DividerRule as R;
+    use crate::engine_api::model::DividerRule as R;
     match rule {
         R::Overflow => (
             "OVERFLOW".into(),
@@ -861,7 +861,7 @@ fn divider_rule(
 // ── Links ───────────────────────────────────────────────────────────────
 
 fn write_links(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::LinkKind as K;
+    use crate::engine_api::model::LinkKind as K;
     let mut conduits = Rows::new(
         "[CONDUITS]",
         &[
@@ -984,8 +984,8 @@ fn write_links(network: &Network, u: &Units, out: &mut String) {
                 vid(l.from),
                 vid(l.to),
                 match orientation {
-                    crate::model::OrificeOrientation::Bottom => "BOTTOM",
-                    crate::model::OrificeOrientation::Side => "SIDE",
+                    crate::engine_api::model::OrificeOrientation::Bottom => "BOTTOM",
+                    crate::engine_api::model::OrificeOrientation::Side => "SIDE",
                 }
                 .to_string(),
                 offset(*off, u),
@@ -1017,9 +1017,9 @@ fn write_links(network: &Network, u: &Units, out: &mut String) {
                 yes_no(*can_surcharge),
                 num(u.len(*road_width)),
                 match road_surface {
-                    crate::model::RoadSurface::Paved => "PAVED",
-                    crate::model::RoadSurface::Gravel => "GRAVEL",
-                    crate::model::RoadSurface::Unspecified => "",
+                    crate::engine_api::model::RoadSurface::Paved => "PAVED",
+                    crate::engine_api::model::RoadSurface::Gravel => "GRAVEL",
+                    crate::engine_api::model::RoadSurface::Unspecified => "",
                 }
                 .to_string(),
                 coeff_curve.map_or(String::new(), |c| id(&network.curves[c].id)),
@@ -1052,16 +1052,16 @@ fn write_links(network: &Network, u: &Units, out: &mut String) {
 }
 
 /// An offset in the convention the model declares (§14.13.1).
-fn offset(o: crate::model::Offset, u: &Units) -> String {
-    use crate::model::Offset as O;
+fn offset(o: crate::engine_api::model::Offset, u: &Units) -> String {
+    use crate::engine_api::model::Offset as O;
     match o {
         O::Depth(v) | O::Elevation(v) => num(u.len(v)),
         O::Missing => "*".into(),
     }
 }
 
-fn weir_form(shape: crate::model::WeirForm) -> String {
-    use crate::model::WeirForm as W;
+fn weir_form(shape: crate::engine_api::model::WeirForm) -> String {
+    use crate::engine_api::model::WeirForm as W;
     match shape {
         W::Transverse => "TRANSVERSE",
         W::SideFlow => "SIDEFLOW",
@@ -1073,12 +1073,12 @@ fn weir_form(shape: crate::model::WeirForm) -> String {
 }
 
 fn outlet_rating(
-    rating: &crate::model::OutletRating,
-    basis: crate::model::OutletHeadBasis,
+    rating: &crate::engine_api::model::OutletRating,
+    basis: crate::engine_api::model::OutletHeadBasis,
     network: &Network,
 ) -> (String, String, String) {
-    use crate::model::OutletHeadBasis as B;
-    use crate::model::OutletRating as R;
+    use crate::engine_api::model::OutletHeadBasis as B;
+    use crate::engine_api::model::OutletRating as R;
     let arg = match basis {
         B::Depth => "DEPTH",
         B::Head => "HEAD",
@@ -1107,7 +1107,7 @@ fn outlet_rating(
 /// carrying both a grate and a curb opening, so it writes two lines
 /// under one name.
 fn write_inlets(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::{GrateKind as G, InletPlacement as P, ThroatAngle as A};
+    use crate::engine_api::model::{GrateKind as G, InletPlacement as P, ThroatAngle as A};
     if !network.inlets.is_empty() {
         let _ = writeln!(out, "\n[INLETS]");
         for d in &network.inlets {
@@ -1204,7 +1204,7 @@ fn write_inlets(network: &Network, u: &Units, out: &mut String) {
 /// depletion curves all live under one header — so each writes its own
 /// line and the section appears only if something is in it.
 fn write_climate(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::{
+    use crate::engine_api::model::{
         EvaporationSource as E, FileTempUnits, TemperatureSource as T, WindSource as W,
     };
     let c = &network.climate;
@@ -1434,7 +1434,7 @@ fn write_snow_rdii(network: &Network, u: &Units, out: &mut String) {
 /// layer's as a void *ratio* against solids rather than a fraction of
 /// the whole.
 fn write_lid(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::{LidKind as K, ParcelOutlet};
+    use crate::engine_api::model::{LidKind as K, ParcelOutlet};
     if !network.lid_controls.is_empty() {
         let _ = writeln!(out, "\n[LID_CONTROLS]");
         for c in &network.lid_controls {
@@ -1703,7 +1703,7 @@ fn write_groundwater(network: &Network, u: &Units, out: &mut String) {
 /// The administrative sections: control rules, the report selection,
 /// interface-file declarations, and routing event windows.
 fn write_admin(network: &Network, out: &mut String) {
-    use crate::model::{FileMode, ReportSelection as Sel};
+    use crate::engine_api::model::{FileMode, ReportSelection as Sel};
 
     // Rules are held as the lines their author wrote — §9.1 compiles
     // them from text — so they are written back unparsed. Round-tripping
@@ -1774,7 +1774,7 @@ fn write_admin(network: &Network, out: &mut String) {
     // `NONE` included. Rewriting `ALL` as an enumeration would freeze a
     // selection that was written to follow the model.
     let r = &network.report;
-    let d = crate::model::ReportOptions::default();
+    let d = crate::engine_api::model::ReportOptions::default();
     let mut report = Rows::new("[REPORT]", &["Directive", "Value"]);
     for (flag, default, word) in [
         (r.disabled, d.disabled, "DISABLED"),
@@ -1821,7 +1821,7 @@ fn write_admin(network: &Network, out: &mut String) {
 /// dimension, so both invert; a constituent inflow's baseline is a
 /// concentration or a mass rate as written, and does not.
 fn write_inflows(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::InflowKind as K;
+    use crate::engine_api::model::InflowKind as K;
 
     let mut inflows = Rows::new(
         "[INFLOWS]",
@@ -1903,7 +1903,7 @@ fn write_inflows(network: &Network, u: &Units, out: &mut String) {
 /// by the unit system — the model stores them in the file's column order
 /// for exactly that reason — so §14.13.3's exact inverse is the identity.
 fn write_quality(network: &Network, out: &mut String) {
-    use crate::model::{
+    use crate::engine_api::model::{
         BuildupForm as B, BuildupNormalizer as N, ConcentrationUnits as Cu, TreatmentKind,
         WashoffForm as W,
     };
@@ -2065,7 +2065,9 @@ fn write_quality(network: &Network, out: &mut String) {
 /// The hydrology sections that describe a surface: its gages, its
 /// parcels, their sub-areas and their infiltration.
 fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::{GageSource, Infiltration as I, ParcelOutlet, RainFileUnit, RainForm};
+    use crate::engine_api::model::{
+        GageSource, Infiltration as I, ParcelOutlet, RainFileUnit, RainForm,
+    };
 
     let mut gages = Rows::new(
         "[RAINGAGES]",
@@ -2165,9 +2167,9 @@ fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
                 num(u.depth(sa.dstore_perv)),
                 num(sa.frac_zero_store * 100.0),
                 match sa.routing {
-                    crate::model::SubareaRouting::Outlet => "OUTLET",
-                    crate::model::SubareaRouting::Impervious => "IMPERVIOUS",
-                    crate::model::SubareaRouting::Pervious => "PERVIOUS",
+                    crate::engine_api::model::SubareaRouting::Outlet => "OUTLET",
+                    crate::engine_api::model::SubareaRouting::Impervious => "IMPERVIOUS",
+                    crate::engine_api::model::SubareaRouting::Pervious => "PERVIOUS",
                 }
                 .to_string(),
                 num(sa.frac_routed * 100.0),
@@ -2308,7 +2310,7 @@ fn write_streets(network: &Network, u: &Units, out: &mut String) {
 /// A conduit with none of them is omitted: every field defaults to zero
 /// or off, so a row of zeroes says exactly what silence says (§14.13.4).
 fn write_losses(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::LinkKind as K;
+    use crate::engine_api::model::LinkKind as K;
     let mut rows = Rows::new(
         "[LOSSES]",
         &["Link", "Kentry", "Kexit", "Kavg", "FlapGate", "Seepage"],
@@ -2347,8 +2349,8 @@ fn write_losses(network: &Network, u: &Units, out: &mut String) {
 
 /// A link kind's position in the export's section order, so anything
 /// listing links across kinds can match it.
-fn link_kind_rank(kind: &crate::model::LinkKind) -> u8 {
-    use crate::model::LinkKind as K;
+fn link_kind_rank(kind: &crate::engine_api::model::LinkKind) -> u8 {
+    use crate::engine_api::model::LinkKind as K;
     match kind {
         K::Channel { .. } => 0,
         K::Pump { .. } => 1,
@@ -2361,7 +2363,7 @@ fn link_kind_rank(kind: &crate::model::LinkKind) -> u8 {
 /// `[XSECTIONS]`, whose four geometry values the model keeps in the
 /// file's own units (§2.7), so they are written back unconverted.
 fn write_xsections(network: &Network, out: &mut String) {
-    use crate::model::{XsectReferent as R, XsectShape};
+    use crate::engine_api::model::{XsectReferent as R, XsectShape};
     let mut rows = Rows::new(
         "[XSECTIONS]",
         &[
@@ -2374,7 +2376,7 @@ fn write_xsections(network: &Network, out: &mut String) {
     // order on the first export and another on the second — the model is
     // the same either way, but idempotence is not, and a file that
     // differs from its own re-export hides which of the two is canonical.
-    let mut ordered: Vec<&crate::model::Link> = network.links.iter().collect();
+    let mut ordered: Vec<&crate::engine_api::model::Link> = network.links.iter().collect();
     ordered.sort_by_key(|l| link_kind_rank(&l.kind));
     for l in ordered {
         let Some(x) = &l.cross_section else { continue };
@@ -2396,7 +2398,7 @@ fn write_xsections(network: &Network, out: &mut String) {
         };
         rows.push([
             id(&l.id),
-            crate::io::objects::xsect_word(x.shape).to_string(),
+            crate::dialect::objects::xsect_word(x.shape).to_string(),
             geom1,
             geom2,
             num(x.geom_user[2]),
@@ -2415,7 +2417,7 @@ fn write_xsections(network: &Network, out: &mut String) {
 /// `[TIMESERIES]`, whose values the model keeps in the consumer's own
 /// units as written (§2.5), so they too are written back unconverted.
 fn write_timeseries(network: &Network, out: &mut String) {
-    use crate::model::{SeriesTime, TimeSeriesSource};
+    use crate::engine_api::model::{SeriesTime, TimeSeriesSource};
     let mut rows = Rows::new("[TIMESERIES]", &["Name", "Date", "Time", "Value"]);
     for s in &network.timeseries {
         match &s.source {
@@ -2452,7 +2454,7 @@ fn write_timeseries(network: &Network, out: &mut String) {
 /// `io::tables` applied to them — the roles convert differently, so the
 /// inverse is chosen per role rather than per column.
 fn write_curves(network: &Network, u: &Units, out: &mut String) {
-    use crate::model::CurveKind as C;
+    use crate::engine_api::model::CurveKind as C;
     let mut rows = Rows::new("[CURVES]", &["Name", "Type", "X-Value", "Y-Value"]);
     for c in &network.curves {
         let word = match c.kind {
@@ -2508,10 +2510,10 @@ fn write_tables(network: &Network, u: &Units, out: &mut String) {
     let mut patterns = Rows::new("[PATTERNS]", &["Name", "Type", "Multipliers"]);
     for p in &network.patterns {
         let kind = match p.kind {
-            crate::model::PatternKind::Monthly => "MONTHLY",
-            crate::model::PatternKind::Daily => "DAILY",
-            crate::model::PatternKind::Hourly => "HOURLY",
-            crate::model::PatternKind::Weekend => "WEEKEND",
+            crate::engine_api::model::PatternKind::Monthly => "MONTHLY",
+            crate::engine_api::model::PatternKind::Daily => "DAILY",
+            crate::engine_api::model::PatternKind::Hourly => "HOURLY",
+            crate::engine_api::model::PatternKind::Weekend => "WEEKEND",
         };
         // The predecessor's reader accumulates a pattern's factors over
         // however many lines carry them; one line per pattern is the
@@ -2533,7 +2535,7 @@ fn write_tables(network: &Network, u: &Units, out: &mut String) {
 /// round-trips losslessly whatever units the model was authored in. An
 /// external mesh file is inlined, never re-created.
 fn write_overland(network: &Network, out: &mut String) {
-    use crate::overland::{
+    use crate::engine_api::overland::{
         BoundaryCondition, CellClosure, FaceReconstruction, OverlandOptions, RainfallMode,
         SeriesOrValue,
     };
@@ -2673,7 +2675,7 @@ fn write_overland(network: &Network, out: &mut String) {
     // An unauthored exchange area stays unwritten: baking the default in
     // would pin a row that COUPLING_AREA AUTO is entitled to derive
     // (§15.6), and the grammar carries a coefficient without an area.
-    let coupling_line = |out: &mut String, r: &crate::overland::CouplingRow| {
+    let coupling_line = |out: &mut String, r: &crate::engine_api::overland::CouplingRow| {
         if r.area_authored {
             let _ = writeln!(out, "{} {} {} {}", r.address, r.node, r.cd, r.area);
         } else {
@@ -2743,7 +2745,7 @@ fn write_display(network: &Network, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{StorageGeometry, StorageShapeKind};
+    use crate::engine_api::model::{StorageGeometry, StorageShapeKind};
     use std::f64::consts::PI;
 
     /// Recompile written parameters the way import does (`objects.rs`),
@@ -2810,8 +2812,11 @@ mod tests {
     }
 
     /// Whether two vertices agree to floating-point rounding.
-    fn vertex_agrees(x: &crate::model::Vertex, y: &crate::model::Vertex) -> bool {
-        use crate::model::{StorageGeometry as G, VertexKind as K};
+    fn vertex_agrees(
+        x: &crate::engine_api::model::Vertex,
+        y: &crate::engine_api::model::Vertex,
+    ) -> bool {
+        use crate::engine_api::model::{StorageGeometry as G, VertexKind as K};
         if x.invert != y.invert {
             return false;
         }
@@ -2977,10 +2982,10 @@ RS1  2:00  0
 QIN  0:00  0.1
 QIN  4:00  0.1
 ";
-        let (a, da) = crate::io::objects::parse_network(inp);
+        let (a, da) = crate::dialect::objects::parse_network(inp);
         assert!(da.iter().all(|d| !d.kind.is_error()), "{da:?}");
         let text = write_inp(&a).expect("export");
-        let (b, db) = crate::io::objects::parse_network(&text);
+        let (b, db) = crate::dialect::objects::parse_network(&text);
         assert!(
             db.iter().all(|d| !d.kind.is_error()),
             "re-import failed: {db:?}\n--- written ---\n{text}"
@@ -3094,7 +3099,7 @@ C1  J1  O1  100  0.01  0  0  0  0
 [XSECTIONS]
 C1  CIRCULAR  1  0  0  0  1
 ";
-        let (mut net, _) = crate::io::objects::parse_network(inp);
+        let (mut net, _) = crate::dialect::objects::parse_network(inp);
         // Reachable only programmatically: §14.2 refuses `nan` on the way
         // in, so a model can hold one only if a caller put it there.
         net.vertices[0].invert = f64::NAN;
@@ -3128,7 +3133,7 @@ J1  10  3  0  0  0
 [OUTFALLS]
 O1  9  FREE  NO
 ";
-        let (mut net, _) = crate::io::objects::parse_network(inp);
+        let (mut net, _) = crate::dialect::objects::parse_network(inp);
         net.vertices[0].id = "J\n1".into();
         let err = write_inp(&net).expect_err("a line break in an identifier must not be written");
         assert!(

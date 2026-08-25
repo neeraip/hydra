@@ -6,11 +6,11 @@
 //! relations own their interpretation — while decay converts from per-day
 //! to per-second and flow-valued inflows convert to m³/s.
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     Buildup, BuildupForm, BuildupNormalizer, ConcentrationUnits, Constituent, DryWeatherInflow,
     ExternalInflow, InflowKind, LandUse, Network, Washoff, WashoffForm,
 };
@@ -702,8 +702,8 @@ pub(crate) fn parse_dry_weather(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::{
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{
         BuildupForm, BuildupNormalizer, ConcentrationUnits, InflowKind, WashoffForm,
     };
 

@@ -8,11 +8,11 @@
 //! coefficient unit-dependent, which stays as written for its owning
 //! section's treatment.
 
-use super::keywords::{match_keyword, Section};
-use super::options::{parse_options, AnalysisOptions, FlowUnits, LinkOffsets};
-use super::survey::{survey, Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::{match_keyword, Section};
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::options::{parse_options, AnalysisOptions, FlowUnits, LinkOffsets};
+use crate::dialect::survey::{survey, Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     CrossSection, DividerRule, Link, LinkKind, Network, Offset, OrificeOrientation, OutfallStage,
     OutletHeadBasis, OutletRating, RoadSurface, StorageGeometry, StorageSeepage, StorageShapeKind,
     Vertex, VertexKind, WeirForm, XsectReferent, XsectShape,
@@ -59,7 +59,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     // §14.15: the overland mesh, when the model authors one. The SI
     // header is a raw-text prescan — comments never reach the tokens.
-    let overland_units_si = super::overland::units_header_si(input);
+    let overland_units_si = crate::dialect::overland::units_header_si(input);
 
     // Data objects (§2.9), before the graph that references them.
     let empty = std::collections::HashMap::new();
@@ -67,7 +67,8 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         match sec {
             Section::Curves => {
                 let ids = s.ids.get(&ObjectKind::Curve).unwrap_or(&empty);
-                net.curves = super::tables::parse_curves(lines, ids, &cv, &mut diagnostics);
+                net.curves =
+                    crate::dialect::tables::parse_curves(lines, ids, &cv, &mut diagnostics);
             }
             Section::TimeSeries => {
                 // Bulk section: retained as text, parsed below from the
@@ -75,7 +76,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
             }
             Section::Patterns => {
                 let ids = s.ids.get(&ObjectKind::TimePattern).unwrap_or(&empty);
-                net.patterns = super::tables::parse_patterns(lines, ids, &mut diagnostics);
+                net.patterns = crate::dialect::tables::parse_patterns(lines, ids, &mut diagnostics);
             }
             _ => {}
         }
@@ -90,31 +91,34 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
             .bulk
             .iter()
             .filter(|(sec, _, _)| *sec == Section::TimeSeries)
-            .flat_map(|(_, body, first)| super::survey::bulk_lines(body, *first));
-        net.timeseries = super::tables::parse_timeseries(lines, ids, &mut diagnostics);
+            .flat_map(|(_, body, first)| crate::dialect::survey::bulk_lines(body, *first));
+        net.timeseries = crate::dialect::tables::parse_timeseries(lines, ids, &mut diagnostics);
     }
 
     // Surface compartment (§3): gages first, then parcels, then their
     // fill-in sections — file order within each is preserved by the survey.
     for (sec, lines) in &s.sections {
         if *sec == Section::RainGages {
-            net.gages = super::hydrology::parse_gages(lines, &s, &mut diagnostics);
+            net.gages = crate::dialect::hydrology::parse_gages(lines, &s, &mut diagnostics);
         }
     }
     for (sec, lines) in &s.sections {
         if *sec == Section::Subcatchments {
-            net.parcels = super::hydrology::parse_parcels(lines, &s, &cv, &mut diagnostics);
+            net.parcels =
+                crate::dialect::hydrology::parse_parcels(lines, &s, &cv, &mut diagnostics);
         }
     }
     for (sec, lines) in &s.sections {
         if *sec == Section::Aquifers {
-            net.aquifers = super::hydrology::parse_aquifers(lines, &s, &cv, &mut diagnostics);
+            net.aquifers =
+                crate::dialect::hydrology::parse_aquifers(lines, &s, &cv, &mut diagnostics);
         }
         if *sec == Section::Transects {
-            net.transects = super::transects::parse_transects(lines, &cv, &mut diagnostics);
+            net.transects =
+                crate::dialect::transects::parse_transects(lines, &cv, &mut diagnostics);
         }
         if *sec == Section::Snowpacks {
-            net.snowpacks = super::snow_rdii::parse_snowpacks(
+            net.snowpacks = crate::dialect::snow_rdii::parse_snowpacks(
                 lines,
                 &s,
                 &cv,
@@ -124,13 +128,13 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         }
         if *sec == Section::Hydrographs {
             net.unit_hydrographs =
-                super::snow_rdii::parse_unit_hydrographs(lines, &s, &cv, &mut diagnostics);
+                crate::dialect::snow_rdii::parse_unit_hydrographs(lines, &s, &cv, &mut diagnostics);
         }
     }
     for (sec, lines) in &s.sections {
         match sec {
             Section::Rdii => {
-                net.rdii.extend(super::snow_rdii::parse_rdii(
+                net.rdii.extend(crate::dialect::snow_rdii::parse_rdii(
                     lines,
                     &s,
                     &cv,
@@ -138,11 +142,12 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 ));
             }
             Section::Treatment => {
-                net.treatments.extend(super::snow_rdii::parse_treatment(
-                    lines,
-                    &s,
-                    &mut diagnostics,
-                ));
+                net.treatments
+                    .extend(crate::dialect::snow_rdii::parse_treatment(
+                        lines,
+                        &s,
+                        &mut diagnostics,
+                    ));
             }
             _ => {}
         }
@@ -151,7 +156,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         let ids = s.ids.get(&ObjectKind::Parcel);
         match sec {
             Section::Groundwater => {
-                super::hydrology::parse_groundwater(
+                crate::dialect::hydrology::parse_groundwater(
                     lines,
                     &s,
                     &mut net.parcels,
@@ -160,11 +165,11 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 );
             }
             Section::Gwf => {
-                super::hydrology::parse_gwf(lines, &s, &mut net.parcels, &mut diagnostics);
+                crate::dialect::hydrology::parse_gwf(lines, &s, &mut net.parcels, &mut diagnostics);
             }
             Section::Subareas => {
                 if let Some(ids) = ids {
-                    super::hydrology::parse_subareas(
+                    crate::dialect::hydrology::parse_subareas(
                         lines,
                         ids,
                         &mut net.parcels,
@@ -175,7 +180,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
             }
             Section::Infiltration => {
                 if let Some(ids) = ids {
-                    super::hydrology::parse_infiltration(
+                    crate::dialect::hydrology::parse_infiltration(
                         lines,
                         ids,
                         &mut net.parcels,
@@ -193,31 +198,41 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     // uses size their relation tables by the constituent count.
     for (sec, lines) in &s.sections {
         if *sec == Section::Pollutants {
-            net.constituents = super::quality::parse_constituents(lines, &s, &mut diagnostics);
+            net.constituents =
+                crate::dialect::quality::parse_constituents(lines, &s, &mut diagnostics);
         }
     }
     for (sec, lines) in &s.sections {
         if *sec == Section::LandUses {
-            net.land_uses =
-                super::quality::parse_land_uses(lines, net.constituents.len(), &mut diagnostics);
+            net.land_uses = crate::dialect::quality::parse_land_uses(
+                lines,
+                net.constituents.len(),
+                &mut diagnostics,
+            );
         }
     }
     for (sec, lines) in &s.sections {
         match sec {
-            Section::Buildup => {
-                super::quality::parse_buildup(lines, &s, &mut net.land_uses, &mut diagnostics)
-            }
-            Section::Washoff => {
-                super::quality::parse_washoff(lines, &s, &mut net.land_uses, &mut diagnostics)
-            }
+            Section::Buildup => crate::dialect::quality::parse_buildup(
+                lines,
+                &s,
+                &mut net.land_uses,
+                &mut diagnostics,
+            ),
+            Section::Washoff => crate::dialect::quality::parse_washoff(
+                lines,
+                &s,
+                &mut net.land_uses,
+                &mut diagnostics,
+            ),
             Section::Coverages => {
-                super::quality::parse_coverages(lines, &s, &mut net, &mut diagnostics)
+                crate::dialect::quality::parse_coverages(lines, &s, &mut net, &mut diagnostics)
             }
             Section::Loadings => {
-                super::quality::parse_loadings(lines, &s, &mut net, &mut diagnostics)
+                crate::dialect::quality::parse_loadings(lines, &s, &mut net, &mut diagnostics)
             }
             Section::Inflows => {
-                net.inflows.extend(super::quality::parse_inflows(
+                net.inflows.extend(crate::dialect::quality::parse_inflows(
                     lines,
                     &s,
                     &cv,
@@ -225,12 +240,13 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 ));
             }
             Section::Dwf => {
-                net.dry_weather.extend(super::quality::parse_dry_weather(
-                    lines,
-                    &s,
-                    &cv,
-                    &mut diagnostics,
-                ));
+                net.dry_weather
+                    .extend(crate::dialect::quality::parse_dry_weather(
+                        lines,
+                        &s,
+                        &cv,
+                        &mut diagnostics,
+                    ));
             }
             _ => {}
         }
@@ -280,10 +296,11 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     for (sec, lines) in &s.sections {
         match sec {
             Section::LidControls => {
-                net.lid_controls = super::lid::parse_lid_controls(lines, &s, &cv, &mut diagnostics);
+                net.lid_controls =
+                    crate::dialect::lid::parse_lid_controls(lines, &s, &cv, &mut diagnostics);
             }
             Section::LidUsage => {
-                net.lid_usage.extend(super::lid::parse_lid_usage(
+                net.lid_usage.extend(crate::dialect::lid::parse_lid_usage(
                     lines,
                     &s,
                     &cv,
@@ -291,13 +308,16 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 ));
             }
             Section::Streets => {
-                net.streets = super::streets::parse_streets(lines, &s, &cv, &mut diagnostics);
+                net.streets =
+                    crate::dialect::streets::parse_streets(lines, &s, &cv, &mut diagnostics);
             }
             Section::Inlets => {
-                net.inlets = super::streets::parse_inlets(lines, &s, &cv, &mut diagnostics);
+                net.inlets =
+                    crate::dialect::streets::parse_inlets(lines, &s, &cv, &mut diagnostics);
             }
             Section::InletUsage => {
-                let usage = super::streets::parse_inlet_usage(lines, &s, &cv, &mut diagnostics);
+                let usage =
+                    crate::dialect::streets::parse_inlet_usage(lines, &s, &cv, &mut diagnostics);
                 for u in usage {
                     match net.inlet_usage.iter_mut().find(|v| v.link == u.link) {
                         Some(slot) => *slot = u,
@@ -314,7 +334,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     for (sec, lines) in &s.sections {
         match sec {
             Section::Temperature => {
-                super::climate::parse_temperature(
+                crate::dialect::climate::parse_temperature(
                     lines,
                     &s,
                     &cv,
@@ -324,7 +344,7 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 );
             }
             Section::Evaporation => {
-                super::climate::parse_evaporation(
+                crate::dialect::climate::parse_evaporation(
                     lines,
                     &s,
                     us,
@@ -333,20 +353,33 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 );
             }
             Section::Adjustments => {
-                super::climate::parse_adjustments(lines, &s, us, &mut net, &mut diagnostics);
+                crate::dialect::climate::parse_adjustments(
+                    lines,
+                    &s,
+                    us,
+                    &mut net,
+                    &mut diagnostics,
+                );
             }
             Section::Controls => {
-                super::admin::parse_controls(lines, &mut net.controls, &mut diagnostics);
+                crate::dialect::admin::parse_controls(lines, &mut net.controls, &mut diagnostics);
             }
             Section::Files => {
-                super::admin::parse_files(lines, &mut net.interface_files, &mut diagnostics);
+                crate::dialect::admin::parse_files(
+                    lines,
+                    &mut net.interface_files,
+                    &mut diagnostics,
+                );
             }
             Section::Report => {
-                super::admin::parse_report(lines, &s, &mut net.report, &mut diagnostics);
+                crate::dialect::admin::parse_report(lines, &s, &mut net.report, &mut diagnostics);
             }
             Section::Events => {
-                net.events
-                    .extend(super::admin::parse_events(lines, &cv, &mut diagnostics));
+                net.events.extend(crate::dialect::admin::parse_events(
+                    lines,
+                    &cv,
+                    &mut diagnostics,
+                ));
             }
             _ => {}
         }
@@ -356,15 +389,15 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     // entry per section occurrence, in file order (§14.5).
     for (sec, lines) in &s.sections {
         if sec.is_display_metadata() && !lines.is_empty() {
-            net.display.push(crate::model::DisplaySection {
-                header: super::keywords::canonical_header(*sec).to_string(),
+            net.display.push(crate::engine_api::model::DisplaySection {
+                header: crate::dialect::keywords::canonical_header(*sec).to_string(),
                 lines: lines.iter().map(|l| l.raw.to_string()).collect(),
             });
         }
     }
 
     net.options = options;
-    net.overland = super::overland::parse_overland(
+    net.overland = crate::dialect::overland::parse_overland(
         &s.sections,
         overland_units_si,
         cv.len,

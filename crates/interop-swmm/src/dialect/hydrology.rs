@@ -9,12 +9,12 @@
 
 use std::collections::HashMap;
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::options::{clock_or_hours_to_seconds, InfiltrationModel};
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::options::{clock_or_hours_to_seconds, InfiltrationModel};
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     Gage, GageSource, Infiltration, Parcel, ParcelOutlet, RainForm, SubareaRouting, Subareas,
 };
 
@@ -98,8 +98,8 @@ pub(crate) fn parse_gages(
             // Trailing unit token: the record's own depth unit (§2.4).
             let unit = match t.get(7).map(|u| u.to_ascii_uppercase()) {
                 None => None,
-                Some(u) if u == "IN" => Some(crate::model::RainFileUnit::Inches),
-                Some(u) if u == "MM" => Some(crate::model::RainFileUnit::Millimetres),
+                Some(u) if u == "IN" => Some(crate::engine_api::model::RainFileUnit::Inches),
+                Some(u) if u == "MM" => Some(crate::engine_api::model::RainFileUnit::Millimetres),
                 Some(_) => {
                     diags.push(bad(l, t[7]));
                     continue;
@@ -416,7 +416,7 @@ pub(crate) fn parse_aquifers(
     s: &Survey,
     cv: &UnitConverter,
     diags: &mut Vec<Diagnostic>,
-) -> Vec<crate::model::Aquifer> {
+) -> Vec<crate::engine_api::model::Aquifer> {
     let mut out = Vec::new();
     for line in lines {
         let t = &line.tokens;
@@ -453,7 +453,7 @@ pub(crate) fn parse_aquifers(
             }
             None => None,
         };
-        out.push(crate::model::Aquifer {
+        out.push(crate::engine_api::model::Aquifer {
             id: t[0].to_string(),
             porosity: x[0],
             wilting_point: x[1],
@@ -559,7 +559,7 @@ pub(crate) fn parse_groundwater(
                 // SI file: cms per hectare.
                 1.0e-4
             };
-            p.groundwater = Some(crate::model::GroundwaterLink {
+            p.groundwater = Some(crate::engine_api::model::GroundwaterLink {
                 aquifer: aq,
                 vertex: vx,
                 surface_elev: x[0] * cv.len,
@@ -627,8 +627,10 @@ pub(crate) fn parse_gwf(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::{GageSource, Infiltration, ParcelOutlet, RainForm, SubareaRouting};
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{
+        GageSource, Infiltration, ParcelOutlet, RainForm, SubareaRouting,
+    };
 
     const FIXTURE: &str = "\
 [OPTIONS]

@@ -8,8 +8,10 @@
 
 use std::io::{self, Write};
 
-use crate::model::{ConcentrationUnits, LinkKind, Network, Offset, ReportSelection, VertexKind};
-use crate::simulation::engine::Snapshot;
+use crate::engine_api::model::{
+    ConcentrationUnits, LinkKind, Network, Offset, ReportSelection, VertexKind,
+};
+use crate::engine_api::simulation::engine::Snapshot;
 
 const MAGIC: i32 = 516_114_522;
 const VERSION: i32 = 52_004;
@@ -197,9 +199,10 @@ impl<W: Write> OutStream<W> {
                 let (code, max_depth) = match &v.kind {
                     VertexKind::Junction { max_depth, .. } => (0, *max_depth),
                     // §14.9: derived, not stored — see `validate::outfall_crown`.
-                    VertexKind::Outfall { .. } => {
-                        (1, crate::io::validate::outfall_crown(net, vi, len_cv))
-                    }
+                    VertexKind::Outfall { .. } => (
+                        1,
+                        crate::engine_api::model::validate::outfall_crown(net, vi, len_cv),
+                    ),
                     VertexKind::Storage { max_depth, .. } => (2, *max_depth),
                     VertexKind::Divider { max_depth, .. } => (3, *max_depth),
                 };
@@ -261,7 +264,7 @@ impl<W: Write> OutStream<W> {
                 };
                 // Full depth from the §5 section build (pumps have none, as in
                 // the predecessor's table).
-                let y_full = crate::io::validate::build_for_link(net, li, len_cv)
+                let y_full = crate::engine_api::model::validate::build_for_link(net, li, len_cv)
                     .and_then(|r| r.ok())
                     .map_or(0.0, |b| b.section.y_full());
                 put_i32(w, code)?;
@@ -434,7 +437,7 @@ pub fn write_out(
 }
 
 /// §14.9 as a §12.2 destination: the stream is the sink.
-impl crate::simulation::sinks::SnapshotSink for OutStream<Box<dyn Write + Send>> {
+impl crate::engine_api::simulation::sinks::SnapshotSink for OutStream<Box<dyn Write + Send>> {
     fn append(&mut self, snap: &Snapshot) -> io::Result<()> {
         OutStream::append(self, snap)
     }

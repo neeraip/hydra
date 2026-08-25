@@ -4,10 +4,9 @@
 
 use std::path::PathBuf;
 
-use hydra_engine_uds::io::out_reader::{
+use hydra_interop_swmm::out_reader::{
     read_element_series, read_metadata, read_period, ElementKind,
 };
-use hydra_engine_uds::simulation::Simulation;
 
 fn fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -26,7 +25,7 @@ fn run_to_out(name: &str) -> PathBuf {
          [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n",
         fixture(name)
     );
-    let (mut sim, _diags, _findings) = Simulation::open(&text).expect("open");
+    let (mut sim, _diags, _findings) = hydra_interop_swmm::session::open(&text).expect("open");
     while sim.step() {}
 
     // Unique per call, not per fixture: cargo runs these tests in parallel
@@ -43,7 +42,7 @@ fn run_to_out(name: &str) -> PathBuf {
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
     ));
     let mut w = std::io::BufWriter::new(std::fs::File::create(&path).expect("create"));
-    sim.write_out(&mut w).expect("write out");
+    hydra_interop_swmm::session::write_out(&sim, &mut w).expect("write out");
     use std::io::Write as _;
     w.flush().expect("flush");
     path
@@ -226,11 +225,11 @@ impl Properties {
 }
 
 fn properties_of(model: &str) -> Properties {
-    let (mut sim, diags, _) = Simulation::open(model).expect("open");
+    let (mut sim, diags, _) = hydra_interop_swmm::session::open(model).expect("open");
     assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
     while sim.step() {}
     let mut buf = Vec::new();
-    sim.write_out(&mut buf).expect("write");
+    hydra_interop_swmm::session::write_out(&sim, &mut buf).expect("write");
     Properties::decode(&buf)
 }
 

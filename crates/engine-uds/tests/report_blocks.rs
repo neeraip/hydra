@@ -5,9 +5,8 @@
 use std::path::PathBuf;
 
 use hydra_common::{BlockError, FragmentItem};
-use hydra_engine_uds::io::objects::parse_network;
 use hydra_engine_uds::report_blocks::{produce_report_block, report_block_options, report_catalog};
-use hydra_engine_uds::simulation::Simulation;
+use hydra_interop_swmm::objects::parse_network;
 
 fn fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -36,7 +35,7 @@ fn run_to_out_with(
          [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n",
         fixture(name)
     );
-    let (mut sim, _diags, _findings) = Simulation::open(&text).expect("open");
+    let (mut sim, _diags, _findings) = hydra_interop_swmm::session::open(&text).expect("open");
     while sim.step() {}
 
     let mut path = std::env::temp_dir();
@@ -46,7 +45,7 @@ fn run_to_out_with(
         std::process::id()
     ));
     let mut w = std::io::BufWriter::new(std::fs::File::create(&path).expect("create"));
-    sim.write_out(&mut w).expect("write out");
+    hydra_interop_swmm::session::write_out(&sim, &mut w).expect("write out");
     use std::io::Write as _;
     w.flush().expect("flush");
 
@@ -90,7 +89,12 @@ fn catalog_categories_are_contiguous() {
 fn every_block_produces_or_declines_for_a_real_run() {
     let (path, net) = run_to_out("runoff_parcel.inp", "all");
     for b in report_catalog() {
-        match produce_report_block(b.id, &path, &net, None) {
+        match produce_report_block(
+            b.id,
+            &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+            &net,
+            None,
+        ) {
             Ok(fragment) => {
                 assert!(!fragment.items.is_empty(), "{} produced nothing", b.id);
             }
@@ -110,7 +114,13 @@ fn every_block_produces_or_declines_for_a_real_run() {
 #[test]
 fn run_summary_reports_the_horizon_and_nonzero_rain_peak() {
     let (path, net) = run_to_out("runoff_parcel.inp", "summary");
-    let f = produce_report_block("uds.run-summary", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.run-summary",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::KeyValues { entries } = &f.items[0] else {
         panic!("run summary is not a key-value list");
     };
@@ -137,15 +147,26 @@ fn run_summary_reports_the_horizon_and_nonzero_rain_peak() {
 fn the_rows_option_caps_a_ranked_table_and_rejects_garbage() {
     let (path, net) = run_to_out("single_conduit.inp", "rows");
     let one = serde_json::json!({ "rows": 1 });
-    let f = produce_report_block("uds.node-extremes", &path, &net, Some(&one)).expect("produce");
+    let f = produce_report_block(
+        "uds.node-extremes",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        Some(&one),
+    )
+    .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
         panic!("node extremes is not a table");
     };
     assert_eq!(table.rows.len(), 1);
 
     let bad = serde_json::json!({ "rows": "many" });
-    let err = produce_report_block("uds.node-extremes", &path, &net, Some(&bad))
-        .expect_err("garbage options must fail");
+    let err = produce_report_block(
+        "uds.node-extremes",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        Some(&bad),
+    )
+    .expect_err("garbage options must fail");
     assert!(matches!(err, BlockError::Failed { .. }));
 
     // The option is described for the ranked tables and only those.
@@ -158,8 +179,13 @@ fn the_rows_option_caps_a_ranked_table_and_rejects_garbage() {
 #[test]
 fn an_unknown_block_is_a_typed_refusal() {
     let (path, net) = run_to_out("single_conduit.inp", "unknown");
-    let err = produce_report_block("uds.no-such-block", &path, &net, None)
-        .expect_err("unknown id must be refused");
+    let err = produce_report_block(
+        "uds.no-such-block",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect_err("unknown id must be refused");
     assert!(matches!(err, BlockError::UnknownBlock { .. }));
     let _ = std::fs::remove_file(&path);
 }
@@ -171,8 +197,13 @@ fn an_unknown_block_is_a_typed_refusal() {
 #[test]
 fn a_us_file_produces_tagged_si_flow_values() {
     let (path, net) = run_to_out("single_conduit.inp", "tagging");
-    let fragment =
-        produce_report_block("uds.link-extremes", &path, &net, None).expect("link extremes");
+    let fragment = produce_report_block(
+        "uds.link-extremes",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("link extremes");
     let FragmentItem::Table { table } = &fragment.items[0] else {
         panic!("link extremes is a table");
     };
@@ -209,7 +240,12 @@ fn every_tagged_key_is_in_the_quantity_catalog() {
         .collect();
     let (path, net) = run_to_out("single_conduit.inp", "keys");
     for block in report_catalog() {
-        let Ok(fragment) = produce_report_block(block.id, &path, &net, None) else {
+        let Ok(fragment) = produce_report_block(
+            block.id,
+            &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+            &net,
+            None,
+        ) else {
             continue; // unavailable for this fixture is fine
         };
         for item in &fragment.items {
@@ -259,7 +295,13 @@ fn every_tagged_key_is_in_the_quantity_catalog() {
 #[test]
 fn system_balance_reports_moving_water_and_its_series() {
     let (path, net) = run_to_out("runoff_parcel.inp", "balance");
-    let f = produce_report_block("uds.system-balance", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.system-balance",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::KeyValues { entries } = &f.items[0] else {
         panic!("balance is not a key-value list");
     };
@@ -299,7 +341,13 @@ fn system_balance_reports_moving_water_and_its_series() {
 #[test]
 fn runoff_summary_yields_a_physical_runoff_coefficient() {
     let (path, net) = run_to_out("runoff_parcel.inp", "runoff");
-    let f = produce_report_block("uds.runoff-summary", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.runoff-summary",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
         panic!("runoff summary is not a table");
     };
@@ -327,7 +375,13 @@ fn runoff_summary_yields_a_physical_runoff_coefficient() {
 #[test]
 fn outfall_summary_reports_the_discharge_through_the_outfall() {
     let (path, net) = run_to_out("runoff_parcel.inp", "outfall");
-    let f = produce_report_block("uds.outfall-summary", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.outfall-summary",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
         panic!("outfall summary is not a table");
     };
@@ -414,7 +468,13 @@ fn criteria_consumption_derives_si_options() {
 #[test]
 fn velocity_thresholds_count_every_conduit_once() {
     let (path, net) = run_to_out("runoff_parcel.inp", "velbands");
-    let f = produce_report_block("uds.velocity-thresholds", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.velocity-thresholds",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::KeyValues { entries } = &f.items[0] else {
         panic!("edges are not key-values");
     };
@@ -445,8 +505,13 @@ fn velocity_thresholds_count_every_conduit_once() {
 fn a_floor_capacity_threshold_lists_the_conduits() {
     let (path, net) = run_to_out("runoff_parcel.inp", "capfloor");
     let opts = serde_json::json!({ "threshold": 0.0 });
-    let f =
-        produce_report_block("uds.capacity-summary", &path, &net, Some(&opts)).expect("produce");
+    let f = produce_report_block(
+        "uds.capacity-summary",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        Some(&opts),
+    )
+    .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
         panic!("capacity summary is not a table");
     };
@@ -462,7 +527,13 @@ fn storage_summary_reports_utilisation_and_attenuation() {
     // The base fixture has no forcing; a sanitary inflow fills the unit
     // so utilisation and the pump's outflow are real numbers.
     let (path, net) = run_to_out_with("storage_pumped.inp", "[DWF]\nJ1 FLOW 2.0\n", "storage");
-    let f = produce_report_block("uds.storage-summary", &path, &net, None).expect("produce");
+    let f = produce_report_block(
+        "uds.storage-summary",
+        &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
+        &net,
+        None,
+    )
+    .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
         panic!("storage summary is not a table");
     };

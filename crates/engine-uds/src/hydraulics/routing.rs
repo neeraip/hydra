@@ -5033,7 +5033,7 @@ mod step_floor_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
     use crate::model::validate::validate;
 
     /// A model with no drainage network routes nothing, and says so by

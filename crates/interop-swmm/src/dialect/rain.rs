@@ -9,8 +9,8 @@
 //! file is written in is recognised from the file, so a caller names a file
 //! and never a format.
 
-use crate::model::options::Date;
-pub use crate::simulation::records::{RainReading, RainRecords};
+use crate::engine_api::model::options::Date;
+pub use crate::engine_api::simulation::records::{RainReading, RainRecords};
 
 /// Parse a user-prepared rain record. A malformed line is an error naming
 /// its line number, never skipped — silently dropping a typoed reading
@@ -62,8 +62,8 @@ pub fn parse_rain_file(text: &str) -> Result<Vec<RainReading>, String> {
             .filter(|v| v.is_finite())
             .ok_or_else(|| bad(&format!("value {:?} is not a number", t[6])))?;
         let (date, seconds) = if hour == 24 {
-            let next = crate::simulation::time::civil_from_days(
-                crate::simulation::time::days_from_civil(Date { year, month, day }) + 1,
+            let next = crate::engine_api::simulation::time::civil_from_days(
+                crate::engine_api::simulation::time::days_from_civil(Date { year, month, day }) + 1,
             );
             (next, 0.0)
         } else {
@@ -359,7 +359,13 @@ fn recognise(text: &str) -> Option<(Layout, f64, String)> {
 /// engine does not read is refused rather than read at a guess.
 pub fn parse_archive_file(
     text: &str,
-) -> Result<(crate::simulation::records::RainGageRecord, Vec<String>), String> {
+) -> Result<
+    (
+        crate::engine_api::simulation::records::RainGageRecord,
+        Vec<String>,
+    ),
+    String,
+> {
     let Some((layout, interval, station)) = recognise(text) else {
         return Err(
             "not an archival station record this engine reads: no line in the \
@@ -500,7 +506,7 @@ pub fn parse_archive_file(
         ));
     }
     Ok((
-        crate::simulation::records::RainGageRecord {
+        crate::engine_api::simulation::records::RainGageRecord {
             station,
             interval,
             readings,
@@ -611,7 +617,9 @@ fn archive_group(group: &str, layout: Layout) -> Option<(u32, u32, i64, char)> {
 /// stamped with. An offset past midnight, or before it, carries the date.
 fn archive_day(date: Date, seconds: f64) -> f64 {
     const SWMM_EPOCH_DAYS: f64 = 25_569.0;
-    SWMM_EPOCH_DAYS + crate::simulation::time::days_from_civil(date) as f64 + seconds / 86_400.0
+    SWMM_EPOCH_DAYS
+        + crate::engine_api::simulation::time::days_from_civil(date) as f64
+        + seconds / 86_400.0
 }
 
 #[cfg(test)]
@@ -684,7 +692,9 @@ mod archive_tests {
 
     /// Readings as `(hour of 2020-01-01, inches)`, rounded past the noise
     /// the decimal-day encoding carries.
-    pub(super) fn hours(rec: &crate::simulation::records::RainGageRecord) -> Vec<(f64, f64)> {
+    pub(super) fn hours(
+        rec: &crate::engine_api::simulation::records::RainGageRecord,
+    ) -> Vec<(f64, f64)> {
         rec.readings
             .iter()
             .map(|(day, v)| {

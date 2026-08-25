@@ -11,13 +11,13 @@
 //! arbitrary. Time-of-day and step values round to the nearest second where
 //! the predecessor's do; timestamps carry no +1 ms guard (§14.4).
 
-use super::keywords::match_keyword;
-use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
-use crate::io::lex::FiniteParse;
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, TokenLine};
 // The option types are model vocabulary (format-blind extraction,
 // phase 2); this re-export keeps the historical `io::options::` paths
 // alive until the interop lift re-points every consumer.
-pub use crate::model::options::*;
+pub use crate::engine_api::model::options::*;
 
 /// ft → m, exact: the predecessor's US path performs no length conversion
 /// (it computes in feet), so the factor is this engine's own and is exact

@@ -852,7 +852,8 @@ impl LedgerRow {
         }
     }
 
-    pub(crate) fn to_array(self) -> [f64; 11] {
+    /// The §14.16 serialisation order, for the dialect tooling.
+    pub fn to_array(self) -> [f64; 11] {
         [
             self.storage,
             self.rain_in,
@@ -868,7 +869,8 @@ impl LedgerRow {
         ]
     }
 
-    pub(crate) fn from_array(a: [f64; 11]) -> LedgerRow {
+    /// The §14.16 serialisation order's inverse.
+    pub fn from_array(a: [f64; 11]) -> LedgerRow {
         LedgerRow {
             storage: a[0],
             rain_in: a[1],

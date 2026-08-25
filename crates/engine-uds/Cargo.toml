@@ -23,3 +23,10 @@ serde_json = "1"
 # width; never enabled for wasm builds. No dependencies: the team is
 # hydraulics/team.rs.
 threads = []
+
+[dev-dependencies]
+# Deliberate dev-only cycle: the engine's behavioural tests open models
+# from .inp text, which is the dialect crate's job (format-blind
+# extraction). Dev-dependencies may be cyclic; the published library
+# depends on nothing here.
+hydra-interop-swmm = { path = "../interop-swmm" }

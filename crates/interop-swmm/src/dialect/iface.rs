@@ -22,16 +22,16 @@
 // Everything else the tool suggests is caught. When this file changes, run
 // it again rather than trusting this note.
 
-pub(crate) use crate::simulation::records::FLOW_WORDS;
-pub use crate::simulation::records::{
+use crate::engine_api::simulation::records::FLOW_WORDS;
+pub use crate::engine_api::simulation::records::{
     flow_cv_of, ParcelReplay, RainGageRecord, RainInterface, RdiiInterface, RoutingInterface,
     RunoffInterface,
 };
 use std::io::{self, Write};
 
-use crate::io::lex::FiniteParse;
-use crate::model::Network;
-use crate::simulation::engine::Snapshot;
+use crate::dialect::lex::FiniteParse;
+use crate::engine_api::model::Network;
+use crate::engine_api::simulation::engine::Snapshot;
 
 /// Declared-count bounds (§14.8): generous against any real model, small
 /// against an allocation attack.
@@ -104,7 +104,7 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
         let Some(&row) = row_of.get(t[0]) else {
             continue;
         };
-        let date = crate::io::options::Date {
+        let date = crate::dialect::options::Date {
             year: t[1].parse().map_err(|_| "bad year")?,
             month: t[2].parse().map_err(|_| "bad month")?,
             day: t[3].parse().map_err(|_| "bad day")?,
@@ -112,7 +112,8 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
         let secs: f64 = t[4].finite_f64().map_err(|_| "bad hour")? * 3600.0
             + t[5].finite_f64().map_err(|_| "bad minute")? * 60.0
             + t[6].finite_f64().map_err(|_| "bad second")?;
-        let epoch = crate::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
+        let epoch =
+            crate::engine_api::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
         let mut values: Vec<f64> = t[7..]
             .iter()
             .map(|s| s.finite_f64().unwrap_or(0.0))
@@ -154,12 +155,12 @@ pub fn write_routing_file(
     w: &mut impl Write,
 ) -> io::Result<()> {
     let unit_word = match net.options.flow_units {
-        crate::io::options::FlowUnits::Cfs => "CFS",
-        crate::io::options::FlowUnits::Gpm => "GPM",
-        crate::io::options::FlowUnits::Mgd => "MGD",
-        crate::io::options::FlowUnits::Cms => "CMS",
-        crate::io::options::FlowUnits::Lps => "LPS",
-        crate::io::options::FlowUnits::Mld => "MLD",
+        crate::dialect::options::FlowUnits::Cfs => "CFS",
+        crate::dialect::options::FlowUnits::Gpm => "GPM",
+        crate::dialect::options::FlowUnits::Mgd => "MGD",
+        crate::dialect::options::FlowUnits::Cms => "CMS",
+        crate::dialect::options::FlowUnits::Lps => "LPS",
+        crate::dialect::options::FlowUnits::Mld => "MLD",
     };
     let flow_cv = FLOW_WORDS
         .iter()
@@ -170,7 +171,7 @@ pub fn write_routing_file(
         .vertices
         .iter()
         .enumerate()
-        .filter(|(_, v)| matches!(v.kind, crate::model::VertexKind::Outfall { .. }))
+        .filter(|(_, v)| matches!(v.kind, crate::engine_api::model::VertexKind::Outfall { .. }))
         .map(|(i, _)| i)
         .collect();
     writeln!(w, "SWMM5 Interface File")?;
@@ -184,9 +185,9 @@ pub fn write_routing_file(
     writeln!(w, "FLOW {unit_word}")?;
     for c in &net.constituents {
         let u = match c.units {
-            crate::model::ConcentrationUnits::MgPerL => "MG/L",
-            crate::model::ConcentrationUnits::UgPerL => "UG/L",
-            crate::model::ConcentrationUnits::CountPerL => "#/L",
+            crate::engine_api::model::ConcentrationUnits::MgPerL => "MG/L",
+            crate::engine_api::model::ConcentrationUnits::UgPerL => "UG/L",
+            crate::engine_api::model::ConcentrationUnits::CountPerL => "#/L",
         };
         writeln!(w, "{} {u}", c.id)?;
     }
@@ -198,7 +199,7 @@ pub fn write_routing_file(
     for snap in snapshots {
         let epoch = start_epoch + snap.t;
         let days = (epoch / 86_400.0).floor() as i64;
-        let d = crate::simulation::time::civil_from_days(days);
+        let d = crate::engine_api::simulation::time::civil_from_days(days);
         let secs = epoch - days as f64 * 86_400.0;
         let (hh, mm, ss) = (
             (secs / 3600.0) as u32,
@@ -397,7 +398,7 @@ fn parse_rdii_text(text: &str, net: &Network) -> Result<RdiiInterface, String> {
         let column = *column_of
             .get(t[0])
             .ok_or_else(|| format!("RDII interface file row names unlisted vertex '{}'", t[0]))?;
-        let date = crate::io::options::Date {
+        let date = crate::dialect::options::Date {
             year: t[1].parse().map_err(|_| "bad RDII year")?,
             month: t[2].parse().map_err(|_| "bad RDII month")?,
             day: t[3].parse().map_err(|_| "bad RDII day")?,
@@ -405,7 +406,8 @@ fn parse_rdii_text(text: &str, net: &Network) -> Result<RdiiInterface, String> {
         let secs = t[4].finite_f64().map_err(|_| "bad RDII hour")? * 3600.0
             + t[5].finite_f64().map_err(|_| "bad RDII minute")? * 60.0
             + t[6].finite_f64().map_err(|_| "bad RDII second")?;
-        let epoch = crate::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
+        let epoch =
+            crate::engine_api::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
         let q = t[7].finite_f64().map_err(|_| "bad RDII flow")? * flow_cv;
         match records.last_mut() {
             Some((te, flows)) if (*te - epoch).abs() < 1e-6 => flows[column] = q,
@@ -436,12 +438,12 @@ pub fn write_rdii_file(
     w: &mut impl Write,
 ) -> io::Result<()> {
     let unit = match net.options.flow_units {
-        crate::io::options::FlowUnits::Cfs => "CFS",
-        crate::io::options::FlowUnits::Gpm => "GPM",
-        crate::io::options::FlowUnits::Mgd => "MGD",
-        crate::io::options::FlowUnits::Cms => "CMS",
-        crate::io::options::FlowUnits::Lps => "LPS",
-        crate::io::options::FlowUnits::Mld => "MLD",
+        crate::dialect::options::FlowUnits::Cfs => "CFS",
+        crate::dialect::options::FlowUnits::Gpm => "GPM",
+        crate::dialect::options::FlowUnits::Mgd => "MGD",
+        crate::dialect::options::FlowUnits::Cms => "CMS",
+        crate::dialect::options::FlowUnits::Lps => "LPS",
+        crate::dialect::options::FlowUnits::Mld => "MLD",
     };
     let cv = flow_cv_of(net.options.flow_units);
     writeln!(w, "SWMM5")?;
@@ -457,7 +459,7 @@ pub fn write_rdii_file(
     writeln!(w, "Node             Year Mon Day Hr Min Sec Flow")?;
     for (epoch, flows) in records {
         let days = (*epoch / 86_400.0).floor();
-        let date = crate::simulation::time::civil_from_days(days as i64);
+        let date = crate::engine_api::simulation::time::civil_from_days(days as i64);
         let secs = *epoch - days * 86_400.0;
         let (hr, min, sec) = (
             (secs / 3600.0) as u32,
@@ -637,8 +639,8 @@ pub fn write_runoff_file(
 }
 
 /// The predecessor's word for a model's flow unit.
-fn flow_unit_word(units: crate::io::options::FlowUnits) -> &'static str {
-    use crate::io::options::FlowUnits::*;
+fn flow_unit_word(units: crate::dialect::options::FlowUnits) -> &'static str {
+    use crate::dialect::options::FlowUnits::*;
     match units {
         Cfs => "CFS",
         Gpm => "GPM",
@@ -652,7 +654,7 @@ fn flow_unit_word(units: crate::io::options::FlowUnits) -> &'static str {
 #[cfg(test)]
 mod routing_iface_tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     /// Two vertices and one constituent, so a file naming both can be
     /// read column by column and a mismatch is visible.
@@ -706,24 +708,26 @@ TSS  MG/L  0  0  0  0
     }
 
     fn at(ifc: &RoutingInterface, hour: f64) -> Vec<(usize, f64, Vec<f64>)> {
-        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
-            year: 2020,
-            month: 1,
-            day: 1,
-        }) as f64
-            * 86_400.0;
+        let day =
+            crate::engine_api::simulation::time::days_from_civil(crate::dialect::options::Date {
+                year: 2020,
+                month: 1,
+                day: 1,
+            }) as f64
+                * 86_400.0;
         ifc.inflows_at(day + hour * 3600.0, 1)
     }
 
     /// The same, addressed in seconds from midnight, for instants that are
     /// not a whole number of hours.
     fn at_secs(ifc: &RoutingInterface, secs: f64) -> Vec<(usize, f64, Vec<f64>)> {
-        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
-            year: 2020,
-            month: 1,
-            day: 1,
-        }) as f64
-            * 86_400.0;
+        let day =
+            crate::engine_api::simulation::time::days_from_civil(crate::dialect::options::Date {
+                year: 2020,
+                month: 1,
+                day: 1,
+            }) as f64
+                * 86_400.0;
         ifc.inflows_at(day + secs, 1)
     }
 
@@ -1043,12 +1047,13 @@ TSS  MG/L  0  0  0  0
     #[test]
     fn the_writer_splits_an_instant_into_hours_minutes_and_seconds() {
         let net = model();
-        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
-            year: 2020,
-            month: 1,
-            day: 1,
-        }) as f64
-            * 86_400.0;
+        let day =
+            crate::engine_api::simulation::time::days_from_civil(crate::dialect::options::Date {
+                year: 2020,
+                month: 1,
+                day: 1,
+            }) as f64
+                * 86_400.0;
         let mut out = Vec::new();
         write_routing_file(
             &net,
@@ -1095,7 +1100,7 @@ TSS  MG/L  0  0  0  0
 #[cfg(test)]
 mod rdii_tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     /// A model with two RDII vertices, so a file can name them in either
     /// order and the difference is visible.
@@ -1141,7 +1146,7 @@ TS1  1:00  0.0
     }
 
     fn epoch_of(y: i32, m: u32, d: u32) -> f64 {
-        crate::simulation::time::days_from_civil(crate::io::options::Date {
+        crate::engine_api::simulation::time::days_from_civil(crate::dialect::options::Date {
             year: y,
             month: m,
             day: d,
@@ -1426,12 +1431,13 @@ TS1  1:00  0.0
         let net = model();
         let f = parse_rdii_file(text("J1  2020 01 01 1 30 45  4.0\n").as_bytes(), &net, 1.0)
             .expect("parse");
-        let day = crate::simulation::time::days_from_civil(crate::io::options::Date {
-            year: 2020,
-            month: 1,
-            day: 1,
-        }) as f64
-            * 86_400.0;
+        let day =
+            crate::engine_api::simulation::time::days_from_civil(crate::dialect::options::Date {
+                year: 2020,
+                month: 1,
+                day: 1,
+            }) as f64
+                * 86_400.0;
         assert_eq!(day + 3_600.0 + 30.0 * 60.0 + 45.0, f.records[0].0);
     }
 
@@ -1452,7 +1458,7 @@ TS1  1:00  0.0
 #[cfg(test)]
 mod runoff_iface_tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     const MODEL: &str = "\
 [OPTIONS]

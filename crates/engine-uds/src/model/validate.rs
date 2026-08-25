@@ -1270,7 +1270,7 @@ fn validate_vertices(net: &Network, originals: &[f64], d: &mut Vec<ValidationDia
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::objects::parse_network;
+    use crate::dialect::objects::parse_network;
 
     fn validated(input: &str) -> (Network, Vec<ValidationDiagnostic>) {
         let (mut net, diags) = parse_network(input);

@@ -5,12 +5,12 @@
 //! from in/day or mm/day to m/s, wind from mph or km/h to m/s. Rainfall
 //! and conductivity adjustments are multiplicative and stay dimensionless.
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::options::parse_date_token;
-use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::options::parse_date_token;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::engine_api::model::{
     Climate, EvaporationSource, FileTempUnits, Network, SnowmeltParams, TemperatureSource,
     WindSource,
 };
@@ -525,16 +525,18 @@ impl Days {
         }
     }
 
-    fn finish(self) -> Vec<crate::model::DailyClimate> {
+    fn finish(self) -> Vec<crate::engine_api::model::DailyClimate> {
         self.0
             .into_iter()
-            .map(|((year, month, day), v)| crate::model::DailyClimate {
-                date: crate::io::options::Date { year, month, day },
-                tmax: v.tmax,
-                tmin: v.tmin,
-                evap: v.evap,
-                wind: v.wind,
-            })
+            .map(
+                |((year, month, day), v)| crate::engine_api::model::DailyClimate {
+                    date: crate::dialect::options::Date { year, month, day },
+                    tmax: v.tmax,
+                    tmin: v.tmin,
+                    evap: v.evap,
+                    wind: v.wind,
+                },
+            )
             .collect()
     }
 }
@@ -758,7 +760,7 @@ pub fn parse_any_climate_file(
     text: &str,
     us: bool,
     units: FileTempUnits,
-) -> Result<(Vec<crate::model::DailyClimate>, Vec<String>), String> {
+) -> Result<(Vec<crate::engine_api::model::DailyClimate>, Vec<String>), String> {
     let Some(layout) = recognise_climate(text) else {
         return Err("climate file is in none of the served layouts \
                     (user-prepared, TD-3200, DLY02/DLY04, GHCN-Daily)"
@@ -810,7 +812,9 @@ pub fn parse_any_climate_file(
 /// `station year month day tmax tmin (evap) (wind)`, `*` for a missing
 /// value. Use [`parse_any_climate_file`] to accept the archival layouts
 /// of §14.14.1 as well.
-pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>, String> {
+pub fn parse_climate_file(
+    text: &str,
+) -> Result<Vec<crate::engine_api::model::DailyClimate>, String> {
     let mut out = Vec::new();
     for (ln, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -857,8 +861,8 @@ pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>,
         let day: u32 = t[3]
             .parse()
             .map_err(|_| format!("climate line {}: bad day", ln + 1))?;
-        out.push(crate::model::DailyClimate {
-            date: crate::io::options::Date { year, month, day },
+        out.push(crate::engine_api::model::DailyClimate {
+            date: crate::dialect::options::Date { year, month, day },
             tmax: num(t[4])?,
             tmin: num(t[5])?,
             evap: t.get(6).map(|s| num(s)).transpose()?.flatten(),
@@ -870,8 +874,10 @@ pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>,
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::{EvaporationSource, FileTempUnits, TemperatureSource, WindSource};
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{
+        EvaporationSource, FileTempUnits, TemperatureSource, WindSource,
+    };
 
     const FIXTURE: &str = "\
 [OPTIONS]
@@ -925,7 +931,7 @@ CONDUCTIVITY 0 1 1 1 1 1 1 1 1 1 1 2
 N-PERV  S1  P1
 ";
 
-    fn net_ok() -> crate::model::Network {
+    fn net_ok() -> crate::engine_api::model::Network {
         let (net, diags) = parse_network(FIXTURE);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),
@@ -989,7 +995,7 @@ N-PERV  S1  P1
         assert!((c.adjust_conductivity[11] - 2.0).abs() < 1e-12);
         assert!(diags.iter().any(|d| matches!(
             &d.kind,
-            crate::io::survey::DiagnosticKind::SubstitutedOption { keyword, .. }
+            crate::dialect::survey::DiagnosticKind::SubstitutedOption { keyword, .. }
                 if *keyword == "CONDUCTIVITY"
         )));
         assert_eq!(net.parcels[0].n_perv_pattern, Some(0));
@@ -1000,7 +1006,7 @@ N-PERV  S1  P1
 #[cfg(test)]
 mod archive_tests {
     use super::*;
-    use crate::model::DailyClimate;
+    use crate::engine_api::model::DailyClimate;
 
     /// Each fixture was run through SWMM 5 with `[TEMPERATURE] FILE` and
     /// `[EVAPORATION] FILE`, and the values asserted here are what its
@@ -1510,9 +1516,9 @@ mod archive_tests {
 
 #[cfg(test)]
 mod section_grammar_tests {
-    use crate::io::objects::parse_network;
-    use crate::io::survey::{Diagnostic, DiagnosticKind};
-    use crate::model::{EvaporationSource, Network};
+    use crate::dialect::objects::parse_network;
+    use crate::dialect::survey::{Diagnostic, DiagnosticKind};
+    use crate::engine_api::model::{EvaporationSource, Network};
 
     /// A model just large enough for the climate sections to refer into.
     fn model(sections: &str) -> (Network, Vec<Diagnostic>) {
@@ -1738,8 +1744,8 @@ S1  3  0.5  4  7  0
     /// the line is.
     #[test]
     fn a_climate_file_declaration_reads_its_optional_tokens() {
-        use crate::io::options::Date;
-        use crate::model::{FileTempUnits, TemperatureSource};
+        use crate::dialect::options::Date;
+        use crate::engine_api::model::{FileTempUnits, TemperatureSource};
         let src = |text: &str| {
             let (net, d) = model(&format!("[TEMPERATURE]\n{text}"));
             assert_eq!(0, missing(&d), "{text}");
@@ -1822,7 +1828,7 @@ S1  3  0.5  4  7  0
         assert!(
             matches!(
                 net.climate.temperature,
-                Some(crate::model::TemperatureSource::Series(_))
+                Some(crate::engine_api::model::TemperatureSource::Series(_))
             ),
             "the prefixed keyword still selected the series source"
         );

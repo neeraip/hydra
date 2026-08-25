@@ -21,7 +21,9 @@ const DATE_TOL: f64 = 1e-3;
 /// any routing step.
 const ROUTING_SPAN_TOLERANCE: f64 = 1.0e-3;
 
-pub(crate) const FLOW_WORDS: [(&str, f64); 6] = [
+/// §14.8: the interface files' declared flow-unit words and their
+/// m³/s factors — shared with the dialect tooling that parses them.
+pub const FLOW_WORDS: [(&str, f64); 6] = [
     ("CFS", 0.028_316_846_592),
     ("GPM", 6.309_019_64e-5),
     ("MGD", 0.043_812_636_4),
@@ -165,8 +167,8 @@ impl RdiiInterface {
 /// Matched by name rather than by position: the two lists happen to be in
 /// the same order today, and a reordering of either would otherwise
 /// silently rescale every flow read from a binary file.
-pub fn flow_cv_of(units: crate::io::options::FlowUnits) -> f64 {
-    use crate::io::options::FlowUnits::*;
+pub fn flow_cv_of(units: crate::model::options::FlowUnits) -> f64 {
+    use crate::model::options::FlowUnits::*;
     let word = match units {
         Cfs => "CFS",
         Gpm => "GPM",

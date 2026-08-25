@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 
-use hydra_engine_uds::io::inp_writer::write_inp;
-use hydra_engine_uds::io::objects::parse_network;
+use hydra_interop_swmm::inp_writer::write_inp;
+use hydra_interop_swmm::objects::parse_network;
 
 fn corpus() -> Vec<PathBuf> {
     let Ok(dir) = std::env::var("HYDRA_UDS_CORPUS") else {

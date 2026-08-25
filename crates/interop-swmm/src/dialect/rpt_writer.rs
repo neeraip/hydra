@@ -23,10 +23,10 @@
 
 use std::io::{self, Write};
 
-use crate::hydraulics::routing::{step_bands, VertexStats};
-use crate::io::options::{Date, InfiltrationModel};
-use crate::model::{LinkKind, VertexKind};
-pub use crate::simulation::summary::{OverlandRpt, ReportInputs};
+use crate::dialect::options::{Date, InfiltrationModel};
+use crate::engine_api::hydraulics::routing::{step_bands, VertexStats};
+use crate::engine_api::model::{LinkKind, VertexKind};
+pub use crate::engine_api::simulation::summary::{OverlandRpt, ReportInputs};
 
 /// Width of the identifier column in the node and link tables.
 const ID_W: usize = 21;
@@ -100,8 +100,8 @@ impl Rv {
     /// A pollutant load in internal mass to the predecessor's load units
     /// (§14.9): pounds | kilograms, or log₁₀ of the count (zero at zero)
     /// for count-type constituents.
-    fn load(&self, units: crate::model::ConcentrationUnits, v: f64) -> f64 {
-        use crate::model::ConcentrationUnits as Cu;
+    fn load(&self, units: crate::engine_api::model::ConcentrationUnits, v: f64) -> f64 {
+        use crate::engine_api::model::ConcentrationUnits as Cu;
         match units {
             Cu::MgPerL => v / if self.us { 453.592_37 } else { 1000.0 },
             Cu::UgPerL => v / if self.us { 453_592.37 } else { 1.0e6 },
@@ -117,8 +117,8 @@ impl Rv {
     }
 
     /// The load column's unit word (§14.9).
-    fn load_word(&self, units: crate::model::ConcentrationUnits) -> &'static str {
-        use crate::model::ConcentrationUnits as Cu;
+    fn load_word(&self, units: crate::engine_api::model::ConcentrationUnits) -> &'static str {
+        use crate::engine_api::model::ConcentrationUnits as Cu;
         match units {
             Cu::CountPerL => "LogN",
             _ if self.us => "lbs",
@@ -182,13 +182,16 @@ impl Rv {
 
 /// A constituent's concentration units by id; the default unit if the id
 /// is unknown (it never is — the ledger keys come from the model).
-fn constituent_units(inp: &ReportInputs<'_>, id: &str) -> crate::model::ConcentrationUnits {
+fn constituent_units(
+    inp: &ReportInputs<'_>,
+    id: &str,
+) -> crate::engine_api::model::ConcentrationUnits {
     inp.net
         .constituents
         .iter()
         .find(|c| c.id == id)
         .map(|c| c.units)
-        .unwrap_or(crate::model::ConcentrationUnits::MgPerL)
+        .unwrap_or(crate::engine_api::model::ConcentrationUnits::MgPerL)
 }
 
 // ── Formatting primitives ───────────────────────────────────────────────
@@ -329,7 +332,7 @@ fn g3(v: f64) -> String {
 }
 
 /// A vertex's kind word.
-fn vertex_kind(v: &crate::model::Vertex) -> &'static str {
+fn vertex_kind(v: &crate::engine_api::model::Vertex) -> &'static str {
     match v.kind {
         VertexKind::Junction { .. } => "JUNCTION",
         VertexKind::Outfall { .. } => "OUTFALL",
@@ -339,7 +342,7 @@ fn vertex_kind(v: &crate::model::Vertex) -> &'static str {
 }
 
 /// A link's kind word.
-fn link_kind(l: &crate::model::Link) -> &'static str {
+fn link_kind(l: &crate::engine_api::model::Link) -> &'static str {
     match l.kind {
         LinkKind::Channel { .. } => "CONDUIT",
         LinkKind::Pump { .. } => "PUMP",
@@ -355,12 +358,12 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
     let rv = Rv {
         us: opt.flow_units.is_us(),
         flow: match opt.flow_units {
-            crate::io::options::FlowUnits::Cfs => 0.028_316_846_592,
-            crate::io::options::FlowUnits::Gpm => 6.309_019_64e-5,
-            crate::io::options::FlowUnits::Mgd => 0.043_812_636_4,
-            crate::io::options::FlowUnits::Cms => 1.0,
-            crate::io::options::FlowUnits::Lps => 1.0e-3,
-            crate::io::options::FlowUnits::Mld => 1.0 / 86.4,
+            crate::dialect::options::FlowUnits::Cfs => 0.028_316_846_592,
+            crate::dialect::options::FlowUnits::Gpm => 6.309_019_64e-5,
+            crate::dialect::options::FlowUnits::Mgd => 0.043_812_636_4,
+            crate::dialect::options::FlowUnits::Cms => 1.0,
+            crate::dialect::options::FlowUnits::Lps => 1.0e-3,
+            crate::dialect::options::FlowUnits::Mld => 1.0 / 86.4,
         },
     };
 
@@ -885,7 +888,7 @@ fn write_step_summary(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> 
     // lowered `MINIMUM_STEP` is reported against the range it actually ran in.
     let edges = step_bands(
         inp.net.options.routing_step,
-        crate::hydraulics::routing::step_floor(
+        crate::engine_api::hydraulics::routing::step_floor(
             inp.net.options.min_routing_step,
             inp.net.options.routing_step,
         ),
@@ -919,7 +922,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
     let hr = |sec: f64| sec / 3600.0;
     // §14.9: every instant below prints against the report start, which is
     // where the statistics themselves begin (§11.2).
-    let origin = crate::simulation::time::report_start_offset(&inp.net.options);
+    let origin = crate::engine_api::simulation::time::report_start_offset(&inp.net.options);
     let fu = format!("{:?}", inp.net.options.flow_units).to_uppercase();
     let lw = rv.len_word();
 

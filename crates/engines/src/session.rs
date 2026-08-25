@@ -217,10 +217,11 @@ impl EngineSession {
                 run.stream = Some(stream);
                 Ok(())
             }
-            Self::Uds(r) => {
-                r.0.sim
-                    .begin_results(Box::new(sink), may_checkpoint == MayCheckpoint::Yes)
-            }
+            Self::Uds(r) => hydra_interop_swmm::session::begin_results(
+                &mut r.0.sim,
+                Box::new(sink),
+                may_checkpoint == MayCheckpoint::Yes,
+            ),
         }
     }
 
@@ -314,7 +315,7 @@ impl EngineSession {
                     .map_err(std::io::Error::other)?;
                 w.write_all(text.as_bytes())
             }
-            Self::Uds(r) => r.0.sim.write_report(&mut w),
+            Self::Uds(r) => hydra_interop_swmm::session::write_report(&r.0.sim, &mut w),
         }
     }
 

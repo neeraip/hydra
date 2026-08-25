@@ -226,6 +226,12 @@ pub use hydra_engine_wds::descriptors;
 /// not a copy of the file it came from — see the engine's §14.13.
 pub use hydra_engine_uds as uds;
 
+/// The SWMM dialect (format-blind extraction): INP import, OUT/RPT
+/// output, interface files, and recognition for the urban drainage
+/// engine. The engine itself is format-blind; every path from text to
+/// a running `uds` session goes through here.
+pub use hydra_interop_swmm as swmm;
+
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract, and its criteria catalog and
 /// consumption per the `common` criteria contract.

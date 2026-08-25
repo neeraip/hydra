@@ -7,12 +7,12 @@
 
 use std::collections::HashMap;
 
-use super::keywords::match_keyword;
-use super::objects::UnitConverter;
-use super::options::Date;
-use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
-use crate::io::lex::FiniteParse;
-use crate::model::{
+use crate::dialect::keywords::match_keyword;
+use crate::dialect::lex::FiniteParse;
+use crate::dialect::objects::UnitConverter;
+use crate::dialect::options::Date;
+use crate::dialect::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::engine_api::model::{
     Curve, CurveKind, PatternKind, SeriesTime, TimePattern, TimeSeries, TimeSeriesPoint,
     TimeSeriesSource,
 };
@@ -193,7 +193,7 @@ pub(crate) fn parse_timeseries<'a>(
         let mut k = 1;
         while k < t.len() {
             // Optional date.
-            if let Some(d) = super::options::parse_date_token(t[k]) {
+            if let Some(d) = crate::dialect::options::parse_date_token(t[k]) {
                 last_date[idx] = Some(d);
                 k += 1;
             }
@@ -204,7 +204,7 @@ pub(crate) fn parse_timeseries<'a>(
             };
             let seconds = if let Ok(h) = tok.finite_f64() {
                 h * 3600.0
-            } else if let Some(s) = super::options::parse_clock_token(tok) {
+            } else if let Some(s) = crate::dialect::options::parse_clock_token(tok) {
                 s
             } else {
                 diags.push(bad(l, tok));
@@ -320,8 +320,8 @@ pub(crate) fn parse_patterns(
 
 #[cfg(test)]
 mod tests {
-    use crate::io::objects::parse_network;
-    use crate::model::{CurveKind, PatternKind, SeriesTime, TimeSeriesSource};
+    use crate::dialect::objects::parse_network;
+    use crate::engine_api::model::{CurveKind, PatternKind, SeriesTime, TimeSeriesSource};
 
     const FIXTURE: &str = "\
 [OPTIONS]
@@ -446,7 +446,7 @@ TS1  bogus
 TS2  0:30  9.0
 ";
         let (net, diags) = parse_network(inp);
-        let points = |id: &str| -> Vec<crate::model::TimeSeriesPoint> {
+        let points = |id: &str| -> Vec<crate::engine_api::model::TimeSeriesPoint> {
             match &net
                 .timeseries
                 .iter()

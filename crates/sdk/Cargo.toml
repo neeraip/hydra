@@ -16,6 +16,7 @@ publish = true
 [dependencies]
 hydra-common = { path = "../common", version = "14.0.0" }
 hydra-engine-uds = { path = "../engine-uds", version = "14.0.0" }
+hydra-interop-swmm = { path = "../interop-swmm", version = "14.0.0" }
 hydra-engine-wds = { path = "../engine-wds", version = "14.0.0" }
 hydra-engines = { path = "../engines", version = "14.0.0" }
 hydra-report = { path = "../report", version = "14.0.0" }

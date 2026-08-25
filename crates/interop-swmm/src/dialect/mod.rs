@@ -1,9 +1,10 @@
-//! Model input and output: the predecessor file formats (specification §14).
-//!
-//! This module is the Tier 1 boundary: everything here binds syntax and
-//! interpretation, and nothing here constrains how results are computed.
-//! Model bytes are supplied in memory by callers; this crate performs no
-//! filesystem or network I/O.
+//! The dialect's modules, mounted once here and once by the engine's
+//! test build (shared-source dual compilation): engine unit tests need
+//! to parse models, a dev-dependency on this crate would hand them a
+//! second build of the engine with incompatible types, so the sources
+//! compile in both places against `crate::engine_api` — the engine
+//! crate itself on one side, the `hydra-engine-uds` dependency on the
+//! other.
 
 pub mod admin;
 pub mod climate;
@@ -22,15 +23,14 @@ pub mod overland_out;
 pub mod quality;
 pub mod rain;
 pub mod rpt_writer;
+pub mod session;
 pub mod snow_rdii;
 pub mod streets;
 pub mod survey;
 pub mod tables;
 pub mod transects;
-// §14.7 validation is model semantics, hosted in the model module
-// (format-blind extraction, phase 2); this alias keeps the historical
-// path alive until the interop lift re-points every consumer.
-pub use crate::model::validate;
+
+pub use crate::engine_api::model::validate;
 
 use hydra_common::Recognition;
 
