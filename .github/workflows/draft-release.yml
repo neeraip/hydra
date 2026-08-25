@@ -104,7 +104,7 @@ jobs:
           # Restore from main's caches; never save.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.22.0
         if: matrix.cross
 
       - name: Install cross
@@ -197,7 +197,7 @@ jobs:
           # under a tag ref nothing can restore from.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.22.0
 
       # Same guard as cargo-ci: a restored cache can carry binstall's install
       # manifest without the binary, and binstall trusts the manifest. Trust
@@ -289,7 +289,7 @@ jobs:
           # Restore from main's caches; never save.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.22.0
 
       - name: Cache Tauri CLI
         id: cache-tauri-cli

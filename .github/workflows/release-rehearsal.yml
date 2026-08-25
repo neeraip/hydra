@@ -85,7 +85,7 @@ jobs:
           # evict the caches every other workflow depends on.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.22.0
 
       - name: Cache Tauri CLI
         uses: actions/cache@v6
