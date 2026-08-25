@@ -33,6 +33,8 @@ CRATE_MANIFESTS = (
     "crates/engines/Cargo.toml",
     "crates/engine-wds/Cargo.toml",
     "crates/engine-uds/Cargo.toml",
+    "crates/interop-swmm/Cargo.toml",
+    "crates/interop-epanet/Cargo.toml",
     "crates/report/Cargo.toml",
     # Published, so its hydra-sdk pin is real and must move with the
     # workspace. Its own package version is a separate track (bump-cli).
@@ -43,6 +45,8 @@ WORKSPACE_DEPS = (
     "hydra-common",
     "hydra-engine-wds",
     "hydra-engine-uds",
+    "hydra-interop-swmm",
+    "hydra-interop-epanet",
     "hydra-engines",
     "hydra-report",
     "hydra-sdk",

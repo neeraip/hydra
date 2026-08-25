@@ -58,8 +58,11 @@ class PublishWorkflowCoversEveryCrate(unittest.TestCase):
             name = re.search(r'(?m)^name\s*=\s*"([^"]+)"', text).group(1)
             if name not in position:
                 continue
-            for dep in re.findall(r"(?m)^(hydra-[a-z-]+)\s*=\s*\{", text):
-                if dep in position and dep != name:
+            # Only deps carrying a version pin constrain the order: a
+            # version-less path dep (the engines' dev-only cycle onto their
+            # dialect crates) is stripped by cargo at publish time.
+            for dep, spec in re.findall(r"(?m)^(hydra-[a-z-]+)\s*=\s*(\{[^}]*\})", text):
+                if "version" in spec and dep in position and dep != name:
                     self.assertLess(
                         position[dep],
                         position[name],
