@@ -116,3 +116,14 @@ impl<W: Write> OverlandStream<W> {
         Ok(self.w)
     }
 }
+
+/// §14.16 as a destination: the sidecar stream is the sink.
+impl crate::simulation::sinks::OverlandSink for OverlandStream<Box<dyn Write + Send>> {
+    fn append(&mut self, t: f64, marcher: &Marcher, exchange_rate: &[f64]) -> io::Result<()> {
+        OverlandStream::append(self, t, marcher, exchange_rate)
+    }
+
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        OverlandStream::finish(*self).map(|_| ())
+    }
+}

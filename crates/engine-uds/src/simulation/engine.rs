@@ -351,8 +351,8 @@ pub struct Simulation {
     /// §15.5 driven boundary slots: (marcher boundary, series index,
     /// stage?), resolved once at attach.
     overland_driven: Vec<(usize, usize, bool)>,
-    /// §14.16: the overland results stream, when a sink is attached.
-    overland_out: Option<crate::io::overland_out::OverlandStream<Box<dyn std::io::Write + Send>>>,
+    /// §14.16: the overland results destination, when one is attached.
+    overland_out: Option<Box<dyn crate::simulation::sinks::OverlandSink>>,
     overland_out_error: Option<std::io::Error>,
     /// §12.4: injected outfall stages and link settings, held so a rule
     /// cannot move an element a caller has taken over, and so a restored
@@ -448,7 +448,7 @@ pub struct Simulation {
     /// [`Self::finish_results`]; absent when the caller wants no results
     /// file. Not state: a resumed run attaches its own sink, and the
     /// bytes already written are in the file the caller holds.
-    out: Option<crate::io::out_writer::OutStream<Box<dyn std::io::Write + Send>>>,
+    out: Option<Box<dyn crate::simulation::sinks::SnapshotSink>>,
     /// The first write failure the stream met, held until the caller
     /// closes it. A step is not the place to fail on a results file.
     out_error: Option<std::io::Error>,
@@ -1946,7 +1946,22 @@ impl Simulation {
             self.report_step,
             self.next_report,
         )?;
-        self.overland_out = Some(out);
+        self.overland_out = Some(Box::new(out));
+        Ok(())
+    }
+
+    /// §14.16: attach a destination for overland records, fed at every
+    /// reporting instant. Refused for a model with no mesh.
+    pub fn attach_overland_results(
+        &mut self,
+        sink: Box<dyn crate::simulation::sinks::OverlandSink>,
+    ) -> std::io::Result<()> {
+        if self.coupled.is_none() {
+            return Err(std::io::Error::other(
+                "this run has no overland mesh to record",
+            ));
+        }
+        self.overland_out = Some(sink);
         Ok(())
     }
 
@@ -4006,6 +4021,12 @@ impl Simulation {
     /// Write the §14.9 text report to `w`, drawing on the §11 ledgers,
     /// the control-action log, and the routing performance counters.
     pub fn write_report(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        crate::io::rpt_writer::write_rpt(&self.report_inputs(), w)
+    }
+
+    /// §11: the run summary as data — everything the §14.9 report is
+    /// built from, for the dialect tooling to format.
+    pub fn report_inputs(&self) -> crate::simulation::summary::ReportInputs<'_> {
         let led = self.ledgers();
         let surface = self.surface.as_ref().map(|s| {
             let err = led.surface.map_or(0.0, |l| l.error_percent);
@@ -4169,40 +4190,37 @@ impl Simulation {
             }
             None => Vec::new(),
         };
-        crate::io::rpt_writer::write_rpt(
-            &crate::io::rpt_writer::ReportInputs {
-                net: &self.net,
-                overland: self
-                    .coupled
-                    .as_ref()
-                    .map(|cs| crate::io::rpt_writer::OverlandRpt {
-                        ledger: crate::overland::LedgerRow::of(&cs.marcher),
-                        initial_storage: cs.marcher.initial_storage(),
-                        delivered_in: cs.delivered_in,
-                        delivered_out: cs.delivered_out,
-                        march: cs.marcher.statistics(),
-                    }),
-                surface,
-                subsurface,
-                flow,
-                quality,
-                loading,
-                actions: self.control_actions(),
-                performance: &self.router.report,
-                vertex_stats: &self.router.vertex_stats,
-                link_stats: &self.router.link_stats,
-                parcel_totals,
-                washoff_by_parcel: self
-                    .surface_quality
-                    .as_ref()
-                    .map(|sq| sq.washed_by_parcel.clone()),
-                outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
-                link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
-                worst,
-                lid_performance,
-            },
-            w,
-        )
+        crate::simulation::summary::ReportInputs {
+            net: &self.net,
+            overland: self
+                .coupled
+                .as_ref()
+                .map(|cs| crate::simulation::summary::OverlandRpt {
+                    ledger: crate::overland::LedgerRow::of(&cs.marcher),
+                    initial_storage: cs.marcher.initial_storage(),
+                    delivered_in: cs.delivered_in,
+                    delivered_out: cs.delivered_out,
+                    march: cs.marcher.statistics(),
+                }),
+            surface,
+            subsurface,
+            flow,
+            quality,
+            loading,
+            actions: self.control_actions(),
+            performance: &self.router.report,
+            vertex_stats: &self.router.vertex_stats,
+            link_stats: &self.router.link_stats,
+            parcel_totals,
+            washoff_by_parcel: self
+                .surface_quality
+                .as_ref()
+                .map(|sq| sq.washed_by_parcel.clone()),
+            outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
+            link_loads: self.quality.as_ref().map(|q| q.link_load.clone()),
+            worst,
+            lid_performance,
+        }
     }
 
     /// Stream the §14.9 results to `sink` as the run produces them.
@@ -4237,23 +4255,31 @@ impl Simulation {
         sink: Box<dyn std::io::Write + Send>,
         may_checkpoint: bool,
     ) -> std::io::Result<()> {
-        // The header backdates from the run's *first* instant, which on a
-        // run resumed from a checkpoint (§12.3) is one the checkpoint
-        // restored rather than the next one falling due. Those restored
-        // instants are written straight away, so a resumed run still
-        // writes the whole run's results and not merely the tail.
-        let first = self.snapshots.first().map_or(self.next_report, |s| s.t);
-        let mut out = crate::io::out_writer::OutStream::begin(
+        let first = self.first_report_instant();
+        let out = crate::io::out_writer::OutStream::begin(
             sink,
             &self.net,
             self.start_epoch,
             self.report_step,
             first,
         )?;
+        self.attach_results(Box::new(out), may_checkpoint)
+    }
+
+    /// §14.9: attach a destination for reporting instants, fed as the
+    /// run produces them. On a run resumed from a checkpoint (§12.3)
+    /// the restored instants are appended straight away, so a resumed
+    /// run still records the whole run's results and not merely the
+    /// tail.
+    pub fn attach_results(
+        &mut self,
+        mut sink: Box<dyn crate::simulation::sinks::SnapshotSink>,
+        may_checkpoint: bool,
+    ) -> std::io::Result<()> {
         for snap in &self.snapshots {
-            out.append(snap)?;
+            sink.append(snap)?;
         }
-        self.out = Some(out);
+        self.out = Some(sink);
         // A routing outflow file is written from the same instants once
         // the run ends (§14.8), so a model that saves one keeps them
         // whatever the caller says about checkpoints.
@@ -4263,6 +4289,14 @@ impl Simulation {
             self.snapshots = Vec::new();
         }
         Ok(())
+    }
+
+    /// §14.9: the run time of the first reporting instant a destination
+    /// will receive — the header datum a format needs before any
+    /// instant exists. On a resumed run it is the earliest restored
+    /// instant, so the whole run's results are recorded.
+    pub fn first_report_instant(&self) -> f64 {
+        self.snapshots.first().map_or(self.next_report, |s| s.t)
     }
 
     /// Close a streamed results file, reporting the first write failure

@@ -432,3 +432,14 @@ pub fn write_out(
     out.finish()?;
     Ok(())
 }
+
+/// §14.9 as a §12.2 destination: the stream is the sink.
+impl crate::simulation::sinks::SnapshotSink for OutStream<Box<dyn Write + Send>> {
+    fn append(&mut self, snap: &Snapshot) -> io::Result<()> {
+        OutStream::append(self, snap)
+    }
+
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        OutStream::finish(*self).map(|_| ())
+    }
+}
