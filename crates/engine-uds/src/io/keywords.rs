@@ -99,6 +99,17 @@ pub enum Section {
     Streets,
     InletUsage,
     Inlets,
+    /// §14.15 overland sections. Recognised so a mesh model parses and
+    /// validates; §1.8 governs whether a run serves it.
+    TwoDOptions,
+    TwoDVertices,
+    TwoDTriangles,
+    TwoDInitialVelocity,
+    TwoDVertexNodeMap,
+    TwoDTriangleNodeMap,
+    TwoDBoundaryConditions,
+    TwoDEdgeConveyance,
+    TwoDMeshFile,
 }
 
 impl Section {
@@ -197,6 +208,39 @@ pub const SECTIONS: &[(&str, &str, Section)] = &[
     ("[STREET", "[STREETS]", Section::Streets),
     ("[INLET_USAGE", "[INLET_USAGE]", Section::InletUsage),
     ("[INLET", "[INLETS]", Section::Inlets),
+    // §14.15 overland sections. `[2D_TRIANGLE_NODE_MAP` and
+    // `[2D_TRIANGLES` share the stem `[2D_TRIANGLE`; the underscore
+    // after it separates them, and the longer is listed first anyway,
+    // the `[INLET_USAGE` convention. Same for the vertex pair.
+    ("[2D_OPTION", "[2D_OPTIONS]", Section::TwoDOptions),
+    (
+        "[2D_VERTEX_NODE_MAP",
+        "[2D_VERTEX_NODE_MAP]",
+        Section::TwoDVertexNodeMap,
+    ),
+    ("[2D_VERTICES", "[2D_VERTICES]", Section::TwoDVertices),
+    (
+        "[2D_TRIANGLE_NODE_MAP",
+        "[2D_TRIANGLE_NODE_MAP]",
+        Section::TwoDTriangleNodeMap,
+    ),
+    ("[2D_TRIANGLES", "[2D_TRIANGLES]", Section::TwoDTriangles),
+    (
+        "[2D_INITIAL_VELOCITY",
+        "[2D_INITIAL_VELOCITY]",
+        Section::TwoDInitialVelocity,
+    ),
+    (
+        "[2D_BOUNDARY_CONDITION",
+        "[2D_BOUNDARY_CONDITIONS]",
+        Section::TwoDBoundaryConditions,
+    ),
+    (
+        "[2D_EDGE_CONVEYANCE",
+        "[2D_EDGE_CONVEYANCE]",
+        Section::TwoDEdgeConveyance,
+    ),
+    ("[2D_MESH_FILE", "[2D_MESH_FILE]", Section::TwoDMeshFile),
 ];
 
 /// A section-header match: which section, and whether the token was the
@@ -309,6 +353,26 @@ mod tests {
             .position(|(p, _, _)| *p == "[INLET")
             .unwrap();
         assert!(iu < i, "[INLET_USAGE must precede [INLET");
-        assert_eq!(SECTIONS.len(), 57);
+        // The §14.15 pairs sharing a stem: the node maps must precede
+        // their geometry sections, the `[INLET_USAGE` convention.
+        let vm = SECTIONS
+            .iter()
+            .position(|(p, _, _)| *p == "[2D_VERTEX_NODE_MAP")
+            .unwrap();
+        let v = SECTIONS
+            .iter()
+            .position(|(p, _, _)| *p == "[2D_VERTICES")
+            .unwrap();
+        assert!(vm < v, "[2D_VERTEX_NODE_MAP must precede [2D_VERTICES");
+        let tm = SECTIONS
+            .iter()
+            .position(|(p, _, _)| *p == "[2D_TRIANGLE_NODE_MAP")
+            .unwrap();
+        let t = SECTIONS
+            .iter()
+            .position(|(p, _, _)| *p == "[2D_TRIANGLES")
+            .unwrap();
+        assert!(tm < t, "[2D_TRIANGLE_NODE_MAP must precede [2D_TRIANGLES");
+        assert_eq!(SECTIONS.len(), 66);
     }
 }

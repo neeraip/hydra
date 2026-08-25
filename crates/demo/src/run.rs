@@ -592,7 +592,7 @@ fn open_uds(
             EXIT_INPUT,
             Diagnostic::error("input/unsupported", s.to_string()),
         ),
-        OpenError::Controls(msg) | OpenError::Transport(msg) => {
+        OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg) => {
             Failure::one(EXIT_INPUT, Diagnostic::error("input/unsupported", msg))
         }
     })?;

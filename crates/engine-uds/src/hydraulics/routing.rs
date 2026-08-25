@@ -594,6 +594,10 @@ struct Vert {
     /// A gated outfall: reverse flow through any connecting link is
     /// blocked (§2.6).
     gated: bool,
+    /// §15.6: coupled to the overland mesh — ponding-capable regardless
+    /// of the global option, ponded area = the mesh median-dual
+    /// footprint, and the §6.4 area takes the exchange conductance.
+    coupled: bool,
     class: VertClass,
 }
 
@@ -680,6 +684,15 @@ pub struct Router {
     err_tol: f64,
     allow_ponding: bool,
     normal_flow: NormalFlowCriteria,
+    /// §15.6: per-outfall 2D tailwater (surface elevation m, wetness
+    /// ramp in \[0, 1\]), consulted inside every iteration's boundary
+    /// evaluation. Sentinel (−∞, 0) = no coupled surface.
+    tail_2d: Vec<(f64, f64)>,
+    /// §15.6: per-vertex exchange conductance (m²/s per m of head, i.e.
+    /// m²·s⁻¹·m⁻¹ = m/s·m — dimensionally an area per time once
+    /// multiplied by Δt), refreshed by the session each routing period;
+    /// zero everywhere no coupling exists.
+    coupling_g: Vec<f64>,
     // State (accepted).
     t: f64,
     y: Vec<f64>,
@@ -1124,6 +1137,7 @@ impl Router {
                 ponded_area: ponded,
                 crown: 0.0,
                 gated,
+                coupled: false,
                 class,
             });
         }
@@ -1513,6 +1527,8 @@ impl Router {
             continuity_tol: net.options.continuity_tol,
             err_tol: net.options.routing_err_tol,
             allow_ponding: net.options.allow_ponding,
+            coupling_g: vec![0.0; net.vertices.len()],
+            tail_2d: vec![(f64::NEG_INFINITY, 0.0); net.vertices.len()],
             normal_flow: net.options.normal_flow,
             t: 0.0,
             y: vec![0.0; nv],
@@ -1727,6 +1743,50 @@ impl Router {
 
     /// Set a fixed-stage outfall's stage elevation (m) — the session's
     /// handle for tidal and series boundaries (§10.1).
+    /// §15.6: mark a vertex as coupled to the overland mesh. Its ponded
+    /// area becomes the mesh's median-dual footprint and ponding applies
+    /// there regardless of the global option.
+    pub fn set_coupled(&mut self, vi: usize, footprint: f64) {
+        self.verts[vi].coupled = true;
+        self.verts[vi].ponded_area = footprint;
+    }
+
+    /// §15.6: refresh a coupled vertex's exchange conductance for the
+    /// coming period. Clamped non-negative — the term only ever damps.
+    pub fn set_coupling_conductance(&mut self, vi: usize, g: f64) {
+        self.coupling_g[vi] = g.max(0.0);
+    }
+
+    /// §15.6: set a coupled outfall's 2D tailwater for the coming
+    /// period — the surface elevation over the deepest wet stencil cell
+    /// and the wetness ramp that blends it in. Every iteration's
+    /// boundary evaluation consults it; a flap gate (`gated`) keeps the
+    /// surface from pushing water back into the network.
+    pub fn set_outfall_tailwater(&mut self, vi: usize, h_2d: f64, ramp: f64) {
+        self.tail_2d[vi] = (h_2d, ramp.clamp(0.0, 1.0));
+    }
+
+    /// §15.6: the net link flow arriving at a vertex right now (m³/s,
+    /// positive toward the vertex) — a coupled outfall's discharge.
+    pub fn vertex_net_link_inflow(&self, vi: usize) -> f64 {
+        let mut q = 0.0;
+        for (ci, c) in self.chans.iter().enumerate() {
+            if c.to == vi {
+                q += self.q[ci];
+            } else if c.from == vi {
+                q -= self.q[ci];
+            }
+        }
+        for (si, st) in self.structs.iter().enumerate() {
+            if st.to == vi {
+                q += self.sq[si];
+            } else if st.from == vi {
+                q -= self.sq[si];
+            }
+        }
+        q
+    }
+
     pub fn set_outfall_stage(&mut self, vi: usize, elev: f64) {
         if let VertClass::Outfall(Boundary::Fixed(e)) = &mut self.verts[vi].class {
             *e = elev;
@@ -3175,11 +3235,15 @@ impl Router {
                             if let VertClass::Storage(g) = &v.class {
                                 area += g.area(y_i);
                             }
-                            let ponded = self.allow_ponding && v.ponded_area > 0.0 && y_i > v.y_max;
+                            let ponded = (self.allow_ponding || v.coupled)
+                                && v.ponded_area > 0.0
+                                && y_i > v.y_max;
                             if ponded {
                                 area = v.ponded_area;
                             }
-                            let area = area.max(self.min_surface_area);
+                            // §15.6: the exchange conductance damps the
+                            // update at a coupled vertex.
+                            let area = area.max(self.min_surface_area) + self.coupling_g[vi] * dt;
                             let net_i = *net_p.get().add(vi);
                             let dv = 0.5 * (self.net_flow[vi] + net_i) * dt;
                             let y_raw = self.y[vi] + dv / area;
@@ -3192,7 +3256,9 @@ impl Router {
                             }
                             let cap = v.y_max + v.surcharge;
                             let mut fl = 0.0;
-                            if y_new > cap && !(self.allow_ponding && v.ponded_area > 0.0) {
+                            if y_new > cap
+                                && !((self.allow_ponding || v.coupled) && v.ponded_area > 0.0)
+                            {
                                 fl = (y_raw - cap).max(0.0) * area / dt;
                                 y_new = cap;
                             }
@@ -3534,11 +3600,15 @@ impl Router {
                         if let VertClass::Storage(g) = &v.class {
                             area += g.area(y[vi]);
                         }
-                        let ponded = self.allow_ponding && v.ponded_area > 0.0 && y[vi] > v.y_max;
+                        let ponded = (self.allow_ponding || v.coupled)
+                            && v.ponded_area > 0.0
+                            && y[vi] > v.y_max;
                         if ponded {
                             area = v.ponded_area;
                         }
-                        let area = area.max(self.min_surface_area);
+                        // §15.6: the exchange conductance damps the update
+                        // at a coupled vertex.
+                        let area = area.max(self.min_surface_area) + self.coupling_g[vi] * dt;
                         let dv = 0.5 * (self.net_flow[vi] + net_new[vi]) * dt;
                         // The mass balance, before relaxation touches it.
                         let y_raw = self.y[vi] + dv / area;
@@ -3560,7 +3630,9 @@ impl Router {
                         // all. At a vertex held at its rim for hours that
                         // is a factor of ω off the flood volume.
                         let cap = v.y_max + v.surcharge;
-                        if y_new > cap && !(self.allow_ponding && v.ponded_area > 0.0) {
+                        if y_new > cap
+                            && !((self.allow_ponding || v.coupled) && v.ponded_area > 0.0)
+                        {
                             flood[vi] = (y_raw - cap).max(0.0) * area / dt;
                             y_new = cap;
                         }
@@ -4168,6 +4240,24 @@ impl Router {
     }
 
     fn outfall_depth(&self, vi: usize, b: &Boundary, q: &[f64]) -> f64 {
+        let y_std = self.outfall_depth_standard(vi, b, q);
+        // §15.6: a coupled outfall blends toward the surface tailwater
+        // by the wetness ramp; a flap gate suppresses the override when
+        // the surface stands above the stage the outfall would
+        // otherwise carry.
+        let (h_2d, ramp) = self.tail_2d[vi];
+        let v = &self.verts[vi];
+        if h_2d > v.invert && ramp > 0.0 {
+            let h_std = v.invert + y_std;
+            if !(v.gated && h_2d > h_std) {
+                let h_blend = h_std + ramp * (h_2d - h_std).max(0.0);
+                return h_blend - v.invert;
+            }
+        }
+        y_std
+    }
+
+    fn outfall_depth_standard(&self, vi: usize, b: &Boundary, q: &[f64]) -> f64 {
         match b {
             // §2.6: a staged condition governs only where it exceeds the
             // critical-depth elevation; below that the brink controls,
@@ -5480,6 +5570,73 @@ C1  CIRCULAR  0.3  0  0  0
         );
     }
 
+    /// §15.6: a coupled vertex ponds over its mesh footprint regardless
+    /// of the global ponding option — the pond there is the overland
+    /// surface itself — while the same overloaded uncoupled vertex pins
+    /// at its rim and floods.
+    #[test]
+    fn a_coupled_vertex_ponds_without_the_global_option() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.2  0.6
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.3  0  0  0
+";
+        let (_, mut r) = build(inp);
+        r.set_coupled(0, 25.0);
+        r.advance(1800.0, &inflow_at(0, 0.2));
+        assert!(r.y[0] > 0.6, "head must rise above the rim, y = {}", r.y[0]);
+        assert_eq!(r.report.flooding, 0.0, "a coupled vertex never floods");
+    }
+
+    /// §15.6: the exchange conductance augments the coupled vertex's
+    /// §6.4 storage, so the same inflow raises its head less.
+    #[test]
+    fn the_coupling_conductance_damps_the_vertex() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.2  2.0
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.3  0  0  0
+";
+        let (_, mut plain) = build(inp);
+        plain.advance(60.0, &inflow_at(0, 0.05));
+        let (_, mut damped) = build(inp);
+        damped.set_coupling_conductance(0, 5.0);
+        damped.advance(60.0, &inflow_at(0, 0.05));
+        assert!(
+            damped.y[0] < plain.y[0],
+            "damped {} vs plain {}",
+            damped.y[0],
+            plain.y[0]
+        );
+        // Clamped non-negative: a negative setting is a no-op.
+        damped.set_coupling_conductance(0, -3.0);
+        assert_eq!(damped.coupling_g[0], 0.0);
+    }
+
     /// An outfall opens at the depth its boundary imposes (§6.7), and the
     /// channel reaching it opens holding that water.
     ///
@@ -6358,6 +6515,8 @@ impl Router {
             err_tol: _,
             allow_ponding: _,
             normal_flow: _,
+            coupling_g: _,
+            tail_2d: _,
             stor_evap_frac: _,
             stor_seep_ksat: _,
             // State.

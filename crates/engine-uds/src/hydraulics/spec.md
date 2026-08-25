@@ -526,7 +526,11 @@ algebraic special case. The assembled area is floored at a documented minimum
 (`min_surface_area`, default 1.167 m², the plan area of a 1.22 m (4 ft)
 manhole) —
 a physical floor, since a real access structure has real plan area, not a
-numerical fiction.
+numerical fiction. At a vertex coupled to the overland mesh (§15.6) the
+assembled area is further augmented by the exchange conductance,
+$A_S + G\,\Delta t$: the coupling is a lagged source with a steep head
+sensitivity, and the added term is exactly the damping that keeps this
+iteration stable against it.
 
 ### 6.4 Iteration
 
@@ -856,7 +860,11 @@ user-supplied flow limit, when given, caps $\lvert Q \rvert$ every iteration.
 ground elevation (plus any surcharge allowance) is pinned there, the surplus
 inflow leaving the system as reported flooding. With ponding enabled the
 surplus accumulates over the vertex's ponded area — a virtual store whose
-head may rise above ground — and drains back as capacity recovers.
+head may rise above ground — and drains back as capacity recovers. A vertex
+coupled to the overland mesh (§15.6) is ponding-capable regardless of the
+global option, its ponded area the mesh's median-dual footprint: the pond
+there is not a modelling choice but the overland surface itself, and the
+grade must track it.
 
 ### 6.7 Initial Conditions
 

@@ -71,7 +71,7 @@ class SpecLanguageTests(unittest.TestCase):
 
     def test_the_scan_reads_every_spec(self):
         found = {p.relative_to(ROOT).as_posix() for p in specs()}
-        self.assertEqual(15, len(found), sorted(found))
+        self.assertEqual(16, len(found), sorted(found))
         for expected in (
             "crates/common/src/spec.md",
             "crates/engine-uds/src/hydraulics/spec.md",

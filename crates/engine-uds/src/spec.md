@@ -223,6 +223,7 @@ Each document owns a disjoint, contiguous range:
 | 9–12 | Simulation | Operational control; time integration and coupling; conservation; session interface |
 | 13 | Analysis | Post-simulation analytics |
 | 14 | Interoperability | Predecessor file formats, import, and export |
+| 15 | Overland | Two-dimensional surface flow and its network coupling |
 
 The ordering is deliberate. The physics is specified first, on its own terms;
 interoperability is specified last, as an adapter between the predecessor's
@@ -288,7 +289,15 @@ orchestration (§10), accounting and statistics (§11), the session (§12), and
 interoperability (§14).
 
 Deferred capabilities are typed refusals, never approximations: a model
-needing one is refused with a named reason. Nothing is deferred: every
-capability this specification describes is served. A section absent from
+needing one is refused with a named reason. A section absent from
 the specification remains unspecified behaviour rather than deferred
 behaviour — it is not implemented until it is specified.
+
+Every section this specification describes is served, **§15 (overland
+flow) included**: a model carrying two-dimensional sections is
+validated (§15.2), coupled (§15.6) and marched (§15.4) with the run,
+its results streamed per §14.16 and its balances reported per §14.9.
+`IGNORE_2D YES` remains the author's explicit request to run the
+one-dimensional model alone; the mesh is still validated so an
+authoring defect is heard now, not on the day the option flips off.
+The capabilities §15.10 records as deferred stay typed refusals.

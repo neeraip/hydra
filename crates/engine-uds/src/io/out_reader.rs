@@ -367,3 +367,218 @@ pub fn read_element_series(
     }
     Ok(ElementSeries { epochs_s, vars })
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// §14.16: the overland results stream's reader — the same carve-out,
+// for the same reason: a mesh run's results dwarf everything else the
+// run owns, so this reader seeks an explicitly supplied path.
+// ═══════════════════════════════════════════════════════════════════
+
+use super::overland_out::{
+    header_len, record_len, LedgerRow, MAGIC as OV_MAGIC, VERSION as OV_VERSION,
+};
+
+fn ov_read_u32(f: &mut File) -> Result<u32, String> {
+    let mut b = [0u8; 4];
+    f.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(u32::from_le_bytes(b))
+}
+
+fn ov_read_f64(f: &mut File) -> Result<f64, String> {
+    let mut b = [0u8; 8];
+    f.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(f64::from_le_bytes(b))
+}
+
+fn ov_read_f32(f: &mut File) -> Result<f32, String> {
+    let mut b = [0u8; 4];
+    f.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(f32::from_le_bytes(b))
+}
+
+/// One §14.16 record: an instant's whole surface.
+#[derive(Debug, Clone)]
+pub struct OverlandRecord {
+    /// Run time (s).
+    pub t: f64,
+    /// Per cell: depth (m), surface elevation (m), velocity u, v (m/s).
+    pub cells: Vec<[f32; 4]>,
+    /// Per coupling point: exchange rate (m³/s, positive draining).
+    pub exchange: Vec<f32>,
+    /// The §15.8 ledger, cumulative (m³).
+    pub ledger: LedgerRow,
+}
+
+/// An open §14.16 overland results file: header held, records served
+/// by seeking.
+#[derive(Debug)]
+pub struct OverlandResults {
+    path: std::path::PathBuf,
+    /// Vertex positions and elevations (m).
+    pub verts: Vec<(f64, f64, f64)>,
+    /// Cell vertex triples.
+    pub cells: Vec<[u32; 3]>,
+    /// Each coupling point's cell.
+    pub point_cells: Vec<u32>,
+    /// The reporting clock: start epoch (s), report step (s), first
+    /// instant's run time (s).
+    pub start_epoch: f64,
+    pub report_step: f64,
+    pub first_report_t: f64,
+    /// Record count from the epilog.
+    pub periods: usize,
+    records_at: u64,
+}
+
+impl OverlandResults {
+    /// Open and validate: both magic numbers, the version, and that
+    /// header, fixed-size records and epilog tile the file exactly. A
+    /// file without its epilog is a run that did not finish, refused
+    /// as such rather than served as complete.
+    pub fn open(path: &Path) -> Result<OverlandResults, String> {
+        let ctx = |e: String| format!("{}: {e}", path.display());
+        let mut f = File::open(path).map_err(|e| ctx(e.to_string()))?;
+        let len = f.metadata().map_err(|e| ctx(e.to_string()))?.len();
+        if ov_read_u32(&mut f).map_err(ctx)? != OV_MAGIC {
+            return Err(format!("{}: not an overland results file", path.display()));
+        }
+        let version = ov_read_u32(&mut f).map_err(ctx)?;
+        if version != OV_VERSION {
+            return Err(format!(
+                "{}: overland results version {version}, this reader serves {OV_VERSION}",
+                path.display()
+            ));
+        }
+        let nv = ov_read_u32(&mut f).map_err(ctx)? as usize;
+        let nc = ov_read_u32(&mut f).map_err(ctx)? as usize;
+        let np = ov_read_u32(&mut f).map_err(ctx)? as usize;
+        let start_epoch = ov_read_f64(&mut f).map_err(ctx)?;
+        let report_step = ov_read_f64(&mut f).map_err(ctx)?;
+        let first_report_t = ov_read_f64(&mut f).map_err(ctx)?;
+        let head = header_len(nv, nc, np);
+        let rec = record_len(nc, np);
+        if len < head + 8 {
+            return Err(format!(
+                "{}: the run this file records did not finish (no epilog)",
+                path.display()
+            ));
+        }
+        // Epilog: record count then the closing magic.
+        f.seek(SeekFrom::End(-8)).map_err(|e| ctx(e.to_string()))?;
+        let mut b = [0u8; 4];
+        f.read_exact(&mut b).map_err(|e| ctx(e.to_string()))?;
+        let periods = i32::from_le_bytes(b);
+        if ov_read_u32(&mut f).map_err(ctx)? != OV_MAGIC {
+            return Err(format!(
+                "{}: the run this file records did not finish (no epilog)",
+                path.display()
+            ));
+        }
+        if periods < 0 || head + rec * periods as u64 + 8 != len {
+            return Err(format!(
+                "{}: header, records and epilog do not tile the file",
+                path.display()
+            ));
+        }
+        // The geometry, read once.
+        f.seek(SeekFrom::Start((4 * 5 + 8 * 3) as u64))
+            .map_err(|e| ctx(e.to_string()))?;
+        let mut verts = Vec::with_capacity(nv);
+        for _ in 0..nv {
+            let x = ov_read_f64(&mut f).map_err(ctx)?;
+            let y = ov_read_f64(&mut f).map_err(ctx)?;
+            let z = ov_read_f64(&mut f).map_err(ctx)?;
+            verts.push((x, y, z));
+        }
+        let mut cells = Vec::with_capacity(nc);
+        for _ in 0..nc {
+            let a = ov_read_u32(&mut f).map_err(ctx)?;
+            let b = ov_read_u32(&mut f).map_err(ctx)?;
+            let c = ov_read_u32(&mut f).map_err(ctx)?;
+            cells.push([a, b, c]);
+        }
+        let mut point_cells = Vec::with_capacity(np);
+        for _ in 0..np {
+            point_cells.push(ov_read_u32(&mut f).map_err(ctx)?);
+        }
+        Ok(OverlandResults {
+            path: path.to_path_buf(),
+            verts,
+            cells,
+            point_cells,
+            start_epoch,
+            report_step,
+            first_report_t,
+            periods: periods as usize,
+            records_at: head,
+        })
+    }
+
+    /// One record, by index.
+    pub fn record(&self, i: usize) -> Result<OverlandRecord, String> {
+        if i >= self.periods {
+            return Err(format!(
+                "{}: record {i} of {}",
+                self.path.display(),
+                self.periods
+            ));
+        }
+        let ctx = |e: String| format!("{}: {e}", self.path.display());
+        let mut f = File::open(&self.path).map_err(|e| ctx(e.to_string()))?;
+        let (nc, np) = (self.cells.len(), self.point_cells.len());
+        f.seek(SeekFrom::Start(
+            self.records_at + record_len(nc, np) * i as u64,
+        ))
+        .map_err(|e| ctx(e.to_string()))?;
+        let t = ov_read_f64(&mut f).map_err(ctx)?;
+        let mut cells = Vec::with_capacity(nc);
+        for _ in 0..nc {
+            let mut c = [0.0f32; 4];
+            for v in &mut c {
+                *v = ov_read_f32(&mut f).map_err(ctx)?;
+            }
+            cells.push(c);
+        }
+        let mut exchange = Vec::with_capacity(np);
+        for _ in 0..np {
+            exchange.push(ov_read_f32(&mut f).map_err(ctx)?);
+        }
+        let mut ledger = [0.0f64; 10];
+        for v in &mut ledger {
+            *v = ov_read_f64(&mut f).map_err(ctx)?;
+        }
+        Ok(OverlandRecord {
+            t,
+            cells,
+            exchange,
+            ledger: LedgerRow::from_array(ledger),
+        })
+    }
+
+    /// One cell's series across every record: (t, depth, surface
+    /// elevation, u, v).
+    pub fn cell_series(&self, ci: usize) -> Result<Vec<(f64, [f32; 4])>, String> {
+        let (nc, np) = (self.cells.len(), self.point_cells.len());
+        if ci >= nc {
+            return Err(format!("{}: cell {ci} of {nc}", self.path.display()));
+        }
+        let ctx = |e: String| format!("{}: {e}", self.path.display());
+        let mut f = File::open(&self.path).map_err(|e| ctx(e.to_string()))?;
+        let rec = record_len(nc, np);
+        let mut out = Vec::with_capacity(self.periods);
+        for i in 0..self.periods {
+            let at = self.records_at + rec * i as u64;
+            f.seek(SeekFrom::Start(at))
+                .map_err(|e| ctx(e.to_string()))?;
+            let t = ov_read_f64(&mut f).map_err(ctx)?;
+            f.seek(SeekFrom::Start(at + 8 + 16 * ci as u64))
+                .map_err(|e| ctx(e.to_string()))?;
+            let mut c = [0.0f32; 4];
+            for v in &mut c {
+                *v = ov_read_f32(&mut f).map_err(ctx)?;
+            }
+            out.push((t, c));
+        }
+        Ok(out)
+    }
+}

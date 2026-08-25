@@ -6547,3 +6547,92 @@ fn the_highest_continuity_errors_list_skips_terminal_and_quiet_vertices() {
     }
     assert!(listed.len() <= 5, "more than five listed: {listed:?}");
 }
+
+/// §14.15: an external mesh file's sections continue the model's own —
+/// indices, units header and all — and a declared-but-unsupplied file
+/// is a named refusal, or a named warning under IGNORE_2D.
+#[test]
+fn an_external_mesh_file_continues_the_inline_sections() {
+    let model = "[OPTIONS]
+FLOW_UNITS CMS
+END_TIME 00:10:00
+        [JUNCTIONS]
+J1 10 4 0 0 0
+[OUTFALLS]
+O1 9 FREE NO
+        [CONDUITS]
+C1 J1 O1 100 0.013 0 0 0 0
+        [XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+        [2D_MESH_FILE]
+FILE terrain.2dm
+        [2D_VERTEX_NODE_MAP]
+VA J1
+";
+    let external = ";; UNITS: SI (m)
+[2D_VERTICES]
+0 0 10
+1 0 10 VA
+0 1 10
+        [2D_TRIANGLES]
+0 1 2 0.02
+";
+
+    // Supplied: the coupling row in the model resolves against a vertex
+    // the external file authors, and the coupled model runs (§1.8).
+    let (mut sim, diags, _) =
+        Simulation::open_with_overland_mesh(model, external).expect("the coupled model serves");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
+
+    // Not supplied: the refusal names the file instead.
+    let Err(err) = Simulation::open(model) else {
+        panic!("missing mesh file refuses");
+    };
+    assert!(err.to_string().contains("terrain.2dm"), "{err}");
+
+    // Ignored and not supplied: the 1D half runs, warned.
+    let ignored = model.replace(
+        "FLOW_UNITS CMS",
+        "FLOW_UNITS CMS
+IGNORE_2D YES",
+    );
+    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    assert!(diags.iter().any(|d| d.to_string().contains("terrain.2dm")));
+    sim.run();
+}
+
+/// §1.8: a mesh model is served — it opens and marches with the run —
+/// while `IGNORE_2D YES` still runs the one-dimensional half alone,
+/// and the mesh is validated either way, so an authoring defect is
+/// heard now rather than on the day the option flips off.
+#[test]
+fn a_mesh_model_is_served() {
+    let base = "[OPTIONS]\nFLOW_UNITS CMS\nROUTING_STEP 5\n\
+        END_TIME 00:10:00\n{IGNORE}\n\
+        [JUNCTIONS]\nJ1 10 4 0 0 0\n[OUTFALLS]\nO1 9 FREE NO\n\
+        [CONDUITS]\nC1 J1 O1 100 0.013 0 0 0 0\n\
+        [XSECTIONS]\nC1 CIRCULAR 1 0 0 0 1\n\
+        [2D_VERTICES]\n0 0 10\n1 0 10\n0 1 10\n\
+        [2D_TRIANGLES]\n0 1 2 {N}\n";
+
+    let served = base.replace("{IGNORE}", "").replace("{N}", "0.02");
+    let (mut sim, diags, _) = Simulation::open(&served).expect("mesh models serve");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
+
+    let ignored = base
+        .replace("{IGNORE}", "IGNORE_2D YES")
+        .replace("{N}", "0.02");
+    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
+
+    for ignore in ["IGNORE_2D YES", ""] {
+        let defective = base.replace("{IGNORE}", ignore).replace("{N}", "0");
+        let Err(err) = Simulation::open(&defective) else {
+            panic!("defects are heard, ignored or served");
+        };
+        assert!(err.to_string().contains("Manning"), "{err}");
+    }
+}

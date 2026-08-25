@@ -148,7 +148,10 @@ owning specification section for its semantics. The nine display-metadata
 sections (`[MAP]`, `[COORDINATES]`, `[VERTICES]`, `[POLYGONS]`, `[SYMBOLS]`,
 `[LABELS]`, `[BACKDROP]`, `[TAGS]`, `[PROFILES]`) carry no engine semantics:
 they are parsed for well-formedness only and preserved verbatim for writers,
-so applications may consume them and a load-and-save cycle keeps them.
+so applications may consume them and a load-and-save cycle keeps them. One
+recorded exception: when a model carries an overland mesh, `[SYMBOLS]`
+supplies the rain-gauge positions §15.7's interpolation reads — the
+predecessor's convention, adopted with it (§14.15).
 
 Within the per-object property sections — external inflows, sanitary
 inflows, sewer inflows, treatment, land cover, and initial loadings — a
@@ -743,7 +746,12 @@ including the process-model checklist; the control-actions log; the runoff
 quantity and quality continuity balances; the flow routing and quality
 routing continuity balances; the highest continuity errors, time-step
 critical elements, flow instability indexes, and non-converging vertices;
-the routing time-step summary; then the per-object summary tables —
+the routing time-step summary; for a run serving an overland mesh
+(§15), the overland flow continuity balance and the overland time-step
+summary, in that order, between the routing continuity balances and the
+highest-continuity-errors list — blocks the predecessor never prints
+because it cannot run a mesh model, laid out in the house style of
+their neighbours; then the per-object summary tables —
 subcatchment runoff, control-measure performance, subcatchment washoff,
 node depth, node inflow, node
 surcharge, node flooding, storage volume, outfall loading, link flow, flow
@@ -768,9 +776,20 @@ predecessor's must never mistake bookkeeping for physics.
 
 **`[REPORT]` gates the body**, as it does in the predecessor. `DISABLED`
 suppresses everything the run produced, leaving the banner. `CONTINUITY`
-gates the four continuity balances, `FLOWSTATS` the diagnostics and the
-routing time-step summary together, and `CONTROLS` the control-actions
-log. The highest continuity errors list names the vertices whose own §11.1
+gates the four continuity balances (and the overland one with them),
+`FLOWSTATS` the diagnostics and the routing time-step summary together
+(and the overland time-step summary with them), and `CONTROLS` the
+control-actions log. The overland flow continuity balance prints the
+§15.8 ledger as volume rows — initial storage, rainfall, evaporation,
+junction drainage, junction spill, outfall injection, outfall
+withdrawal, boundary inflow, boundary outflow, final storage — and its
+closure as the continuity error, in the report's volume units. The
+flow routing continuity balance of a coupled run additionally carries
+the §15.8 named pair, surface drainage among its inflows and surface
+spill among its outflows, and its error term accounts for both. The
+overland time-step summary prints the march's whole-run counts: base
+substeps, macro cycles, active-set rebuilds, the minimum and average
+base step, and the peak active-cell count (§15.4.4). The highest continuity errors list names the vertices whose own §11.1
 balance closes worst, skipping terminal vertices — with nothing leaving by
 a link the balance says nothing about the solver — and vertices that barely
 saw water, below the predecessor's threshold of a tenth of a cubic foot,
@@ -1390,3 +1409,167 @@ than silently ignored.
 > *Source: `climate.c:climate_openFile` seeding `FileValue[TMIN]` and
 > `[TMAX]` from `Temp.ta`, `project.c:915` setting that to 70.0, and
 > `updateFileValues`, `if ( FileData[i][FileDay] == MISSING ) continue;`.*
+
+### 14.15 Two-Dimensional Sections
+
+The overland-flow input vocabulary (§15) is the successor format's — the
+community continuation whose 6.x line grows two-dimensional simulation on
+this same file format — adopted section for section. A mesh activates §15;
+`IGNORE_2D YES` in `[OPTIONS]` keeps the sections parsed and preserved but
+runs the model one-dimensional, with notice. Until §15 is served (§1.8),
+every section below receives §14.2's unrecognised-section treatment.
+
+**Sections.** Whitespace-tokenised per §14.2. Vertices and cells are
+implicitly indexed from zero in file order.
+
+- `[2D_VERTICES]` — `X Y Z [TAG]`: position and ground elevation in the
+  model's length units, optional tag.
+- `[2D_TRIANGLES]` — `V1 V2 V3 MANNINGS_N [INIT_DEPTH] [TAG]`: three
+  vertex indices, Manning roughness (> 0), optional initial depth
+  (default 0). The fifth column is initial depth when numeric and a tag
+  otherwise (the historical four-column-plus-tag form); a written file
+  always carries the depth when a tag is present, so round-trips are
+  unambiguous. Winding order is free.
+- `[2D_INITIAL_VELOCITY]` — `TRI U V`: an initial velocity (m/s) for a
+  cell, seeding face discharges by projection. Follows `[2D_TRIANGLES]`.
+- `[2D_VERTEX_NODE_MAP]` / `[2D_TRIANGLE_NODE_MAP]` — `INDEX_OR_TAG NODE
+  [CD] [AREA]`: a coupling point (§15.6) joining a mesh vertex or cell to
+  a node; discharge coefficient default 0.65, exchange area default
+  1.0 m² in the model's units (an unauthored area is eligible for
+  `COUPLING_AREA AUTO`). The first token is an index where numeric and in
+  range, else a tag. One coupling per vertex (a later row replaces);
+  repeated triangle rows accumulate, several nodes to one cell.
+- `[2D_BOUNDARY_CONDITIONS]` — `TRI EDGE TYPE [PARAM_1 [PARAM_2
+  [GROUP]]]`: attaches a §15.5 condition to a boundary edge; local edge
+  `e` is the edge opposite vertex `e`. Types `WALL`, `NORMAL_FLOW`
+  (parameter: slope), `SPECIFIED_STAGE` (stage) and `TS_STAGE` (series
+  name), `SPECIFIED_FLOW` (per-metre discharge in the model's flow units
+  per metre) and `TS_FLOW` (series name), `RATING_CURVE` (curve of stage
+  above the edge bed against per-metre discharge). `PARAM_2` is reserved
+  and written `*`. Unaddressed boundary edges are walls.
+- `[2D_EDGE_CONVEYANCE]` — `FROM_VERTEX TO_VERTEX FACTOR`: the §15.2
+  conveyance ψ ∈ [0, 1] of the undirected interior edge between two
+  vertices.
+- `[2D_MESH_FILE]` — `FILE <path>`: an external file, resolved against
+  the model's location and supplied in memory by the caller like every
+  §14.8 auxiliary, carrying the same sections (nested mesh files
+  excluded). Only the first `FILE` line is honoured. The `.2dm`
+  extension is conventional; the content is this grammar, not the SMS
+  format of that name.
+
+**Units.** Mesh coordinates, elevations, depths and areas are authored in
+the model's display units and convert at import, unless the mesh carries
+the header comment `;; UNITS: SI (m)` (either in the model or the
+external file), which declares it SI already. The header can only assert
+SI: a US declaration is ignored, as the predecessor's is. Boundary stages
+convert as elevations; boundary flows convert per the model's flow unit.
+
+**`[2D_OPTIONS]`.** `PARAMETER VALUE` per line, case-insensitive:
+
+| Key | Default | §15 meaning |
+|---|---|---|
+| `INTEGRATOR` | `EXPLICIT` | the only value; others are retired |
+| `CFL_NUMBER` | 0.7 | §15.4.4 α |
+| `MAX_TIMESTEP` | 10 s | §15.4.4 cap |
+| `THETA` | 0.8 | §15.4.2 θ |
+| `FROUDE_MAX` | 1.5 | §15.4.2 cap |
+| `LTS_TIERS` | 4 | §15.4.4 tiers (1–8) |
+| `H_MOVE` | 0.003 m | §15.4.4 activation threshold |
+| `DRY_DEPTH` | 0.001 m | §15.4.2 dry gate |
+| `CELL_CLOSURE` | `FLAT` | or `VFR` (§15.3) |
+| `FACE_RECONSTRUCTION` | `MEAN` | or `VFR_FACE` (§15.3) |
+| `VFR_MIN_WET_FRAC` | 0.01 | §15.3 ε, (0, 0.5] |
+| `ADVECTION` | `NO` | §15.4.6 convective term |
+| `RAINFALL_MODE` | `NATURAL_NEIGHBOUR` | or `SYSTEM`, `NONE` (§15.7) |
+| `COUPLING_AREA` | `DEFAULT` | or `AUTO` (§15.6) |
+| `COUPLING_CD` | 0.65 | default discharge coefficient for coupling rows without their own |
+| `COUPLING_SYNC` | 0 s | §15.6 batching; 0 couples per routing step |
+| `REPORT_2D` | `YES` | §15.10 results gap governs what this yields |
+| `OUTPUT_FILE` | none | §15.10 results gap |
+
+> **CORRESPONDENCE:** the predecessor parses `COUPLING_CD` and writes it
+> back, but its solve path never reads it — per-point coefficients come
+> only from the map rows or the hard-coded default. This engine honours
+> the option as its name says. `LIMITER_EPSILON` and `FLUX_DH_EPS` are
+> likewise accepted and inert here: both belong to the predecessor's
+> retired flux machinery, and files that carry them mean nothing by them.
+
+**Retired keys** — the predecessor's implicit-integrator vocabulary
+(`MIN_TIMESTEP`, `REL_TOLERANCE`, `ABS_TOLERANCE`, `MAX_CVODE_STEPS`,
+`MAX_KRYLOV_DIM`, `LINEAR_SOLVER`, `PRECONDITIONER`, `JACOBIAN`,
+`ATOL_AREA_REF`, `COUPLING_INTERVAL`, `COUPLING_WINDOW`, `ACTIVE_SET`,
+`ACTIVE_SET_HALO`, `MOMENTUM`, and non-`EXPLICIT` integrators) — warn
+and are ignored, so files from any predecessor vintage open. The same
+treatment absorbs keys this table does not carry: the predecessor is
+pre-release and its option vocabulary churns; an unknown 2D option warns
+and is ignored rather than refusing the file, and adopting a new key is
+an amendment to this table.
+
+**Import warnings.** A model with both parcels and mesh rainfall warns of
+the §15.7 double count. A coupling area more than ten times the node's
+largest connected conduit warns. A node whose rim sits outside the mesh's
+elevation envelope by more than a sanity margin warns of a datum mismatch.
+
+**Export.** A model carrying a mesh writes every 2D section it holds,
+always in SI under a `;; UNITS: SI (m)` header — the one representation
+that round-trips losslessly whatever units the model was authored in,
+and one the predecessor reads. Cells always write their initial depth
+when they carry a tag, so the fifth column stays unambiguous
+(§14.13's columns rule). An external mesh file is not re-created:
+export inlines the mesh it holds, and the `[2D_MESH_FILE]` declaration
+is not written.
+
+### 14.16 The Overland Results Stream
+
+The §14.9 binary results file is the predecessor's format, and the
+predecessor's format has no vocabulary for a mesh: its object classes
+are fixed, its readers are third parties, and nothing may be appended
+to it. Overland results therefore stream to a **sidecar file** in this
+engine's own format, written alongside the §14.9 file at the same
+reporting instants. The predecessor writes CF/UGRID HDF5 instead; that
+choice needs a native library this engine's browser constraint (§1.4)
+refuses, and a reader for it is a foreign dependency either way, so
+the sidecar is this engine's own framed layout, fully specified here.
+One engine writes it and the same engine reads it back; nothing about
+it is a compatibility surface with the predecessor.
+
+Everything is little-endian. The clock, the geometry and the ledger
+are eight-byte floats; per-cell record values are four-byte floats,
+the resolution every reported result in §14.9 already has. All values
+are SI (§14.15): metres, seconds, cubic metres per second. The file
+has three parts:
+
+**Header.** Leading magic `1214727218`, format version `1`, then the
+counts — vertices, cells, coupling points — as four-byte unsigned
+integers; the reporting clock (start epoch seconds, report step
+seconds, first instant's run time seconds) as floats; then the mesh
+geometry a viewer renders without the model: each vertex's $x, y, z$,
+then each cell's three vertex indices, then each coupling point's
+cell index.
+
+**Records**, one per reporting instant, fixed size:
+
+- the instant's run time (s, eight-byte float);
+- per cell, in index order: depth (m), surface elevation (m), and the
+  velocity components $u, v$ (m/s) from the §15.4.3 reconstruction,
+  zero where the cell holds less than the drying depth;
+- per coupling point, in point order: the exchange rate over the
+  reporting period (m³/s, positive draining into the network);
+- the §15.8 ledger, cumulative since the start of the run, as ten
+  eight-byte floats: surface storage now, rainfall in, evaporation
+  out, junction drainage out, junction spill in, outfall injection
+  in, outfall withdrawal out, boundary in, boundary out, and the
+  continuity error as a signed volume.
+
+**Epilog.** The record count as a four-byte signed integer, then the
+closing magic. A file without its epilog is a run that did not finish,
+and a reader says so rather than serving the torso as complete.
+
+**Reading** follows §14.9's carve-out for the same reason: a mesh
+run's results dwarf everything else the run owns, so the reader
+operates on an explicitly supplied path and seeks — the header, one
+record, one cell's series across all records, or a sequential scan —
+rather than requiring the whole file in memory. Opening validates the
+leading and closing magic, the version, and that header, fixed-size
+records and epilog tile the file exactly.
+

@@ -48,6 +48,8 @@ pub struct Network {
     pub aquifers: Vec<Aquifer>,
     /// Snow pack parameter sets, in registration order.
     pub snowpacks: Vec<Snowpack>,
+    /// The overland surface mesh (§15.2), when the model authors one.
+    pub overland: Option<crate::overland::OverlandMesh>,
     /// Unit-hydrograph groups, in registration order.
     pub unit_hydrographs: Vec<UnitHydrographGroup>,
     /// Sewer-inflow (RDII) assignments at vertices.
@@ -620,6 +622,10 @@ pub struct Gage {
     pub catch_factor: f64,
     /// Where the record comes from.
     pub source: GageSource,
+    /// Map position (m, SI), from `[SYMBOLS]` — populated only when the
+    /// model carries an overland mesh, the one recorded exception to
+    /// display metadata's semantics-free rule (§14.5, §15.7).
+    pub position: Option<(f64, f64)>,
 }
 
 /// Precipitation record forms.

@@ -12,6 +12,7 @@
 
 pub mod checkpoint;
 pub mod controls;
+pub mod coupled;
 pub mod expression;
 pub mod time;
 

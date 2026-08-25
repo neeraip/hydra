@@ -51,6 +51,10 @@ pub enum OpenError {
     Controls(String),
     /// A transport configuration this stage does not evaluate yet (§8).
     Transport(String),
+    /// The model's overland mesh (§15) was refused: a §15.2 validation
+    /// defect, or a coupling row naming a node, series or curve the
+    /// model does not have (§15.6).
+    Overland(String),
 }
 
 /// One readable line per refusal, so applications can show the error
@@ -93,7 +97,9 @@ impl std::fmt::Display for OpenError {
             }
             OpenError::Routing(r) => write!(f, "{r}"),
             OpenError::Surface(s) => write!(f, "{s}"),
-            OpenError::Controls(msg) | OpenError::Transport(msg) => f.write_str(msg),
+            OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg) => {
+                f.write_str(msg)
+            }
         }
     }
 }
@@ -332,6 +338,22 @@ pub struct Simulation {
     series_warned: Vec<bool>,
     /// Per-vertex lateral overrides (§12.4 boundary forcing).
     lateral_override: HashMap<usize, f64>,
+    /// §15.6: the coupled overland surface, present only when a mesh
+    /// model is served.
+    coupled: Option<super::coupled::CoupledSurface>,
+    /// §15.7 precomputed rain weights and the model's rainfall mode.
+    overland_rain: crate::overland::meteorology::RainWeights,
+    overland_rain_mode: crate::overland::RainfallMode,
+    /// §15.6 `COUPLING_SYNC` batching: authored batch width (s) and the
+    /// surface time accrued toward the next batch.
+    overland_sync: f64,
+    overland_accrued: f64,
+    /// §15.5 driven boundary slots: (marcher boundary, series index,
+    /// stage?), resolved once at attach.
+    overland_driven: Vec<(usize, usize, bool)>,
+    /// §14.16: the overland results stream, when a sink is attached.
+    overland_out: Option<crate::io::overland_out::OverlandStream<Box<dyn std::io::Write + Send>>>,
+    overland_out_error: Option<std::io::Error>,
     /// §12.4: injected outfall stages and link settings, held so a rule
     /// cannot move an element a caller has taken over, and so a restored
     /// checkpoint takes it over again.
@@ -491,7 +513,7 @@ impl Simulation {
             .into_iter()
             .map(|(name, readings)| (name, crate::io::rain::RainRecords::Station(readings)))
             .collect();
-        Simulation::open_inner(input, climate_records, records, None)
+        Simulation::open_inner(input, climate_records, records, None, None)
     }
 
     /// Load a model together with rain files in whichever layout each was
@@ -503,7 +525,7 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, crate::io::rain::RainRecords)>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_inner(input, climate_records, rain_files, None)
+        Simulation::open_inner(input, climate_records, rain_files, None, None)
     }
 
     /// Load a model whose file-sourced gages read a rainfall interface
@@ -520,7 +542,19 @@ impl Simulation {
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let iface = crate::io::iface::parse_rain_iface(rain_interface)
             .map_err(|e| OpenError::Transport(format!("rainfall interface file: {e}")))?;
-        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface))
+        Simulation::open_inner(input, climate_records, Vec::new(), Some(iface), None)
+    }
+
+    /// Load a model together with the external mesh file its
+    /// `[2D_MESH_FILE]` declares (§14.15) — the caller owns reading it,
+    /// like every auxiliary. The external file's sections continue the
+    /// model's own: its vertices and cells extend the inline numbering,
+    /// and either file's SI header governs the whole mesh.
+    pub fn open_with_overland_mesh(
+        input: &str,
+        mesh_text: &str,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        Simulation::open_inner(input, Vec::new(), Vec::new(), None, Some(mesh_text))
     }
 
     fn open_inner(
@@ -528,10 +562,67 @@ impl Simulation {
         climate_records: Vec<crate::model::DailyClimate>,
         rain_files: Vec<(String, crate::io::rain::RainRecords)>,
         rain_interface: Option<crate::io::iface::RainInterface>,
+        overland_mesh: Option<&str>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        let (mut net, diags) = parse_network(input);
+        let (mut net, mut diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
+        }
+        // §14.15: a declared external mesh file carries the mesh's own
+        // sections; supplied, they continue the inline ones — indices,
+        // units header and all — through one combined parse. Declared
+        // and not supplied, the mesh cannot be read: under IGNORE_2D
+        // the run warns and proceeds without it, and otherwise the
+        // refusals below name what is missing.
+        let mesh_file = net.overland.as_ref().and_then(|m| m.mesh_file.clone());
+        match (&mesh_file, overland_mesh) {
+            (Some(_), Some(external)) => {
+                net.overland = crate::io::overland::reparse_with_external(
+                    input,
+                    external,
+                    &net.options,
+                    &mut diags,
+                );
+            }
+            (Some(name), None) if net.options.ignore_overland => {
+                // The 1D half runs, but the author should hear that the
+                // unreadable mesh was dropped, file named.
+                diags.push(Diagnostic {
+                    line: 0,
+                    kind: crate::io::survey::DiagnosticKind::UnknownOverlandOption {
+                        key: format!("mesh file {name:?} not supplied; mesh ignored"),
+                    },
+                });
+                net.overland = None;
+            }
+            (Some(name), None) => {
+                return Err(OpenError::Overland(format!(
+                    "this model reads its mesh from {name:?}, which was not                      supplied (§14.15)"
+                )));
+            }
+            (None, _) => {}
+        }
+
+        // §1.8: the overland sections are specified (§15) and not yet
+        // served. A mesh model refuses with the campaign named rather
+        // than silently running its one-dimensional half; `IGNORE_2D
+        // YES` is the author's own request for exactly that half, so it
+        // proceeds, dropping the mesh from the run.
+        if let Some(mesh) = &net.overland {
+            if net.options.ignore_overland {
+                // Validated even when ignored: an authoring defect in a
+                // preserved mesh should be heard now, not on the day the
+                // author flips the option off.
+                if let Err(errors) = crate::overland::Topology::build(mesh) {
+                    return Err(OpenError::Overland(format!(
+                        "the ignored mesh is defective: {}",
+                        errors.first().map(|e| e.to_string()).unwrap_or_default()
+                    )));
+                }
+                net.overland = None;
+            }
+            // Served (§1.8): the mesh attaches to the session below,
+            // once the router it couples to exists.
         }
         // Before validation, not after: §3.1 says a realised record is
         // treated exactly as if its series had been written in the model,
@@ -711,7 +802,7 @@ impl Simulation {
         let _ = &mut notices;
 
         let nv = net.vertices.len();
-        Ok((
+        let mut sim = (
             Simulation {
                 router,
                 surface,
@@ -731,6 +822,14 @@ impl Simulation {
                 link_by_id,
                 series_warned: vec![false; n_series],
                 lateral_override: HashMap::new(),
+                coupled: None,
+                overland_rain: Default::default(),
+                overland_rain_mode: crate::overland::RainfallMode::None,
+                overland_sync: 0.0,
+                overland_accrued: 0.0,
+                overland_driven: Vec::new(),
+                overland_out: None,
+                overland_out_error: None,
                 stage_override: HashMap::new(),
                 setting_override: HashMap::new(),
                 loss_override: HashMap::new(),
@@ -804,7 +903,28 @@ impl Simulation {
             },
             diags,
             findings,
-        ))
+        );
+        // §1.8: serve §15 — attach the model's mesh to the session it
+        // couples to.
+        if let Some(mesh) = sim.0.net.overland.take() {
+            use super::coupled::AttachError;
+            sim.0.attach_overland(mesh).map_err(|e| match e {
+                AttachError::Mesh(errors) => OpenError::Overland(format!(
+                    "the mesh is defective: {}",
+                    errors.first().map(|d| d.to_string()).unwrap_or_default()
+                )),
+                AttachError::UnknownNode(n) => OpenError::Overland(format!(
+                    "a coupling row names the node {n:?}, which this model does not have"
+                )),
+                AttachError::UnknownSeries(n) => OpenError::Overland(format!(
+                    "a boundary row names the time series {n:?}, which this model does not have"
+                )),
+                AttachError::UnknownCurve(n) => OpenError::Overland(format!(
+                    "a boundary row names the curve {n:?}, which this model does not have"
+                )),
+            })?;
+        }
+        Ok(sim)
     }
 
     /// Current simulation time (s from start).
@@ -1760,6 +1880,136 @@ impl Simulation {
     /// period's start, update dynamic boundaries, route — or freeze,
     /// between events — and service any reporting boundary passed.
     /// Returns false once the run is complete.
+    /// §15.6: attach a validated overland mesh, resolving its coupled
+    /// nodes against the network and precomputing the §15.7 rain
+    /// weights. Serving is gated by `open` (§1.8); this is the wiring
+    /// that gate will open onto.
+    pub(crate) fn attach_overland(
+        &mut self,
+        mesh: crate::overland::OverlandMesh,
+    ) -> Result<(), super::coupled::AttachError> {
+        let topo =
+            crate::overland::Topology::build(&mesh).map_err(super::coupled::AttachError::Mesh)?;
+        let marcher = crate::overland::marcher::Marcher::build(&mesh, &topo);
+        let cs = super::coupled::CoupledSurface::new(marcher, &self.net, &mut self.router)
+            .map_err(|e| super::coupled::AttachError::UnknownNode(e.node))?;
+        let positions: Vec<Option<(f64, f64)>> =
+            self.net.gages.iter().map(|g| g.position).collect();
+        let cx: Vec<f64> = topo.centroid.iter().map(|c| c[0]).collect();
+        let cy: Vec<f64> = topo.centroid.iter().map(|c| c[1]).collect();
+        self.overland_rain = crate::overland::meteorology::RainWeights::build(&cx, &cy, &positions);
+        self.overland_rain_mode = mesh.options.rainfall_mode;
+        self.overland_sync = mesh.options.coupling_sync;
+        // §15.5: driven boundary parameters resolve here, by name, once.
+        self.overland_driven.clear();
+        let mut cs = cs;
+        for d in cs.marcher.driven_boundaries().to_vec() {
+            let Some(si) = self.net.timeseries.iter().position(|t| t.id == d.series) else {
+                return Err(super::coupled::AttachError::UnknownSeries(d.series));
+            };
+            self.overland_driven.push((d.boundary, si, d.is_stage));
+        }
+        for (slot, name) in cs.marcher.rating_curve_names().to_vec().iter().enumerate() {
+            let Some(curve) = self.net.curves.iter().find(|c| &c.id == name) else {
+                return Err(super::coupled::AttachError::UnknownCurve(name.clone()));
+            };
+            cs.marcher.set_rating_curve(slot, curve.points.clone());
+        }
+        self.coupled = Some(cs);
+        // The mesh is the model's; the §14.16 stream reads its geometry.
+        self.net.overland = Some(mesh);
+        Ok(())
+    }
+
+    /// §14.16: stream the overland results to `sink` as the run
+    /// produces them, alongside the §14.9 stream. Attach after the
+    /// mesh and before stepping; refused for a model with no mesh.
+    pub fn begin_overland_results(
+        &mut self,
+        sink: Box<dyn std::io::Write + Send>,
+    ) -> std::io::Result<()> {
+        let (Some(mesh), Some(cs)) = (self.net.overland.as_ref(), self.coupled.as_ref()) else {
+            return Err(std::io::Error::other(
+                "this run has no overland mesh to record",
+            ));
+        };
+        let out = crate::io::overland_out::OverlandStream::begin(
+            sink,
+            mesh,
+            &cs.marcher,
+            self.start_epoch,
+            self.report_step,
+            self.next_report,
+        )?;
+        self.overland_out = Some(out);
+        Ok(())
+    }
+
+    /// §15.7: set the surface's rain and evaporation for the coming
+    /// co-advance from the model's gauges and climate.
+    fn drive_overland_sources(&mut self, cs: &mut super::coupled::CoupledSurface, t: f64) {
+        let epoch = self.start_epoch + t;
+        let month = self.calendar(t).0;
+        let rain_factor = self.net.climate.adjust_rainfall[(month - 1) as usize];
+        use crate::overland::RainfallMode;
+        match self.overland_rain_mode {
+            RainfallMode::None => {
+                for r in &mut cs.marcher.rain {
+                    *r = 0.0;
+                }
+            }
+            mode => {
+                let rates: Vec<f64> = (0..self.net.gages.len())
+                    .map(|g| {
+                        self.surface
+                            .as_ref()
+                            .map_or(0.0, |s| s.gage_rate(g, epoch) * rain_factor)
+                    })
+                    .collect();
+                // §15.7: NATURAL_NEIGHBOUR with no located gauge falls
+                // back to the SYSTEM mean.
+                if mode == RainfallMode::NaturalNeighbour && self.overland_rain.ready() {
+                    self.overland_rain.apply(&rates, &mut cs.marcher.rain);
+                } else {
+                    let mean = if rates.is_empty() {
+                        0.0
+                    } else {
+                        rates.iter().sum::<f64>() / rates.len() as f64
+                    };
+                    for r in &mut cs.marcher.rain {
+                        *r = mean;
+                    }
+                }
+            }
+        }
+        let evap = self.evaporation_rate(month);
+        for e in &mut cs.marcher.evap {
+            *e = evap;
+        }
+        // §15.5: series-driven stages and flows resolve to this
+        // advance's values.
+        for &(bi, si, is_stage) in &self.overland_driven {
+            let v = series_value_pure(&self.net, self.start_epoch, si, t, true);
+            if is_stage {
+                cs.marcher.set_boundary_stage(bi, v);
+            } else {
+                cs.marcher.set_boundary_flow(bi, v);
+            }
+        }
+    }
+
+    /// Whether this model carries an overland mesh (§15) — the caller's
+    /// cue to attach the §14.16 results stream.
+    pub fn has_overland(&self) -> bool {
+        self.coupled.is_some()
+    }
+
+    /// The attached overland surface, for the crate's own tests.
+    #[cfg(test)]
+    pub(crate) fn overland(&self) -> Option<&super::coupled::CoupledSurface> {
+        self.coupled.as_ref()
+    }
+
     pub fn step(&mut self) -> bool {
         let t = self.router.time();
         if t >= self.duration - 1e-9 {
@@ -1778,7 +2028,12 @@ impl Simulation {
             // §7.7: channels evaporate at the session's potential rate.
             let month = self.calendar(t).0;
             self.router.evap_rate = self.evaporation_rate(month);
-            let (base, base_mass) = self.assemble_lateral(t);
+            let (mut base, base_mass) = self.assemble_lateral(t);
+            // §15.6: last period's surface exchange delivers as this
+            // period's lateral inflow, a constant rate over the window.
+            if let Some(cs) = self.coupled.as_mut() {
+                cs.deliver_laterals(&mut base, period_end - t);
+            }
             self.vol_dwf += self.last_dwf_total * (period_end - t);
             self.vol_ext += self.last_ext_total * (period_end - t);
             // §10.1: hydrology outputs interpolate linearly to routing
@@ -1888,6 +2143,23 @@ impl Simulation {
             } else {
                 self.router.advance(period_end, &interp);
             }
+            // §15.6: the surface co-advances the interval the network
+            // just finished, batched by COUPLING_SYNC (clamped to the
+            // band from one routing period to 60 s), node grades frozen.
+            if let Some(mut cs) = self.coupled.take() {
+                self.overland_accrued += self.router.time() - t;
+                let sync = self
+                    .overland_sync
+                    .clamp(self.routing_period, 60.0_f64.max(self.routing_period));
+                if self.overland_accrued + 1e-9 >= sync {
+                    self.drive_overland_sources(&mut cs, t);
+                    let span = self.overland_accrued;
+                    cs.co_advance(&mut self.router, span);
+                    self.overland_accrued = 0.0;
+                }
+                self.coupled = Some(cs);
+            }
+
             // Retain the end-of-period laterals for the §14.9 records —
             // §7.8 inlet transfers included, or an inlet-fed vertex would
             // report zero inflow while its depth rises.
@@ -1954,6 +2226,14 @@ impl Simulation {
             // instants alone, which is what a reader finds in the
             // results file.
             self.router.record_reported_depths();
+            // §14.16: the overland record rides the same instants.
+            if let (Some(cs), Some(out)) = (self.coupled.as_mut(), self.overland_out.as_mut()) {
+                let vols = cs.take_report_exchange();
+                let rates: Vec<f64> = vols.iter().map(|v| v / self.report_step).collect();
+                if let Err(e) = out.append(self.next_report, &cs.marcher, &rates) {
+                    self.overland_out_error.get_or_insert(e);
+                }
+            }
             self.next_report += self.report_step;
         }
         true
@@ -2817,6 +3097,18 @@ impl Simulation {
             next_rule_t,
             series_warned,
             lateral_override,
+            coupled,
+            // §15.6 parameters, rebuilt when a mesh is attached.
+            overland_rain: _,
+            overland_rain_mode: _,
+            overland_sync: _,
+            overland_accrued,
+            overland_driven: _,
+            // §12.3: the sidecar is a stream, not held state — a
+            // resumed run's sidecar begins at the resume instant and
+            // its header says so.
+            overland_out: _,
+            overland_out_error: _,
             stage_override,
             setting_override,
             loss_override,
@@ -3066,7 +3358,38 @@ impl Simulation {
             gw.checkpoint_put(w).map_err(io)?;
         }
         router.checkpoint_put(w).map_err(io)?;
+        // §12.3: the overland surface, behind its own mesh fingerprint —
+        // the model fingerprint does not see the mesh.
+        cp::put_b(w, coupled.is_some()).map_err(io)?;
+        if let Some(cs) = coupled {
+            cp::put_u(w, self.overland_fingerprint()).map_err(io)?;
+            cs.checkpoint_put(w).map_err(io)?;
+            cp::put_f(w, *overland_accrued).map_err(io)?;
+        }
         Ok(())
+    }
+
+    /// §12.3: a fingerprint of the overland mesh — vertex coordinates
+    /// and cell definitions in model order. The model fingerprint does
+    /// not see the mesh, and a checkpoint restored onto a different
+    /// terrain would put every volume on the wrong cell.
+    fn overland_fingerprint(&self) -> u64 {
+        let mut h = crate::simulation::checkpoint::Fnv::new();
+        if let Some(mesh) = &self.net.overland {
+            h.write(&(mesh.verts.len() as u64).to_le_bytes());
+            h.write(&(mesh.cells.len() as u64).to_le_bytes());
+            for v in &mesh.verts {
+                for c in [v.x, v.y, v.z] {
+                    h.write(&c.to_le_bytes());
+                }
+            }
+            for c in &mesh.cells {
+                for i in c.v {
+                    h.write(&i.to_le_bytes());
+                }
+            }
+        }
+        h.finish()
     }
 
     /// Restore a checkpoint over this session (§12.3).
@@ -3407,6 +3730,32 @@ impl Simulation {
             gw.checkpoint_get(&mut r)?;
         }
         self.router.checkpoint_get(&mut r)?;
+        // §12.3: the overland surface. A mesh checkpoint into a
+        // meshless session (or the reverse) is a different model, even
+        // when the network half fingerprints alike.
+        let has_overland = r.b()?;
+        if has_overland != self.coupled.is_some() {
+            return Err(if has_overland {
+                "this checkpoint carries an overland surface and this model has none".into()
+            } else {
+                "this model couples an overland mesh and this checkpoint carries none".into()
+            });
+        }
+        if has_overland {
+            let fp = r.u()?;
+            if fp != self.overland_fingerprint() {
+                return Err(
+                    "this checkpoint's overland surface came from a different mesh (§12.3)".into(),
+                );
+            }
+            let mut cs = self.coupled.take().expect("checked above");
+            // On error `cs` drops here, leaving no coupled surface — a
+            // half-restored one must not march.
+            cs.checkpoint_get(&mut r)?;
+            cs.resync_network(&mut self.router);
+            self.coupled = Some(cs);
+            self.overland_accrued = r.f()?;
+        }
         // Bytes left over mean a layout this build does not share, which
         // the version alone did not catch.
         if !r.at_end() {
@@ -3818,6 +4167,16 @@ impl Simulation {
         crate::io::rpt_writer::write_rpt(
             &crate::io::rpt_writer::ReportInputs {
                 net: &self.net,
+                overland: self
+                    .coupled
+                    .as_ref()
+                    .map(|cs| crate::io::rpt_writer::OverlandRpt {
+                        ledger: crate::io::overland_out::LedgerRow::of(&cs.marcher),
+                        initial_storage: cs.marcher.initial_storage(),
+                        delivered_in: cs.delivered_in,
+                        delivered_out: cs.delivered_out,
+                        march: cs.marcher.statistics(),
+                    }),
                 surface,
                 subsurface,
                 flow,
@@ -3907,6 +4266,14 @@ impl Simulation {
         if let Some(e) = self.out_error.take() {
             self.out = None;
             return Err(e);
+        }
+        if let Some(e) = self.overland_out_error.take() {
+            self.overland_out = None;
+            self.out = None;
+            return Err(e);
+        }
+        if let Some(ov) = self.overland_out.take() {
+            ov.finish()?;
         }
         match self.out.take() {
             Some(out) => out.finish().map(|_| ()),
