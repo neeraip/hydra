@@ -456,7 +456,7 @@ struct LidRptStream(
 impl Simulation {
     /// Build a session from a parsed, in-memory model (§12.1) — the
     /// engine's only door. The dialect tooling parses text into the
-    /// [`Network`](crate::model::Network) and the auxiliary records;
+    /// [`Network`] and the auxiliary records;
     /// this constructor validates, builds the router, realises the
     /// supplied records, and attaches the overland surface. The
     /// returned findings are §14.7 validation's; parse diagnostics
@@ -4075,25 +4075,17 @@ impl Simulation {
         }
     }
 
-    /// Stream the §14.9 results to `sink` as the run produces them.
-    ///
-    /// The alternative is [`Self::write_out`], which writes the whole run
-    /// at the end from the gathered instants. Streaming exists because
-    /// that set is the largest thing a long run owns.
-    ///
-    /// Attach before stepping: the header records where the first
-    /// reporting instant falls, so instants already produced would be
-    /// missing from a file opened late.
     /// State that this run will never be asked for a checkpoint (§12.3).
     ///
     /// A session keeps every reporting instant so a checkpoint can carry
     /// the whole run's results — the largest thing a long run holds. A
     /// run with a results sink states its intent through
-    /// [`Self::begin_results`]; this is the same statement for a run
-    /// without one, which otherwise pays for the guarantee forever. A
-    /// model that saves a routing outflow file keeps its instants
-    /// regardless, since that file is written from them at the end
-    /// (§14.8). Asking for a checkpoint afterwards is refused.
+    /// [`Self::attach_results`]'s `may_checkpoint` argument; this is the
+    /// same statement for a run without one, which otherwise pays for
+    /// the guarantee forever. A model that saves a routing outflow file
+    /// keeps its instants regardless, since that file is written from
+    /// them at the end (§14.8). Asking for a checkpoint afterwards is
+    /// refused.
     pub fn forgo_checkpoint(&mut self) {
         let saves_outflows = self.net.interface_files.outflows.is_some();
         self.retain_snapshots = saves_outflows;

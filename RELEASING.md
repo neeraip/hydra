@@ -1,6 +1,6 @@
 # Releasing Hydra
 
-CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the library stack (`hydra-common`, the engine crates `hydra-engine-wds`/`hydra-engine-uds`, `hydra-engines`, `hydra-report`, `hydra-sdk`). The library stack shares a single workspace version.
+CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the library stack (`hydra-common`, the engine crates `hydra-engine-wds`/`hydra-engine-uds`, the dialect crates `hydra-interop-swmm`/`hydra-interop-epanet`, `hydra-engines`, `hydra-report`, `hydra-sdk`). The library stack shares a single workspace version.
 
 | Command | What it bumps | Tag created | Triggers |
 |---|---|---|---|

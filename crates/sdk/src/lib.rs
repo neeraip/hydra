@@ -213,24 +213,21 @@ pub use hydra_engine_wds::descriptors;
 ///
 /// Namespaced rather than flattened because its vocabulary overlaps the
 /// water-distribution types above (both have networks, simulations, and
-/// options). The session API is [`uds::simulation::engine::Simulation`]:
-/// `open` a model from its input text, `step`/`run` it, then write results
-/// with `write_out` and `write_report`. Model text and auxiliary-file
-/// contents are supplied in memory; the engine's one filesystem surface is
-/// the path-based `.out` streaming reader (`uds::io::out_reader`), the
-/// same carve-out the water-distribution engine has.
-///
-/// A model can also be written back out: `uds::io::inp_writer::write_inp`
-/// serialises a network as SWMM input text, so an integrator can build or
-/// modify a drainage model and hand it to another tool. It writes the
-/// model as it stands *after* import's validation and repairs, which is
-/// not a copy of the file it came from — see the engine's §14.13.
+/// options). The engine is format-blind: a session is built from a parsed
+/// model ([`uds::simulation::engine::Simulation::from_network`]), stepped
+/// or run, and queried by element id. Every path between SWMM text or
+/// files and that session — parsing, recognition, `.out`/`.rpt` output,
+/// interface files — lives in the [`swmm`] dialect module.
 pub use hydra_engine_uds as uds;
 
-/// The SWMM dialect (format-blind extraction): INP import, OUT/RPT
-/// output, interface files, and recognition for the urban drainage
-/// engine. The engine itself is format-blind; every path from text to
-/// a running `uds` session goes through here.
+/// The SWMM dialect: INP import (`swmm::session::open` opens a `uds`
+/// session straight from model text), OUT/RPT output, interface files,
+/// recognition, and `swmm::inp_writer::write_inp` to serialise a network
+/// back to SWMM input text. It writes the model as it stands *after*
+/// import's validation and repairs, which is not a copy of the file it
+/// came from — see the interop spec §14.13. The engine itself is
+/// format-blind; every path from text to a running `uds` session goes
+/// through here.
 pub use hydra_interop_swmm as swmm;
 
 /// The EPANET dialect (format-blind extraction): INP import, OUT/RPT
