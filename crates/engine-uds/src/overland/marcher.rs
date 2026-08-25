@@ -136,19 +136,22 @@ pub struct Marcher {
     pub eta: Vec<f64>,
     /// Derived mean depths (m).
     pub depth: Vec<f64>,
-    /// Perot velocity proxies (m²/s).
-    qcx: Vec<f64>,
-    qcy: Vec<f64>,
-    /// Face discharges (m²/s) and pending mass per side (m³).
-    q: Vec<f64>,
-    facc_l: Vec<f64>,
-    facc_r: Vec<f64>,
+    /// Perot velocity proxies (m²/s); crate-visible for §12.3 — each
+    /// cell's is stale by design (its own last firing's), so a restore
+    /// carries them rather than recomputing against newer discharges.
+    pub(crate) qcx: Vec<f64>,
+    pub(crate) qcy: Vec<f64>,
+    /// Face discharges (m²/s) and pending mass per side (m³);
+    /// crate-visible for §12.3 checkpoint carriage.
+    pub(crate) q: Vec<f64>,
+    pub(crate) facc_l: Vec<f64>,
+    pub(crate) facc_r: Vec<f64>,
     /// §15.4.4 active set with hysteresis, one-ring halo, and pinned
     /// boundary cells.
-    active: Vec<bool>,
+    pub(crate) active: Vec<bool>,
     /// §15.4.4 tier per cell (0 = every base substep); boundary cells
     /// pinned to 0, inactive cells parked at the coarsest.
-    tier: Vec<u8>,
+    pub(crate) tier: Vec<u8>,
     /// A face fires at the finer of its two cells' cadences.
     face_tier: Vec<u8>,
     /// §15.4.4: the members of each tier, index-sorted — a substep
@@ -161,16 +164,16 @@ pub struct Marcher {
     active_list: Vec<u32>,
     /// §15.4.4: seconds of source integration owed to inactive cells
     /// since their last lazy sync.
-    lazy_owed: f64,
-    macro_cycles: u64,
+    pub(crate) lazy_owed: f64,
+    pub(crate) macro_cycles: u64,
     /// §15.4.4 whole-run counts for the §14.9 time-step summary.
-    substeps: u64,
-    rebuilds: u64,
-    min_dt0: f64,
-    advanced: f64,
-    peak_active: usize,
+    pub(crate) substeps: u64,
+    pub(crate) rebuilds: u64,
+    pub(crate) min_dt0: f64,
+    pub(crate) advanced: f64,
+    pub(crate) peak_active: usize,
     /// Initial storage (m³), the §15.8 ledger's opening term.
-    storage0: f64,
+    pub(crate) storage0: f64,
     /// Per-cell ledger scratch for the ∥ cell phase: (rain, coupling,
     /// evaporation take), reduced serially in index order so the sums
     /// are byte-identical at every width (§15.4.5).
@@ -789,6 +792,39 @@ impl Marcher {
     #[cfg(feature = "threads")]
     pub fn set_width(&mut self, width: usize) {
         self.team = crate::hydraulics::team::Team::new(width);
+    }
+
+    /// §12.3: the boundary laws' prognostic discharges, in slot order.
+    pub(crate) fn boundary_discharges(&self) -> Vec<f64> {
+        self.boundaries.iter().map(|b| b.q).collect()
+    }
+
+    /// §12.3: restore the boundary discharges saved by
+    /// [`Marcher::boundary_discharges`].
+    pub(crate) fn set_boundary_discharges(&mut self, q: &[f64]) {
+        for (b, &v) in self.boundaries.iter_mut().zip(q) {
+            b.q = v;
+        }
+    }
+
+    /// §12.3: rebuild everything derivable after a checkpoint restore —
+    /// the closures from the volumes, the reconstruction from the
+    /// discharges, the face cadences from the cell tiers, and the
+    /// active and tier lists from the flags.
+    pub(crate) fn rebuild_after_restore(&mut self) {
+        for ci in 0..self.area.len() {
+            self.reclose(ci);
+        }
+        for (fi, f) in self.faces.iter().enumerate() {
+            self.face_tier[fi] = self.tier[f.cl as usize].min(self.tier[f.cr as usize]);
+        }
+        self.active_list.clear();
+        for (ci, on) in self.active.iter().enumerate() {
+            if *on {
+                self.active_list.push(ci as u32);
+            }
+        }
+        self.rebuild_tier_lists();
     }
 
     /// The §15.4.4 drying depth (m), for callers keying wetness ramps.

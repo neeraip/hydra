@@ -579,10 +579,11 @@ Typed, per §1.8 — each is a named absence, not an approximation:
   §14.9 reporting instants — chosen over the predecessor's CF/UGRID
   HDF5 because a native-library dependency conflicts with the browser
   build's constraints (§1.4).
-- **Checkpoint carriage.** §12.3 checkpoints do not yet carry overland
-  state; a run with a mesh refuses checkpointing until they do (format
-  version bump when it lands). The predecessor's hotstart files have the
-  same gap.
+- **Checkpoint carriage: resolved.** §12.3 carries the overland state
+  — mesh runs checkpoint and resume bit-identically, behind their own
+  mesh fingerprint. The one deviation is recorded there: the §14.16
+  sidecar of a resumed run begins at the resume instant. The
+  predecessor's hotstart files carry no 2D state at all.
 - **Sub-rim street drainage.** Junction exchange opens only at the
   rim; a surface film over a node whose water stands below ground does
   not drain into it.

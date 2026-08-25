@@ -201,18 +201,7 @@ impl CoupledSurface {
             self.pending[slot] += dv;
             self.report_exchange[k] += dv;
         }
-        // Damping for the coming period, §6.4: the summed conductance of
-        // every point naming the vertex, against the live surface.
-        let mut g = vec![0.0; self.slot_vertex.len()];
-        for k in 0..self.marcher.coupling_points().len() {
-            let slot = self.marcher.coupling_points()[k].node_slot as usize;
-            if !self.marcher.is_outfall_slot(slot) {
-                g[slot] += self.marcher.coupling_conductance(k);
-            }
-        }
-        for (slot, &vi) in self.slot_vertex.iter().enumerate() {
-            router.set_coupling_conductance(vi, g[slot]);
-        }
+        self.refresh_conductances(router);
         // §15.6: bank each coupled outfall's net discharge over this
         // period for the next batch's injection. A withdrawal (the
         // surface pushing into the network through the boundary) is
@@ -237,6 +226,165 @@ impl CoupledSurface {
         }
         // The surface the network sees next period.
         self.set_outfall_tailwaters(router);
+    }
+
+    /// §6.4 damping for the coming period: the summed conductance of
+    /// every point naming the vertex, against the live surface.
+    fn refresh_conductances(&self, router: &mut Router) {
+        let mut g = vec![0.0; self.slot_vertex.len()];
+        for k in 0..self.marcher.coupling_points().len() {
+            let slot = self.marcher.coupling_points()[k].node_slot as usize;
+            if !self.marcher.is_outfall_slot(slot) {
+                g[slot] += self.marcher.coupling_conductance(k);
+            }
+        }
+        for (slot, &vi) in self.slot_vertex.iter().enumerate() {
+            router.set_coupling_conductance(vi, g[slot]);
+        }
+    }
+
+    /// §12.3: re-derive what a checkpoint does not carry because the
+    /// restored halves already hold it — the marcher's node drives from
+    /// the restored router, and the router's damping conductances and
+    /// outfall tailwaters from the restored surface — exactly the
+    /// values the interrupted run's last co-advance left in place.
+    pub fn resync_network(&mut self, router: &mut Router) {
+        for (slot, &vi) in self.slot_vertex.iter().enumerate() {
+            if self.marcher.is_outfall_slot(slot) {
+                continue;
+            }
+            let invert = router.vertex_invert(vi);
+            let y = router.depth(vi);
+            let rim = invert + router.vertex_max_depth(vi);
+            self.marcher
+                .set_node_drive(slot, invert + y, y, rim, router.vertex_volume_now(vi));
+        }
+        self.refresh_conductances(router);
+        self.set_outfall_tailwaters(router);
+    }
+
+    /// §12.3: write the overland state — the marcher's physical and
+    /// cadence state, the §15.8 ledger and march counters, and this
+    /// struct's exchange bookkeeping — in the checkpoint's framing.
+    pub fn checkpoint_put(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        use crate::simulation::checkpoint as cp;
+        let m = &self.marcher;
+        for vs in [&m.vol, &m.q, &m.facc_l, &m.facc_r, &m.qcx, &m.qcy] {
+            cp::put_fs(w, vs)?;
+        }
+        cp::put_fs(w, &m.boundary_discharges())?;
+        cp::put_u(w, m.active.len() as u64)?;
+        for &on in &m.active {
+            cp::put_b(w, on)?;
+        }
+        for &t in &m.tier {
+            cp::put_u(w, u64::from(t))?;
+        }
+        for v in [
+            m.lazy_owed,
+            m.storage0,
+            m.min_dt0,
+            m.advanced,
+            m.rain_in,
+            m.evap_out,
+            m.boundary_in,
+            m.boundary_out,
+            m.coupling_in,
+            m.coupling_out,
+            m.outfall_in,
+            m.outfall_out,
+        ] {
+            cp::put_f(w, v)?;
+        }
+        for v in [m.macro_cycles, m.substeps, m.rebuilds, m.peak_active as u64] {
+            cp::put_u(w, v)?;
+        }
+        for vs in [&self.pending, &self.outfall_pending, &self.report_exchange] {
+            cp::put_fs(w, vs)?;
+        }
+        cp::put_f(w, self.delivered_in)?;
+        cp::put_f(w, self.delivered_out)
+    }
+
+    /// §12.3: restore what [`CoupledSurface::checkpoint_put`] wrote,
+    /// then rebuild everything derivable. Sizes are checked against the
+    /// attached mesh — the fingerprint upstream should have refused a
+    /// mismatch already, so a failure here is a corrupt file.
+    pub fn checkpoint_get(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let m = &mut self.marcher;
+        let (nc, nf, nb) = (m.vol.len(), m.q.len(), m.boundary_discharges().len());
+        let vol = r.fs()?;
+        let q = r.fs()?;
+        let fl = r.fs()?;
+        let fr = r.fs()?;
+        let qcx = r.fs()?;
+        let qcy = r.fs()?;
+        let bq = r.fs()?;
+        if vol.len() != nc
+            || q.len() != nf
+            || fl.len() != nf
+            || fr.len() != nf
+            || qcx.len() != nc
+            || qcy.len() != nc
+            || bq.len() != nb
+        {
+            return Err("checkpoint overland state does not fit this mesh".into());
+        }
+        m.vol = vol;
+        m.q = q;
+        m.facc_l = fl;
+        m.facc_r = fr;
+        m.qcx = qcx;
+        m.qcy = qcy;
+        m.set_boundary_discharges(&bq);
+        let n = r.u()? as usize;
+        if n != nc {
+            return Err("checkpoint overland state does not fit this mesh".into());
+        }
+        for ci in 0..nc {
+            m.active[ci] = r.b()?;
+        }
+        for ci in 0..nc {
+            m.tier[ci] = u8::try_from(r.u()?).map_err(|_| "overland tier out of range")?;
+        }
+        for slot in [
+            &mut m.lazy_owed,
+            &mut m.storage0,
+            &mut m.min_dt0,
+            &mut m.advanced,
+            &mut m.rain_in,
+            &mut m.evap_out,
+            &mut m.boundary_in,
+            &mut m.boundary_out,
+            &mut m.coupling_in,
+            &mut m.coupling_out,
+            &mut m.outfall_in,
+            &mut m.outfall_out,
+        ] {
+            *slot = r.f()?;
+        }
+        m.macro_cycles = r.u()?;
+        m.substeps = r.u()?;
+        m.rebuilds = r.u()?;
+        m.peak_active = r.u()? as usize;
+        m.rebuild_after_restore();
+        let pending = r.fs()?;
+        let outfall_pending = r.fs()?;
+        let report_exchange = r.fs()?;
+        if pending.len() != self.pending.len()
+            || outfall_pending.len() != self.outfall_pending.len()
+        {
+            return Err("checkpoint overland state does not fit this mesh".into());
+        }
+        self.pending = pending;
+        self.outfall_pending = outfall_pending;
+        self.report_exchange = report_exchange;
+        self.delivered_in = r.f()?;
+        self.delivered_out = r.f()?;
+        Ok(())
     }
 
     /// §14.16: the per-point exchanged volumes since the last take
@@ -507,11 +655,6 @@ C1  CIRCULAR  0.5  0  0  0
         sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
         let v0 = sim.overland().expect("attached").marcher.storage();
 
-        // §15.10: a mesh run refuses checkpointing, by name.
-        let mut sink = Vec::new();
-        let err = sim.save_checkpoint(&mut sink).expect_err("refusal");
-        assert!(err.contains("overland mesh"), "{err}");
-
         sim.run();
         let m = &sim.overland().expect("attached").marcher;
         assert!(
@@ -685,6 +828,79 @@ C1  CIRCULAR  0.5  0  0  0
         ] {
             assert!(rpt.contains(needle), "report lacks {needle}");
         }
+    }
+
+    /// §12.3 for the surface: a mesh run checkpoints mid-run and a
+    /// restored session continues bit-identically to one never
+    /// interrupted — and the mesh fingerprint refuses a checkpoint from
+    /// a different terrain.
+    #[test]
+    fn a_mesh_run_resumes_bit_identically_from_a_checkpoint() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+";
+        // The uninterrupted reference.
+        let (mut whole, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        whole.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
+        whole.run();
+
+        // The same run, checkpointed midway and resumed elsewhere.
+        let (mut first, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        first.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
+        for _ in 0..120 {
+            first.step();
+        }
+        let mut held = Vec::new();
+        first.save_checkpoint(&mut held).expect("save");
+
+        let (mut resumed, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        resumed
+            .attach_overland(pond_mesh(0.3, "J1"))
+            .expect("attach");
+        resumed.load_checkpoint(&held).expect("load");
+        resumed.run();
+
+        let a = &whole.overland().expect("attached").marcher;
+        let b = &resumed.overland().expect("attached").marcher;
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&a.vol), bits(&b.vol), "volumes");
+        assert_eq!(bits(&a.eta), bits(&b.eta), "surfaces");
+        assert_eq!(bits(&a.q), bits(&b.q), "discharges");
+        assert_eq!(a.coupling_out.to_bits(), b.coupling_out.to_bits(), "ledger");
+        assert_eq!(a.storage().to_bits(), b.storage().to_bits());
+        let ca = whole.overland().expect("attached");
+        let cb = resumed.overland().expect("attached");
+        assert_eq!(ca.delivered_in.to_bits(), cb.delivered_in.to_bits());
+
+        // A different terrain is a different model: the mesh
+        // fingerprint refuses.
+        let (mut other, _, _) = crate::simulation::Simulation::open(inp).expect("open");
+        let mut mesh = pond_mesh(0.3, "J1");
+        for v in &mut mesh.verts {
+            v.z += 0.5;
+        }
+        other.attach_overland(mesh).expect("attach");
+        let err = other.load_checkpoint(&held).expect_err("refusal");
+        assert!(err.contains("different mesh"), "{err}");
     }
 
     /// §15.6 the other direction: a surcharged node spills onto the

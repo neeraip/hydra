@@ -3098,16 +3098,15 @@ impl Simulation {
             series_warned,
             lateral_override,
             coupled,
-            // §15.6 parameters, rebuilt when a mesh is attached; the
-            // accrued batch time is nonzero only when `coupled` is, and
-            // the mesh refusal below covers it.
+            // §15.6 parameters, rebuilt when a mesh is attached.
             overland_rain: _,
             overland_rain_mode: _,
             overland_sync: _,
-            overland_accrued: _,
+            overland_accrued,
             overland_driven: _,
-            // §14.16 stream state: possible only on a coupled run, and
-            // the mesh refusal above covers those.
+            // §12.3: the sidecar is a stream, not held state — a
+            // resumed run's sidecar begins at the resume instant and
+            // its header says so.
             overland_out: _,
             overland_out_error: _,
             stage_override,
@@ -3142,14 +3141,6 @@ impl Simulation {
             snapshots,
             notices,
         } = self;
-        // §15.10: mesh-run checkpoint carriage is a recorded deferral —
-        // the surface state (cell volumes, face discharges, exchange
-        // bookkeeping) is not yet carried, and restoring it from a
-        // fresh mesh would continue plausibly and wrongly.
-        if coupled.is_some() {
-            return Err("this model couples an overland mesh (section 15), whose state a                         checkpoint does not yet carry"
-                .into());
-        }
         let io = |e: std::io::Error| e.to_string();
         w.write_all(cp::STAMP).map_err(io)?;
         w.write_all(&cp::VERSION.to_le_bytes()).map_err(io)?;
@@ -3367,7 +3358,38 @@ impl Simulation {
             gw.checkpoint_put(w).map_err(io)?;
         }
         router.checkpoint_put(w).map_err(io)?;
+        // §12.3: the overland surface, behind its own mesh fingerprint —
+        // the model fingerprint does not see the mesh.
+        cp::put_b(w, coupled.is_some()).map_err(io)?;
+        if let Some(cs) = coupled {
+            cp::put_u(w, self.overland_fingerprint()).map_err(io)?;
+            cs.checkpoint_put(w).map_err(io)?;
+            cp::put_f(w, *overland_accrued).map_err(io)?;
+        }
         Ok(())
+    }
+
+    /// §12.3: a fingerprint of the overland mesh — vertex coordinates
+    /// and cell definitions in model order. The model fingerprint does
+    /// not see the mesh, and a checkpoint restored onto a different
+    /// terrain would put every volume on the wrong cell.
+    fn overland_fingerprint(&self) -> u64 {
+        let mut h = crate::simulation::checkpoint::Fnv::new();
+        if let Some(mesh) = &self.net.overland {
+            h.write(&(mesh.verts.len() as u64).to_le_bytes());
+            h.write(&(mesh.cells.len() as u64).to_le_bytes());
+            for v in &mesh.verts {
+                for c in [v.x, v.y, v.z] {
+                    h.write(&c.to_le_bytes());
+                }
+            }
+            for c in &mesh.cells {
+                for i in c.v {
+                    h.write(&i.to_le_bytes());
+                }
+            }
+        }
+        h.finish()
     }
 
     /// Restore a checkpoint over this session (§12.3).
@@ -3708,6 +3730,32 @@ impl Simulation {
             gw.checkpoint_get(&mut r)?;
         }
         self.router.checkpoint_get(&mut r)?;
+        // §12.3: the overland surface. A mesh checkpoint into a
+        // meshless session (or the reverse) is a different model, even
+        // when the network half fingerprints alike.
+        let has_overland = r.b()?;
+        if has_overland != self.coupled.is_some() {
+            return Err(if has_overland {
+                "this checkpoint carries an overland surface and this model has none".into()
+            } else {
+                "this model couples an overland mesh and this checkpoint carries none".into()
+            });
+        }
+        if has_overland {
+            let fp = r.u()?;
+            if fp != self.overland_fingerprint() {
+                return Err(
+                    "this checkpoint's overland surface came from a different mesh (§12.3)".into(),
+                );
+            }
+            let mut cs = self.coupled.take().expect("checked above");
+            // On error `cs` drops here, leaving no coupled surface — a
+            // half-restored one must not march.
+            cs.checkpoint_get(&mut r)?;
+            cs.resync_network(&mut self.router);
+            self.coupled = Some(cs);
+            self.overland_accrued = r.f()?;
+        }
         // Bytes left over mean a layout this build does not share, which
         // the version alone did not catch.
         if !r.at_end() {

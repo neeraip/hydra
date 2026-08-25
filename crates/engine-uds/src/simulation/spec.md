@@ -484,6 +484,7 @@ therefore also carries:
 | Position in supplied records | How far each supplied interface file has been read, and the day of the climate record in force |
 | Latches | Every warning issued at most once per run, so a restored run neither repeats one nor swallows one |
 | Output so far | The reporting snapshots and runtime notices already produced, and the interface-file records already collected |
+| Overland surface | For a §15 mesh run: cell volumes, prognostic face and boundary discharges, the pending face accumulators, the active set and tier assignment (hysteresis and cadence are history, not derivable from depths), the lazy-source clock, the §15.8 ledger and march counters, and the §15.6 exchange bookkeeping — pending deliveries, banked outfall injection, delivered totals, per-point report accumulation, and the batch time accrued toward `COUPLING_SYNC` |
 
 The last of those is what makes a checkpoint large: a restored run must be
 able to write the whole run's results, not the part after the checkpoint.
@@ -507,7 +508,12 @@ is the whole of what it promises, and a checkpoint converted to a model's
 display units would restore something subtly other than what it saved.
 
 The fingerprint is the counts of parcels, vertices, channels, constituents
-and land uses, and a hash of every element identifier in model order. Counts
+and land uses, and a hash of every element identifier in model order. A
+mesh run's overland section carries its own fingerprint besides — the
+mesh's vertex coordinates and cell definitions hashed in model order —
+because the model fingerprint does not see the mesh, and a checkpoint
+restored onto a different terrain would put every volume on the wrong
+cell. Counts
 alone let a checkpoint load into a model with the same shape and different
 elements, and let a reordered model load a checkpoint whose every value then
 belongs to the wrong element. Hashing the identifiers costs one pass and
@@ -522,6 +528,15 @@ refuses both.
 >
 > *Source: `hotstart.c:20–25`, and `openHotstartFile2` which compares five
 > counts and `UnitSystem`.*
+
+**The §14.16 sidecar is a stream, not held state.** The reporting
+snapshots a checkpoint carries rebuild the whole §14.9 results file, but
+overland records are written to their sidecar as produced and never
+retained — at mesh scale, holding them would multiply the checkpoint's
+size by the surface. A resumed run's sidecar therefore begins at the
+resume instant, and says so itself: its header's first-instant field is
+the resume's first reporting instant. A reader wanting the whole run
+reads both files.
 
 **Supplied files are not in the checkpoint, and are checked against it.**
 An interface file's contents belong to the caller, who read them and handed
