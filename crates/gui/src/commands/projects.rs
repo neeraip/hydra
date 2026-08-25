@@ -1810,7 +1810,7 @@ fn ensure_uds_reporting(
          SUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n",
         text.trim_end()
     );
-    let (reparsed, diags) = hydra::uds::io::objects::parse_network(&widened);
+    let (reparsed, diags) = hydra::swmm::objects::parse_network(&widened);
     if diags.iter().any(|d| d.kind.is_error()) {
         // Cannot happen for an appended section on text that already
         // parsed; keep the file as written rather than serve one that no
@@ -1838,7 +1838,7 @@ fn ensure_uds_reporting(
 fn import_uds_text(
     text: String,
 ) -> Result<(String, hydra::uds::model::Network, Vec<String>), String> {
-    let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+    let (network, diags) = hydra::swmm::objects::parse_network(&text);
     let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
     if errors.is_empty() {
         let (text, network, widened) = ensure_uds_reporting(text, network);
@@ -1869,7 +1869,7 @@ fn import_uds_text(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let (network, diags) = hydra::uds::io::objects::parse_network(&repaired);
+    let (network, diags) = hydra::swmm::objects::parse_network(&repaired);
     if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
         // The repair did not converge (should not happen for line-scoped
         // omissions) — refuse rather than loop.
@@ -3192,7 +3192,7 @@ mod tests {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4\n\
                      [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
-        let (network, diags) = hydra::uds::io::objects::parse_network(model);
+        let (network, diags) = hydra::swmm::objects::parse_network(model);
         assert!(!diags.iter().any(|d| d.kind.is_error()));
         let mut guard = NetworkStateInner::LoadedUds {
             dirty: false,

@@ -292,7 +292,7 @@ TS1 1:00 0.5
 ";
 
     fn uds() -> hydra::uds::model::Network {
-        hydra::uds::io::objects::parse_network(UDS).0
+        hydra::swmm::objects::parse_network(UDS).0
     }
 
     fn wds() -> hydra::Network {
@@ -490,7 +490,7 @@ TS1 1:00 0.5
             source: hydra::uds::model::TimeSeriesSource::Points(vec![
                 hydra::uds::model::TimeSeriesPoint {
                     time: hydra::uds::model::SeriesTime::Absolute {
-                        date: hydra::uds::io::options::Date {
+                        date: hydra::swmm::options::Date {
                             year: 2026,
                             month: 8,
                             day: 1,

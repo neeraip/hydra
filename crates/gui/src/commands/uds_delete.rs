@@ -1075,8 +1075,8 @@ mod tests {
     }
 
     use super::*;
-    use hydra::uds::io::inp_writer::write_inp;
-    use hydra::uds::io::objects::parse_network;
+    use hydra::swmm::inp_writer::write_inp;
+    use hydra::swmm::objects::parse_network;
 
     /// A model with every index-holding collection populated, and with
     /// its references pointing *past* the elements the tests remove — so

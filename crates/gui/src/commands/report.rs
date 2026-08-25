@@ -85,10 +85,9 @@ pub fn probe_report_blocks(
             Ok(hydra::uds::report_blocks::report_catalog()
                 .iter()
                 .map(|block| {
-                    let (status, reason) =
-                        availability(hydra::uds::report_blocks::produce_report_block(
-                            block.id, &out_path, &network, None,
-                        ));
+                    let (status, reason) = availability(produce_uds_block_from_file(
+                        block.id, &out_path, &network, None,
+                    ));
                     BlockAvailabilityDto {
                         id: block.id.to_string(),
                         status,
@@ -378,9 +377,7 @@ pub fn get_analysis_blocks(
                     let options = options_by_id.get(block.id);
                     analysis_block_dto(
                         block,
-                        hydra::uds::report_blocks::produce_report_block(
-                            block.id, &out_path, &network, options,
-                        ),
+                        produce_uds_block_from_file(block.id, &out_path, &network, options),
                         &settings,
                     )
                 })
@@ -630,7 +627,7 @@ fn render_for_target(
     let engine = super::projects::project_engine_key(&app_data, project_id);
     match engine.as_str() {
         "uds" => {
-            hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            hydra::swmm::out_reader::read_metadata(&out_path)?;
         }
         "wds" => {
             hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
@@ -673,12 +670,7 @@ fn render_for_target(
                 context,
                 |id, options| {
                     let merged = report_block_options_for(criteria_options.get(id), options);
-                    hydra::uds::report_blocks::produce_report_block(
-                        id,
-                        &out_path,
-                        &network,
-                        merged.as_ref(),
-                    )
+                    produce_uds_block_from_file(id, &out_path, &network, merged.as_ref())
                 },
             );
             let family = display_family_for(unit_system, !network.options.flow_units.is_us());
@@ -725,6 +717,20 @@ fn render_for_target(
         }
         other => return Err(format!("unknown report format: {other:?}")),
     })
+}
+/// Produce one uds report block from a persisted results file: the
+/// engine's blocks read data sources, and the file is this dialect's
+/// (format-blind extraction). Opened per call, exactly as the block
+/// producer itself used to read the metadata per call.
+fn produce_uds_block_from_file(
+    id: &str,
+    out_path: &std::path::Path,
+    network: &hydra::uds::model::Network,
+    options: Option<&serde_json::Value>,
+) -> Result<hydra::common::Fragment, hydra::common::BlockError> {
+    let source = hydra::swmm::session::OutFileSource::open(out_path)
+        .map_err(|message| hydra::common::BlockError::Failed { message })?;
+    hydra::uds::report_blocks::produce_report_block(id, &source, network, options)
 }
 
 #[cfg(test)]

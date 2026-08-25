@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn preserved_display_sections_become_viewer_geometry() {
-        let (net, diags) = hydra::uds::io::objects::parse_network(MODEL);
+        let (net, diags) = hydra::swmm::objects::parse_network(MODEL);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),
             "test model must parse: {diags:?}"
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn v4_encoding_is_self_consistent() {
-        let (net, _) = hydra::uds::io::objects::parse_network(MODEL);
+        let (net, _) = hydra::swmm::objects::parse_network(MODEL);
         let view = build_view(&net);
         let bytes = encode_uds_snapshot(&view);
 
@@ -558,7 +558,7 @@ mod tests {
                     [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 J2 400 0.013 0 0\n\
                     C2 J2 O1 400 0.013 0 0\n\
                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n";
-        let (net, diags) = hydra::uds::io::objects::parse_network(bare);
+        let (net, diags) = hydra::swmm::objects::parse_network(bare);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         let view = build_view(&net);
         assert_eq!(view.points.len(), 3, "every vertex is placed");
@@ -600,7 +600,7 @@ mod tests {
             [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
             [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
             [TIMESERIES]\nR1 0:00 1.0\n";
-        let (net, diags) = hydra::uds::io::objects::parse_network(inp);
+        let (net, diags) = hydra::swmm::objects::parse_network(inp);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         let view = build_view(&net);
         assert_eq!(view.regions.len(), 2, "both subcatchments visible");
@@ -633,7 +633,7 @@ mod tests {
             [TIMESERIES]\nR1 0:00 1.0\n\
             [MAP]\nUNITS DEGREES\n\
             [COORDINATES]\nJ1 -87.63 41.88\nO1 -87.62 41.87\n";
-        let (net, _) = hydra::uds::io::objects::parse_network(authored);
+        let (net, _) = hydra::swmm::objects::parse_network(authored);
         let view = build_view(&net);
         assert_eq!(view.points.len(), 2, "the authored placements stand");
         assert!(
@@ -656,7 +656,7 @@ mod tests {
                     [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
                     [COORDINATES]\nJ1 100 200\n";
-        let (net, _) = hydra::uds::io::objects::parse_network(partial);
+        let (net, _) = hydra::swmm::objects::parse_network(partial);
         let view = build_view(&net);
         assert_eq!(view.points.len(), 1, "only the authored placement");
         assert_eq!(view.points[0].id, "J1");
@@ -929,7 +929,7 @@ S1  0  0
 ";
 
     fn model() -> Network {
-        let (net, diags) = hydra::uds::io::objects::parse_network(INP);
+        let (net, diags) = hydra::swmm::objects::parse_network(INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         net
     }
@@ -961,7 +961,7 @@ S1  0  0
     fn placing_into_a_section_the_model_lacks_creates_it() {
         // A model authored with no map has no `[COORDINATES]` at all, so
         // the first placement has nowhere to go unless one is made.
-        let (mut net, _) = hydra::uds::io::objects::parse_network(
+        let (mut net, _) = hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CMS\n\n[JUNCTIONS]\nJ1 10 3 0 0 0\n",
         );
         assert!(coords(&net).is_empty());
@@ -1030,8 +1030,8 @@ S1  0  0
         // third field alone would truncate one.
         assert_eq!(tag_of(&net, "J1"), "Trunk sewer");
 
-        let written = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
-        let (again, _) = hydra::uds::io::objects::parse_network(&written);
+        let written = hydra::swmm::inp_writer::write_inp(&net).expect("write");
+        let (again, _) = hydra::swmm::objects::parse_network(&written);
         assert_eq!(
             tag_of(&again, "J1"),
             "Trunk sewer",
@@ -1075,8 +1075,8 @@ S1  0  0
         // back as itself.
         let mut net = model();
         set_display_point(&mut net, "[COORDINATES]", "J1", 12.5, -7.25);
-        let text = hydra::uds::io::inp_writer::write_inp(&net).expect("export");
-        let (again, diags) = hydra::uds::io::objects::parse_network(&text);
+        let text = hydra::swmm::inp_writer::write_inp(&net).expect("export");
+        let (again, diags) = hydra::swmm::objects::parse_network(&text);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         assert!(
             coords(&again).contains(&("J1".into(), 12.5, -7.25)),
@@ -1114,7 +1114,7 @@ O1  500  600
 
 {controls}"
         );
-        let (net, diags) = hydra::uds::io::objects::parse_network(&inp);
+        let (net, diags) = hydra::swmm::objects::parse_network(&inp);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         net
     }

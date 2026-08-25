@@ -441,7 +441,7 @@ mod tests {
     use super::*;
 
     fn uds_model() -> hydra::uds::model::Network {
-        let (net, _) = hydra::uds::io::objects::parse_network(
+        let (net, _) = hydra::swmm::objects::parse_network(
             "[OPTIONS]\nFLOW_UNITS CFS\n\
              [JUNCTIONS]\nJ1 100 4\n\
              [OUTFALLS]\nO1 90 FREE NO\n\
@@ -623,7 +623,7 @@ mod tests {
     /// not make a conduit.
     #[test]
     fn every_creatable_kind_can_actually_be_created() {
-        let uds = hydra::uds::io::objects::parse_network(UDS_FIXTURE).0;
+        let uds = hydra::swmm::objects::parse_network(UDS_FIXTURE).0;
         let wds =
             hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).expect("fixture");
 
@@ -716,7 +716,7 @@ mod tests {
                      [OUTFALLS]\nO1 8 FREE NO\n\
                      [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
-        let (mut net, _) = hydra::uds::io::objects::parse_network(model);
+        let (mut net, _) = hydra::swmm::objects::parse_network(model);
 
         let mut element = new("divider", "D1");
         element.position = Some([0.0, 0.0]);

@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use hydra::common::{ElementClass, VariableDescriptor};
-use hydra::uds::io::out_reader::{scan_periods, OutMetadata, PeriodRecord};
+use hydra::swmm::out_reader::{scan_periods, OutMetadata, PeriodRecord};
 
 use super::generic_results::{GenericResultMetaDto, GenericVariableDto};
 use super::uds_view::UdsView;
@@ -76,7 +76,7 @@ pub(super) fn quantity_descriptor(key: &str) -> Option<hydra::common::QuantityDe
 /// every other catalog quantity is either already SI or converts through
 /// its §5 descriptor (all affine offsets in the catalog are zero).
 fn si_factor(meta: &OutMetadata, quantity: Option<&str>) -> f64 {
-    use hydra::uds::io::options::FlowUnits::*;
+    use hydra::swmm::options::FlowUnits::*;
     let Some(key) = quantity else { return 1.0 };
     if key == "flow" {
         return match meta.flow_units {
@@ -329,9 +329,9 @@ pub fn element_series(
     kind: &str,
     index: usize,
 ) -> Result<Option<super::results::SeriesDto>, String> {
-    use hydra::uds::io::out_reader::{read_element_series, ElementKind};
+    use hydra::swmm::out_reader::{read_element_series, ElementKind};
 
-    let meta = hydra::uds::io::out_reader::read_metadata(out_path)?;
+    let meta = hydra::swmm::out_reader::read_metadata(out_path)?;
     let view = super::uds_view::build_view(network);
     let (element_id, out_ids, out_kind, class) = match kind {
         "node" => (
@@ -423,8 +423,7 @@ mod tests {
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
                      [REPORT]\nNODES ALL\nLINKS ALL\n\
                      [COORDINATES]\nJ1 0 0\nO1 100 0\n";
-        let (sim, _diags, _findings) =
-            hydra::uds::simulation::Simulation::open(model).expect("open uds model");
+        let (sim, _diags, _findings) = hydra::swmm::session::open(model).expect("open uds model");
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
         let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
@@ -441,7 +440,7 @@ mod tests {
         );
         assert!(err.is_none(), "uds run must succeed: {err:?}");
 
-        let meta = hydra::uds::io::out_reader::read_metadata(&out).expect("readable");
+        let meta = hydra::swmm::out_reader::read_metadata(&out).expect("readable");
         let gm = generic_meta(&out, &meta).expect("generic meta");
         // The §6 catalog: 6 point, 4 polyline, 3 region variables.
         assert_eq!(gm.point_vars.len(), 6);
@@ -473,11 +472,11 @@ mod tests {
         // Ranges came from a real scan: ordered and finite.
         assert!(depth.min <= depth.max && depth.max.is_finite());
 
-        let (network, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (network, _diags) = hydra::swmm::objects::parse_network(model);
         let view = super::super::uds_view::build_view(&network);
         assert_eq!(view.points.len(), 2);
         assert_eq!(view.polylines.len(), 1);
-        let rec = hydra::uds::io::out_reader::read_period(&out, &meta, 0).unwrap();
+        let rec = hydra::swmm::out_reader::read_period(&out, &meta, 0).unwrap();
         let payload = encode_generic_period(&view, &meta, &rec);
         let header: Vec<u32> = payload[..24]
             .chunks_exact(4)
@@ -567,8 +566,7 @@ mod tests {
                      [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n\
                      [COORDINATES]\nJ1 0 0\nO1 100 0\n\
                      [POLYGONS]\nS1 0 0\nS1 10 0\nS1 10 10\nS1 0 10\n";
-        let (sim, _diags, _findings) =
-            hydra::uds::simulation::Simulation::open(model).expect("open uds model");
+        let (sim, _diags, _findings) = hydra::swmm::session::open(model).expect("open uds model");
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
         let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
@@ -585,8 +583,8 @@ mod tests {
         );
         assert!(err.is_none(), "uds run must succeed: {err:?}");
 
-        let meta = hydra::uds::io::out_reader::read_metadata(&out).expect("readable");
-        let (network, _diags) = hydra::uds::io::objects::parse_network(model);
+        let meta = hydra::swmm::out_reader::read_metadata(&out).expect("readable");
+        let (network, _diags) = hydra::swmm::objects::parse_network(model);
         let view = super::super::uds_view::build_view(&network);
         assert_eq!(view.regions.len(), 1, "the model has one subcatchment");
 

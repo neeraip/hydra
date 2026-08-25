@@ -710,8 +710,7 @@ mod tests {
                      [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
                      [REPORT]\nNODES ALL\nLINKS ALL\n";
-        let (sim, _diags, _findings) =
-            hydra::uds::simulation::Simulation::open(model).expect("open uds model");
+        let (sim, _diags, _findings) = hydra::swmm::session::open(model).expect("open uds model");
 
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
@@ -738,7 +737,7 @@ mod tests {
             516_114_522
         );
         // And the engine's own reader accepts what the loop published.
-        let meta = hydra::uds::io::out_reader::read_metadata(&out).expect("readable");
+        let meta = hydra::swmm::out_reader::read_metadata(&out).expect("readable");
         assert!(meta.n_periods > 0);
 
         assert!(

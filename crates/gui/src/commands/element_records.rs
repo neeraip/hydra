@@ -1022,7 +1022,7 @@ mod tests {
     #[test]
     fn every_record_set_agrees_with_its_write_for_every_kind() {
         let (net, diags) =
-            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+            hydra::swmm::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
 
         let mut editable = Vec::new();
@@ -1145,7 +1145,7 @@ Duration  0
                      GR1 BC\n\
                      GR1 SURFACE 150 0.0 0.1 1.0 5\n\
                      GR1 SOIL 600 0.5 0.2 0.1 10.0 30 3.5\n";
-        hydra::uds::io::objects::parse_network(model).0
+        hydra::swmm::objects::parse_network(model).0
     }
 
     /// Six sets, one per layer, whatever the measure holds.
@@ -1255,7 +1255,7 @@ Duration  0
                      [SNOWPACKS]\n\
                      SP1 PLOWABLE 0.001 0.002 0.0 0.1 0.0 0.0 0.0\n\
                      SP1 IMPERVIOUS 0.001 0.002 0.0 0.1 0.0 0.0 0.5\n";
-        hydra::uds::io::objects::parse_network(model).0
+        hydra::swmm::objects::parse_network(model).0
     }
 
     fn wds_model() -> hydra::Network {
@@ -1407,7 +1407,7 @@ Duration  0
                      [SNOWPACKS]\n\
                      SP1 PLOWABLE 0.001 0.002 0.0 0.1 0.0 0.0 0.0\n\
                      SP1 IMPERVIOUS 0.001 0.002 0.0 0.1 0.0 0.0 0.5\n";
-        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, _diags) = hydra::swmm::objects::parse_network(model);
 
         let sets = uds_records(&net, "SP1");
         let set = sets.first().expect("a surfaces set");
@@ -1551,7 +1551,7 @@ Duration  0
                      [HYDROGRAPHS]\n\
                      UH1  G1\n\
                      UH1  JUL  MEDIUM  0.05  4.0  2.0  0.1  0  0.5\n";
-        let (net, diags) = hydra::uds::io::objects::parse_network(model);
+        let (net, diags) = hydra::swmm::objects::parse_network(model);
         assert!(
             !diags.iter().any(|d| format!("{d:?}").contains("Error")),
             "{diags:?}"

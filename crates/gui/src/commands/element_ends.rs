@@ -135,7 +135,7 @@ O1 100 0
 ";
 
     fn uds_model() -> hydra::uds::model::Network {
-        hydra::uds::io::objects::parse_network(UDS).0
+        hydra::swmm::objects::parse_network(UDS).0
     }
 
     fn wds_model() -> hydra::Network {
@@ -163,7 +163,7 @@ O1 100 0
         // absence list is asserted so a kind the fixture lacks cannot be
         // skipped in silence.
         let (net, diags) =
-            hydra::uds::io::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
+            hydra::swmm::objects::parse_network(crate::commands::test_fixtures::UDS_FULL_INP);
         assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
 
         let mut reconnected = 0;
@@ -210,7 +210,7 @@ O1 100 0
         assert_eq!(net.vertices[link.to].id, "O1");
         // Through the writer, because an index that moved without the
         // section that names it would produce a file naming the old end.
-        let written = hydra::uds::io::inp_writer::write_inp(&net).expect("write");
+        let written = hydra::swmm::inp_writer::write_inp(&net).expect("write");
         // Compared by fields rather than by the spacing between them:
         // the writer pads its columns.
         assert!(

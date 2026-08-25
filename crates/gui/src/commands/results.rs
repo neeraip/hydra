@@ -303,7 +303,7 @@ pub fn load_result_meta(
     match super::projects::project_engine_key(&app_data, &project_id).as_str() {
         "wds" => {}
         "uds" => {
-            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let meta = hydra::swmm::out_reader::read_metadata(&out_path)?;
             // Sim-relative period instants. The stored clock carries absolute
             // record times; the standard case reports one step after start,
             // which (i+1)·step reproduces.
@@ -409,8 +409,8 @@ pub fn get_period_results(
     match super::projects::project_engine_key(&app_data, &project_id).as_str() {
         "wds" => {}
         "uds" => {
-            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
-            let rec = hydra::uds::io::out_reader::read_period(&out_path, &meta, period)?;
+            let meta = hydra::swmm::out_reader::read_metadata(&out_path)?;
+            let rec = hydra::swmm::out_reader::read_period(&out_path, &meta, period)?;
             // Snapshot order comes from the same view build the canvas
             // rendered, so values line up positionally with v4 indices.
             let network =
@@ -513,7 +513,7 @@ pub(crate) fn uds_network_for_target(
     }
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let text = String::from_utf8_lossy(&raw);
-    let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+    let (network, diags) = hydra::swmm::objects::parse_network(&text);
     if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
         return Err(format!("Cannot read model: {first}"));
     }
@@ -544,7 +544,7 @@ pub(crate) fn shared_uds_parse(
             return Ok(net.clone());
         }
     }
-    let (network, diags) = hydra::uds::io::objects::parse_network(text);
+    let (network, diags) = hydra::swmm::objects::parse_network(text);
     if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
         return Err(format!("Cannot open this model: {first}"));
     }
@@ -970,7 +970,7 @@ pub async fn export_results_csv(
             })
         }
         "uds" => {
-            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let meta = hydra::swmm::out_reader::read_metadata(&out_path)?;
             let out_path = out_path.clone();
             Box::new(move |nodes_csv, links_csv, subs_csv| {
                 super::uds_results::stream_uds_results_csv(

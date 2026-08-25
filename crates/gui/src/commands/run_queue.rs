@@ -350,7 +350,7 @@ pub async fn enqueue_runs(
             }
             "uds" => {
                 let text = String::from_utf8_lossy(&raw);
-                let (_net, diags) = hydra::uds::io::objects::parse_network(&text);
+                let (_net, diags) = hydra::swmm::objects::parse_network(&text);
                 if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
                     return Err(format!("Cannot simulate {label}: {first}"));
                 }
@@ -609,7 +609,7 @@ pub(crate) fn open_uds_with_aux(
 
     // Survey the declarations; parse problems are ignored here — the open
     // below re-parses and reports them properly.
-    let (net, _) = hydra::uds::io::objects::parse_network(text);
+    let (net, _) = hydra::swmm::objects::parse_network(text);
     let aux_text = |name: &str| {
         let path = super::aux_files::aux_file_path(aux_dir, name)?;
         std::fs::read_to_string(path).ok()
@@ -618,7 +618,7 @@ pub(crate) fn open_uds_with_aux(
     let climate_records = match &net.climate.temperature {
         Some(TemperatureSource::File { name, units, .. }) => match aux_text(name) {
             Some(text) => {
-                hydra::uds::io::climate::parse_any_climate_file(
+                hydra::swmm::climate::parse_any_climate_file(
                     &text,
                     net.options.flow_units.is_us(),
                     *units,
@@ -656,7 +656,7 @@ pub(crate) fn open_uds_with_aux(
     // it is written. The station format and the six archival layouts are
     // recognised from the file itself, so a model pointed at an archive
     // runs here exactly as it runs at the command line.
-    let mut rain_files: Vec<(String, hydra::uds::io::rain::RainRecords)> = Vec::new();
+    let mut rain_files: Vec<(String, hydra::swmm::rain::RainRecords)> = Vec::new();
     if rain_iface.is_none() {
         for gage in &net.gages {
             let GageSource::File { file, .. } = &gage.source else {
@@ -671,7 +671,7 @@ pub(crate) fn open_uds_with_aux(
             // to anyone not told otherwise. These are raised before the
             // session exists, so they travel to `warnings.json` beside the
             // session's own rather than through it.
-            let (records, notices) = hydra::uds::io::rain::parse_any_rain_file(&rain_text)
+            let (records, notices) = hydra::swmm::rain::parse_any_rain_file(&rain_text)
                 .map_err(|e| format!("rain record {file:?}: {e}"))?;
             for notice in notices {
                 warnings.push(super::simulation::RunWarningDto {
@@ -685,16 +685,8 @@ pub(crate) fn open_uds_with_aux(
     }
 
     let opened = match &rain_iface {
-        Some(bytes) => hydra::uds::simulation::Simulation::open_with_rain_interface(
-            text,
-            climate_records,
-            bytes,
-        ),
-        None => hydra::uds::simulation::Simulation::open_with_rain_records(
-            text,
-            climate_records,
-            rain_files,
-        ),
+        Some(bytes) => hydra::swmm::session::open_with_rain_interface(text, climate_records, bytes),
+        None => hydra::swmm::session::open_with_rain_records(text, climate_records, rain_files),
     };
     let (mut sim, _diags, _findings) = opened.map_err(|e| format!("Cannot open the model: {e}"))?;
     if let Some(name) = &net.interface_files.hotstart_use {
@@ -711,7 +703,7 @@ pub(crate) fn open_uds_with_aux(
         let text = aux_bytes(name)
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .ok_or_else(|| missing("routing inflows file", name))?;
-        sim.supply_routing_inflows(&text)
+        hydra::swmm::session::supply_routing_inflows(&mut sim, &text)
             .map_err(|e| format!("routing inflows file {name:?}: {e}"))?;
     }
 
@@ -720,7 +712,7 @@ pub(crate) fn open_uds_with_aux(
     // modeller asked to reuse instead.
     if let Some((hydra::uds::model::FileMode::Use, name)) = &net.interface_files.runoff {
         let bytes = aux_bytes(name).ok_or_else(|| missing("runoff interface file", name))?;
-        sim.supply_runoff(&bytes)
+        hydra::swmm::session::supply_runoff(&mut sim, &bytes)
             .map_err(|e| format!("runoff interface file {name:?}: {e}"))?;
     }
 
@@ -728,7 +720,7 @@ pub(crate) fn open_uds_with_aux(
     // same reason. Either encoding, so bytes.
     if let Some((hydra::uds::model::FileMode::Use, name)) = &net.interface_files.rdii {
         let bytes = aux_bytes(name).ok_or_else(|| missing("RDII interface file", name))?;
-        sim.supply_rdii(&bytes)
+        hydra::swmm::session::supply_rdii(&mut sim, &bytes)
             .map_err(|e| format!("RDII interface file {name:?}: {e}"))?;
     }
     Ok((sim, warnings))
@@ -1106,8 +1098,7 @@ C1  CIRCULAR  1.0  0  0  0
 
         // Present: a state file the engine itself saved loads cleanly.
         let model_without = HOTSTART_INP.replace("USE HOTSTART se_hot_start_test.hsf", "");
-        let (donor, _, _) =
-            hydra::uds::simulation::Simulation::open(&model_without).expect("donor opens");
+        let (donor, _, _) = hydra::swmm::session::open(&model_without).expect("donor opens");
         let mut hsf = Vec::new();
         donor.save_hotstart(&mut hsf).expect("saves");
         let aux = tempfile::tempdir().expect("aux dir");
