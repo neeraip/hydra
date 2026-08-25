@@ -104,8 +104,11 @@ Both `http://` and `https://` are accepted. The fetch follows up to 10 redirects
 |---|---|
 | `<MODEL>` | Path or `http(s)://` URL of the model to run. The only positional |
 | `--engine <KEY>` | Run with a named engine (`wds`, `uds`). Omit to detect it from the model |
-| `--results <PATH>` | Binary time-series results (`.out`). Omitted, none is written |
+| `--results <PATH>` | Binary time-series results (`.out`). Omitted, none is written. A drainage model with a 2D mesh also writes its surface results beside this path, with `.out` replaced by `.2d.out` |
 | `--summary <PATH>` | Run summary in the engine's native format (`.rpt`; the water engine also writes `.json` when the path ends in `.json`, the drainage engine refuses it for now). Omitted, it goes to stdout |
+| `--checkpoint <PATH>` | Write a checkpoint of the finished run, so a later run can continue from it. Drainage models only for now |
+| `--resume <PATH>` | Continue from a checkpoint instead of starting the model at its beginning. The model and every auxiliary file must be the ones the checkpoint was taken from, and a checkpoint from an older release is refused rather than misread |
+| `--tank-tolerance <METRES>` | Tank-level integration error tolerance (water models only, default 0.001). `0` restores EPANET's first-order tank stepping, which runs faster on control-heavy networks and carries no error bound |
 
 ### Global
 

@@ -33,9 +33,9 @@ Inputs are EPANET `.inp` files (local or via HTTP URL), any 2.x release, since t
 
 ## Urban drainage engine
 
-Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; two-dimensional overland flow on an unstructured triangular mesh, coupled to the network; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
 
-Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. Available from the CLI (`hydra run model.inp`; the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
+Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report (a mesh model also writes its surface results to a `.2d.out` sidecar). Routing runs in parallel when the model's own `THREADS` option asks for width, with results byte-identical at any width. Available from the CLI (`hydra run model.inp`; the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
 
 ## Install
 

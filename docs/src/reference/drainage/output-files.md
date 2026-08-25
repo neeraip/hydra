@@ -17,6 +17,12 @@ Node and link values are period-interpolated, and the period-averaged variant is
 
 Opening validates before serving: the leading and trailing magic numbers, the version, the epilog's section positions against the actual file length, and the stored error code. A file whose writer recorded an error, or whose geometry does not reconcile, is refused rather than served as data.
 
+## `.2d.out`: Surface results
+
+A model with a 2D mesh writes a second results file beside the `.out`, at the same reporting instants, named by replacing `.out` with `.2d.out`. SWMM's binary format has no vocabulary for a mesh (its object classes are fixed and nothing may be appended to it), so the sidecar is Hydra's own layout: little-endian, fully self-describing, and SI throughout (metres, seconds, cubic metres per second).
+
+The header carries the mesh geometry itself (vertex coordinates, cell topology, coupling-point locations), so a viewer can render the surface without the model. Each reporting instant then records, per cell, the depth, surface elevation and velocity components; per coupling point, the exchange rate with the network over the period; and the cumulative surface conservation ledger (rainfall in, infiltration out, network exchange in both directions, boundary flows, and the closure error). The file opens with a magic number and format version, and a reader refuses a version it does not know.
+
 ## `.rpt`: Text report
 
 The run summary follows SWMM's layout: the same sections in the same order, with the same tables, column headings and field widths. A Hydra report can be diffed side by side against a SWMM run, and tools that already parse SWMM reports read Hydra's without changes.

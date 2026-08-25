@@ -8,7 +8,7 @@ methods. They all sit behind one shared toolchain: the desktop GUI, the
 | Engine | Key | Domain | Source model |
 |---|---|---|---|
 | Water Distribution | `wds` | Pressurised supply networks: hydraulics, water quality, energy | EPANET `.inp` (2.x) |
-| Urban Drainage | `uds` | Stormwater and wastewater collection: runoff, routing, water quality | SWMM `.inp` |
+| Urban Drainage | `uds` | Stormwater and wastewater collection: runoff, routing, 2D overland flow, water quality | SWMM `.inp` |
 
 Both engines run from all three surfaces, and both are edited in the GUI.
 The one difference is how a project starts: a water distribution project

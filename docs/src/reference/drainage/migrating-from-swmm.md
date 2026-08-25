@@ -25,6 +25,7 @@ Every claim Hydra's specifications make about SWMM is made against SWMM 5.2.4, a
 - **Numbers will not match SWMM digit for digit.** Where they differ materially, the reason is documented in the specification section the quantity belongs to.
 - **The report will look familiar.** The `.rpt` follows SWMM's layout section for section, so it diffs side by side against a SWMM run.
 - **The `.out` file is readable by your existing tools.** It is written to SWMM 5.2.4's binary layout.
+- **2D models run here.** A model carrying the successor format's 2D sections opens and runs as a coupled 1D/2D system; see [INP Format Support](inp-format.md#the-2d-sections). SWMM 5 discards those sections.
 - **You will see notices you did not see before.** Where SWMM silently reinterprets something, Hydra names it: a discarded section, a property line replacing an earlier one, a coefficient converted out of the file's unit system, a routing form mapped onto the one this engine solves.
 
 ## Things Hydra refuses that SWMM accepts

@@ -50,6 +50,14 @@ Seven relations are defined by SWMM in the *user's* unit system, so their file c
 
 The last row is the interesting one: a formula cannot be dimensionally converted, so the boundary moves to its edges. Inputs are presented to the expression in the units its author wrote it for, and the result is converted.
 
+## The 2D sections
+
+A model may carry a two-dimensional overland surface in the same `.inp`, through the 2D sections SWMM's successor format defines, adopted section for section: `[2D_OPTIONS]`, `[2D_VERTICES]`, `[2D_TRIANGLES]`, `[2D_INITIAL_VELOCITY]`, the two node-coupling maps, `[2D_BOUNDARY_CONDITIONS]`, `[2D_INFILTRATION]`, `[2D_EDGE_CONVEYANCE]` and `[2D_MESH_FILE]` (an external mesh file, resolved beside the model like any other auxiliary file; export inlines it).
+
+- A retired or unknown `[2D_OPTIONS]` key is a warning, never a refusal, so a file written for a newer vocabulary still opens. SWMM 6 refuses the whole file.
+- `IGNORE_2D YES` runs the one-dimensional model alone, with the surface parsed, preserved and set aside, with notice.
+- Mesh geometry is SI by declaration (the one-way mesh-units header); a display-unit model has its 2D inputs scaled at import.
+
 ## Auxiliary files
 
 A model that names external files is read with them:
