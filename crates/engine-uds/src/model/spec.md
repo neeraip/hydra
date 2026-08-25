@@ -21,6 +21,14 @@ A drainage model describes water and material moving between four compartments:
 - **Conveyance** — the network of channels, pipes, structures, and storage that
   carries water to receiving waters.
 
+A model may additionally carry an **overland surface** (§15): a meshed
+ground surface on which water ponds and conveys in two dimensions,
+exchanging with the conveyance network at mapped points. It is an optional
+refinement of the land-surface compartment for the flooding problem — where
+parcels lump the surface into stores, the mesh resolves it spatially — and
+a model carries either view of any given ground, not both (§15.7 records
+the double-count hazard).
+
 **No compartment is mandatory.** A model may be conveyance alone, driven by
 supplied inflow time series, or surface alone, ending at parcel outlets. Every
 subsystem specification states its behaviour when a compartment it draws from is
@@ -38,9 +46,11 @@ may be assumed about an entity's relationship to the network.
 
 1. **Network elements** — vertices and edges of the conveyance graph. Only
    these have topology.
-2. **Areal entities** — parcels, aquifers, and snow packs. These are simulated,
-   hold state, and are referenced by network elements, but are neither vertices
-   nor edges. A parcel is a surface, not a point or a channel.
+2. **Areal entities** — parcels, aquifers, snow packs, and the overland
+   mesh's cells (§15.2). These are simulated, hold state, and are referenced
+   by network elements, but are neither vertices nor edges. A parcel is a
+   surface, not a point or a channel; a mesh cell is ground, addressed by
+   index rather than identifier.
 3. **Shared definitions** — cross-section profiles, street sections, aquifer
    parameters, snow-pack parameters, unit-hydrograph groups, and control-measure
    designs. Each is defined once and instantiated by reference from many
@@ -235,6 +245,8 @@ The state is small relative to the model's scope:
 | Regulator | Current setting, whether a control placed it there or it opened by its own rule |
 | Sewer inflow | The convolution's memory of the rainfall still draining through each unit hydrograph |
 | Constituent | Accumulated surface mass and ponded mass per parcel, with time since last removal; concentration per vertex and per edge |
+| Overland cell | Stored water volume (§15.3; surface elevation and depth are derived) |
+| Overland face | Unit-width discharge, interior and boundary alike (§15.4) |
 
 Everything else the engine reports — velocities, volumes, flooding, loads — is
 derived from this state, the inputs, and the parameters.
