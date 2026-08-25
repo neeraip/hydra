@@ -2,17 +2,17 @@
 
 Hydra is a water infrastructure simulation platform written in Rust, built as a suite of domain engines behind one shared toolchain (CLI, desktop GUI, Rust SDK).
 
-Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, and water quality on the SWMM data model; it is available from the CLI, the SDK, and the GUI, where a drainage model is imported, then edited, run and explored. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, two-dimensional overland flow coupled to the network (spec §15), and water quality on the SWMM data model; it is available from the CLI, the SDK, and the GUI, where a drainage model is imported, then edited, run and explored. The GUI runs mesh models but does not yet render their surfaces. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
 
-**2D overland flow** is planned as future functionality of the `uds` engine,
-not as a separate engine: SWMM's own data model is gaining 2D simulation
-upstream (SWMM6) on the same input format, so Hydra's path to 2D is growing
-`uds`, spec-first, when that work begins. There was once a third planned
+**2D overland flow** is functionality of the `uds` engine, not a separate
+engine: the overland sections ride the SWMM input format (specs
+`crates/engine-uds/src/overland/spec.md` §15 and interop §14.15–§14.16),
+mirroring the direction SWMM's own data model is taking upstream (SWMM6).
+There was once a third planned
 engine — **open channel** (`och`, HEC-RAS data model) — withdrawn in favour
 of this plan. Its registry key and crate name (`hydra-engine-och`, published
 as an empty scaffold through workspace v12) stay reserved and must never be
-reused for a different domain. Never write copy that implies `uds` simulates
-2D overland flow today, and never resurrect `och` in docs or interfaces.
+reused for a different domain. Never resurrect `och` in docs or interfaces.
 
 The engine registry's `EngineStatus::Planned` variant is permanent machinery
 and stays, even while no planned engine is registered.
@@ -82,6 +82,7 @@ authoritative definition of Hydra's mathematical behaviour:
 | `crates/engine-uds/src/hydrology/spec.md` | Runoff, infiltration, LID, snowmelt, groundwater, RDII, climate |
 | `crates/engine-uds/src/hydraulics/spec.md` | Section geometry, dynamic-wave routing, structures, inlets |
 | `crates/engine-uds/src/transport/spec.md` | Buildup, washoff, treatment, network transport |
+| `crates/engine-uds/src/overland/spec.md` | Two-dimensional overland flow: mesh, marcher, coupling, meteorology, conservation |
 | `crates/engine-uds/src/simulation/spec.md` | Controls, orchestration, accounting, statistics, session API |
 | `crates/engine-uds/src/report_blocks/spec.md` | Post-simulation analytics: report-block catalog, derivations, options |
 | `crates/engine-uds/src/interop/spec.md` | INP import, interface files, OUT/RPT output, recognition |

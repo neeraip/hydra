@@ -448,6 +448,23 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
         }
     }
 
+    // §14.16: a mesh model's overland results stream to a sidecar
+    // alongside the §14.9 file.
+    if let Some(out_path) = args.results.as_deref() {
+        if es.as_uds().is_some_and(Simulation::has_overland) {
+            let p2 = two_d_results_path(out_path);
+            let attach = std::fs::File::create(&p2).and_then(|f| {
+                es.as_uds_mut()
+                    .expect("checked above")
+                    .begin_overland_results(Box::new(std::io::BufWriter::new(f)))
+            });
+            if let Err(e) = attach {
+                emit_error("io/output", &format!("{p2}: {e}"), None, None);
+                return EXIT_IO;
+            }
+        }
+    }
+
     let mut progress = ProgressReporter::new(std::io::stderr().is_terminal() && !cli.quiet);
     progress.startup_banner();
     if let Err(code) = crate::drive_with_progress(&mut es, &mut progress) {
@@ -768,5 +785,27 @@ J1  0  0
     fn aux_files_refuse_http_models() {
         let err = resolve_aux_path("https://example.com/net.inp", "climate.dat");
         assert_eq!(err.unwrap_err(), EXIT_INPUT);
+    }
+}
+
+/// The §14.16 sidecar's path beside the §14.9 results file: `run.out`
+/// becomes `run.2d.out`, and a path without the extension gains it.
+fn two_d_results_path(out_path: &str) -> String {
+    match out_path.strip_suffix(".out") {
+        Some(stem) => format!("{stem}.2d.out"),
+        None => format!("{out_path}.2d.out"),
+    }
+}
+
+#[cfg(test)]
+mod overland_path_tests {
+    use super::two_d_results_path;
+
+    /// The sidecar lands beside the results file, named after it.
+    #[test]
+    fn the_sidecar_is_named_after_the_results_file() {
+        assert_eq!(two_d_results_path("run.out"), "run.2d.out");
+        assert_eq!(two_d_results_path("a/b/city.out"), "a/b/city.2d.out");
+        assert_eq!(two_d_results_path("results"), "results.2d.out");
     }
 }
