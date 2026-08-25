@@ -83,23 +83,28 @@ The same method: release builds of both engines, the same machine, best
 of three runs, timed end to end, over the published research networks
 bundled in `tests/benchmarks/wds/`.
 
-| Network | Hydra / EPANET runtime |
-|---|---|
-| Balerma, Exeter, Kentucky 8/9/10, NY Tunnels | 0.9 to 1.2 (sub-10 ms; process start dominates) |
-| BWSN-2 (12,527 nodes) | 1.21 |
-| L-Town | 1.03 |
-| D-Town | 1.12 |
-| Micropolis | 1.29 |
-| Richmond | 2.00, or **0.85 with `--tank-tolerance 0`** |
+| Network | Hydra / EPANET runtime | with `--tank-tolerance 0` |
+|---|---|---|
+| Balerma, Exeter, Kentucky 8/9/10, NY Tunnels | 0.9 to 1.2 | (sub-10 ms; process start dominates) |
+| BWSN-2 (12,527 nodes) | 1.29 | 1.16 |
+| L-Town | 1.23 | **0.83** |
+| D-Town | 1.30 | **0.96** |
+| Micropolis | 1.32 | **1.07** |
+| Richmond | 2.04 | 1.20 (tens of ms; start shares dominate) |
 
-Richmond's ratio is a documented purchase, not a loss. Hydra integrates
-tank levels with a second-order predictor-corrector carrying a per-step
-error estimate, where EPANET takes one uncontrolled first-order step;
-on Richmond's eighteen level-switched pumps that costs a corrector solve
-per step plus the error control's retries. Setting the tolerance to
-zero (`--tank-tolerance 0`, or `level_err_tol = 0` in the session API)
-restores EPANET's own scheme exactly: 55 hydraulic solves to EPANET's
-54, and a faster run. The default keeps the error bound.
+The first column's ratios above 1 are a documented purchase, not a
+loss, and the second column is the proof. Hydra integrates tank levels
+with a second-order predictor-corrector carrying a per-step error
+estimate, where EPANET takes one uncontrolled first-order step; on a
+tanked network that costs a corrector solve per step plus the error
+control's retries (on Richmond's eighteen level-switched pumps, most
+of the run). Setting the tolerance to zero (`--tank-tolerance 0`, or
+`level_err_tol = 0` in the session API) restores EPANET's own scheme
+exactly, and the engines then step in lockstep: on Micropolis, 785
+hydraulic solves totalling 6,698 iterations against EPANET's 780 and
+6,701, at parity or faster on every network large enough to measure.
+The default keeps the error bound: solver speed is not where the time
+goes, and the bound is worth what it costs.
 
 Accuracy rides the same runs: 95.4% of 2.6 million node pressures agree
 within 0.1 (in each model's own pressure unit) across the set, and every
