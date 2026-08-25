@@ -29,8 +29,10 @@ identity.
 | Crate | Owns | Does not own |
 |---|---|---|
 | `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry), the reportable-output contract (block catalog, neutral fragment model), and — since a second engine exists to validate them — the element-taxonomy, quantity, result-variable, and criteria contracts (spec §4–§7: engine-authored catalogs, opaque ids). Depends on nothing in the workspace | Any engine logic; presentation/rendering; a cross-engine simulation session contract (still deferred — only its dispatch home is assigned, spec §2.6) |
-| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
-| `hydra-engine-uds` | Complete urban-drainage engine: SWMM data model; INP import and OUT/RPT writers; rainfall-runoff hydrology (infiltration, LID, snow, groundwater, RDII); dynamic-wave routing; structures and inlets; pollutant transport; controls; session API (`simulation::engine::Simulation`); local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`, §14.9) | Interface logic; network I/O; any other filesystem I/O (model text and auxiliary-file contents are supplied in memory by callers) |
+| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers *(transitional — extracting to `hydra-interop-epanet`)*; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
+| `hydra-engine-uds` | Complete urban-drainage engine: SWMM data model; INP import and OUT/RPT writers *(transitional — extracting to `hydra-interop-swmm`)*; rainfall-runoff hydrology (infiltration, LID, snow, groundwater, RDII); dynamic-wave routing; structures and inlets; pollutant transport; controls; session API (`simulation::engine::Simulation`); local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`, §14.9) | Interface logic; network I/O; any other filesystem I/O (model text and auxiliary-file contents are supplied in memory by callers) |
+| `hydra-interop-swmm` *(planned, lift phase 3)* | The SWMM dialect: INP parse/write, OUT/RPT writers, the streaming OUT reader (the filesystem carve-out), interface/climate/rain records, recognition of SWMM files, the §14 interop spec. Depends on `hydra-engine-uds` and `hydra-common` only | Any physics; any validation semantics; acquiring bytes |
+| `hydra-interop-epanet` *(planned, lift phase 4)* | The EPANET dialect, same shape, for `hydra-engine-wds` | Same exclusions |
 | `hydra-engines` | Engine dispatch, implemented once for every application: the routing policy of the `hydra-common` recognition contract (§2.5.1) and the uniform run surface of §2.6 (`EngineSession` — open a model for its engine, step it, observe progress, persist results, collect warnings). Depends on `hydra-common` and every engine — the only layer that sees both | Any recognition logic of its own (each engine judges its own models); any solver logic (it drives sessions, never computes) |
 | `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
 | `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
@@ -44,7 +46,7 @@ identity.
 
 **`hydra-cli`, `hydra-gui` and `hydra-demo` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
 
-**The engines must keep working on `wasm32-unknown-unknown`.** They have no filesystem calls outside test code and `io::out_reader`, and no threads by default, which is what makes a browser build possible at all. The one concurrency door is `hydra-engine-uds`'s `threads` cargo feature: it parallelises exactly the spec's ∥ iteration phases (uds §6.4), takes its width from the model's own `THREADS` option, is off by default and never enabled for a wasm build, and produces byte-identical results at any width — so a serial build and a threaded one cannot disagree, and a test that holds on one holds on both. Three things break it, and only the first is caught by compiling:
+**The engines must keep working on `wasm32-unknown-unknown`.** They have no filesystem calls outside test code and `io::out_reader` (which leaves with the interop extraction — the end state is engines with no filesystem code at all), and no threads by default, which is what makes a browser build possible at all. The interop crates must stay wasm-clean under the same rules. The one concurrency door is `hydra-engine-uds`'s `threads` cargo feature: it parallelises exactly the spec's ∥ iteration phases (uds §6.4), takes its width from the model's own `THREADS` option, is off by default and never enabled for a wasm build, and produces byte-identical results at any width — so a serial build and a threaded one cannot disagree, and a test that holds on one holds on both. Three things break it, and only the first is caught by compiling:
 
 | Break | Example | Guarded by |
 |---|---|---|
@@ -58,7 +60,30 @@ Keep that file small. Everything it could assert about behaviour is already asse
 
 **`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 
-**Serialisation and output formatting** belong in the engine crates. Acquiring model bytes (reading INP files from disk, making HTTP calls, reading a model's auxiliary climate/hotstart/interface files) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside an engine is `hydra-engine-wds`'s explicit path-based streaming of `.out` result files (`io::out_reader`), which exists so large results never have to be loaded whole.
+**Engines are format-blind** (workspace decision, 2026-08-26): models
+enter an engine as typed data, results leave as typed streams, and no
+engine knows any file format. All dialect tooling — `.inp` parse/write,
+`.out`/`.rpt` writers, the `.out` streaming reader, interface/climate/rain
+file handling, recognition of a dialect's files — belongs in one interop
+crate per dialect (`hydra-interop-swmm`, `hydra-interop-epanet`), each
+depending only on its engine's public data model and `hydra-common`.
+Validation and mutation of the parsed model are engine semantics and stay
+in the engines. Checkpoints stay in the engines (persistence of private
+state, not an exchange format). Acquiring bytes (reading files from disk,
+HTTP) belongs in `hydra-cli` or `hydra-gui`; the one filesystem carve-out
+is the interop crates' explicit path-based streaming of `.out` result
+files, which exists so large results never have to be loaded whole.
+
+**Transition status:** the extraction is in progress on this branch; the
+dialect tooling still compiles inside the engines' `io/` modules until the
+lift phases complete. Two rules govern the interim: **nothing new lands in
+an engine's `io/`** — new capabilities are data-model-first, and their
+`.inp` mapping is a separate deliberate interop decision (which may
+legitimately be "not expressible in the legacy format") — and export
+refusals are the exporter's sentences, stated once, in interop code.
+`.inp` remains the CLI/GUI compatibility format indefinitely; a native
+portable format is deliberately deferred until the public data model has
+been stable for years.
 
 ---
 

@@ -172,8 +172,11 @@ candidate model, each engine reports whether the model is one of its own.
 
 The foundation layer defines only the neutral verdict. It contains no
 section names, no format grammar, and no engine vocabulary of any kind —
-the judgement is authored entirely by the engine, and this layer merely
-gives every engine the same three words to say it in:
+the judgement is authored entirely on the engine's side, and this layer
+merely gives every engine the same three words to say it in. Which code
+speaks for the engine is the workspace's business, not this contract's:
+the judgement concerns the engine's input dialect, and the dialect
+tooling that reads those files is where the judgement naturally lives.
 
 | Verdict | Meaning |
 |---|---|
