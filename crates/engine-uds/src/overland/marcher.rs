@@ -1180,6 +1180,8 @@ impl Marcher {
             fr: fr.as_mut_ptr(),
             led: led.as_mut_ptr(),
         };
+        // `mut` only when the team path can set it.
+        #[cfg_attr(not(feature = "threads"), allow(unused_mut))]
         let mut ran = false;
         #[cfg(feature = "threads")]
         {

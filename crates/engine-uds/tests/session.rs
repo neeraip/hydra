@@ -6579,11 +6579,11 @@ VA J1
 ";
 
     // Supplied: the coupling row in the model resolves against a vertex
-    // the external file authors, and the refusal is the not-served one.
-    let Err(err) = Simulation::open_with_overland_mesh(model, external) else {
-        panic!("mesh models refuse until served");
-    };
-    assert!(err.to_string().contains("IGNORE_2D"), "{err}");
+    // the external file authors, and the coupled model runs (§1.8).
+    let (mut sim, diags, _) =
+        Simulation::open_with_overland_mesh(model, external).expect("the coupled model serves");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
 
     // Not supplied: the refusal names the file instead.
     let Err(err) = Simulation::open(model) else {
@@ -6602,12 +6602,12 @@ IGNORE_2D YES",
     sim.run();
 }
 
-/// §1.8: a mesh model refuses with the campaign named; `IGNORE_2D YES`
-/// runs its one-dimensional half; and an ignored mesh is still
-/// validated, so an authoring defect is heard now rather than on the
-/// day the option flips off.
+/// §1.8: a mesh model is served — it opens and marches with the run —
+/// while `IGNORE_2D YES` still runs the one-dimensional half alone,
+/// and the mesh is validated either way, so an authoring defect is
+/// heard now rather than on the day the option flips off.
 #[test]
-fn a_mesh_model_refuses_until_overland_is_served() {
+fn a_mesh_model_is_served() {
     let base = "[OPTIONS]\nFLOW_UNITS CMS\nROUTING_STEP 5\n\
         END_TIME 00:10:00\n{IGNORE}\n\
         [JUNCTIONS]\nJ1 10 4 0 0 0\n[OUTFALLS]\nO1 9 FREE NO\n\
@@ -6616,12 +6616,10 @@ fn a_mesh_model_refuses_until_overland_is_served() {
         [2D_VERTICES]\n0 0 10\n1 0 10\n0 1 10\n\
         [2D_TRIANGLES]\n0 1 2 {N}\n";
 
-    let refused = base.replace("{IGNORE}", "").replace("{N}", "0.02");
-    let Err(err) = Simulation::open(&refused) else {
-        panic!("mesh models refuse");
-    };
-    let msg = err.to_string();
-    assert!(msg.contains("IGNORE_2D"), "{msg}");
+    let served = base.replace("{IGNORE}", "").replace("{N}", "0.02");
+    let (mut sim, diags, _) = Simulation::open(&served).expect("mesh models serve");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
 
     let ignored = base
         .replace("{IGNORE}", "IGNORE_2D YES")
@@ -6630,11 +6628,11 @@ fn a_mesh_model_refuses_until_overland_is_served() {
     assert!(diags.iter().all(|d| !d.kind.is_error()));
     sim.run();
 
-    let defective = base
-        .replace("{IGNORE}", "IGNORE_2D YES")
-        .replace("{N}", "0");
-    let Err(err) = Simulation::open(&defective) else {
-        panic!("defects are heard even ignored");
-    };
-    assert!(err.to_string().contains("Manning"), "{err}");
+    for ignore in ["IGNORE_2D YES", ""] {
+        let defective = base.replace("{IGNORE}", ignore).replace("{N}", "0");
+        let Err(err) = Simulation::open(&defective) else {
+            panic!("defects are heard, ignored or served");
+        };
+        assert!(err.to_string().contains("Manning"), "{err}");
+    }
 }

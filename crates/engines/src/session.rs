@@ -347,6 +347,15 @@ impl EngineSession {
         }
     }
 
+    /// The uds session, mutably — attaching the §14.16 overland
+    /// results stream is the capability that needs it.
+    pub fn as_uds_mut(&mut self) -> Option<&mut hydra_engine_uds::simulation::Simulation> {
+        match self {
+            Self::Wds(_) => None,
+            Self::Uds(r) => Some(&mut r.0.sim),
+        }
+    }
+
     /// Whether this engine can checkpoint a run at all.
     ///
     /// Asked before offering the operation rather than discovering it from

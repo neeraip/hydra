@@ -51,9 +51,9 @@ pub enum OpenError {
     Controls(String),
     /// A transport configuration this stage does not evaluate yet (§8).
     Transport(String),
-    /// The model authors an overland mesh (§15), which is specified and
-    /// not yet served (§1.8). `IGNORE_2D YES` runs the model
-    /// one-dimensional in the meantime.
+    /// The model's overland mesh (§15) was refused: a §15.2 validation
+    /// defect, or a coupling row naming a node, series or curve the
+    /// model does not have (§15.6).
     Overland(String),
 }
 
@@ -620,12 +620,9 @@ impl Simulation {
                     )));
                 }
                 net.overland = None;
-            } else {
-                return Err(OpenError::Overland(
-                    "this model authors a two-dimensional mesh; overland flow                      (§15) is specified and not yet served. Set IGNORE_2D YES                      to run the one-dimensional model"
-                        .to_string(),
-                ));
             }
+            // Served (§1.8): the mesh attaches to the session below,
+            // once the router it couples to exists.
         }
         // Before validation, not after: §3.1 says a realised record is
         // treated exactly as if its series had been written in the model,
@@ -805,7 +802,7 @@ impl Simulation {
         let _ = &mut notices;
 
         let nv = net.vertices.len();
-        Ok((
+        let mut sim = (
             Simulation {
                 router,
                 surface,
@@ -906,7 +903,28 @@ impl Simulation {
             },
             diags,
             findings,
-        ))
+        );
+        // §1.8: serve §15 — attach the model's mesh to the session it
+        // couples to.
+        if let Some(mesh) = sim.0.net.overland.take() {
+            use super::coupled::AttachError;
+            sim.0.attach_overland(mesh).map_err(|e| match e {
+                AttachError::Mesh(errors) => OpenError::Overland(format!(
+                    "the mesh is defective: {}",
+                    errors.first().map(|d| d.to_string()).unwrap_or_default()
+                )),
+                AttachError::UnknownNode(n) => OpenError::Overland(format!(
+                    "a coupling row names the node {n:?}, which this model does not have"
+                )),
+                AttachError::UnknownSeries(n) => OpenError::Overland(format!(
+                    "a boundary row names the time series {n:?}, which this model does not have"
+                )),
+                AttachError::UnknownCurve(n) => OpenError::Overland(format!(
+                    "a boundary row names the curve {n:?}, which this model does not have"
+                )),
+            })?;
+        }
+        Ok(sim)
     }
 
     /// Current simulation time (s from start).
@@ -1866,10 +1884,6 @@ impl Simulation {
     /// nodes against the network and precomputing the §15.7 rain
     /// weights. Serving is gated by `open` (§1.8); this is the wiring
     /// that gate will open onto.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the §1.8 serving gate's wiring")
-    )]
     pub(crate) fn attach_overland(
         &mut self,
         mesh: crate::overland::OverlandMesh,
@@ -1909,12 +1923,8 @@ impl Simulation {
 
     /// §14.16: stream the overland results to `sink` as the run
     /// produces them, alongside the §14.9 stream. Attach after the
-    /// mesh and before stepping; refused without a mesh.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the §1.8 serving gate's wiring")
-    )]
-    pub(crate) fn begin_overland_results(
+    /// mesh and before stepping; refused for a model with no mesh.
+    pub fn begin_overland_results(
         &mut self,
         sink: Box<dyn std::io::Write + Send>,
     ) -> std::io::Result<()> {
@@ -1988,12 +1998,14 @@ impl Simulation {
         }
     }
 
-    /// The attached overland surface, for the callers the §1.8 serving
-    /// gate will admit (and the crate's own tests today).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the §1.8 serving gate's wiring")
-    )]
+    /// Whether this model carries an overland mesh (§15) — the caller's
+    /// cue to attach the §14.16 results stream.
+    pub fn has_overland(&self) -> bool {
+        self.coupled.is_some()
+    }
+
+    /// The attached overland surface, for the crate's own tests.
+    #[cfg(test)]
     pub(crate) fn overland(&self) -> Option<&super::coupled::CoupledSurface> {
         self.coupled.as_ref()
     }

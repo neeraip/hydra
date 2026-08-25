@@ -293,10 +293,11 @@ needing one is refused with a named reason. A section absent from
 the specification remains unspecified behaviour rather than deferred
 behaviour — it is not implemented until it is specified.
 
-One section runs ahead of its implementation: **§15 (overland flow) is
-specified and not yet served.** Until its implementation lands, a model
-carrying two-dimensional sections receives §14.2's unrecognised-section
-treatment — the sections are reported and discarded, and the run is the
-one-dimensional model's. Serving §15 is the campaign the specification
-exists to govern; every other section this specification describes is
-served.
+Every section this specification describes is served, **§15 (overland
+flow) included**: a model carrying two-dimensional sections is
+validated (§15.2), coupled (§15.6) and marched (§15.4) with the run,
+its results streamed per §14.16 and its balances reported per §14.9.
+`IGNORE_2D YES` remains the author's explicit request to run the
+one-dimensional model alone; the mesh is still validated so an
+authoring defect is heard now, not on the day the option flips off.
+The capabilities §15.10 records as deferred stay typed refusals.
