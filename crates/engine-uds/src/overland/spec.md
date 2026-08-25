@@ -248,7 +248,10 @@ $$\mathbf{q}_c = \frac{1}{A} \sum_e s_e\, q_e\, \xi_e\,
 (\mathbf{m}_e - \mathbf{c}),$$
 
 $s_e$ the cell's sign for the edge's orientation and $\mathbf{m}_e$ the
-edge midpoint. Each cell writes only its own state and clears only its
+edge midpoint. The offset $\mathbf{m}_e - \mathbf{c}$ is the formula:
+substituting the face normal — plausible on a near-orthogonal mesh —
+was measured to destabilise the march outright, the θ-blend feeding on
+its own mis-reconstruction until the basin stood in metre-scale waves. Each cell writes only its own state and clears only its
 own accumulator sides: the phase is order-independent and
 byte-reproducible at any width.
 
@@ -337,12 +340,20 @@ condition addresses its (cell, edge) slot. Five types:
 | `SPECIFIED_STAGE` | the §15.4.2 momentum law against a ghost cell held at the authored (or time-series) stage, slope arm $d_n = 2A/(3\xi)$, the cell's own $n^2$, prognostic discharge |
 
 $h$ is the cell-mean depth under `MEAN` reconstruction and the wetted-edge
-depth under `VFR_FACE`. All boundary applications clamp in volume space —
-a cell cannot be driven negative, and a stage boundary cannot overshoot
-its equilibrium volume within one substep — and the flux booked to the
-§15.8 ledger is re-derived from the volume actually applied, so booking
-and application agree exactly. Boundary edges evaluate at tier-0 cadence,
-sequentially.
+depth under `VFR_FACE`. All boundary applications clamp in volume
+space — a cell cannot be driven negative, and one substep of a stage
+boundary moves its cell at most **to** the prescribed stage, from
+either side — and the flux booked to the §15.8 ledger is re-derived
+from the volume actually applied, so booking and application agree
+exactly. The prognostic discharge is likewise re-derived from the
+applied flux: a clamped exchange that kept its unclamped momentum
+would wind up and drive the basin as an oscillator instead of settling
+it. A cell fed through a boundary edge also carries that edge's
+discharge in its §15.4.3 velocity reconstruction, in the same
+outward-flux convention — reconstructed from interior faces alone, a
+boundary-fed cell's θ-blend drags every interior exchange by the
+reconstruction's missing share. Boundary edges evaluate at tier-0
+cadence, sequentially.
 
 > **CORRESPONDENCE:** the predecessor's earlier diffusive stage-boundary
 > law left every boundary-driven steady case one velocity head above the

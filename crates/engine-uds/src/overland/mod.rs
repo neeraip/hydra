@@ -5,6 +5,9 @@
 //! these in later phases; until they land, §1.8 governs what a model
 //! carrying a mesh receives.
 
+pub mod closure;
+pub mod marcher;
+
 /// The authored overland surface (§15.2, §14.15), in SI after import.
 ///
 /// Everything here is what the file said, converted and index-resolved,
