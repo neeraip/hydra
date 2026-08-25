@@ -57,6 +57,10 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     let cv = UnitConverter::new(options.flow_units, options.link_offsets);
 
+    // §14.15: the overland mesh, when the model authors one. The SI
+    // header is a raw-text prescan — comments never reach the tokens.
+    let overland_units_si = super::overland::units_header_si(input);
+
     // Data objects (§2.9), before the graph that references them.
     let empty = std::collections::HashMap::new();
     for (sec, lines) in &s.sections {
@@ -360,6 +364,14 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     }
 
     net.options = options;
+    net.overland = super::overland::parse_overland(
+        &s.sections,
+        overland_units_si,
+        cv.len,
+        cv.flow,
+        &mut diagnostics,
+    );
+
     (net, diagnostics)
 }
 

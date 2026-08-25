@@ -162,6 +162,19 @@ pub enum DiagnosticKind {
     },
     /// A line with too few items for its section's grammar.
     MissingItems,
+    /// A retired §14.15 overland option: accepted for compatibility,
+    /// governing nothing.
+    RetiredOverlandOption {
+        /// The key as written, upper-cased.
+        key: String,
+    },
+    /// An overland option this vocabulary does not carry (§14.15): the
+    /// predecessor's option set churns, so unknown keys warn and are
+    /// ignored rather than refusing the file.
+    UnknownOverlandOption {
+        /// The key as written, upper-cased.
+        key: String,
+    },
     /// A value token failing its field's grammar or range.
     BadValue {
         /// The offending token.
@@ -203,6 +216,8 @@ impl DiagnosticKind {
                 | DiagnosticKind::CappedValue { .. }
                 | DiagnosticKind::OverriddenDefinition { .. }
                 | DiagnosticKind::ExtraTokensIgnored { .. }
+                | DiagnosticKind::RetiredOverlandOption { .. }
+                | DiagnosticKind::UnknownOverlandOption { .. }
         )
     }
 
@@ -273,6 +288,12 @@ impl std::fmt::Display for DiagnosticKind {
                 write!(f, "{what} {token:?} capped to its accepted range")
             }
             DiagnosticKind::MissingItems => write!(f, "too few items for this section's grammar"),
+            DiagnosticKind::RetiredOverlandOption { key } => {
+                write!(f, "retired 2D option {key} is accepted and governs nothing")
+            }
+            DiagnosticKind::UnknownOverlandOption { key } => {
+                write!(f, "unknown 2D option {key} ignored")
+            }
             DiagnosticKind::BadValue { token } => write!(f, "bad value {token:?}"),
             DiagnosticKind::OverriddenDefinition { what, id } => {
                 write!(f, "later {what} line for {id:?} replaces the earlier one")

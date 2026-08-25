@@ -216,7 +216,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
             emit_error("input/unsupported", &s.to_string(), None, None);
             return EXIT_INPUT;
         }
-        Err(OpenError::Controls(msg)) | Err(OpenError::Transport(msg)) => {
+        Err(OpenError::Controls(msg))
+        | Err(OpenError::Transport(msg))
+        | Err(OpenError::Overland(msg)) => {
             emit_error("input/unsupported", &msg, None, None);
             return EXIT_INPUT;
         }

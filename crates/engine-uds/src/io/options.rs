@@ -193,6 +193,9 @@ pub struct AnalysisOptions {
     pub ignore_rdii: bool,
     /// Ignore flow routing (also set by `FLOW_ROUTING NONE`).
     pub ignore_routing: bool,
+    /// Keep the overland mesh parsed and preserved but run the model
+    /// one-dimensional (§14.15 `IGNORE_2D`).
+    pub ignore_overland: bool,
     /// Ignore constituent transport.
     pub ignore_quality: bool,
     /// Wet hydrology step (s); default 300.
@@ -265,6 +268,7 @@ impl Default for AnalysisOptions {
             ignore_groundwater: false,
             ignore_rdii: false,
             ignore_routing: false,
+            ignore_overland: false,
             ignore_quality: false,
             wet_step: 300.0,
             dry_step: 3600.0,
@@ -352,6 +356,7 @@ const OPTION_WORDS: &[&str] = &[
     "MINIMUM_STEP",
     "THREADS",
     "SURCHARGE_METHOD",
+    "IGNORE_2D",
 ];
 
 /// Parse an `[OPTIONS]` section's lines into resolved [`AnalysisOptions`],
@@ -510,6 +515,7 @@ pub fn parse_options(
             }
             "IGNORE_RDII" => set_bool(&mut o.ignore_rdii, keyword, value, l, diagnostics),
             "IGNORE_ROUTING" => set_bool(&mut o.ignore_routing, keyword, value, l, diagnostics),
+            "IGNORE_2D" => set_bool(&mut o.ignore_overland, keyword, value, l, diagnostics),
             "IGNORE_QUALITY" => set_bool(&mut o.ignore_quality, keyword, value, l, diagnostics),
             "LINK_OFFSETS" => {
                 if let Some(v) = enum_value(&["DEPTH", "ELEVATION"], keyword, value, l, diagnostics)

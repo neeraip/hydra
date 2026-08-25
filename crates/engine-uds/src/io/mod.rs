@@ -17,6 +17,7 @@ pub mod objects;
 pub mod options;
 pub mod out_reader;
 pub mod out_writer;
+pub mod overland;
 pub mod quality;
 pub mod rain;
 pub mod rpt_writer;
@@ -43,6 +44,15 @@ use hydra_common::Recognition;
 /// mirror image of the water-distribution engine's pair (its model spec
 /// §4.1.3), so any INP file both engines see gets complementary verdicts.
 const SWMM_ONLY_SECTIONS: &[&str] = &[
+    "2D_BOUNDARY_CONDITIONS",
+    "2D_EDGE_CONVEYANCE",
+    "2D_INITIAL_VELOCITY",
+    "2D_MESH_FILE",
+    "2D_OPTIONS",
+    "2D_TRIANGLES",
+    "2D_TRIANGLE_NODE_MAP",
+    "2D_VERTEX_NODE_MAP",
+    "2D_VERTICES",
     "ADJUSTMENTS",
     "AQUIFERS",
     "CONDUITS",

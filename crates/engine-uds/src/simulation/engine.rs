@@ -51,6 +51,10 @@ pub enum OpenError {
     Controls(String),
     /// A transport configuration this stage does not evaluate yet (§8).
     Transport(String),
+    /// The model authors an overland mesh (§15), which is specified and
+    /// not yet served (§1.8). `IGNORE_2D YES` runs the model
+    /// one-dimensional in the meantime.
+    Overland(String),
 }
 
 /// One readable line per refusal, so applications can show the error
@@ -93,7 +97,9 @@ impl std::fmt::Display for OpenError {
             }
             OpenError::Routing(r) => write!(f, "{r}"),
             OpenError::Surface(s) => write!(f, "{s}"),
-            OpenError::Controls(msg) | OpenError::Transport(msg) => f.write_str(msg),
+            OpenError::Controls(msg) | OpenError::Transport(msg) | OpenError::Overland(msg) => {
+                f.write_str(msg)
+            }
         }
     }
 }
@@ -532,6 +538,30 @@ impl Simulation {
         let (mut net, diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
+        }
+        // §1.8: the overland sections are specified (§15) and not yet
+        // served. A mesh model refuses with the campaign named rather
+        // than silently running its one-dimensional half; `IGNORE_2D
+        // YES` is the author's own request for exactly that half, so it
+        // proceeds, dropping the mesh from the run.
+        if let Some(mesh) = &net.overland {
+            if net.options.ignore_overland {
+                // Validated even when ignored: an authoring defect in a
+                // preserved mesh should be heard now, not on the day the
+                // author flips the option off.
+                if let Err(errors) = crate::overland::Topology::build(mesh) {
+                    return Err(OpenError::Overland(format!(
+                        "the ignored mesh is defective: {}",
+                        errors.first().map(|e| e.to_string()).unwrap_or_default()
+                    )));
+                }
+                net.overland = None;
+            } else {
+                return Err(OpenError::Overland(
+                    "this model authors a two-dimensional mesh; overland flow                      (§15) is specified and not yet served. Set IGNORE_2D YES                      to run the one-dimensional model"
+                        .to_string(),
+                ));
+            }
         }
         // Before validation, not after: §3.1 says a realised record is
         // treated exactly as if its series had been written in the model,

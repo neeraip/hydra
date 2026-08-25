@@ -6547,3 +6547,40 @@ fn the_highest_continuity_errors_list_skips_terminal_and_quiet_vertices() {
     }
     assert!(listed.len() <= 5, "more than five listed: {listed:?}");
 }
+
+/// §1.8: a mesh model refuses with the campaign named; `IGNORE_2D YES`
+/// runs its one-dimensional half; and an ignored mesh is still
+/// validated, so an authoring defect is heard now rather than on the
+/// day the option flips off.
+#[test]
+fn a_mesh_model_refuses_until_overland_is_served() {
+    let base = "[OPTIONS]\nFLOW_UNITS CMS\nROUTING_STEP 5\n\
+        END_TIME 00:10:00\n{IGNORE}\n\
+        [JUNCTIONS]\nJ1 10 4 0 0 0\n[OUTFALLS]\nO1 9 FREE NO\n\
+        [CONDUITS]\nC1 J1 O1 100 0.013 0 0 0 0\n\
+        [XSECTIONS]\nC1 CIRCULAR 1 0 0 0 1\n\
+        [2D_VERTICES]\n0 0 10\n1 0 10\n0 1 10\n\
+        [2D_TRIANGLES]\n0 1 2 {N}\n";
+
+    let refused = base.replace("{IGNORE}", "").replace("{N}", "0.02");
+    let Err(err) = Simulation::open(&refused) else {
+        panic!("mesh models refuse");
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("IGNORE_2D"), "{msg}");
+
+    let ignored = base
+        .replace("{IGNORE}", "IGNORE_2D YES")
+        .replace("{N}", "0.02");
+    let (mut sim, diags, _) = Simulation::open(&ignored).expect("1D half runs");
+    assert!(diags.iter().all(|d| !d.kind.is_error()));
+    sim.run();
+
+    let defective = base
+        .replace("{IGNORE}", "IGNORE_2D YES")
+        .replace("{N}", "0");
+    let Err(err) = Simulation::open(&defective) else {
+        panic!("defects are heard even ignored");
+    };
+    assert!(err.to_string().contains("Manning"), "{err}");
+}
