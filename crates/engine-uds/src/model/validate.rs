@@ -20,7 +20,7 @@ use crate::model::{
     TimeSeriesSource, TreatmentKind, VertexKind, WeirForm, XsectReferent, XsectShape,
 };
 
-use super::options::LinkOffsets;
+use crate::model::options::LinkOffsets;
 
 /// The predecessor's minimum elevation change for a channel (0.001 ft).
 const MIN_DELTA_Z: f64 = 0.001 * 0.3048;

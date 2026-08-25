@@ -3,7 +3,7 @@
 //! simulation is meaningful. All rates are m/s and depths m; the applied
 //! rate is capacity or availability including ponded water.
 
-use crate::io::options::InfiltrationModel;
+use crate::model::options::InfiltrationModel;
 use crate::model::Infiltration;
 
 // `just mutants crates/engine-uds/src/hydrology/infiltration.rs` reports a

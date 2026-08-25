@@ -16,7 +16,7 @@
 use super::section::Section;
 use super::{tables, GRAVITY};
 use crate::hydrology::infiltration::{InfilFactors, InfilState};
-use crate::io::options::NormalFlowCriteria;
+use crate::model::options::NormalFlowCriteria;
 use crate::model::{
     CurveKind, LinkKind, Network, Offset, OrificeOrientation, OutfallStage, OutletHeadBasis,
     OutletRating, StorageGeometry, VertexKind, WeirForm, XsectShape,
@@ -1166,7 +1166,7 @@ impl Router {
                                 conductivity: sp.conductivity,
                                 initial_deficit: sp.initial_deficit,
                             },
-                            crate::io::options::InfiltrationModel::ModifiedGreenAmpt,
+                            crate::model::options::InfiltrationModel::ModifiedGreenAmpt,
                         ));
                     }
                 }
@@ -1202,7 +1202,7 @@ impl Router {
                         continue;
                     }
 
-                    let built = crate::io::validate::build_for_link(net, li, len)
+                    let built = crate::model::validate::build_for_link(net, li, len)
                         .ok_or(RouterRefusal::Geometry(format!(
                             "{}: no cross-section",
                             link.id
@@ -1246,11 +1246,11 @@ impl Router {
                         }
                         let d = sec.y_full();
                         match net.options.force_main {
-                            crate::io::options::ForceMainEquation::HazenWilliams => {
+                            crate::model::options::ForceMainEquation::HazenWilliams => {
                                 n = 1.119 / coeff * (d / slope).powf(0.04);
                                 friction = Friction::HazenWilliams { c: coeff };
                             }
-                            crate::io::options::ForceMainEquation::DarcyWeisbach => {
+                            crate::model::options::ForceMainEquation::DarcyWeisbach => {
                                 let e = coeff
                                     * if net.options.flow_units.is_us() {
                                         0.0254
@@ -4965,7 +4965,7 @@ fn build_struct_section(
     len: f64,
     id: &str,
 ) -> Result<Section, RouterRefusal> {
-    match crate::io::validate::build_for_link(net, li, len) {
+    match crate::model::validate::build_for_link(net, li, len) {
         Some(Ok(b)) => Ok(b.section),
         Some(Err(e)) => Err(RouterRefusal::Geometry(format!("{id}: {e:?}"))),
         None => Err(RouterRefusal::Geometry(format!("{id}: no cross-section"))),
@@ -5034,7 +5034,7 @@ mod step_floor_tests {
 mod tests {
     use super::*;
     use crate::io::objects::parse_network;
-    use crate::io::validate::validate;
+    use crate::model::validate::validate;
 
     /// A model with no drainage network routes nothing, and says so by
     /// finishing.

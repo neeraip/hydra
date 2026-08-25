@@ -27,7 +27,10 @@ pub mod streets;
 pub mod survey;
 pub mod tables;
 pub mod transects;
-pub mod validate;
+// §14.7 validation is model semantics, hosted in the model module
+// (format-blind extraction, phase 2); this alias keeps the historical
+// path alive until the interop lift re-points every consumer.
+pub use crate::model::validate;
 
 use hydra_common::Recognition;
 

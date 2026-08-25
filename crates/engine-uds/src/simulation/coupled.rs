@@ -412,7 +412,7 @@ impl CoupledSurface {
 mod tests {
     use super::*;
     use crate::io::objects::parse_network;
-    use crate::io::validate::validate;
+    use crate::model::validate::validate;
     use crate::overland::{CouplingRow, MeshCell, MeshVertex, OverlandMesh, Topology};
 
     const NET: &str = "\

@@ -7,7 +7,11 @@
 //! the four parameters are lengths is a per-shape question §5's geometry
 //! evaluation owns; the field name says so.
 
-use crate::io::options::{AnalysisOptions, Date};
+/// §14.7 validation and mutation: model semantics, so it lives with
+/// the model (format-blind extraction, phase 2).
+pub mod options;
+pub mod validate;
+use crate::model::options::{AnalysisOptions, Date};
 
 /// A parsed, reference-resolved drainage network.
 ///
@@ -1541,7 +1545,7 @@ pub enum TemperatureSource {
         /// Path as written.
         name: String,
         /// Start reading here rather than at the record's start.
-        start: Option<crate::io::options::Date>,
+        start: Option<crate::model::options::Date>,
         /// The record's temperature unit.
         units: FileTempUnits,
     },
@@ -1713,11 +1717,11 @@ pub enum ReportSelection {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventWindow {
     /// Start date.
-    pub start_date: crate::io::options::Date,
+    pub start_date: crate::model::options::Date,
     /// Start clock time (s past midnight).
     pub start_time: f64,
     /// End date.
-    pub end_date: crate::io::options::Date,
+    pub end_date: crate::model::options::Date,
     /// End clock time (s past midnight).
     pub end_time: f64,
 }
@@ -1729,7 +1733,7 @@ pub struct EventWindow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DailyClimate {
     /// Calendar date.
-    pub date: crate::io::options::Date,
+    pub date: crate::model::options::Date,
     /// Daily maximum temperature.
     pub tmax: Option<f64>,
     /// Daily minimum temperature.

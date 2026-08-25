@@ -20,7 +20,7 @@ use crate::hydrology::runoff::{Surface, SurfaceRefusal};
 use crate::hydrology::snow::SnowClimate;
 use crate::io::objects::parse_network;
 use crate::io::survey::Diagnostic;
-use crate::io::validate::{validate, ValidationDiagnostic};
+use crate::model::validate::{validate, ValidationDiagnostic};
 use crate::model::{
     InflowKind, Network, OutfallStage, PatternKind, SeriesTime, TimeSeriesSource, VertexKind,
 };
@@ -1494,7 +1494,7 @@ impl Simulation {
                 let day = (self.start_epoch + self.hydro_t + dt) / 86_400.0;
                 let doy = {
                     let d = civil_from_days(day as i64);
-                    let jan1 = crate::io::options::Date {
+                    let jan1 = crate::model::options::Date {
                         year: d.year,
                         month: 1,
                         day: 1,
@@ -1651,7 +1651,7 @@ impl Simulation {
         // Day of year for the seasonal sweep.
         let epoch_days = ((self.start_epoch + t) / 86_400.0).floor() as i64;
         let date = civil_from_days(epoch_days);
-        let jan1 = crate::io::options::Date {
+        let jan1 = crate::model::options::Date {
             year: date.year,
             month: 1,
             day: 1,
@@ -1716,7 +1716,7 @@ impl Simulation {
         };
         st.prev_tmax = Some(hi);
         // Min at sunrise, max three hours before sunset (§3.1).
-        let jan1 = crate::io::options::Date {
+        let jan1 = crate::model::options::Date {
             year: date.year,
             month: 1,
             day: 1,
@@ -4846,7 +4846,7 @@ fn cacheable_record(
 /// back as 899.9999999 s — so the second is rounded to the nearest
 /// millisecond, far above the encoding's noise and far below any interval
 /// a record uses.
-fn civil_from_decimal_day(day: f64) -> (crate::io::options::Date, f64) {
+fn civil_from_decimal_day(day: f64) -> (crate::model::options::Date, f64) {
     let since_epoch = day - SWMM_EPOCH_DAYS_ENGINE;
     let days = since_epoch.floor();
     let seconds = ((since_epoch - days) * 86_400.0 * 1000.0).round() / 1000.0;
@@ -4887,8 +4887,8 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
 
 /// The internal-unit scale (metres per foot-based slot) for each §14.8
 /// infiltration state slot under the session's model.
-fn infil_slot_ft(model: crate::io::options::InfiltrationModel, slot: usize) -> f64 {
-    use crate::io::options::InfiltrationModel as M;
+fn infil_slot_ft(model: crate::model::options::InfiltrationModel, slot: usize) -> f64 {
+    use crate::model::options::InfiltrationModel as M;
     const FT: f64 = 0.3048;
     match model {
         // tp (s), Fe (ft), rest unused.

@@ -316,12 +316,12 @@ impl NetworkQuality {
             hrt: vec![0.0; nv],
             cv_len: if us { 0.3048 } else { 1.0 },
             cv_flow: match net.options.flow_units {
-                crate::io::options::FlowUnits::Cfs => 0.028_316_846_592,
-                crate::io::options::FlowUnits::Gpm => 6.309_019_64e-5,
-                crate::io::options::FlowUnits::Mgd => 0.043_812_636_4,
-                crate::io::options::FlowUnits::Cms => 1.0,
-                crate::io::options::FlowUnits::Lps => 1.0e-3,
-                crate::io::options::FlowUnits::Mld => 1.0 / 86.4,
+                crate::model::options::FlowUnits::Cfs => 0.028_316_846_592,
+                crate::model::options::FlowUnits::Gpm => 6.309_019_64e-5,
+                crate::model::options::FlowUnits::Mgd => 0.043_812_636_4,
+                crate::model::options::FlowUnits::Cms => 1.0,
+                crate::model::options::FlowUnits::Lps => 1.0e-3,
+                crate::model::options::FlowUnits::Mld => 1.0 / 86.4,
             },
         })
     }
