@@ -102,7 +102,7 @@ pub fn probe_report_blocks(
             Ok(hydra::report_catalog()
                 .iter()
                 .map(|block| {
-                    let (status, reason) = availability(hydra::produce_report_block(
+                    let (status, reason) = availability(produce_wds_block_from_file(
                         block.id, &out_path, &network, None,
                     ));
                     BlockAvailabilityDto {
@@ -412,7 +412,7 @@ pub fn get_analysis_blocks(
                     let options = options_by_id.get(block.id);
                     analysis_block_dto(
                         block,
-                        hydra::produce_report_block(block.id, &out_path, &network, options),
+                        produce_wds_block_from_file(block.id, &out_path, &network, options),
                         &settings,
                     )
                 })
@@ -690,7 +690,7 @@ fn render_for_target(
             };
             let document = assemble(template, hydra::report_catalog(), context, |id, options| {
                 let merged = report_block_options_for(criteria_options.get(id), options);
-                hydra::produce_report_block(id, &out_path, &network, merged.as_ref())
+                produce_wds_block_from_file(id, &out_path, &network, merged.as_ref())
             });
             let family = display_family_for(
                 unit_system,
@@ -718,6 +718,22 @@ fn render_for_target(
         other => return Err(format!("unknown report format: {other:?}")),
     })
 }
+/// The wds twin of [`produce_uds_block_from_file`], over the EPANET
+/// dialect's results reader.
+fn produce_wds_block_from_file(
+    id: &str,
+    out_path: &std::path::Path,
+    network: &hydra::Network,
+    options: Option<&serde_json::Value>,
+) -> Result<hydra::common::Fragment, hydra::common::BlockError> {
+    let src = hydra::io::out_reader::OutFileSource::open(out_path).map_err(|e| {
+        hydra::common::BlockError::Failed {
+            message: e.to_string(),
+        }
+    })?;
+    hydra::produce_report_block(id, &src, network, options)
+}
+
 /// Produce one uds report block from a persisted results file: the
 /// engine's blocks read data sources, and the file is this dialect's
 /// (format-blind extraction). Opened per call, exactly as the block
