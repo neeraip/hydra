@@ -17,7 +17,7 @@ modelling deviations.
 
 | Workload | Hydra / SWMM runtime |
 |---|---|
-| Bellinge (published, 1,020 nodes), 48 h including its storm | 1.04 |
+| Bellinge (published, 1,020 nodes), 48 h including its storm | **1.00** |
 | Bellinge, the storm hours alone (03:00 to 12:00) | **0.91** |
 | Bellinge, a dry-weather day (12 h) | 1.24 |
 | SWMM test corpus, models running 0.2 to 1 s | 1.08 |
@@ -49,12 +49,12 @@ page carry over to it unchanged.
 
 | Workload | Hydra | SWMM 6, 1 thread | SWMM 6, 4 threads |
 |---|---|---|---|
-| Bellinge, 48 h | 52 s serial, **29 s at width 6** | 55 s | 26 s |
+| Bellinge, 48 h | 50 s serial, **26 s at width 6** | 55 s | 26 s |
 
 Per core the engines are at parity: Hydra's serial run edges SWMM 6's
 single thread. Threaded, both engines run the whole routing iteration
-as one parallel region and land within a few seconds of each other,
-with Hydra using fewer processor seconds to get there. Both engines
+as one parallel region and land at the same mark, with Hydra using
+fewer processor seconds to get there. Both engines
 hold results bit-identical across thread counts; Hydra's serial
 default additionally means the browser build and the desktop app
 compute the same bytes.
@@ -65,8 +65,8 @@ statistics pass across a persistent worker team, with the width taken
 from the model's own `THREADS` option. Results are byte-identical at
 every width: the specification fixes every accumulation order, and a
 test holds serial and threaded runs, results and report both, to the
-same bytes. So measured, same method: Bellinge at width 6 runs 29 s,
-0.58 of SWMM 5's serial time on the same window. The official
+same bytes. So measured, same method: Bellinge at width 6 runs 26 s,
+0.52 of SWMM 5's serial time on the same window. The official
 binaries enable the feature: a model that never asks for width runs
 the serial arm, bit for bit, at a compiled-in cost of about 2%, and a
 model whose `THREADS` asks for width takes the whole gain.

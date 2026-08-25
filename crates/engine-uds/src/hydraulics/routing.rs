@@ -642,6 +642,15 @@ pub struct RoutingReport {
 }
 
 /// The §6 router over a validated network.
+/// Where a model link lives in the router: its channel index, its
+/// structure index, or nowhere (a link the router does not carry).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum LinkSlot {
+    Chan(u32),
+    Struct(u32),
+    None,
+}
+
 pub struct Router {
     chans: Vec<Chan>,
     verts: Vec<Vert>,
@@ -734,6 +743,12 @@ pub struct Router {
     /// Per-object statistics begin here (s); numerical statistics span
     /// the whole run (§11.2).
     pub stats_start: f64,
+    /// Model link index -> router element, built once at `build`. Every
+    /// by-link accessor resolves through this: the linear searches it
+    /// replaced cost O(links x channels) per reporting snapshot — about
+    /// two thirds of all snapshot time on a thousand-link network — and
+    /// the same scan again for every §9 rule evaluation.
+    link_map: Vec<LinkSlot>,
 }
 
 /// Per-vertex §11.2 statistics, accumulated on accepted steps after
@@ -1448,6 +1463,16 @@ impl Router {
         // ~a thousand channels per worker to break even and still lost
         // on a 1,044-channel network), but a worker with only a few
         // dozen channels is still contention, not help.
+        let link_map = {
+            let mut m = vec![LinkSlot::None; net.links.len()];
+            for (ci, c) in chans.iter().enumerate() {
+                m[c.link] = LinkSlot::Chan(ci as u32);
+            }
+            for (si, st) in structs.iter().enumerate() {
+                m[st.link] = LinkSlot::Struct(si as u32);
+            }
+            m
+        };
         #[cfg(feature = "threads")]
         let pool = {
             const CHANNELS_PER_WORKER: usize = 128;
@@ -1523,6 +1548,7 @@ impl Router {
             ],
             worst_counts: vec![0; nv],
             stats_start: 0.0,
+            link_map,
             evap_rate: 0.0,
             report: RoutingReport::default(),
         };
@@ -1683,6 +1709,22 @@ impl Router {
         self.t
     }
 
+    /// Model link `li`'s channel index, through the O(1) map.
+    fn chan_of(&self, li: usize) -> Option<usize> {
+        match self.link_map.get(li)? {
+            LinkSlot::Chan(ci) => Some(*ci as usize),
+            _ => None,
+        }
+    }
+
+    /// Model link `li`'s structure index, through the O(1) map.
+    fn struct_of(&self, li: usize) -> Option<usize> {
+        match self.link_map.get(li)? {
+            LinkSlot::Struct(si) => Some(*si as usize),
+            _ => None,
+        }
+    }
+
     /// Set a fixed-stage outfall's stage elevation (m) — the session's
     /// handle for tidal and series boundaries (§10.1).
     pub fn set_outfall_stage(&mut self, vi: usize, elev: f64) {
@@ -1694,7 +1736,7 @@ impl Router {
     /// Set a channel's entry, exit and average loss coefficients (§12.4).
     /// `None` for a model link this router does not carry as a channel.
     pub fn set_losses(&mut self, li: usize, inlet: f64, outlet: f64, average: f64) -> Option<()> {
-        let ci = self.chans.iter().position(|c| c.link == li)?;
+        let ci = self.chan_of(li)?;
         self.chans[ci].loss_inlet = inlet;
         self.chans[ci].loss_outlet = outlet;
         self.chans[ci].loss_avg = average;
@@ -1703,7 +1745,7 @@ impl Router {
 
     /// A channel's entry, exit and average loss coefficients.
     pub fn losses(&self, li: usize) -> Option<(f64, f64, f64)> {
-        let ci = self.chans.iter().position(|c| c.link == li)?;
+        let ci = self.chan_of(li)?;
         let c = &self.chans[ci];
         Some((c.loss_inlet, c.loss_outlet, c.loss_avg))
     }
@@ -1712,14 +1754,14 @@ impl Router {
     /// model (§12.4). `None` for a link this router does not carry as a
     /// channel.
     pub fn set_flow_limit(&mut self, li: usize, q_limit: f64) -> Option<()> {
-        let ci = self.chans.iter().position(|c| c.link == li)?;
+        let ci = self.chan_of(li)?;
         self.chans[ci].q_limit = q_limit;
         Some(())
     }
 
     /// A channel's flow cap (m³/s); zero is no cap.
     pub fn flow_limit(&self, li: usize) -> Option<f64> {
-        let ci = self.chans.iter().position(|c| c.link == li)?;
+        let ci = self.chan_of(li)?;
         Some(self.chans[ci].q_limit)
     }
 
@@ -1863,7 +1905,7 @@ impl Router {
     /// Water depth in model link `li` (m): a channel's mid-depth, a
     /// structure's head above its crest, for the §9.1 premises.
     pub fn link_depth(&self, li: usize) -> Option<f64> {
-        if let Some(c) = self.chans.iter().find(|c| c.link == li) {
+        if let Some(c) = self.chan_of(li).map(|ci| &self.chans[ci]) {
             // Each end caps at the section's full depth before averaging
             // — a submerged outlet contributes a full pipe, not the whole
             // tailwater column (the predecessor's convention).
@@ -1872,10 +1914,8 @@ impl Router {
             let y2 = (self.y[c.to] - c.off2).clamp(0.0, y_full);
             return Some(0.5 * (y1 + y2));
         }
-        self.structs
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s.link == li)
+        self.struct_of(li)
+            .map(|si| (si, &self.structs[si]))
             .map(|(si, st)| {
                 // The predecessor's per-kind depth conventions: a pump
                 // reports zero; an orifice its wetted opening (capped by
@@ -1896,10 +1936,8 @@ impl Router {
     /// Flow velocity in channel `li` (m/s); `None` for structures, whose
     /// premise then reads inapplicable (§9.1).
     pub fn link_velocity(&self, li: usize) -> Option<f64> {
-        self.chans
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.link == li)
+        self.chan_of(li)
+            .map(|ci| (ci, &self.chans[ci]))
             .map(|(ci, c)| {
                 let a = self.a_mid[ci].max(DRY);
                 (self.q[ci] / c.barrels / a).clamp(-V_MAX, V_MAX)
@@ -1909,7 +1947,7 @@ impl Router {
     /// Channel-only §9.1 observables: Manning full-section flow, full
     /// depth, length, and slope.
     pub fn chan_full_attrs(&self, li: usize) -> Option<(f64, f64, f64, f64)> {
-        self.chans.iter().find(|c| c.link == li).map(|c| {
+        self.chan_of(li).map(|ci| &self.chans[ci]).map(|c| {
             let y_full = c.geom.sec.y_full();
             let a = c.geom.sec.area(y_full);
             let r = c.geom.sec.hyd_radius(y_full);
@@ -1945,7 +1983,7 @@ impl Router {
     /// open (1) / closed (0). Returns `Some(changed)`, `None` for a link
     /// the router does not carry.
     pub fn set_setting(&mut self, li: usize, value: f64) -> Option<bool> {
-        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+        if let Some(ci) = self.chan_of(li) {
             let open = value > 0.0;
             let changed = self.chan_open[ci] != open;
             if changed {
@@ -1954,7 +1992,7 @@ impl Router {
             }
             return Some(changed);
         }
-        if let Some(si) = self.structs.iter().position(|s| s.link == li) {
+        if let Some(si) = self.struct_of(li) {
             let changed = self.sett[si] != value;
             if changed {
                 if (self.sett[si] > 0.0) != (value > 0.0) {
@@ -1969,51 +2007,42 @@ impl Router {
 
     /// Model link `li`'s current §9 setting.
     pub fn setting(&self, li: usize) -> Option<f64> {
-        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+        if let Some(ci) = self.chan_of(li) {
             return Some(if self.chan_open[ci] { 1.0 } else { 0.0 });
         }
-        self.structs
-            .iter()
-            .position(|s| s.link == li)
-            .map(|si| self.sett[si])
+        self.struct_of(li).map(|si| self.sett[si])
     }
 
     /// Time model link `li` has spent in its current open/closed status
     /// (s), for the TIMEOPEN/TIMECLOSED premises (§9.1). Pump latches
     /// count as status flips too.
     pub fn time_in_status(&self, li: usize) -> Option<f64> {
-        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+        if let Some(ci) = self.chan_of(li) {
             return Some(self.t - self.chan_flip_t[ci]);
         }
-        self.structs
-            .iter()
-            .position(|s| s.link == li)
-            .map(|si| self.t - self.struct_flip_t[si])
+        self.struct_of(li).map(|si| self.t - self.struct_flip_t[si])
     }
 
     /// Whether model link `li` is currently open: a positive setting,
     /// which for a pump is also its §7.1 on/off state.
     pub fn is_open(&self, li: usize) -> Option<bool> {
-        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+        if let Some(ci) = self.chan_of(li) {
             return Some(self.chan_open[ci]);
         }
-        self.structs
-            .iter()
-            .position(|s| s.link == li)
-            .map(|si| self.sett[si] > 0.0)
+        self.struct_of(li).map(|si| self.sett[si] > 0.0)
     }
 
     /// Flow in the element routed for model link `li` (m³/s), in the
     /// user's orientation.
     pub fn flow(&self, li: usize, net: &Network) -> f64 {
-        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+        if let Some(ci) = self.chan_of(li) {
             let q = self.q[ci];
             return match &net.links[li].kind {
                 LinkKind::Channel { reversed: true, .. } => -q,
                 _ => q,
             };
         }
-        if let Some(si) = self.structs.iter().position(|s| s.link == li) {
+        if let Some(si) = self.struct_of(li) {
             return self.sq[si];
         }
         0.0
@@ -6360,6 +6389,7 @@ impl Router {
             link_stats,
             worst_counts,
             stats_start,
+            link_map: _,
         } = self;
         put_f(w, *t)?;
         for vs in [y, q, sq, sett, sett_cur, struct_flip_t, chan_flip_t] {
