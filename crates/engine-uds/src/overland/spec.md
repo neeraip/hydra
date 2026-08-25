@@ -548,7 +548,9 @@ implemented reference solutions: lake at rest over immersed and emerged
 bumps (exact to round-off — the well-balancing property, which the
 deadband and face-gating exist to protect); subcritical flow over a bump
 (≲ 1%, the residual being the omitted velocity-head dip); MacDonald
-subcritical profile (≲ 2%). A frictionless case posed between a
+subcritical profile (≈ 2%, likewise the omitted velocity-head term,
+integrated along the channel; the predecessor's marcher measures 2.0%
+on the same case). A frictionless case posed between a
 specified-flow inlet and a specified-stage outlet holds an undamped
 standing wave — both laws reflect, and the scheme adds no dissipation
 of its own — so steady analytic cases are graded on the **time-mean**

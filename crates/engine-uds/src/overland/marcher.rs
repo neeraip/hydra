@@ -24,6 +24,12 @@ const ETA_DEADBAND: f64 = 1e-12;
 /// §15.4.2: the exporting cell's per-face volume share β.
 const BETA: f64 = 0.8;
 
+/// §15.4.5: elements per worker below which a phase runs serial — a
+/// dispatch costs more than a small map saves, and byte-identity makes
+/// the two paths interchangeable.
+#[cfg(feature = "threads")]
+const PAR_GRAIN: usize = 256;
+
 /// One interior face: a single prognostic discharge shared by two cells,
 /// oriented from the lower-indexed cell to the higher.
 #[derive(Debug, Clone)]
@@ -154,6 +160,13 @@ pub struct Marcher {
     peak_active: usize,
     /// Initial storage (m³), the §15.8 ledger's opening term.
     storage0: f64,
+    /// Per-cell ledger scratch for the ∥ cell phase: (rain, coupling,
+    /// evaporation take), reduced serially in index order so the sums
+    /// are byte-identical at every width (§15.4.5).
+    led: Vec<[f64; 3]>,
+    /// §15.4.5: the worker team, when the model asked for width.
+    #[cfg(feature = "threads")]
+    team: Option<crate::hydraulics::team::Team>,
 
     // ── Sources, set by the caller before an advance (m/s) ─────────
     pub rain: Vec<f64>,
@@ -238,6 +251,24 @@ pub struct CouplingPoint {
     /// Unauthored areas are eligible for `COUPLING_AREA AUTO` (§15.6).
     pub area_authored: bool,
 }
+
+/// The §15.4.3 cell phase's taken-out state, as raw pointers.
+struct CellPtrs {
+    vol: *mut f64,
+    depth: *mut f64,
+    eta: *mut f64,
+    qcx: *mut f64,
+    qcy: *mut f64,
+    fl: *mut f64,
+    fr: *mut f64,
+    led: *mut [f64; 3],
+}
+
+// SAFETY: the cell phase's writes are per-cell disjoint (see
+// [`Marcher::fire_cell_at`]), which is what makes sharing the pointers
+// across the team sound.
+#[cfg(feature = "threads")]
+unsafe impl Sync for CellPtrs {}
 
 impl Marcher {
     /// Build from a validated mesh and its topology. Initial volumes come
@@ -499,6 +530,9 @@ impl Marcher {
             advanced: 0.0,
             peak_active: 0,
             storage0: 0.0,
+            led: vec![[0.0; 3]; nc],
+            #[cfg(feature = "threads")]
+            team: None,
             rain: vec![0.0; nc],
             evap: vec![0.0; nc],
             coupling: vec![0.0; nc],
@@ -534,14 +568,21 @@ impl Marcher {
         m
     }
 
-    /// Re-derive a cell's surface from its volume (§15.3).
-    fn reclose(&mut self, ci: usize) {
-        let h = self.vol[ci].max(0.0) / self.area[ci];
-        self.depth[ci] = h;
-        self.eta[ci] = match self.closure {
+    /// A cell's (depth, surface) closure for a volume (§15.3), pure.
+    fn close_of(&self, ci: usize, vol: f64) -> (f64, f64) {
+        let h = vol.max(0.0) / self.area[ci];
+        let eta = match self.closure {
             CellClosure::Flat => flat_eta(&self.bed[ci], h),
             CellClosure::Vfr => vfr_eta(&self.bed[ci], h, self.vfr_eps),
         };
+        (h, eta)
+    }
+
+    /// Re-derive a cell's surface from its volume (§15.3).
+    fn reclose(&mut self, ci: usize) {
+        let (h, eta) = self.close_of(ci, self.vol[ci]);
+        self.depth[ci] = h;
+        self.eta[ci] = eta;
     }
 
     /// §15.4.3 Perot reconstruction over each cell's faces, fixed order:
@@ -558,6 +599,13 @@ impl Marcher {
 
     /// One cell's interior-face reconstruction, at its firing.
     fn perot_cell(&mut self, ci: usize) {
+        let (x, y) = self.perot_of(ci);
+        self.qcx[ci] = x;
+        self.qcy[ci] = y;
+    }
+
+    /// The reconstruction itself, pure over the face discharges.
+    fn perot_of(&self, ci: usize) -> (f64, f64) {
         let (mut sx, mut sy) = (0.0, 0.0);
         let lo = self.cf_off[ci] as usize;
         let hi = self.cf_off[ci + 1] as usize;
@@ -567,8 +615,7 @@ impl Marcher {
             sx += flux * (f.mx - self.cx[ci]);
             sy += flux * (f.my - self.cy[ci]);
         }
-        self.qcx[ci] = sx / self.area[ci];
-        self.qcy[ci] = sy / self.area[ci];
+        (sx / self.area[ci], sy / self.area[ci])
     }
 
     /// §15.5 completion: a boundary edge's discharge belongs to its
@@ -712,6 +759,13 @@ impl Marcher {
             self.exchange[k] += dv;
             self.reclose(ci);
         }
+    }
+
+    /// §15.4.5: give the march the §6.4 worker width. Widths below 2
+    /// stay serial; results are byte-identical either way.
+    #[cfg(feature = "threads")]
+    pub fn set_width(&mut self, width: usize) {
+        self.team = crate::hydraulics::team::Team::new(width);
     }
 
     /// The §15.4.4 drying depth (m), for callers keying wetness ramps.
@@ -936,112 +990,243 @@ impl Marcher {
         }
     }
 
-    /// §15.4.2 ∥ face phase (serial in this slice; per-face writes
-    /// only): fire every face whose tier is due at base substep `s`,
-    /// each over its own tier's interval.
-    fn fire_faces(&mut self, dt0: f64, s: u64) {
-        for fi in 0..self.faces.len() {
-            if !s.is_multiple_of(1u64 << self.face_tier[fi]) {
-                continue;
-            }
-            let dt = dt0 * f64::from(1u32 << self.face_tier[fi]);
-            let f = &self.faces[fi];
-            let (cl, cr) = (f.cl as usize, f.cr as usize);
-            // Both-active gating: a one-sided face loses basin volume.
-            if !self.active[cl] || !self.active[cr] {
-                self.q[fi] = 0.0;
-                continue;
-            }
-            let h_f = match self.face_rec {
-                FaceReconstruction::Mean => face_depth_mean(self.eta[cl], self.eta[cr], f.z_face),
-                FaceReconstruction::VfrFace => {
-                    face_depth_vfr(self.eta[cl], self.eta[cr], f.z_lo, f.z_hi)
-                }
-            };
-            if h_f <= self.dry_depth {
-                self.q[fi] = 0.0;
-                continue;
-            }
-            let mut d_eta = self.eta[cr] - self.eta[cl];
-            if d_eta.abs() < ETA_DEADBAND {
-                d_eta = 0.0;
-            }
-            let slope = d_eta * f.inv_dn;
-            let q_perot =
-                0.5 * ((self.qcx[cl] + self.qcx[cr]) * f.nx + (self.qcy[cl] + self.qcy[cr]) * f.ny);
-            let q_hat = self.theta * self.q[fi] + (1.0 - self.theta) * q_perot;
-            let q_mag = self.q[fi]
-                .abs()
-                .max(0.5 * (self.qcx[cl] + self.qcx[cr]).hypot(self.qcy[cl] + self.qcy[cr]));
-            let h73 = h_f * h_f * h_f.cbrt();
-            let mut q_new = (q_hat - dt * G * h_f * slope) / (1.0 + G * dt * f.n2 * q_mag / h73);
-            // Froude cap.
-            let q_cap = self.froude_max * h_f * (G * h_f).sqrt();
-            q_new = q_new.clamp(-q_cap, q_cap);
-            // Positivity: the exporter grants at most β/3 of its volume
-            // per cell cycle, divided by the times this face fires
-            // within the exporter's cycle (§15.4.4) — repeated takes at
-            // a tier interface would otherwise drain the cell into the
-            // backstop.
-            let exporter = if q_new > 0.0 { cl } else { cr };
-            let refire = 1u32 << (self.tier[exporter] - self.face_tier[fi]);
-            let budget = BETA / 3.0 / f64::from(refire) * self.vol[exporter].max(0.0);
-            let take = q_new.abs() * f.psi * f.xi * dt;
-            if take > budget && take > 0.0 {
-                q_new *= budget / take;
-            }
-            self.q[fi] = q_new;
-            let dm = f.psi * q_new * f.xi * dt;
-            self.facc_l[fi] -= dm;
-            self.facc_r[fi] += dm;
+    /// One face's §15.4.2 firing. The face arrays are taken out of
+    /// `self` for the phase and passed as raw pointers.
+    ///
+    /// # Safety
+    /// Reads and writes only index `fi` of `q`, `fl` and `fr`; callers
+    /// run disjoint `fi` concurrently and nothing else touches those
+    /// arrays during the phase.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn fire_face_at(
+        &self,
+        fi: usize,
+        dt0: f64,
+        s: u64,
+        q: *mut f64,
+        fl: *mut f64,
+        fr: *mut f64,
+    ) {
+        if !s.is_multiple_of(1u64 << self.face_tier[fi]) {
+            return;
         }
+        let dt = dt0 * f64::from(1u32 << self.face_tier[fi]);
+        let f = &self.faces[fi];
+        let (cl, cr) = (f.cl as usize, f.cr as usize);
+        // Both-active gating: a one-sided face loses basin volume.
+        if !self.active[cl] || !self.active[cr] {
+            *q.add(fi) = 0.0;
+            return;
+        }
+        let h_f = match self.face_rec {
+            FaceReconstruction::Mean => face_depth_mean(self.eta[cl], self.eta[cr], f.z_face),
+            FaceReconstruction::VfrFace => {
+                face_depth_vfr(self.eta[cl], self.eta[cr], f.z_lo, f.z_hi)
+            }
+        };
+        if h_f <= self.dry_depth {
+            *q.add(fi) = 0.0;
+            return;
+        }
+        let q_old = *q.add(fi);
+        let mut d_eta = self.eta[cr] - self.eta[cl];
+        if d_eta.abs() < ETA_DEADBAND {
+            d_eta = 0.0;
+        }
+        let slope = d_eta * f.inv_dn;
+        let q_perot =
+            0.5 * ((self.qcx[cl] + self.qcx[cr]) * f.nx + (self.qcy[cl] + self.qcy[cr]) * f.ny);
+        let q_hat = self.theta * q_old + (1.0 - self.theta) * q_perot;
+        let q_mag = q_old
+            .abs()
+            .max(0.5 * (self.qcx[cl] + self.qcx[cr]).hypot(self.qcy[cl] + self.qcy[cr]));
+        let h73 = h_f * h_f * h_f.cbrt();
+        let mut q_new = (q_hat - dt * G * h_f * slope) / (1.0 + G * dt * f.n2 * q_mag / h73);
+        // Froude cap.
+        let q_cap = self.froude_max * h_f * (G * h_f).sqrt();
+        q_new = q_new.clamp(-q_cap, q_cap);
+        // Positivity: the exporter grants at most β/3 of its volume
+        // per cell cycle, divided by the times this face fires
+        // within the exporter's cycle (§15.4.4) — repeated takes at
+        // a tier interface would otherwise drain the cell into the
+        // backstop.
+        let exporter = if q_new > 0.0 { cl } else { cr };
+        let refire = 1u32 << (self.tier[exporter] - self.face_tier[fi]);
+        let budget = BETA / 3.0 / f64::from(refire) * self.vol[exporter].max(0.0);
+        let take = q_new.abs() * f.psi * f.xi * dt;
+        if take > budget && take > 0.0 {
+            q_new *= budget / take;
+        }
+        *q.add(fi) = q_new;
+        let dm = f.psi * q_new * f.xi * dt;
+        *fl.add(fi) -= dm;
+        *fr.add(fi) += dm;
+    }
+
+    /// §15.4.2 ∥ face phase: fire every face whose tier is due at base
+    /// substep `s`, each over its own tier's interval — across the
+    /// worker team when the model asked for width, byte-identical at
+    /// any (§15.4.5).
+    fn fire_faces(&mut self, dt0: f64, s: u64) {
+        let mut q = std::mem::take(&mut self.q);
+        let mut fl = std::mem::take(&mut self.facc_l);
+        let mut fr = std::mem::take(&mut self.facc_r);
+        let (qp, flp, frp) = (q.as_mut_ptr(), fl.as_mut_ptr(), fr.as_mut_ptr());
+        #[cfg(feature = "threads")]
+        {
+            if let Some(mut team) = self.team.take() {
+                if self.faces.len() >= PAR_GRAIN * team.width() {
+                    use crate::hydraulics::team::SendPtr;
+                    let (qs, fls, frs) = (SendPtr::new(qp), SendPtr::new(flp), SendPtr::new(frp));
+                    let me = &*self;
+                    // SAFETY: per-face disjoint reads/writes, as the
+                    // body's contract states.
+                    team.run(me.faces.len(), |fi| unsafe {
+                        me.fire_face_at(fi, dt0, s, qs.get(), fls.get(), frs.get());
+                    });
+                    self.team = Some(team);
+                    self.q = q;
+                    self.facc_l = fl;
+                    self.facc_r = fr;
+                    return;
+                }
+                self.team = Some(team);
+            }
+        }
+        for fi in 0..self.faces.len() {
+            // SAFETY: serial — the pointers are exclusive here.
+            unsafe { self.fire_face_at(fi, dt0, s, qp, flp, frp) };
+        }
+        self.q = q;
+        self.facc_l = fl;
+        self.facc_r = fr;
+    }
+
+    /// One cell's §15.4.3 firing. The cell-state arrays and the face
+    /// accumulators are taken out of `self` for the phase and passed as
+    /// raw pointers; ledger contributions land in the per-cell scratch
+    /// for the driver's serial reduction.
+    ///
+    /// # Safety
+    /// Reads and writes only this cell's indices — its own slots of
+    /// `vol`/`depth`/`eta`/`qcx`/`qcy`/`led`, and its **own sides** of
+    /// its incident faces' accumulators, which no other cell owns.
+    /// Callers run disjoint `ci` concurrently and nothing else touches
+    /// these arrays during the phase.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn fire_cell_at(&self, ci: usize, dt0: f64, s: u64, p: &CellPtrs) {
+        if !s.is_multiple_of(1u64 << self.tier[ci]) {
+            return;
+        }
+        let dt = dt0 * f64::from(1u32 << self.tier[ci]);
+        let lo = self.cf_off[ci] as usize;
+        let hi = self.cf_off[ci + 1] as usize;
+        let mut flux = 0.0;
+        for &(fi, sign) in &self.cf_face[lo..hi] {
+            let fi = fi as usize;
+            if sign > 0.0 {
+                flux += *p.fl.add(fi);
+                *p.fl.add(fi) = 0.0;
+            } else {
+                flux += *p.fr.add(fi);
+                *p.fr.add(fi) = 0.0;
+            }
+        }
+        let a = self.area[ci];
+        let rain = self.rain[ci] * a * dt;
+        let coup = self.coupling[ci] * a * dt;
+        // §15.4.3: evaporation shuts off C¹ as the cell dries, and
+        // takes no more than the cell holds.
+        let t = (*p.depth.add(ci) / self.dry_depth).clamp(0.0, 1.0);
+        let ramp = t * t * (3.0 - 2.0 * t);
+        let want = self.evap[ci] * ramp * a * dt;
+        let before = *p.vol.add(ci) + flux + rain + coup;
+        let take = want.min(before.max(0.0));
+        let v_new = (before - take).max(0.0);
+        *p.vol.add(ci) = v_new;
+        let (h, eta) = self.close_of(ci, v_new);
+        *p.depth.add(ci) = h;
+        *p.eta.add(ci) = eta;
+        let (qx, qy) = self.perot_of(ci);
+        *p.qcx.add(ci) = qx;
+        *p.qcy.add(ci) = qy;
+        *p.led.add(ci) = [rain, coup, take];
     }
 
     /// §15.4.3 ∥ cell phase: every cell whose tier is due at base
     /// substep `s` gathers its own accumulator sides in fixed order,
     /// applies its sources over its own tier's interval, clamps,
-    /// re-closes, and refreshes its velocity reconstruction.
+    /// re-closes, and refreshes its velocity reconstruction — across
+    /// the worker team when the model asked for width. The §15.8
+    /// ledger reduces serially in index order afterwards, so its sums
+    /// are byte-identical at every width (§15.4.5).
     fn fire_cells(&mut self, dt0: f64, s: u64) {
-        for ci in 0..self.area.len() {
+        let nc = self.area.len();
+        let mut vol = std::mem::take(&mut self.vol);
+        let mut depth = std::mem::take(&mut self.depth);
+        let mut eta = std::mem::take(&mut self.eta);
+        let mut qcx = std::mem::take(&mut self.qcx);
+        let mut qcy = std::mem::take(&mut self.qcy);
+        let mut fl = std::mem::take(&mut self.facc_l);
+        let mut fr = std::mem::take(&mut self.facc_r);
+        let mut led = std::mem::take(&mut self.led);
+        let ptrs = CellPtrs {
+            vol: vol.as_mut_ptr(),
+            depth: depth.as_mut_ptr(),
+            eta: eta.as_mut_ptr(),
+            qcx: qcx.as_mut_ptr(),
+            qcy: qcy.as_mut_ptr(),
+            fl: fl.as_mut_ptr(),
+            fr: fr.as_mut_ptr(),
+            led: led.as_mut_ptr(),
+        };
+        let mut ran = false;
+        #[cfg(feature = "threads")]
+        {
+            if let Some(mut team) = self.team.take() {
+                if nc >= PAR_GRAIN * team.width() {
+                    let shared = &ptrs;
+                    let me = &*self;
+                    // SAFETY: per-cell disjoint reads/writes — a cell
+                    // touches only its own slots and its own sides of
+                    // its incident faces' accumulators.
+                    team.run(nc, |ci| unsafe {
+                        me.fire_cell_at(ci, dt0, s, shared);
+                    });
+                    ran = true;
+                }
+                self.team = Some(team);
+            }
+        }
+        if !ran {
+            for ci in 0..nc {
+                // SAFETY: serial — the pointers are exclusive here.
+                unsafe { self.fire_cell_at(ci, dt0, s, &ptrs) };
+            }
+        }
+        self.vol = vol;
+        self.depth = depth;
+        self.eta = eta;
+        self.qcx = qcx;
+        self.qcy = qcy;
+        self.facc_l = fl;
+        self.facc_r = fr;
+        self.led = led;
+        // §15.8: the ledger reduction, serial and in index order.
+        for ci in 0..nc {
             if !s.is_multiple_of(1u64 << self.tier[ci]) {
                 continue;
             }
-            let dt = dt0 * f64::from(1u32 << self.tier[ci]);
-            let lo = self.cf_off[ci] as usize;
-            let hi = self.cf_off[ci + 1] as usize;
-            let mut flux = 0.0;
-            for &(fi, sign) in &self.cf_face[lo..hi] {
-                let fi = fi as usize;
-                if sign > 0.0 {
-                    flux += self.facc_l[fi];
-                    self.facc_l[fi] = 0.0;
-                } else {
-                    flux += self.facc_r[fi];
-                    self.facc_r[fi] = 0.0;
-                }
-            }
-            let a = self.area[ci];
-            let rain = self.rain[ci] * a * dt;
-            let coup = self.coupling[ci] * a * dt;
+            let [rain, coup, take] = self.led[ci];
             self.rain_in += rain;
-            // §15.8: the injection path books separately from the
-            // junction orifice exchange.
+            // The injection path books separately from the junction
+            // orifice exchange.
             if coup >= 0.0 {
                 self.outfall_in += coup;
             } else {
                 self.outfall_out += -coup;
             }
-            // §15.4.3: evaporation shuts off C¹ as the cell dries, and
-            // takes no more than the cell holds.
-            let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
-            let ramp = t * t * (3.0 - 2.0 * t);
-            let want = self.evap[ci] * ramp * a * dt;
-            let before = self.vol[ci] + flux + rain + coup;
-            let take = want.min(before.max(0.0));
             self.evap_out += take;
-            self.vol[ci] = (before - take).max(0.0);
-            self.reclose(ci);
-            self.perot_cell(ci);
         }
     }
 
@@ -1900,6 +2085,113 @@ mod tests {
         );
     }
 
+    /// §15.9 SWASHES 3.2.1: the MacDonald 1000 m subcritical profile.
+    /// The bed is derived from the full steady momentum equation for a
+    /// prescribed depth profile, so the analytic solution is exact by
+    /// construction; the scheme omits convective acceleration, and its
+    /// steady surface differs by the integrated velocity-head term. The
+    /// grade bounds the relative L1 depth error of the settled
+    /// time-mean field at 2.5% (the predecessor's own marcher measures
+    /// 2.0% on this case).
+    #[test]
+    fn macdonald_subcritical_profile() {
+        let (l, q_in, n_man) = (1000.0, 2.0, 0.033);
+        let a_h = (4.0 / G).powf(1.0 / 3.0);
+        let h_ex = |x: f64| a_h * (1.0 + 0.5 * (-16.0 * (x / l - 0.5).powi(2)).exp());
+        let dh_ex = |x: f64| {
+            a_h * 0.5 * (-16.0 * (x / l - 0.5).powi(2)).exp() * (-32.0 * (x / l - 0.5) / l)
+        };
+        // Bed from the full steady momentum equation, z(L) = 0:
+        // z(x) = ∫ₓᴸ [(1 − Fr²) h′ + n² q² / h^{10/3}] ds.
+        let integrand = |x: f64| {
+            let h = h_ex(x);
+            let fr2 = q_in * q_in / (G * h * h * h);
+            (1.0 - fr2) * dh_ex(x) + n_man * n_man * q_in * q_in / h.powf(10.0 / 3.0)
+        };
+        // Cumulative trapezoid on a fine grid, then linear lookup.
+        let m = 4000usize;
+        let ds = l / m as f64;
+        let mut z_tab = vec![0.0; m + 1];
+        for i in (0..m).rev() {
+            let x0 = ds * i as f64;
+            z_tab[i] = z_tab[i + 1] + 0.5 * ds * (integrand(x0) + integrand(x0 + ds));
+        }
+        let z_of = |x: f64| {
+            let f = (x / ds).clamp(0.0, m as f64);
+            let i = (f as usize).min(m - 1);
+            let t = f - i as f64;
+            z_tab[i] * (1.0 - t) + z_tab[i + 1] * t
+        };
+
+        let (nx, ny, dx) = (200usize, 2usize, 5.0);
+        let mut mesh = grid(nx, ny, dx, |x, _| z_of(x));
+        let topo = Topology::build(&mesh).expect("valid");
+        let cells = std::mem::take(&mut mesh.cells);
+        mesh.cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(ci, mut c)| {
+                c.n = n_man;
+                c.h0 = h_ex(topo.centroid[ci][0]);
+                c
+            })
+            .collect();
+        for ci in 0..mesh.cells.len() {
+            for e in 0..3usize {
+                let slot = ci * 3 + e;
+                if topo.neighbour[slot].is_some() {
+                    continue;
+                }
+                let x = topo.edge_mid[slot][0];
+                if x < 1e-9 {
+                    mesh.boundaries.push(crate::overland::BoundaryRow {
+                        cell: ci as u32,
+                        edge: e as u8,
+                        condition: BoundaryCondition::Flow(SeriesOrValue::Value(-q_in)),
+                        group: None,
+                    });
+                } else if x > l - 1e-9 {
+                    mesh.boundaries.push(crate::overland::BoundaryRow {
+                        cell: ci as u32,
+                        edge: e as u8,
+                        condition: BoundaryCondition::Stage(SeriesOrValue::Value(h_ex(l))),
+                        group: None,
+                    });
+                }
+            }
+        }
+        let mut m = build(&mesh);
+        // Settle, then grade the time mean of the final half.
+        m.advance(2000.0);
+        let mut mean = vec![0.0; m.depth.len()];
+        let samples = 400u32;
+        for _ in 0..samples {
+            m.advance(5.0);
+            for (a, h) in mean.iter_mut().zip(&m.depth) {
+                *a += h;
+            }
+        }
+        for a in &mut mean {
+            *a /= f64::from(samples);
+        }
+        let (mut err, mut norm) = (0.0, 0.0);
+        for (ci, &h) in mean.iter().enumerate() {
+            let h_ref = h_ex(topo.centroid[ci][0]);
+            err += (h - h_ref).abs() * topo.area[ci];
+            norm += h_ref * topo.area[ci];
+        }
+        assert!(
+            err / norm < 0.025,
+            "MacDonald subcritical relative L1 depth error {}",
+            err / norm
+        );
+        assert!(
+            m.ledger_error().abs() < 1e-6 * m.storage(),
+            "mass error {}",
+            m.ledger_error()
+        );
+    }
+
     /// §15.5: a series-driven slot is a wall until its first
     /// resolution, and conveys from then on.
     #[test]
@@ -1989,6 +2281,81 @@ mod tests {
             (out / expect - 1.0).abs() < 0.10,
             "clamped outflow {out} vs {expect}"
         );
+    }
+
+    /// §15.4.5: the same march, serial and across the team, writes
+    /// byte-identical state — the §6.4 width contract, held for the
+    /// surface. The case is big enough that the team genuinely engages
+    /// (faces and cells both above the dispatch grain) and busy enough
+    /// that every phase does real work: a dam break over a graded
+    /// strip, rain, an evaporating film, and a normal-flow outlet,
+    /// marched through tier rebuilds.
+    #[cfg(feature = "threads")]
+    #[test]
+    fn the_march_is_byte_identical_at_width() {
+        let build_case = || {
+            let mut mesh = graded_strip(100, 12, 1.0, 1.02);
+            let topo = Topology::build(&mesh).expect("valid");
+            let cells = std::mem::take(&mut mesh.cells);
+            mesh.cells = cells
+                .into_iter()
+                .enumerate()
+                .map(|(ci, mut c)| {
+                    if topo.centroid[ci][0] < 10.0 {
+                        c.h0 = 1.0;
+                    }
+                    c
+                })
+                .collect();
+            for ci in 0..mesh.cells.len() {
+                for e in 0..3usize {
+                    let slot = ci * 3 + e;
+                    if topo.neighbour[slot].is_none() && topo.edge_mid[slot][0] < 1e-9 {
+                        mesh.boundaries.push(crate::overland::BoundaryRow {
+                            cell: ci as u32,
+                            edge: e as u8,
+                            condition: BoundaryCondition::NormalFlow { slope: 0.005 },
+                            group: None,
+                        });
+                    }
+                }
+            }
+            let mut m = build(&mesh);
+            for r in &mut m.rain {
+                *r = 1e-5;
+            }
+            for ev in &mut m.evap {
+                *ev = 1e-6;
+            }
+            m
+        };
+        let mut serial = build_case();
+        for _ in 0..12 {
+            serial.advance(5.0);
+        }
+        for width in [3usize, 4] {
+            let mut teamed = build_case();
+            teamed.set_width(width);
+            assert!(
+                teamed.faces.len() >= PAR_GRAIN * width,
+                "the case must be big enough to engage the team"
+            );
+            for _ in 0..12 {
+                teamed.advance(5.0);
+            }
+            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&serial.vol), bits(&teamed.vol), "vol at width {width}");
+            assert_eq!(bits(&serial.eta), bits(&teamed.eta), "eta at width {width}");
+            assert_eq!(bits(&serial.q), bits(&teamed.q), "q at width {width}");
+            assert_eq!(bits(&serial.qcx), bits(&teamed.qcx), "qcx at width {width}");
+            assert_eq!(
+                serial.rain_in.to_bits(),
+                teamed.rain_in.to_bits(),
+                "rain ledger at width {width}"
+            );
+            assert_eq!(serial.evap_out.to_bits(), teamed.evap_out.to_bits());
+            assert_eq!(serial.boundary_out.to_bits(), teamed.boundary_out.to_bits());
+        }
     }
 
     /// §15.6: a vertex row collapses to the lowest-bed incident cell,

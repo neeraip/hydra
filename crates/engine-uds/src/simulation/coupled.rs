@@ -87,6 +87,9 @@ impl CoupledSurface {
                 marcher.mark_outfall_slot(slot);
             }
         }
+        // §15.4.5: the march takes the model's §6.4 worker width.
+        #[cfg(feature = "threads")]
+        marcher.set_width(net.options.threads as usize);
         let pending = vec![0.0; slot_vertex.len()];
         let outfall_pending = vec![0.0; slot_vertex.len()];
         Ok(CoupledSurface {
@@ -519,6 +522,79 @@ C1  CIRCULAR  0.5  0  0  0
         assert!(
             (v0 - m.storage() - (m.coupling_out - m.coupling_in)).abs() < 1e-9,
             "surface ledger"
+        );
+    }
+
+    /// §15.9 determinism: SI and US authorings of one physical model
+    /// agree to round-trip precision. The mesh is SI either way
+    /// (§14.15); only the network sections convert.
+    #[test]
+    fn si_and_us_authorings_agree() {
+        let run = |inp: &str| {
+            let (mut sim, _, findings) = crate::simulation::Simulation::open(inp).expect("open");
+            assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
+            sim.attach_overland(pond_mesh(0.3, "J1")).expect("attach");
+            sim.run();
+            let m = &sim.overland().expect("attached").marcher;
+            (m.storage(), m.coupling_out)
+        };
+        let si = run("\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+");
+        // The same model in feet: every length is the exact conversion
+        // of the metric authoring.
+        let us = run("\
+[OPTIONS]
+FLOW_UNITS    CFS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  328.0839895013123  6.561679790026246
+
+[OUTFALLS]
+O1  324.8031496062992  FREE
+
+[CONDUITS]
+C1  J1  O1  328.0839895013123  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.6404199475065617  0  0  0
+");
+        assert!(
+            (si.0 - us.0).abs() <= 1e-6 * si.0.max(1e-9),
+            "storage: SI {} vs US {}",
+            si.0,
+            us.0
+        );
+        assert!(
+            (si.1 - us.1).abs() <= 1e-6 * si.1.max(1e-9),
+            "drained: SI {} vs US {}",
+            si.1,
+            us.1
         );
     }
 
