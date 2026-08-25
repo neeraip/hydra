@@ -6,7 +6,9 @@
 //! carrying a mesh receives.
 
 pub mod closure;
+pub mod coupling;
 pub mod marcher;
+pub mod meteorology;
 
 /// The authored overland surface (§15.2, §14.15), in SI after import.
 ///

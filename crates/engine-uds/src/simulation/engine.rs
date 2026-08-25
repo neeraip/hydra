@@ -338,6 +338,19 @@ pub struct Simulation {
     series_warned: Vec<bool>,
     /// Per-vertex lateral overrides (§12.4 boundary forcing).
     lateral_override: HashMap<usize, f64>,
+    /// §15.6: the coupled overland surface, present only when a mesh
+    /// model is served.
+    coupled: Option<super::coupled::CoupledSurface>,
+    /// §15.7 precomputed rain weights and the model's rainfall mode.
+    overland_rain: crate::overland::meteorology::RainWeights,
+    overland_rain_mode: crate::overland::RainfallMode,
+    /// §15.6 `COUPLING_SYNC` batching: authored batch width (s) and the
+    /// surface time accrued toward the next batch.
+    overland_sync: f64,
+    overland_accrued: f64,
+    /// §15.5 driven boundary slots: (marcher boundary, series index,
+    /// stage?), resolved once at attach.
+    overland_driven: Vec<(usize, usize, bool)>,
     /// §12.4: injected outfall stages and link settings, held so a rule
     /// cannot move an element a caller has taken over, and so a restored
     /// checkpoint takes it over again.
@@ -809,6 +822,12 @@ impl Simulation {
                 link_by_id,
                 series_warned: vec![false; n_series],
                 lateral_override: HashMap::new(),
+                coupled: None,
+                overland_rain: Default::default(),
+                overland_rain_mode: crate::overland::RainfallMode::None,
+                overland_sync: 0.0,
+                overland_accrued: 0.0,
+                overland_driven: Vec::new(),
                 stage_override: HashMap::new(),
                 setting_override: HashMap::new(),
                 loss_override: HashMap::new(),
@@ -1838,6 +1857,112 @@ impl Simulation {
     /// period's start, update dynamic boundaries, route — or freeze,
     /// between events — and service any reporting boundary passed.
     /// Returns false once the run is complete.
+    /// §15.6: attach a validated overland mesh, resolving its coupled
+    /// nodes against the network and precomputing the §15.7 rain
+    /// weights. Serving is gated by `open` (§1.8); this is the wiring
+    /// that gate will open onto.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the §1.8 serving gate's wiring")
+    )]
+    pub(crate) fn attach_overland(
+        &mut self,
+        mesh: &crate::overland::OverlandMesh,
+    ) -> Result<(), super::coupled::AttachError> {
+        let topo =
+            crate::overland::Topology::build(mesh).map_err(super::coupled::AttachError::Mesh)?;
+        let marcher = crate::overland::marcher::Marcher::build(mesh, &topo);
+        let cs = super::coupled::CoupledSurface::new(marcher, &self.net, &mut self.router)
+            .map_err(|e| super::coupled::AttachError::UnknownNode(e.node))?;
+        let positions: Vec<Option<(f64, f64)>> =
+            self.net.gages.iter().map(|g| g.position).collect();
+        let cx: Vec<f64> = topo.centroid.iter().map(|c| c[0]).collect();
+        let cy: Vec<f64> = topo.centroid.iter().map(|c| c[1]).collect();
+        self.overland_rain = crate::overland::meteorology::RainWeights::build(&cx, &cy, &positions);
+        self.overland_rain_mode = mesh.options.rainfall_mode;
+        self.overland_sync = mesh.options.coupling_sync;
+        // §15.5: driven boundary parameters resolve here, by name, once.
+        self.overland_driven.clear();
+        let mut cs = cs;
+        for d in cs.marcher.driven_boundaries().to_vec() {
+            let Some(si) = self.net.timeseries.iter().position(|t| t.id == d.series) else {
+                return Err(super::coupled::AttachError::UnknownSeries(d.series));
+            };
+            self.overland_driven.push((d.boundary, si, d.is_stage));
+        }
+        for (slot, name) in cs.marcher.rating_curve_names().to_vec().iter().enumerate() {
+            let Some(curve) = self.net.curves.iter().find(|c| &c.id == name) else {
+                return Err(super::coupled::AttachError::UnknownCurve(name.clone()));
+            };
+            cs.marcher.set_rating_curve(slot, curve.points.clone());
+        }
+        self.coupled = Some(cs);
+        Ok(())
+    }
+
+    /// §15.7: set the surface's rain and evaporation for the coming
+    /// co-advance from the model's gauges and climate.
+    fn drive_overland_sources(&mut self, cs: &mut super::coupled::CoupledSurface, t: f64) {
+        let epoch = self.start_epoch + t;
+        let month = self.calendar(t).0;
+        let rain_factor = self.net.climate.adjust_rainfall[(month - 1) as usize];
+        use crate::overland::RainfallMode;
+        match self.overland_rain_mode {
+            RainfallMode::None => {
+                for r in &mut cs.marcher.rain {
+                    *r = 0.0;
+                }
+            }
+            mode => {
+                let rates: Vec<f64> = (0..self.net.gages.len())
+                    .map(|g| {
+                        self.surface
+                            .as_ref()
+                            .map_or(0.0, |s| s.gage_rate(g, epoch) * rain_factor)
+                    })
+                    .collect();
+                // §15.7: NATURAL_NEIGHBOUR with no located gauge falls
+                // back to the SYSTEM mean.
+                if mode == RainfallMode::NaturalNeighbour && self.overland_rain.ready() {
+                    self.overland_rain.apply(&rates, &mut cs.marcher.rain);
+                } else {
+                    let mean = if rates.is_empty() {
+                        0.0
+                    } else {
+                        rates.iter().sum::<f64>() / rates.len() as f64
+                    };
+                    for r in &mut cs.marcher.rain {
+                        *r = mean;
+                    }
+                }
+            }
+        }
+        let evap = self.evaporation_rate(month);
+        for e in &mut cs.marcher.evap {
+            *e = evap;
+        }
+        // §15.5: series-driven stages and flows resolve to this
+        // advance's values.
+        for &(bi, si, is_stage) in &self.overland_driven {
+            let v = series_value_pure(&self.net, self.start_epoch, si, t, true);
+            if is_stage {
+                cs.marcher.set_boundary_stage(bi, v);
+            } else {
+                cs.marcher.set_boundary_flow(bi, v);
+            }
+        }
+    }
+
+    /// The attached overland surface, for the callers the §1.8 serving
+    /// gate will admit (and the crate's own tests today).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the §1.8 serving gate's wiring")
+    )]
+    pub(crate) fn overland(&self) -> Option<&super::coupled::CoupledSurface> {
+        self.coupled.as_ref()
+    }
+
     pub fn step(&mut self) -> bool {
         let t = self.router.time();
         if t >= self.duration - 1e-9 {
@@ -1856,7 +1981,12 @@ impl Simulation {
             // §7.7: channels evaporate at the session's potential rate.
             let month = self.calendar(t).0;
             self.router.evap_rate = self.evaporation_rate(month);
-            let (base, base_mass) = self.assemble_lateral(t);
+            let (mut base, base_mass) = self.assemble_lateral(t);
+            // §15.6: last period's surface exchange delivers as this
+            // period's lateral inflow, a constant rate over the window.
+            if let Some(cs) = self.coupled.as_mut() {
+                cs.deliver_laterals(&mut base, period_end - t);
+            }
             self.vol_dwf += self.last_dwf_total * (period_end - t);
             self.vol_ext += self.last_ext_total * (period_end - t);
             // §10.1: hydrology outputs interpolate linearly to routing
@@ -1966,6 +2096,23 @@ impl Simulation {
             } else {
                 self.router.advance(period_end, &interp);
             }
+            // §15.6: the surface co-advances the interval the network
+            // just finished, batched by COUPLING_SYNC (clamped to the
+            // band from one routing period to 60 s), node grades frozen.
+            if let Some(mut cs) = self.coupled.take() {
+                self.overland_accrued += self.router.time() - t;
+                let sync = self
+                    .overland_sync
+                    .clamp(self.routing_period, 60.0_f64.max(self.routing_period));
+                if self.overland_accrued + 1e-9 >= sync {
+                    self.drive_overland_sources(&mut cs, t);
+                    let span = self.overland_accrued;
+                    cs.co_advance(&mut self.router, span);
+                    self.overland_accrued = 0.0;
+                }
+                self.coupled = Some(cs);
+            }
+
             // Retain the end-of-period laterals for the §14.9 records —
             // §7.8 inlet transfers included, or an inlet-fed vertex would
             // report zero inflow while its depth rises.
@@ -2895,6 +3042,15 @@ impl Simulation {
             next_rule_t,
             series_warned,
             lateral_override,
+            coupled,
+            // §15.6 parameters, rebuilt when a mesh is attached; the
+            // accrued batch time is nonzero only when `coupled` is, and
+            // the mesh refusal below covers it.
+            overland_rain: _,
+            overland_rain_mode: _,
+            overland_sync: _,
+            overland_accrued: _,
+            overland_driven: _,
             stage_override,
             setting_override,
             loss_override,
@@ -2927,6 +3083,14 @@ impl Simulation {
             snapshots,
             notices,
         } = self;
+        // §15.10: mesh-run checkpoint carriage is a recorded deferral —
+        // the surface state (cell volumes, face discharges, exchange
+        // bookkeeping) is not yet carried, and restoring it from a
+        // fresh mesh would continue plausibly and wrongly.
+        if coupled.is_some() {
+            return Err("this model couples an overland mesh (section 15), whose state a                         checkpoint does not yet carry"
+                .into());
+        }
         let io = |e: std::io::Error| e.to_string();
         w.write_all(cp::STAMP).map_err(io)?;
         w.write_all(&cp::VERSION.to_le_bytes()).map_err(io)?;

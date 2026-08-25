@@ -9,8 +9,10 @@
 //! a value the single-tier march produces at the same steps.
 
 use super::closure::{face_depth_mean, face_depth_vfr, flat_eta, vfr_eta, CellBed};
+use super::coupling::{exchange_conductance, exchange_q};
 use super::{
-    BoundaryCondition, CellClosure, FaceReconstruction, OverlandMesh, SeriesOrValue, Topology,
+    BoundaryCondition, CellClosure, CouplingRow, FaceReconstruction, OverlandMesh, SeriesOrValue,
+    Topology,
 };
 
 /// §15.1: standard gravity (m/s²).
@@ -67,10 +69,19 @@ struct Boundary {
     /// Prognostic discharge of the stage law's inertial arm (m²/s,
     /// inflow positive).
     q: f64,
+    /// The edge's sill (higher endpoint elevation, m), the rating law's
+    /// datum (§15.5).
+    z_sill: f64,
+    /// §15.5: a series- or curve-driven slot is a wall until its first
+    /// resolution.
+    enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BoundaryLaw {
+    /// §15.5 `RATING_CURVE`: per-metre discharge from a curve of stage
+    /// above the edge sill, re-read every firing.
+    Rating { curve: u32 },
     /// Manning outfall at the authored bed slope.
     NormalFlow { slope: f64 },
     /// Held per-metre discharge (m³/s per m, authored outward positive).
@@ -83,7 +94,8 @@ enum BoundaryLaw {
 /// [`Marcher::advance`].
 pub struct Marcher {
     // ── Geometry ────────────────────────────────────────────────────
-    area: Vec<f64>,
+    /// Cell planimetric areas (m²) — public for §15.6 footprint sums.
+    pub area: Vec<f64>,
     /// Cell centroids (m), for the Perot offset (§15.4.3).
     cx: Vec<f64>,
     cy: Vec<f64>,
@@ -140,11 +152,83 @@ pub struct Marcher {
     pub evap: Vec<f64>,
     pub coupling: Vec<f64>,
 
+    // ── §15.6 coupling ─────────────────────────────────────────────
+    couplings: Vec<CouplingPoint>,
+    /// Distinct coupled node names, in slot order.
+    node_names: Vec<String>,
+    /// Per-slot drive, set before an advance: node hydraulic grade,
+    /// node water depth, rim elevation (all m), and the volume
+    /// available to spill over the whole advance (m³).
+    node_grade: Vec<f64>,
+    node_depth: Vec<f64>,
+    node_rim: Vec<f64>,
+    node_spill_avail: Vec<f64>,
+    /// §15.6 per-advance spill ledger: the same water cannot spill
+    /// twice within one routing step.
+    node_drawn: Vec<f64>,
+    /// §15.6: slots naming an outfall exchange through the boundary
+    /// stage and injection paths, never the junction orifice law.
+    outfall_slot: Vec<bool>,
+    /// Signed exchanged volume per point over the last advance (m³,
+    /// positive = drained into the node).
+    exchange: Vec<f64>,
+
+    // ── §15.5 driven boundaries ────────────────────────────────────
+    /// Slots whose stage or flow the session resolves per advance.
+    driven: Vec<DrivenBoundary>,
+    /// Distinct rating-curve names, in first-appearance order, and the
+    /// resolved curves (stage above sill → per-metre discharge).
+    rating_names: Vec<String>,
+    rating_curves: Vec<Vec<(f64, f64)>>,
+
     // ── §15.8 ledger (m³ since construction) ───────────────────────
     pub rain_in: f64,
     pub evap_out: f64,
     pub boundary_in: f64,
     pub boundary_out: f64,
+    /// Junction exchange (§15.6 orifice law): spills in, drains out.
+    pub coupling_in: f64,
+    pub coupling_out: f64,
+    /// Outfall exchange (§15.6 injection path): discharges in,
+    /// withdrawals out — booked separately per §15.8.
+    pub outfall_in: f64,
+    pub outfall_out: f64,
+}
+
+/// §15.5: a boundary slot whose law the session resolves per advance
+/// from an authored time series.
+#[derive(Debug, Clone)]
+pub struct DrivenBoundary {
+    /// Index into the marcher's boundary list.
+    pub boundary: usize,
+    /// The authored series name, resolved by the session.
+    pub series: String,
+    /// Stage series (`true`) or flow series (`false`).
+    pub is_stage: bool,
+}
+
+/// §15.6: a resolved coupling point. A vertex row collapses to the
+/// lowest-bed cell of its stencil for the orifice exchange; the stencil
+/// and the vertex remain for outfall-injection scattering.
+#[derive(Debug, Clone)]
+pub struct CouplingPoint {
+    /// The cell both directions of the exchange apply at.
+    pub cell: u32,
+    /// The vertex's incident cells (a cell row: the cell alone).
+    pub stencil: Vec<u32>,
+    /// The vertex position and ground elevation, `None` for a cell row.
+    pub vertex: Option<(f64, f64, f64)>,
+    /// The exchange slot: points naming one network node share a slot,
+    /// its drive, and its spill ledger.
+    pub node_slot: u32,
+    /// The network node as authored, for the session to resolve (§2.6).
+    pub node: String,
+    /// Discharge coefficient (§15.6).
+    pub cd: f64,
+    /// Exchange area (m²).
+    pub area: f64,
+    /// Unauthored areas are eligible for `COUPLING_AREA AUTO` (§15.6).
+    pub area_authored: bool,
 }
 
 impl Marcher {
@@ -225,7 +309,13 @@ impl Marcher {
 
         // Boundary laws from the validated rows; walls stay implicit.
         let mut boundaries = Vec::new();
+        let mut driven: Vec<DrivenBoundary> = Vec::new();
+        let mut rating_names: Vec<String> = Vec::new();
         for row in &mesh.boundaries {
+            // §15.5: series and curve parameters resolve at the wiring
+            // layer; a slot is a wall until its first resolution.
+            let mut enabled = true;
+            let mut series: Option<(String, bool)> = None;
             let law = match &row.condition {
                 BoundaryCondition::Wall => continue,
                 BoundaryCondition::NormalFlow { slope } => {
@@ -235,15 +325,37 @@ impl Marcher {
                     BoundaryLaw::Flow { q_per_m: *v }
                 }
                 BoundaryCondition::Stage(SeriesOrValue::Value(v)) => BoundaryLaw::Stage { eta: *v },
-                // Series and curves resolve to per-advance values at the
-                // wiring layer; until then the slot is a wall, which is
-                // the refusal-safe reading of an unresolved parameter.
-                BoundaryCondition::Flow(SeriesOrValue::Series(_))
-                | BoundaryCondition::Stage(SeriesOrValue::Series(_))
-                | BoundaryCondition::RatingCurve { .. } => continue,
+                BoundaryCondition::Flow(SeriesOrValue::Series(name)) => {
+                    enabled = false;
+                    series = Some((name.clone(), false));
+                    BoundaryLaw::Flow { q_per_m: 0.0 }
+                }
+                BoundaryCondition::Stage(SeriesOrValue::Series(name)) => {
+                    enabled = false;
+                    series = Some((name.clone(), true));
+                    BoundaryLaw::Stage { eta: 0.0 }
+                }
+                BoundaryCondition::RatingCurve { curve } => {
+                    enabled = false;
+                    let slot = match rating_names.iter().position(|n| n == curve) {
+                        Some(i) => i,
+                        None => {
+                            rating_names.push(curve.clone());
+                            rating_names.len() - 1
+                        }
+                    };
+                    BoundaryLaw::Rating { curve: slot as u32 }
+                }
             };
             let slot = row.cell as usize * 3 + row.edge as usize;
             let xi = topo.edge_len[slot];
+            if let Some((name, is_stage)) = series {
+                driven.push(DrivenBoundary {
+                    boundary: boundaries.len(),
+                    series: name,
+                    is_stage,
+                });
+            }
             boundaries.push(Boundary {
                 cell: row.cell,
                 xi,
@@ -252,6 +364,8 @@ impl Marcher {
                 my: topo.edge_mid[slot][1],
                 inv_dn_ghost: 3.0 * xi / (2.0 * topo.area[row.cell as usize]),
                 q: 0.0,
+                z_sill: topo.edge_z[slot][0].max(topo.edge_z[slot][1]),
+                enabled,
             });
         }
 
@@ -278,6 +392,63 @@ impl Marcher {
                 0.5 * ((ul + ur) * f.nx + (vl + vr) * f.ny)
             })
             .collect();
+
+        // §15.6: resolve coupling rows. Two rows resolving to one
+        // vertex (or cell) are one coupling, the last authored winning.
+        let z_mean_of = |ci: usize| bed[ci].mean();
+        let mut resolved: Vec<(Option<u32>, Option<u32>, &CouplingRow)> = Vec::new();
+        for row in &mesh.vertex_couplings {
+            if let Some(v) = mesh.resolve_vertex(&row.address) {
+                resolved.retain(|(rv, _, _)| *rv != Some(v));
+                resolved.push((Some(v), None, row));
+            }
+        }
+        for row in &mesh.cell_couplings {
+            if let Some(c) = mesh.resolve_cell(&row.address) {
+                resolved.retain(|(_, rc, _)| *rc != Some(c));
+                resolved.push((None, Some(c), row));
+            }
+        }
+        let mut couplings: Vec<CouplingPoint> = Vec::new();
+        let mut node_names: Vec<String> = Vec::new();
+        for (v, c, row) in resolved {
+            let (cell, stencil, vertex) = if let Some(v) = v {
+                let stencil: Vec<u32> = (0..nc)
+                    .filter(|&ci| mesh.cells[ci].v.contains(&v))
+                    .map(|ci| ci as u32)
+                    .collect();
+                let Some(&cell) = stencil
+                    .iter()
+                    .min_by(|&&a, &&b| z_mean_of(a as usize).total_cmp(&z_mean_of(b as usize)))
+                else {
+                    continue;
+                };
+                let vr = &mesh.verts[v as usize];
+                (cell, stencil, Some((vr.x, vr.y, vr.z)))
+            } else {
+                let cell = c.unwrap_or(0);
+                (cell, vec![cell], None)
+            };
+            let slot = match node_names.iter().position(|n| n == &row.node) {
+                Some(i) => i,
+                None => {
+                    node_names.push(row.node.clone());
+                    node_names.len() - 1
+                }
+            } as u32;
+            couplings.push(CouplingPoint {
+                cell,
+                stencil,
+                vertex,
+                node_slot: slot,
+                node: row.node.clone(),
+                cd: row.cd,
+                area: row.area,
+                area_authored: row.area_authored,
+            });
+        }
+        let ns = node_names.len();
+        let np = couplings.len();
 
         let nf = faces.len();
         let mut m = Marcher {
@@ -317,10 +488,26 @@ impl Marcher {
             rain: vec![0.0; nc],
             evap: vec![0.0; nc],
             coupling: vec![0.0; nc],
+            couplings,
+            node_names,
+            node_grade: vec![0.0; ns],
+            node_depth: vec![0.0; ns],
+            node_rim: vec![0.0; ns],
+            node_spill_avail: vec![0.0; ns],
+            node_drawn: vec![0.0; ns],
+            outfall_slot: vec![false; ns],
+            exchange: vec![0.0; np],
+            driven,
+            rating_curves: vec![Vec::new(); rating_names.len()],
+            rating_names,
             rain_in: 0.0,
             evap_out: 0.0,
             boundary_in: 0.0,
             boundary_out: 0.0,
+            coupling_in: 0.0,
+            coupling_out: 0.0,
+            outfall_in: 0.0,
+            outfall_out: 0.0,
         };
         for ci in 0..nc {
             m.reclose(ci);
@@ -405,6 +592,16 @@ impl Marcher {
         for b in &self.boundaries {
             next[b.cell as usize] = true;
         }
+        // §15.4.4: cells with coupling points or held injection are
+        // always active.
+        for cp in &self.couplings {
+            next[cp.cell as usize] = true;
+        }
+        for (ci, r) in self.coupling.iter().enumerate() {
+            if *r != 0.0 {
+                next[ci] = true;
+            }
+        }
         self.active = next;
     }
 
@@ -450,6 +647,216 @@ impl Marcher {
         self.q[fi].clamp(-cap, cap)
     }
 
+    /// §15.6: junction exchange at tier-0 cadence, sequentially, in
+    /// point order. A drain takes at most the β share of its source
+    /// cell per substep; a spill draws against the node's advance-wide
+    /// ledger — the same water cannot spill twice.
+    fn fire_couplings(&mut self, dt: f64) {
+        for k in 0..self.couplings.len() {
+            let cp = &self.couplings[k];
+            let ci = cp.cell as usize;
+            let slot = cp.node_slot as usize;
+            if self.outfall_slot[slot] {
+                // §15.6: outfall coupling is asymmetric — no orifice law.
+                continue;
+            }
+            let mut q = exchange_q(
+                self.eta[ci],
+                self.node_grade[slot],
+                self.node_rim[slot],
+                cp.cd,
+                cp.area,
+                self.depth[ci],
+                self.node_depth[slot],
+                self.dry_depth,
+            );
+            if q == 0.0 {
+                continue;
+            }
+            if q > 0.0 {
+                q = q.min(BETA * self.vol[ci].max(0.0) / dt);
+            } else {
+                let avail = (self.node_spill_avail[slot] - self.node_drawn[slot]).max(0.0);
+                if avail <= 0.0 {
+                    continue;
+                }
+                let take = (-q * dt).min(avail);
+                self.node_drawn[slot] += take;
+                q = -take / dt;
+            }
+            let dv = q * dt;
+            self.vol[ci] = (self.vol[ci] - dv).max(0.0);
+            if dv > 0.0 {
+                self.coupling_out += dv;
+            } else {
+                self.coupling_in += -dv;
+            }
+            self.exchange[k] += dv;
+            self.reclose(ci);
+        }
+    }
+
+    /// The §15.4.4 drying depth (m), for callers keying wetness ramps.
+    pub fn dry_depth(&self) -> f64 {
+        self.dry_depth
+    }
+
+    /// §15.6: mark a slot as naming an outfall — its points leave the
+    /// junction orifice law to the boundary-stage and injection paths.
+    pub fn mark_outfall_slot(&mut self, slot: usize) {
+        self.outfall_slot[slot] = true;
+    }
+
+    /// Whether a slot was marked as an outfall.
+    pub fn is_outfall_slot(&self, slot: usize) -> bool {
+        self.outfall_slot[slot]
+    }
+
+    /// §15.5: the boundary slots whose stage or flow the session must
+    /// resolve per advance.
+    pub fn driven_boundaries(&self) -> &[DrivenBoundary] {
+        &self.driven
+    }
+
+    /// §15.5: resolve a driven slot's flow (m³/s per metre, outward
+    /// positive as authored). The slot conveys from now on.
+    pub fn set_boundary_flow(&mut self, bi: usize, q_per_m: f64) {
+        self.boundaries[bi].law = BoundaryLaw::Flow { q_per_m };
+        self.boundaries[bi].enabled = true;
+    }
+
+    /// §15.5: resolve a driven slot's stage (m). The slot conveys from
+    /// now on.
+    pub fn set_boundary_stage(&mut self, bi: usize, eta: f64) {
+        self.boundaries[bi].law = BoundaryLaw::Stage { eta };
+        self.boundaries[bi].enabled = true;
+    }
+
+    /// Distinct rating-curve names, in slot order.
+    pub fn rating_curve_names(&self) -> &[String] {
+        &self.rating_names
+    }
+
+    /// §15.5: supply a rating curve's points (stage above the edge sill
+    /// (m) → per-metre discharge, sorted by stage). Every boundary slot
+    /// reading this curve conveys from now on.
+    pub fn set_rating_curve(&mut self, slot: usize, points: Vec<(f64, f64)>) {
+        self.rating_curves[slot] = points;
+        for b in &mut self.boundaries {
+            if matches!(b.law, BoundaryLaw::Rating { curve } if curve as usize == slot) {
+                b.enabled = true;
+            }
+        }
+    }
+
+    /// The resolved §15.6 coupling points, in authored (post last-wins)
+    /// order.
+    pub fn coupling_points(&self) -> &[CouplingPoint] {
+        &self.couplings
+    }
+
+    /// Distinct coupled node names, in slot order; drives and spill
+    /// budgets are addressed by these slots.
+    pub fn coupling_nodes(&self) -> &[String] {
+        &self.node_names
+    }
+
+    /// §15.6: set a node slot's drive for the coming advance — its
+    /// hydraulic grade, water depth and rim elevation (m), and the
+    /// volume available to spill over the whole advance (m³).
+    pub fn set_node_drive(&mut self, slot: usize, grade: f64, depth: f64, rim: f64, spill: f64) {
+        self.node_grade[slot] = grade;
+        self.node_depth[slot] = depth;
+        self.node_rim[slot] = rim;
+        self.node_spill_avail[slot] = spill;
+    }
+
+    /// Resolve a `COUPLING_AREA AUTO` derivation (§15.6): the session
+    /// overrides unauthored areas from the node's largest connected
+    /// conduit before the first advance.
+    pub fn set_coupling_area(&mut self, point: usize, area: f64) {
+        self.couplings[point].area = area;
+    }
+
+    /// Signed exchanged volume per point over the last advance (m³,
+    /// positive = drained into the node).
+    pub fn exchanged(&self) -> &[f64] {
+        &self.exchange
+    }
+
+    /// §15.6: the exchange conductance of a point against the current
+    /// surface, for the §6.4 vertex damping. Never negative.
+    pub fn coupling_conductance(&self, point: usize) -> f64 {
+        let cp = &self.couplings[point];
+        let ci = cp.cell as usize;
+        let slot = cp.node_slot as usize;
+        exchange_conductance(
+            self.eta[ci],
+            self.node_grade[slot],
+            self.node_rim[slot],
+            cp.cd,
+            cp.area,
+            self.depth[ci],
+            self.node_depth[slot],
+            self.dry_depth,
+        )
+    }
+
+    /// Clear every held injection rate (§15.6 outfall network→surface).
+    pub fn clear_injection(&mut self) {
+        for r in &mut self.coupling {
+            *r = 0.0;
+        }
+    }
+
+    /// §15.6: scatter an outfall's injection (m³/s) across a point's
+    /// stencil, weighted by the surface slope from the vertex down
+    /// toward each cell, falling back to area weights on a flat or dry
+    /// surface. The rates persist until cleared.
+    pub fn inject(&mut self, point: usize, rate: f64) {
+        let cp = self.couplings[point].clone();
+        let weights: Vec<f64> = if let Some((vx, vy, vz)) = cp.vertex {
+            // η_v: wet-depth-weighted mean surface of the wet stencil
+            // cells, the vertex ground elevation when all are dry.
+            let (mut num, mut den) = (0.0, 0.0);
+            for &t in &cp.stencil {
+                let t = t as usize;
+                if self.depth[t] >= self.dry_depth {
+                    num += self.depth[t] * self.eta[t];
+                    den += self.depth[t];
+                }
+            }
+            let eta_v = if den > 0.0 { num / den } else { vz };
+            cp.stencil
+                .iter()
+                .map(|&t| {
+                    let t = t as usize;
+                    let d = (self.cx[t] - vx).hypot(self.cy[t] - vy);
+                    if d < 1e-9 {
+                        0.0
+                    } else {
+                        ((eta_v - self.eta[t]) / d).max(0.0)
+                    }
+                })
+                .collect()
+        } else {
+            vec![1.0]
+        };
+        let wsum: f64 = weights.iter().sum();
+        if wsum > 1e-30 {
+            for (&t, w) in cp.stencil.iter().zip(&weights) {
+                let t = t as usize;
+                self.coupling[t] += rate * (w / wsum) / self.area[t];
+            }
+        } else {
+            let asum: f64 = cp.stencil.iter().map(|&t| self.area[t as usize]).sum();
+            for &t in &cp.stencil {
+                let t = t as usize;
+                self.coupling[t] += rate / asum;
+            }
+        }
+    }
+
     /// §15.4.4: re-tiering invalidates the positivity bookkeeping of
     /// in-flight accumulators, so gather every pending side into its
     /// cell first, and re-close the cells that changed.
@@ -491,6 +898,15 @@ impl Marcher {
         }
         for b in &self.boundaries {
             self.tier[b.cell as usize] = 0;
+        }
+        // §15.4.4: coupling and injection cells are pinned to tier 0.
+        for cp in &self.couplings {
+            self.tier[cp.cell as usize] = 0;
+        }
+        for (ci, r) in self.coupling.iter().enumerate() {
+            if *r != 0.0 {
+                self.tier[ci] = 0;
+            }
         }
         for (fi, f) in self.faces.iter().enumerate() {
             self.face_tier[fi] = self.tier[f.cl as usize].min(self.tier[f.cr as usize]);
@@ -590,6 +1006,13 @@ impl Marcher {
             let rain = self.rain[ci] * a * dt;
             let coup = self.coupling[ci] * a * dt;
             self.rain_in += rain;
+            // §15.8: the injection path books separately from the
+            // junction orifice exchange.
+            if coup >= 0.0 {
+                self.outfall_in += coup;
+            } else {
+                self.outfall_out += -coup;
+            }
             // §15.4.3: evaporation shuts off C¹ as the cell dries, and
             // takes no more than the cell holds.
             let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
@@ -609,10 +1032,35 @@ impl Marcher {
     fn fire_boundaries(&mut self, dt: f64) {
         for bi in 0..self.boundaries.len() {
             let b = &self.boundaries[bi];
+            if !b.enabled {
+                // §15.5: an unresolved series or curve slot is a wall.
+                continue;
+            }
             let ci = b.cell as usize;
             let h = self.depth[ci];
             // Inflow-positive volume the law asks to move this substep.
             let asked: f64 = match b.law {
+                BoundaryLaw::Rating { curve } => {
+                    // §15.5: stage above the edge sill, re-read every
+                    // firing; linear between points, held at the ends.
+                    let head = (self.eta[ci] - b.z_sill).max(0.0);
+                    let pts = &self.rating_curves[curve as usize];
+                    let q = match pts.iter().position(|p| p.0 >= head) {
+                        _ if pts.is_empty() => 0.0,
+                        None => pts[pts.len() - 1].1,
+                        Some(0) => pts[0].1,
+                        Some(i) => {
+                            let (x0, y0) = pts[i - 1];
+                            let (x1, y1) = pts[i];
+                            y0 + (y1 - y0) * (head - x0) / (x1 - x0).max(1e-30)
+                        }
+                    };
+                    if h <= self.dry_depth {
+                        0.0
+                    } else {
+                        -q * b.xi * dt
+                    }
+                }
                 BoundaryLaw::NormalFlow { slope } => {
                     if h <= self.dry_depth || slope <= 0.0 {
                         0.0
@@ -695,6 +1143,15 @@ impl Marcher {
     /// Advance to exactly `span` seconds from now (§15.4.4: an advance
     /// always reaches its target).
     pub fn advance(&mut self, span: f64) {
+        // §15.6 per-advance state: the spill ledger and the exchange
+        // totals reset; the same water cannot spill twice within one
+        // routing step.
+        for d in &mut self.node_drawn {
+            *d = 0.0;
+        }
+        for e in &mut self.exchange {
+            *e = 0.0;
+        }
         let mut remaining = span;
         let nsub = 1u64 << self.lts_tiers.saturating_sub(1).min(7);
         let mut dt0 = self.stable_dt();
@@ -727,6 +1184,7 @@ impl Marcher {
                     self.fire_faces(dt, 0);
                     self.fire_cells(dt, 0);
                     self.fire_boundaries(dt);
+                    self.fire_couplings(dt);
                     remaining -= dt;
                 }
                 self.macro_cycles += 1;
@@ -736,6 +1194,7 @@ impl Marcher {
                 self.fire_faces(dt0, s);
                 self.fire_cells(dt0, s);
                 self.fire_boundaries(dt0);
+                self.fire_couplings(dt0);
             }
             remaining -= dt0 * nsub as f64;
             self.macro_cycles += 1;
@@ -1368,6 +1827,266 @@ mod tests {
             "SWASHES bump relative L1 depth error {}",
             err / norm
         );
+    }
+
+    /// §15.5: a series-driven slot is a wall until its first
+    /// resolution, and conveys from then on.
+    #[test]
+    fn a_driven_boundary_is_a_wall_until_resolved() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.4);
+        let topo = Topology::build(&mesh).expect("valid");
+        let (ci, e) = (0..mesh.cells.len() * 3)
+            .find(|slot| topo.neighbour[*slot].is_none())
+            .map(|slot| (slot / 3, slot % 3))
+            .expect("boundary edge");
+        mesh.boundaries.push(crate::overland::BoundaryRow {
+            cell: ci as u32,
+            edge: e as u8,
+            condition: BoundaryCondition::Flow(SeriesOrValue::Series("QB".into())),
+            group: None,
+        });
+        let mut m = build(&mesh);
+        assert_eq!(m.driven_boundaries().len(), 1);
+        assert_eq!(m.driven_boundaries()[0].series, "QB");
+        let v0 = m.storage();
+        m.advance(30.0);
+        assert!(
+            (m.storage() - v0).abs() < 1e-12,
+            "unresolved slot must wall"
+        );
+        let bi = m.driven_boundaries()[0].boundary;
+        m.set_boundary_flow(bi, 0.05);
+        m.advance(30.0);
+        assert!(m.storage() < v0, "resolved slot must convey");
+        assert!(m.boundary_out > 0.0);
+    }
+
+    /// §15.5: a rating outlet reads its curve of stage above the edge
+    /// sill at every firing — linear between points, held at the ends,
+    /// dry-gated.
+    #[test]
+    fn a_rating_outlet_follows_its_curve() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        let topo = Topology::build(&mesh).expect("valid");
+        let (ci, e) = (0..mesh.cells.len() * 3)
+            .find(|slot| topo.neighbour[*slot].is_none())
+            .map(|slot| (slot / 3, slot % 3))
+            .expect("boundary edge");
+        mesh.boundaries.push(crate::overland::BoundaryRow {
+            cell: ci as u32,
+            edge: e as u8,
+            condition: BoundaryCondition::RatingCurve { curve: "RC".into() },
+            group: None,
+        });
+        let mut m = build(&mesh);
+        assert_eq!(m.rating_curve_names(), ["RC"]);
+        // Unsupplied curve: wall.
+        let v0 = m.storage();
+        m.advance(10.0);
+        assert!((m.storage() - v0).abs() < 1e-12);
+        // Head 0.5 on a curve rising 0 → 0.5 m²/s over a metre of
+        // head: q = 0.25 per metre of edge.
+        m.set_rating_curve(0, vec![(0.0, 0.0), (1.0, 0.5)]);
+        let xi = 1.0; // grid edges are dx long
+        let before = m.boundary_out;
+        m.advance(4.0);
+        let out = m.boundary_out - before;
+        let expect = 0.25 * xi * 4.0;
+        assert!(
+            (out / expect - 1.0).abs() < 0.10,
+            "rated outflow {out} vs {expect}"
+        );
+        // Held at the top end: far above the last point the discharge
+        // is the last point's.
+        let mut mesh2 = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh2, 13.0);
+        mesh2.boundaries.push(crate::overland::BoundaryRow {
+            cell: ci as u32,
+            edge: e as u8,
+            condition: BoundaryCondition::RatingCurve { curve: "RC".into() },
+            group: None,
+        });
+        let mut m2 = build(&mesh2);
+        m2.set_rating_curve(0, vec![(0.0, 0.0), (1.0, 0.5)]);
+        let before = m2.boundary_out;
+        m2.advance(2.0);
+        let out = m2.boundary_out - before;
+        let expect = 0.5 * xi * 2.0;
+        assert!(
+            (out / expect - 1.0).abs() < 0.10,
+            "clamped outflow {out} vs {expect}"
+        );
+    }
+
+    /// §15.6: a vertex row collapses to the lowest-bed incident cell,
+    /// two spellings of one vertex are one coupling (last wins), and
+    /// points naming one node share a slot.
+    #[test]
+    fn a_vertex_coupling_collapses_to_the_lowest_bed_cell() {
+        let mut mesh = grid(2, 2, 1.0, |x, y| 10.0 - 0.5 * x - 0.1 * y);
+        let row = |address: &str, node: &str, cd: f64| crate::overland::CouplingRow {
+            address: address.into(),
+            node: node.into(),
+            cd,
+            area: 1.0,
+            area_authored: false,
+        };
+        // Vertex 4 = (1, 1), interior: six incident cells.
+        mesh.vertex_couplings.push(row("4", "J1", 0.5));
+        mesh.vertex_couplings.push(row("4", "J1", 0.7)); // same vertex: last wins
+        mesh.cell_couplings.push(row("0", "J2", 0.65));
+        mesh.cell_couplings.push(row("3", "J1", 0.65)); // same node: same slot
+        let m = build(&mesh);
+        let pts = m.coupling_points();
+        assert_eq!(pts.len(), 3);
+        assert_eq!(pts[0].cd, 0.7, "last authored row wins");
+        // The collapse cell is the lowest-bed incident cell of vertex 4.
+        let topo = Topology::build(&mesh).expect("valid");
+        let v = &mesh.verts[4];
+        let lowest = (0..mesh.cells.len())
+            .filter(|&ci| mesh.cells[ci].v.contains(&4))
+            .min_by(|&a, &b| topo.centroid[a][2].total_cmp(&topo.centroid[b][2]))
+            .expect("incident");
+        assert_eq!(pts[0].cell as usize, lowest);
+        assert_eq!(pts[0].vertex, Some((v.x, v.y, v.z)));
+        assert_eq!(m.coupling_nodes(), ["J1", "J2"]);
+        assert_eq!(pts[0].node_slot, 0);
+        assert_eq!(pts[1].node_slot, 1);
+        assert_eq!(pts[2].node_slot, 0);
+    }
+
+    /// §15.6: a ponded surface drains through a coupling at the orifice
+    /// rate, the ledger closes exactly, and the conductance is live.
+    #[test]
+    fn a_pond_drains_through_a_coupling_at_the_orifice_rate() {
+        let mut mesh = grid(4, 4, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        mesh.cell_couplings.push(crate::overland::CouplingRow {
+            address: "0".into(),
+            node: "J1".into(),
+            cd: 0.65,
+            area: 0.05,
+            area_authored: true,
+        });
+        let mut m = build(&mesh);
+        let v0 = m.storage();
+        m.set_node_drive(0, 8.0, 2.0, 10.0, 0.0);
+        assert!(m.coupling_conductance(0) > 0.0);
+        m.advance(1.0);
+        // First-second drain within 10% of the initial orifice rate
+        // (the local drawdown cone lowers the driving head a little).
+        let q0 = 0.65 * (2.0 * 0.05) * (2.0 * G).sqrt() * 2.5_f64.sqrt();
+        assert!(
+            (m.coupling_out / q0 - 1.0).abs() < 0.10,
+            "drained {} vs orifice {q0}",
+            m.coupling_out
+        );
+        assert_eq!(m.exchanged().len(), 1);
+        assert!((m.exchanged()[0] - m.coupling_out).abs() < 1e-12);
+        m.advance(119.0);
+        // Ledger identity, exactly; the pond is nearly gone.
+        assert!(
+            (v0 - m.storage() - m.coupling_out).abs() < 1e-9,
+            "ledger: {} drained, {} missing",
+            m.coupling_out,
+            v0 - m.storage()
+        );
+        assert_eq!(m.coupling_in, 0.0);
+        assert!(m.storage() < 0.05 * v0, "pond still holds {}", m.storage());
+    }
+
+    /// §15.6: a spill draws against the node's advance-wide ledger —
+    /// the same water cannot spill twice within one routing step.
+    #[test]
+    fn a_spill_cannot_draw_the_same_water_twice() {
+        let mut mesh = grid(4, 4, 1.0, |_, _| 10.0);
+        mesh.cell_couplings.push(crate::overland::CouplingRow {
+            address: "0".into(),
+            node: "J1".into(),
+            cd: 0.65,
+            area: 0.05,
+            area_authored: true,
+        });
+        let mut m = build(&mesh);
+        m.set_node_drive(0, 11.0, 1.0, 10.0, 0.05);
+        m.advance(10.0);
+        assert!(
+            (m.coupling_in - 0.05).abs() < 1e-12,
+            "spilled {}",
+            m.coupling_in
+        );
+        assert!((m.storage() - 0.05).abs() < 1e-12);
+        // A further advance re-arms the budget.
+        m.set_node_drive(0, 11.0, 1.0, 10.0, 0.05);
+        m.advance(10.0);
+        assert!((m.coupling_in - 0.10).abs() < 1e-12);
+    }
+
+    /// §15.6: equal heads exchange nothing and leave the basin at rest.
+    #[test]
+    fn equal_heads_exchange_nothing() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        mesh.cell_couplings.push(crate::overland::CouplingRow {
+            address: "0".into(),
+            node: "J1".into(),
+            cd: 0.65,
+            area: 1.0,
+            area_authored: true,
+        });
+        let mut m = build(&mesh);
+        let v0 = m.storage();
+        m.set_node_drive(0, 10.5, 0.5, 10.0, 1.0);
+        m.advance(30.0);
+        assert_eq!(m.coupling_out, 0.0);
+        assert_eq!(m.coupling_in, 0.0);
+        assert!((m.storage() - v0).abs() < 1e-12);
+    }
+
+    /// §15.6: outfall injection scatters down the surface slope from
+    /// the vertex, and falls back to area weights on a flat surface.
+    #[test]
+    fn injection_scatters_downhill_from_the_vertex() {
+        let row = |address: &str| crate::overland::CouplingRow {
+            address: address.into(),
+            node: "OUT".into(),
+            cd: 0.65,
+            area: 1.0,
+            area_authored: true,
+        };
+        // Sloped and dry: η_v is the vertex ground elevation, cells
+        // downhill of it weight positive, uphill cells get nothing.
+        let mut mesh = grid(2, 2, 1.0, |x, _| 10.0 - 0.5 * x);
+        mesh.vertex_couplings.push(row("4")); // (1, 1), z = 9.5
+        let mut m = build(&mesh);
+        m.inject(0, 0.1);
+        let total: f64 = m.coupling.iter().zip(&m.area).map(|(r, a)| r * a).sum();
+        assert!((total - 0.1).abs() < 1e-12, "scatter conserves the rate");
+        let topo = Topology::build(&mesh).expect("valid");
+        for (ci, r) in m.coupling.iter().enumerate() {
+            if *r > 0.0 {
+                assert!(
+                    topo.centroid[ci][2] < 9.5,
+                    "cell {ci} is not downhill of the vertex"
+                );
+            }
+        }
+        // Flat: area weights over the whole stencil.
+        let mut mesh = grid(2, 2, 1.0, |_, _| 10.0);
+        mesh.vertex_couplings.push(row("4"));
+        let mut m = build(&mesh);
+        m.inject(0, 0.1);
+        let stencil: Vec<usize> = (0..mesh.cells.len())
+            .filter(|&ci| mesh.cells[ci].v.contains(&4))
+            .collect();
+        let asum: f64 = stencil.iter().map(|&ci| m.area[ci]).sum();
+        for &ci in &stencil {
+            assert!((m.coupling[ci] - 0.1 / asum).abs() < 1e-12);
+        }
+        m.clear_injection();
+        assert!(m.coupling.iter().all(|&r| r == 0.0));
     }
 
     /// §15.5: a stage boundary fills a dry basin toward its stage and

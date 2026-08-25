@@ -356,11 +356,13 @@ condition addresses its (cell, edge) slot. Five types:
 | `WALL` | $F = 0$ |
 | `NORMAL_FLOW` | Manning outfall at the authored bed slope $S$: $F = -\dfrac{h^{5/3}\sqrt{S}}{n}\,\xi$ |
 | `SPECIFIED_FLOW` | $F = -q_{bc}\,\xi$, $q_{bc}$ the authored (or time-series) per-metre discharge |
-| `RATING_CURVE` | as `SPECIFIED_FLOW` with $q_{bc}$ read from a curve of stage above the edge bed |
+| `RATING_CURVE` | as `SPECIFIED_FLOW` with $q_{bc}$ read from a curve of stage above the edge bed — the edge's sill, its higher endpoint elevation, the §15.3 face datum — interpolated linearly and held at its end values beyond its range, re-read every firing because stage is state, not time |
 | `SPECIFIED_STAGE` | the §15.4.2 momentum law against a ghost cell held at the authored (or time-series) stage, slope arm $d_n = 2A/(3\xi)$, the cell's own $n^2$, prognostic discharge |
 
 $h$ is the cell-mean depth under `MEAN` reconstruction and the wetted-edge
-depth under `VFR_FACE`. All boundary applications clamp in volume
+depth under `VFR_FACE`. A time-series stage or flow resolves to a value
+per advance at the wiring layer; until its first resolution the slot is
+a wall, the refusal-safe reading of an unresolved parameter. All boundary applications clamp in volume
 space — a cell cannot be driven negative, and one substep of a stage
 boundary moves its cell at most **to** the prescribed stage, from
 either side — and the flux booked to the §15.8 ledger is re-derived
@@ -385,12 +387,18 @@ cadence, sequentially.
 The overland surface and the §6 network exchange at **coupling points**:
 authored mappings from a mesh vertex or cell to a network node (§14.15).
 Nothing couples implicitly — an unmapped node never exchanges. A vertex
-mapping conveys through the vertex's incident-cell stencil; for junction
-exchange the stencil collapses to its lowest-bed cell (where water
-actually pools), while volume scattering spreads across the stencil
-weighted by the surface slope toward each cell (downhill for arriving
-water, uphill for draining), falling back to geometric weights on a flat
-surface.
+mapping conveys through the vertex's incident-cell stencil, collapsed
+for junction exchange to its lowest-bed cell: that is where water
+actually pools, and a single source cell is what the drain cap is
+written against — both directions of the orifice exchange apply there.
+Outfall injection (network→surface, below) instead spreads across the
+stencil, weighted by the surface slope from the vertex down toward each
+cell ($w_k = \max(0, (\eta_v - \eta_k)/d_k)$, $d_k$ the distance from
+the vertex to the cell centroid, $\eta_v$ the wet-depth-weighted mean
+surface of the vertex's wet incident cells, or the vertex ground
+elevation when all are dry), falling back to area weights on a flat or
+dry surface. Two rows resolving to one vertex are one coupling, the
+last authored winning (§14.15).
 
 **Junction exchange** is one orifice law for both directions. With
 $\Delta h = \eta_{2D} - h_{1D}$ (the overland surface against the node's
@@ -452,7 +460,12 @@ and the network's grade must track it.
 boundary stage reads the surface (the deepest wet stencil cell's
 surface, blended in by a wetness ramp; a dry stencil leaves the authored
 stage), evaluated inside each network iteration; a flap gate suppresses
-the override when the surface stands above the authored stage.
+the override when the surface stands above the stage the outfall would
+otherwise carry. The ramp is keyed on the depth in excess of the drying
+depth, $t = (d - h_{dry})/h_{dry}$ smoothstepped: a draining cell comes
+to rest holding a film at about the drying depth, and a ramp keyed on
+the raw depth would read that immovable film as wet and deadlock the
+outfall at its own bed (a measured predecessor failure).
 Network→surface: the outfall's discharge over the step is accumulated in
 volume, capped against a per-cell budget frozen at the step's start, and
 injected into the surface as a constant rate over the following step.
