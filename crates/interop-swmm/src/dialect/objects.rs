@@ -728,6 +728,13 @@ fn parse_outfall(
             OutfallStage::Series { series: ts }
         }
     };
+    // FREE and NORMAL carry no stage-data column, but the predecessor's
+    // interface still emits one as a `*` placeholder ("OUT1 98.0 FREE *
+    // NO") and the successor's reader skips it — so this one does too,
+    // keeping the tails aligned in both layouts (§14.5).
+    if matches!(kind, 0 | 1) && t.get(n).is_some_and(|tok| *tok == "*") {
+        n += 1;
+    }
     // Optional flap gate, then optional parcel routing — positional, per the
     // predecessor: gate at token n, routing at n+1.
     let mut flap_gate = false;
@@ -737,12 +744,15 @@ fn parse_outfall(
         };
         flap_gate = v == 1;
     }
+    // `*` is no routing, the same null the divider's link column admits.
     let mut route_to_parcel = None;
     if let Some(tok) = t.get(n + 1) {
-        let Some(p) = resolve(s, ObjectKind::Parcel, tok, diags, l) else {
-            return;
-        };
-        route_to_parcel = Some(p);
+        if *tok != "*" {
+            let Some(p) = resolve(s, ObjectKind::Parcel, tok, diags, l) else {
+                return;
+            };
+            route_to_parcel = Some(p);
+        }
     }
     net.vertices.push(Vertex {
         id: t[0].to_string(),
@@ -1950,6 +1960,81 @@ TS1  0:00  1.0
         assert_eq!((true, Some(0)), by_id("O2"), "a free outfall with both");
         assert_eq!((true, None), by_id("O3"), "the gate alone");
         assert_eq!((false, None), by_id("O4"), "neither");
+    }
+
+    /// §14.5: FREE and NORMAL carry no stage data, but the predecessor's
+    /// interface still writes the column as a `*` placeholder, and files
+    /// it exported carry it everywhere. The placeholder is skipped so the
+    /// gate and routing stay aligned; a routing of `*` is no routing.
+    #[test]
+    fn a_free_outfall_skips_the_interface_stage_placeholder() {
+        const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  TS1
+
+[SUBCATCHMENTS]
+P1  G1  J1  2  50  100  0.5  0
+
+[SUBAREAS]
+P1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+P1  3  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  5
+
+[OUTFALLS]
+O1  98.0  FREE    *  NO
+O2  98.0  NORMAL  *  YES  P1
+O3  98.0  FREE    *  YES  *
+O4  98.0  FIXED   96.5  NO  *
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1  0  0  0
+
+[TIMESERIES]
+TS1  0:00  1.0
+";
+        let (net, diags) = parse(INP);
+        assert!(
+            !diags.iter().any(|d| d.kind.is_error()),
+            "{:?}",
+            diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .collect::<Vec<_>>()
+        );
+        let outfall = |id: &str| {
+            let v = net.vertices.iter().find(|v| v.id == id).unwrap();
+            let VertexKind::Outfall {
+                ref stage,
+                flap_gate,
+                route_to_parcel,
+            } = v.kind
+            else {
+                panic!("{id} should be an outfall")
+            };
+            (stage.clone(), flap_gate, route_to_parcel)
+        };
+        assert!(matches!(outfall("O1"), (OutfallStage::Free, false, None)));
+        assert!(matches!(
+            outfall("O2"),
+            (OutfallStage::Normal, true, Some(0))
+        ));
+        assert!(matches!(outfall("O3"), (OutfallStage::Free, true, None)));
+        // A staged outfall's `*` is only ever the routing null: the stage
+        // column is real there and still must parse.
+        let (stage, gate, route) = outfall("O4");
+        assert!(matches!(stage, OutfallStage::Fixed(_)));
+        assert!(!gate);
+        assert_eq!(route, None);
     }
 
     #[test]

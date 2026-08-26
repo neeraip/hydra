@@ -171,7 +171,12 @@ seepage whatever the other two parameters say.
 
 **An outfall's two optional tails** are a flap gate and the parcel its
 outflow is routed to, in that order, and either may be given without the
-other. Both are read here whenever they are present.
+other. Both are read here whenever they are present. A `FREE` or `NORMAL`
+outfall carries no stage-data column, but the predecessor's interface
+still emits one as a `*` placeholder (`OUT1 98.0 FREE * NO`), and the
+successor's reader skips it; this reader skips it likewise, so the tails
+stay aligned in both layouts. A routed-to parcel of `*` is no routing,
+the same null the divider's link column already admits.
 
 > **DEVIATION from SWMM:** the predecessor tests the two tails with
 > `ntoks == n` and `ntoks == n+1` rather than by length, so a line
