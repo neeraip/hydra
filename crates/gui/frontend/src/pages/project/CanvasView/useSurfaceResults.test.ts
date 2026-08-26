@@ -246,7 +246,7 @@ describe("the legend and the canvas agree on what is shown", () => {
 describe("the smooth surface", () => {
   it("takes the ground from the vertices, not from cell means", () => {
     const g = geometry(4);
-    const shown = shownSurface(g, GROUND, null, null, "ground", true);
+    const shown = shownSurface(g, GROUND, null, null, "ground", 6);
     expect(shown.vertexValues?.length).toBe(g.nVertices);
     // Vertex 0's own z, untouched by any averaging.
     expect(shown.vertexValues?.[0]).toBeCloseTo(g.positions[2], 6);
@@ -261,7 +261,7 @@ describe("the smooth surface", () => {
    */
   it("keeps a cell's own value at its centre", () => {
     const g = geometry(4);
-    const shown = shownSurface(g, GROUND, meta(4), period(4), "depth", true);
+    const shown = shownSurface(g, GROUND, meta(4), period(4), "depth", 6);
     expect(shown.centreValues).toBe(shown.values);
     const deepest = shown.values?.[0];
     expect(deepest).toBeCloseTo(0.5, 6);
@@ -289,7 +289,7 @@ describe("the smooth surface", () => {
       meta(4),
       period(4),
       "speed",
-      true,
+      6,
     );
     expect(shown.variable?.id).toBe("speed");
     expect(shown.vertexValues?.length).toBe(geometry(4).nVertices);
@@ -300,7 +300,7 @@ describe("the smooth surface", () => {
   });
 
   it("holds no vertex values while the surface is drawn flat", () => {
-    const flat = shownSurface(geometry(4), GROUND, null, null, "ground", false);
+    const flat = shownSurface(geometry(4), GROUND, null, null, "ground", 0);
     expect(flat.vertexValues).toBeNull();
     // The per-cell field is there either way: it is what the flat
     // picture paints and what a flat hover reads.
@@ -310,8 +310,8 @@ describe("the smooth surface", () => {
   it("still names what the legend names", () => {
     for (const id of ["", "ground", "depth"]) {
       const g = geometry(4);
-      const flat = shownSurface(g, GROUND, meta(4), period(4), id, false);
-      const smooth = shownSurface(g, GROUND, meta(4), period(4), id, true);
+      const flat = shownSurface(g, GROUND, meta(4), period(4), id, 0);
+      const smooth = shownSurface(g, GROUND, meta(4), period(4), id, 6);
       expect(smooth.variable?.id).toBe(flat.variable?.id);
     }
   });

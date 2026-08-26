@@ -15,9 +15,10 @@
  * there is a surface.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
+  blendSegments,
   cellValuesAtVertices,
   groundAtVertices,
   type SurfaceEdgeData,
@@ -234,33 +235,40 @@ export function useSurfaceResults({
   // Geometry → screen space: the cells to fill and the edges to draw
   // over them. Re-runs on a CRS change or a def registration, never on a
   // timeline scrub — this is the mesh, and the mesh does not move.
-  // Counted rather than derived from the CRS: a projection also changes
-  // when a proj4 definition lands for a code that already had a name,
-  // which no string built from the inputs would show.
-  const projectionEpoch = useRef(0);
+  // How finely the surface is blended, decided once: the geometry and
+  // the colours are two arrays indexed together, and a grid computed
+  // separately for each is one they could disagree about. Zero is the
+  // plain fill — asked for, or refused as unaffordable.
+  const segments = geometry && smooth ? blendSegments(geometry.nCells) : 0;
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: reprojToken re-runs this once lazily fetched proj4 defs register
   const projected = useMemo(() => {
     if (!geometry || !enabled) return null;
     const project = planProjector(sourceCrs);
     if (!project) return null;
-    projectionEpoch.current += 1;
-    // The blended picture is drawn from three sub-triangles per cell, so
-    // its geometry differs from the plain fill's and is built only while
-    // it is on show.
-    const blended = smooth
-      ? surfaceBlendedPolygonData(geometry, project)
-      : null;
+    const blended =
+      segments > 0
+        ? surfaceBlendedPolygonData(geometry, project, segments)
+        : null;
     const flat = blended ? null : surfacePolygonData(geometry, project);
+    const data = blended ?? (flat as SurfacePolygonData);
+    // Identity of these coordinates, from the coordinates themselves.
+    // Derived rather than counted because counting meant writing to a
+    // ref while rendering, which React may do twice, and which made the
+    // key depend on how often this ran rather than on what it produced.
+    // The extent moves whenever the projection does, including when a
+    // proj4 definition lands late for a code that already had a name.
     return {
-      key: `${sourceCrs}:${smooth ? "blend" : "flat"}:${projectionEpoch.current}`,
-      data: blended ?? (flat as SurfacePolygonData),
+      key: `${sourceCrs}:${segments}:${data.bounds?.join(",") ?? "empty"}`,
+      data,
       corners: blended
         ? blended.corners
         : (flat as SurfacePolygonData).attributes.getPolygon.value,
       subsPerCell: blended ? blended.segments * blended.segments : 1,
+      segments,
       edges: surfaceEdgeData(geometry, project),
     };
-  }, [geometry, sourceCrs, enabled, reprojToken, smooth]);
+  }, [geometry, sourceCrs, enabled, reprojToken, segments]);
 
   const shown = useMemo(
     () =>
@@ -271,10 +279,10 @@ export function useSurfaceResults({
             meta,
             periodData,
             variableId,
-            smooth,
+            segments,
           )
         : null,
-    [geometry, meshInfo, meta, periodData, variableId, smooth],
+    [geometry, meshInfo, meta, periodData, variableId, segments],
   );
 
   const surface = useMemo(
@@ -333,8 +341,9 @@ export function shownSurface(
   meta: SurfaceMeta | null,
   periodData: SurfacePeriod | null,
   variableId?: string,
-  /** Draw the field as a continuous surface rather than a mosaic. */
-  smooth = false,
+  /** Sub-triangles per cell edge for the blended picture; zero draws the
+   * plain fill. One value, shared with the geometry that is coloured. */
+  segments = 0,
 ): {
   variable: GenericVariable | null;
   values: Float32Array | null;
@@ -362,7 +371,7 @@ export function shownSurface(
   // is a property of the mesh, and the ground is the one there is.
   const column = periodData ? surfaceColumn(periodData, variable.id) : null;
   if (column && periodData) {
-    if (!smooth) {
+    if (segments < 1) {
       return {
         variable,
         values: column,
@@ -387,6 +396,7 @@ export function shownSurface(
         wetCorners,
         periodData.depth,
         variable,
+        segments,
       ),
     };
   }
@@ -400,7 +410,7 @@ export function shownSurface(
   if (!shown) return footprint;
 
   const values = surfaceGroundValues(geometry);
-  if (smooth) {
+  if (segments > 0) {
     // The ground needs no averaging: the mesh holds it at the vertices,
     // and the flat fill was this renderer throwing that away. The same
     // construction serves it exactly, since a cell's centre value is
@@ -422,6 +432,7 @@ export function shownSurface(
         null,
         null,
         shown,
+        segments,
       ),
     };
   }

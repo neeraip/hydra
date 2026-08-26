@@ -8,6 +8,7 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
+  BLEND_CELL_CEILING,
   blendedValue,
   blendSegments,
   cellValuesAtVertices,
@@ -282,13 +283,26 @@ describe("blended shading", () => {
     for (const n of [
       blendSegments(8),
       blendSegments(7_500),
-      blendSegments(120_000),
+      blendSegments(40_000),
     ]) {
       expect(n % 3).toBe(0);
       expect(n).toBeGreaterThanOrEqual(3);
     }
     // Finer where cells are large on screen, coarser where they are not.
-    expect(blendSegments(8)).toBeGreaterThan(blendSegments(120_000));
+    expect(blendSegments(8)).toBeGreaterThan(blendSegments(40_000));
+  });
+
+  /**
+   * The grid multiplies drawn polygons by its square, so a large mesh
+   * blended runs to a million polygons and tens of megabytes, rebuilt
+   * whenever the colours change. Cells that small are sub-pixel anyway,
+   * where blending changes nothing anyone can see.
+   */
+  it("refuses to blend a mesh too large to afford it", () => {
+    expect(blendSegments(BLEND_CELL_CEILING)).toBeGreaterThan(0);
+    expect(blendSegments(BLEND_CELL_CEILING + 1)).toBe(0);
+    const n = blendSegments(BLEND_CELL_CEILING);
+    expect(n * n * BLEND_CELL_CEILING).toBeLessThanOrEqual(500_000);
   });
 
   it("draws an n-by-n grid of sub-triangles per cell", () => {

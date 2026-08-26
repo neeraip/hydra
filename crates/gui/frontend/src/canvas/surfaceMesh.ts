@@ -397,10 +397,20 @@ export interface SurfaceBlendedData extends SurfacePolygonData {
  *
  * Multiples of three only: the centroid must be a sample, or the cell's
  * own value never appears.
+ *
+ * Zero above the ceiling, meaning "do not blend this mesh". The cost is
+ * the reason: the grid multiplies the drawn polygons by its square, and
+ * at a million polygons the geometry alone runs to tens of megabytes and
+ * is rebuilt whenever the colours change. A mesh that large draws cells
+ * smaller than a pixel, where blending changes nothing anyone can see,
+ * so the ceiling costs no picture and averts a stall.
  */
+export const BLEND_CELL_CEILING = 50_000;
+
 export function blendSegments(nCells: number): number {
   if (nCells <= 20_000) return 6; // 36 sub-triangles per cell
-  return 3; // 9 per cell
+  if (nCells <= BLEND_CELL_CEILING) return 3; // 9 per cell
+  return 0;
 }
 
 /** The barycentric grid for `n` segments: (w0, w1, w2) per sample. */
