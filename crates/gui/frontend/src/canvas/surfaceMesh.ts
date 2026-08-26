@@ -130,13 +130,17 @@ export function surfaceFootprintColors(nCells: number): Uint8Array {
  */
 export function surfaceFillColors(
   values: Float32Array,
-  depth: Float32Array,
+  /** Per-cell water depth, masking cells that hold none — or `null` for
+   * a variable that is not water. The ground under a dry cell is still
+   * there, and hiding it would be a claim about the terrain rather than
+   * about the flood. */
+  depth: Float32Array | null,
   variable: GenericVariable,
 ): Uint8Array {
   const nCells = values.length;
   const out = new Uint8Array(12 * nCells);
   for (let ci = 0; ci < nCells; ci++) {
-    if (!(depth[ci] > SURFACE_DRY_DEPTH_M)) continue; // alpha stays 0
+    if (depth != null && !(depth[ci] > SURFACE_DRY_DEPTH_M)) continue; // alpha stays 0
     const [r, g, b, a] = genericRgba(
       values[ci],
       variable,
@@ -281,4 +285,23 @@ export function meshEdgesLegible(
   pixelsPerProjectedUnit: number,
 ): boolean {
   return medianLength * pixelsPerProjectedUnit >= MESH_EDGE_MIN_PIXELS;
+}
+
+/**
+ * Each cell's bed elevation: the mean of its three vertices, which is
+ * the same reading of a cell's ground the solver's own flat closure
+ * takes (§15.3). Comes from the geometry, so it is available for any
+ * mesh, run or not.
+ */
+export function surfaceGroundValues(geometry: SurfaceGeometry): Float32Array {
+  const { nCells, positions, triangles } = geometry;
+  const out = new Float32Array(nCells);
+  for (let ci = 0; ci < nCells; ci++) {
+    const a = triangles[3 * ci];
+    const b = triangles[3 * ci + 1];
+    const c = triangles[3 * ci + 2];
+    out[ci] =
+      (positions[3 * a + 2] + positions[3 * b + 2] + positions[3 * c + 2]) / 3;
+  }
+  return out;
 }

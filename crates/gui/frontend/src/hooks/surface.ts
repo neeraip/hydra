@@ -36,6 +36,9 @@ export interface SurfaceMeta {
 export interface MeshInfo {
   nVertices: number;
   nCells: number;
+  /** The engine's mesh-property catalog with this mesh's own ranges:
+   * what can be shown about the surface with no run behind it. */
+  properties: GenericVariable[];
 }
 
 /** The mesh a viewer renders without the model: SI metres, model CRS. */

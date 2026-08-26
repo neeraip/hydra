@@ -17,6 +17,7 @@ import {
   surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
+  surfaceGroundValues,
   surfacePolygonData,
 } from "./surfaceMesh";
 
@@ -203,5 +204,47 @@ describe("the edge legibility decision", () => {
     const close = pixelsPerUnit("orthographic", 4);
     expect(meshEdgesLegible(cellMetres, whole)).toBe(false);
     expect(meshEdgesLegible(cellMetres, close)).toBe(true);
+  });
+});
+
+describe("surfaceGroundValues", () => {
+  // The solver reads a cell's bed as the mean of its vertices (spec
+  // 15.3's flat closure); the canvas must read it the same way, or the
+  // terrain on screen is not the terrain the run was over.
+  it("reads each cell's bed as the mean of its vertices", () => {
+    const g: SurfaceGeometry = {
+      nVertices: 4,
+      nCells: 2,
+      positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 12, 0, 1, 13]),
+      triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    };
+    const z = surfaceGroundValues(g);
+    expect(z[0]).toBeCloseTo(11, 6); // (10 + 11 + 12) / 3
+    expect(z[1]).toBeCloseTo(35 / 3, 6); // (10 + 12 + 13) / 3
+  });
+});
+
+describe("the water mask", () => {
+  const wet = new Float32Array([1, 0]);
+  const v: GenericVariable = {
+    id: "ground",
+    label: "Ground",
+    ramp: { type: "sequential" },
+    min: 0,
+    max: 2,
+  };
+
+  it("hides dry cells for a water variable", () => {
+    const colors = surfaceFillColors(new Float32Array([1, 1]), wet, v);
+    expect(colors[3]).toBe(SURFACE_ALPHA);
+    expect(colors[15]).toBe(0);
+  });
+
+  // The ground under a dry cell is still ground: masking it would be a
+  // claim about the terrain rather than about the flood.
+  it("paints every cell when there is no water to mask by", () => {
+    const colors = surfaceFillColors(new Float32Array([1, 1]), null, v);
+    expect(colors[3]).toBe(SURFACE_ALPHA);
+    expect(colors[15]).toBe(SURFACE_ALPHA);
   });
 });

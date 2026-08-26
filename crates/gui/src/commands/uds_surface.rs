@@ -165,20 +165,39 @@ pub(crate) fn surface_geometry_of(path: &Path) -> Result<Vec<u8>, String> {
 // has ever been run.
 
 /// What the app needs to know a model carries a surface at all.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshInfoDto {
     pub n_vertices: u32,
     pub n_cells: u32,
+    /// The engine's mesh-property catalog with this mesh's own ranges —
+    /// the ground it sits on, which a reader can be shown before there
+    /// is any run to colour it with.
+    pub properties: Vec<GenericVariableDto>,
 }
 
-/// The loaded model's mesh counts, or `None` when it carries no mesh
-/// (every water model, and every drainage model without 2D sections).
+/// The loaded model's mesh counts and properties, or `None` when it
+/// carries no mesh (every water model, and every drainage model without
+/// 2D sections).
 pub(crate) fn mesh_info_of(net: &hydra::uds::model::Network) -> Option<MeshInfoDto> {
     let mesh = net.overland.as_ref()?;
+    // The bed's range over the mesh's own vertices (§15.2), so the ramp
+    // spans the terrain that is there rather than an assumed datum.
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for v in &mesh.verts {
+        if v.z.is_finite() {
+            lo = lo.min(v.z);
+            hi = hi.max(v.z);
+        }
+    }
+    let properties = hydra::uds::descriptors::surface_properties()
+        .iter()
+        .map(|v| GenericVariableDto::from_descriptor(v, lo, hi, quantity_descriptor))
+        .collect();
     Some(MeshInfoDto {
         n_vertices: mesh.verts.len() as u32,
         n_cells: mesh.cells.len() as u32,
+        properties,
     })
 }
 
@@ -424,6 +443,16 @@ mod tests {
         let (net, _) = hydra::swmm::objects::parse_network(MESH_MODEL);
         let info = mesh_info_of(&net).expect("the model carries a mesh");
         assert_eq!((info.n_vertices, info.n_cells), (4, 2));
+        // The ground comes with the mesh, ranged over the mesh's own
+        // bed: a reader can be shown the terrain with no run at all.
+        let ground = info
+            .properties
+            .iter()
+            .find(|p| p.id == "ground")
+            .expect("the mesh publishes its ground");
+        assert!((ground.min - 10.0).abs() < 1e-9, "{}", ground.min);
+        assert!((ground.max - 10.6).abs() < 1e-9, "{}", ground.max);
+        assert!(ground.quantity.is_some(), "resolved for display");
 
         let (flat, _) = hydra::swmm::objects::parse_network(FLAT_MODEL);
         assert!(

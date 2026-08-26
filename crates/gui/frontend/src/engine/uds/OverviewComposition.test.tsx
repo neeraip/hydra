@@ -45,7 +45,7 @@ function composition() {
 
 describe("UdsOverviewComposition", () => {
   it("states the surface a mesh model carries, before any run", () => {
-    meshInfo.mockReturnValue({ nVertices: 9, nCells: 8 });
+    meshInfo.mockReturnValue({ nVertices: 9, nCells: 8, properties: [] });
     composition();
     expect(screen.getByText("Surface cells")).toBeTruthy();
     expect(screen.getByText("8")).toBeTruthy();

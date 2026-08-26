@@ -2485,7 +2485,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             <GenericLegend
               meta={genericMeta}
               hasRegions={canvasRegions.length > 0}
-              surfaceVars={surfaceMeta?.variables}
+              // The mesh's own properties first, then whatever a run
+              // produced: the ground is there to be picked whether or
+              // not anyone has simulated.
+              surfaceVars={[
+                ...(meshInfo?.properties ?? []),
+                ...(surfaceMeta?.variables ?? []),
+              ]}
               selection={genericSelection}
               onSelect={handleGenericSelect}
               scaleMode={scaleMode}

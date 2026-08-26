@@ -23,6 +23,7 @@ import {
   surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
+  surfaceGroundValues,
   surfacePolygonData,
 } from "../../../canvas/surfaceMesh";
 import type { GenericVariable } from "../../../hooks/results";
@@ -207,8 +208,16 @@ export function useSurfaceResults({
 
   const shown = useMemo(
     () =>
-      geometry ? shownSurface(geometry, meta, periodData, variableId) : null,
-    [geometry, meta, periodData, variableId],
+      geometry
+        ? shownSurface(
+            geometry,
+            meshInfo?.properties ?? [],
+            meta,
+            periodData,
+            variableId,
+          )
+        : null,
+    [geometry, meshInfo, meta, periodData, variableId],
   );
 
   const surface = useMemo(
@@ -231,6 +240,8 @@ export function useSurfaceResults({
  */
 export function shownSurface(
   geometry: SurfaceGeometry,
+  /** The mesh's own properties (the ground), always available. */
+  properties: GenericVariable[],
   meta: SurfaceMeta | null,
   periodData: SurfacePeriod | null,
   variableId?: string,
@@ -239,18 +250,34 @@ export function shownSurface(
   values: Float32Array | null;
   colors: Uint8Array;
 } {
-  const footprint = {
-    variable: null,
-    values: null,
-    colors: surfaceFootprintColors(geometry.nCells),
+  // A run's values are usable only where they belong to the mesh on
+  // screen: a run of a different mesh has values for cells that are not
+  // these cells.
+  const usable =
+    meta != null && periodData != null && meta.nCells === geometry.nCells;
+  const property = properties.find((v) => v.id === variableId);
+
+  /** The ground: asked for, or all that can be shown. */
+  const ground = () => {
+    const v = property ?? properties[0];
+    if (!v) {
+      return {
+        variable: null,
+        values: null,
+        colors: surfaceFootprintColors(geometry.nCells),
+      };
+    }
+    const values = surfaceGroundValues(geometry);
+    // No water mask: the ground under a dry cell is still ground.
+    return { variable: v, values, colors: surfaceFillColors(values, null, v) };
   };
-  if (meta == null || periodData == null) return footprint;
-  if (meta.nCells !== geometry.nCells) return footprint;
+
+  if (property || !usable) return ground();
   const variable =
     meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
-  if (!variable) return footprint;
+  if (!variable) return ground();
   const values = surfaceColumn(periodData, variable.id);
-  if (!values) return footprint;
+  if (!values) return ground();
   return {
     variable,
     values,
