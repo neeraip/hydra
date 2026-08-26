@@ -144,6 +144,22 @@ export async function getSurfaceMeta(
   });
 }
 
+/**
+ * The transport check every binary payload gets before decoding: a
+ * backend command that stops returning `tauri::ipc::Response` arrives as
+ * a JSON number array, and a silent `null` there cost a whole feature —
+ * the surface fetched, decoded to nothing, and nobody was told. Loud,
+ * like `getPeriodResults`.
+ */
+function requireArrayBuffer(buf: unknown, command: string): ArrayBuffer {
+  if (buf instanceof ArrayBuffer) return buf;
+  const err = surfaceDecodeError(
+    `${command} returned unexpected payload type ${typeof buf} (expected ArrayBuffer)`,
+  );
+  console.error("[surface]", err);
+  throw err;
+}
+
 /** The mesh geometry. Ask only after `getSurfaceMeta` returned one. */
 export async function getSurfaceGeometry(
   projectId: string,
@@ -154,7 +170,14 @@ export async function getSurfaceGeometry(
     scenarioId: scenarioId ?? null,
   });
   if (buf === null) return null;
-  return decodeSurfaceGeometry(buf);
+  try {
+    return decodeSurfaceGeometry(
+      requireArrayBuffer(buf, "load_surface_geometry"),
+    );
+  } catch (err) {
+    console.error("[surface] geometry decode failed:", err);
+    throw err;
+  }
 }
 
 /** One instant's surface values, by period index. */
@@ -169,5 +192,10 @@ export async function getSurfacePeriod(
     scenarioId: scenarioId ?? null,
   });
   if (buf === null) return null;
-  return decodeSurfacePeriod(buf);
+  try {
+    return decodeSurfacePeriod(requireArrayBuffer(buf, "load_surface_period"));
+  } catch (err) {
+    console.error("[surface] period decode failed:", err);
+    throw err;
+  }
 }

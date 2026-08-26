@@ -190,28 +190,33 @@ pub fn load_surface_meta(
 
 /// The mesh geometry payload. Ask only after `load_surface_meta` said the
 /// target has surface results; a missing sidecar is an error here.
+///
+/// Returned as `tauri::ipc::Response` like every binary command: a bare
+/// `Vec<u8>` serialises as a JSON number array, which reaches the
+/// frontend as an `Array` where its decoder expects an `ArrayBuffer` —
+/// the payload survives, the type does not.
 #[tauri::command(async)]
 pub fn load_surface_geometry(
     app: tauri::AppHandle,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<Vec<u8>, String> {
+) -> Result<tauri::ipc::Response, String> {
     match sidecar_for(&app, &project_id, scenario_id.as_deref())? {
-        Some(path) => surface_geometry_of(&path),
+        Some(path) => surface_geometry_of(&path).map(tauri::ipc::Response::new),
         None => Err("this target has no surface results".into()),
     }
 }
 
-/// One instant's surface values, by period index.
+/// One instant's surface values, by period index (binary, see above).
 #[tauri::command(async)]
 pub fn load_surface_period(
     app: tauri::AppHandle,
     project_id: String,
     scenario_id: Option<String>,
     period: u32,
-) -> Result<Vec<u8>, String> {
+) -> Result<tauri::ipc::Response, String> {
     match sidecar_for(&app, &project_id, scenario_id.as_deref())? {
-        Some(path) => surface_period_of(&path, period as usize),
+        Some(path) => surface_period_of(&path, period as usize).map(tauri::ipc::Response::new),
         None => Err("this target has no surface results".into()),
     }
 }

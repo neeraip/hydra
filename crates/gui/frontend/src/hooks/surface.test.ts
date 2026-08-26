@@ -6,7 +6,7 @@
  * sidecar reader — a drift on either side fails one of the two suites.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   decodeSurfaceGeometry,
@@ -68,6 +68,24 @@ describe("decodeSurfaceGeometry", () => {
     expect(() => decodeSurfaceGeometry(geometryPayload().slice(0, 40))).toThrow(
       /expected/,
     );
+  });
+});
+
+describe("the transport guard", () => {
+  // The defect this pins: a backend command returning bare Vec<u8>
+  // arrives as a JSON number array, and the fetch used to fold that
+  // into a silent null — the surface simply never appeared. The guard
+  // names the command and the type instead.
+  it("refuses a payload that is not an ArrayBuffer, loudly", async () => {
+    const { getSurfaceGeometry } = await import("./surface");
+    const ipc = await import("./ipc");
+    const spy = vi
+      .spyOn(ipc, "tryInvoke")
+      .mockResolvedValue([1, 0, 0, 0] as unknown as ArrayBuffer);
+    await expect(getSurfaceGeometry("p")).rejects.toThrow(
+      /unexpected payload type object/,
+    );
+    spy.mockRestore();
   });
 });
 
