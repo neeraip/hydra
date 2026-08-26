@@ -18,15 +18,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
-  blendSegments,
   cellValuesAtVertices,
   groundAtVertices,
   type SurfaceEdgeData,
   type SurfacePolygonData,
-  surfaceBlendedColors,
-  surfaceBlendedPolygonData,
+  surfaceBarycentric,
+  surfaceCellColors,
+  surfaceCornerColors,
   surfaceEdgeData,
-  surfaceFillColors,
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
@@ -71,20 +70,23 @@ export interface CanvasSurface {
   variable: GenericVariable | null;
   /** That variable's per-cell SI values, `null` alongside `variable`. */
   values: Float32Array | null;
+  /** Each cell's own colour, repeated per vertex — what the blend mixes
+   * toward at a cell's middle. Equal to `colors` for a plain fill, where
+   * the mix then has nothing to do. */
+  cellColors: Uint8Array;
+  /** The barycentric basis the blend weight is computed from. Static for
+   * a mesh, so it survives every timeline step untouched. */
+  bary: Float32Array;
   /** The field at the mesh's corners, present only while the surface is
    * blended. It is what the picture interpolates near the boundaries,
    * so it is also part of what the pointer reads. */
   vertexValues: Float32Array | null;
-  /** The cells' own values, which the blended picture keeps at their
-   * centres. `null` for a field held at the vertices (the ground),
-   * where plain linear interpolation is already exact. */
+  /** The cells' own values, which the blend keeps at their centres.
+   * `null` for a field held at the vertices (the ground), where plain
+   * linear interpolation is already exact. */
   centreValues: Float32Array | null;
-  /** The parent cells' projected corners, for reading a point. */
+  /** The cells' projected corners, for reading a point. */
   corners: Float64Array | null;
-  /** Polygons drawn per cell: one for the plain fill, many for the
-   * blended grid. What a pick returns is a polygon, so this is what
-   * turns it back into a cell. */
-  subsPerCell: number;
 }
 
 export function useSurfaceResults({
@@ -235,23 +237,16 @@ export function useSurfaceResults({
   // Geometry → screen space: the cells to fill and the edges to draw
   // over them. Re-runs on a CRS change or a def registration, never on a
   // timeline scrub — this is the mesh, and the mesh does not move.
-  // How finely the surface is blended, decided once: the geometry and
-  // the colours are two arrays indexed together, and a grid computed
-  // separately for each is one they could disagree about. Zero is the
-  // plain fill — asked for, or refused as unaffordable.
-  const segments = geometry && smooth ? blendSegments(geometry.nCells) : 0;
-
+  // One triangle per cell, whether the surface is blended or not: the
+  // blend is a weight the shader applies within a cell, not a finer
+  // geometry. So this survives a timeline step, a variable change and
+  // the blend toggle alike — only the colours move.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reprojToken re-runs this once lazily fetched proj4 defs register
   const projected = useMemo(() => {
     if (!geometry || !enabled) return null;
     const project = planProjector(sourceCrs);
     if (!project) return null;
-    const blended =
-      segments > 0
-        ? surfaceBlendedPolygonData(geometry, project, segments)
-        : null;
-    const flat = blended ? null : surfacePolygonData(geometry, project);
-    const data = blended ?? (flat as SurfacePolygonData);
+    const data: SurfacePolygonData = surfacePolygonData(geometry, project);
     // Identity of these coordinates, from the coordinates themselves.
     // Derived rather than counted because counting meant writing to a
     // ref while rendering, which React may do twice, and which made the
@@ -259,16 +254,13 @@ export function useSurfaceResults({
     // The extent moves whenever the projection does, including when a
     // proj4 definition lands late for a code that already had a name.
     return {
-      key: `${sourceCrs}:${segments}:${data.bounds?.join(",") ?? "empty"}`,
+      key: `${sourceCrs}:${data.bounds?.join(",") ?? "empty"}`,
       data,
-      corners: blended
-        ? blended.corners
-        : (flat as SurfacePolygonData).attributes.getPolygon.value,
-      subsPerCell: blended ? blended.segments * blended.segments : 1,
-      segments,
+      corners: data.attributes.getPolygon.value,
+      bary: surfaceBarycentric(geometry.nCells),
       edges: surfaceEdgeData(geometry, project),
     };
-  }, [geometry, sourceCrs, enabled, reprojToken, segments]);
+  }, [geometry, sourceCrs, enabled, reprojToken]);
 
   const shown = useMemo(
     () =>
@@ -279,10 +271,10 @@ export function useSurfaceResults({
             meta,
             periodData,
             variableId,
-            segments,
+            smooth,
           )
         : null,
-    [geometry, meshInfo, meta, periodData, variableId, segments],
+    [geometry, meshInfo, meta, periodData, variableId, smooth],
   );
 
   const surface = useMemo(
@@ -341,22 +333,44 @@ export function shownSurface(
   meta: SurfaceMeta | null,
   periodData: SurfacePeriod | null,
   variableId?: string,
-  /** Sub-triangles per cell edge for the blended picture; zero draws the
-   * plain fill. One value, shared with the geometry that is coloured. */
-  segments = 0,
+  /** Blend a cell's colour into its corners' rather than painting it
+   * flat. The weight is applied per pixel by `BlendedSurfaceLayer`;
+   * what changes here is only which colours it is given. */
+  blend = false,
 ): {
   variable: GenericVariable | null;
   values: Float32Array | null;
   vertexValues: Float32Array | null;
   centreValues: Float32Array | null;
   colors: Uint8Array;
+  cellColors: Uint8Array;
 } {
+  const flat = (
+    variable: GenericVariable,
+    values: Float32Array,
+    depth: Float32Array | null,
+  ) => {
+    // The plain fill hands a cell's colour to its corners too, so the
+    // blend has nothing to mix and the cell reads flat.
+    const colors = surfaceCellColors(values, depth, variable);
+    return {
+      variable,
+      values,
+      vertexValues: null,
+      centreValues: null,
+      colors,
+      cellColors: colors,
+    };
+  };
+
+  const footprintColors = surfaceFootprintColors(geometry.nCells);
   const footprint = {
     variable: null,
     values: null,
     vertexValues: null,
     centreValues: null,
-    colors: surfaceFootprintColors(geometry.nCells),
+    colors: footprintColors,
+    cellColors: footprintColors,
   };
 
   // Resolved over the same list, by the same rule, as the legend that
@@ -371,17 +385,9 @@ export function shownSurface(
   // is a property of the mesh, and the ground is the one there is.
   const column = periodData ? surfaceColumn(periodData, variable.id) : null;
   if (column && periodData) {
-    if (segments < 1) {
-      return {
-        variable,
-        values: column,
-        vertexValues: null,
-        centreValues: null,
-        colors: surfaceFillColors(column, periodData.depth, variable),
-      };
-    }
+    if (!blend) return flat(variable, column, periodData.depth);
     // Blended: the corners take the neighbour mean and the cell keeps
-    // its own value at its centre, so a peak stays a peak.
+    // its own colour at its middle, so a peak stays a peak.
     const vertexValues = cellValuesAtVertices(geometry, column);
     const wetCorners = cellValuesAtVertices(geometry, periodData.depth);
     return {
@@ -389,15 +395,8 @@ export function shownSurface(
       values: column,
       vertexValues,
       centreValues: column,
-      colors: surfaceBlendedColors(
-        geometry,
-        vertexValues,
-        column,
-        wetCorners,
-        periodData.depth,
-        variable,
-        segments,
-      ),
+      colors: surfaceCornerColors(geometry, vertexValues, wetCorners, variable),
+      cellColors: surfaceCellColors(column, periodData.depth, variable),
     };
   }
 
@@ -409,39 +408,19 @@ export function shownSurface(
   const shown = property ?? properties[0];
   if (!shown) return footprint;
 
-  const values = surfaceGroundValues(geometry);
-  if (segments > 0) {
-    // The ground needs no averaging: the mesh holds it at the vertices,
-    // and the flat fill was this renderer throwing that away. The same
-    // construction serves it exactly, since a cell's centre value is
-    // already the mean of its corners.
-    const vertexValues = groundAtVertices(geometry);
-    return {
-      variable: shown,
-      values,
-      vertexValues,
-      // Held at the vertices, so plain linear interpolation is exact and
-      // a reading needs no centre term.
-      centreValues: null,
-      colors: surfaceBlendedColors(
-        geometry,
-        vertexValues,
-        // Held at the vertices: the blend's lift is zero here anyway,
-        // since a cell's value is already the mean of its corners.
-        null,
-        null,
-        null,
-        shown,
-        segments,
-      ),
-    };
-  }
   // No water mask: the ground under a dry cell is still ground.
+  const values = surfaceGroundValues(geometry);
+  if (!blend) return flat(shown, values, null);
+  // The ground needs no averaging: the mesh holds it at the vertices.
+  const vertexValues = groundAtVertices(geometry);
   return {
     variable: shown,
     values,
-    vertexValues: null,
+    vertexValues,
+    // Held at the vertices, so plain linear interpolation is exact and
+    // a reading needs no centre term.
     centreValues: null,
-    colors: surfaceFillColors(values, null, shown),
+    colors: surfaceCornerColors(geometry, vertexValues, null, shown),
+    cellColors: surfaceCellColors(values, null, shown),
   };
 }

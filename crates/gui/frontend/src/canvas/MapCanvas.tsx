@@ -9,7 +9,6 @@ import {
   PathLayer,
   PolygonLayer,
   ScatterplotLayer,
-  SolidPolygonLayer,
   TextLayer,
 } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
@@ -40,6 +39,7 @@ import {
   MAP_GROUND_COLOR,
   parseProviderBasemapId,
 } from "./Basemap";
+import { BlendedSurfaceLayer } from "./BlendedSurfaceLayer";
 import {
   FIT_DURATION_MS,
   flyDurationMs,
@@ -117,12 +117,7 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
-import {
-  meshEdgesLegible,
-  pickedCell,
-  pixelsPerUnit,
-  valueAtPoint,
-} from "./surfaceMesh";
+import { meshEdgesLegible, pixelsPerUnit, valueAtPoint } from "./surfaceMesh";
 import {
   pathIntersectsBox,
   pointInBox,
@@ -1975,7 +1970,10 @@ export const MapCanvas = memo(function MapCanvas({
       // pointer only when no node, link or region claims it first.
       const surfacePickable = tool === "select";
       layers.push(
-        new SolidPolygonLayer({
+        new BlendedSurfaceLayer({
+          // deck's own `data` typing does not mention `startIndices`,
+          // which is how a polygon layer is handed binary rings.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           // Keyed by projection: re-projecting replaces the layer
           // rather than updating it, so deck can never draw a cached
           // tesselation at coordinates that have moved.
@@ -1985,13 +1983,15 @@ export const MapCanvas = memo(function MapCanvas({
             startIndices: surface.data.startIndices,
             attributes: {
               getPolygon: surface.data.attributes.getPolygon,
-              getFillColor: {
-                value: surface.colors,
-                size: 4,
-                normalized: true,
-              },
+              getFillColor: { value: surface.colors, size: 4 },
+              // The blend, mixed per pixel: the weight from the
+              // barycentric basis, the target from each cell's own
+              // colour. Equal colours make the mix a no-op, which is
+              // how the plain fill is drawn by the same layer.
+              getBlendBary: { value: surface.bary, size: 3 },
+              getBlendCellColor: { value: surface.cellColors, size: 4 },
             },
-          },
+          } as never,
           // The triangles are already closed rings in draw order; deck
           // must not re-wind or close them.
           _normalize: false,
@@ -2004,9 +2004,9 @@ export const MapCanvas = memo(function MapCanvas({
             coordinate?: number[];
           }) => {
             if (!surfacePickable) return;
-            // A pick names a polygon; the blended surface draws many of
-            // them per cell.
-            const ci = pickedCell(info.index ?? -1, surface.subsPerCell);
+            // One polygon per cell, blended or not, so a pick names a
+            // cell directly.
+            const ci = info.index ?? -1;
             // A smooth surface varies inside its cells, so the pointer
             // reads the value where it actually is rather than the one
             // number the whole cell would otherwise report.

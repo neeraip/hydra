@@ -54,6 +54,7 @@ const surface = {
     medianLength: 0,
   },
   colors: new Uint8Array(12),
+  cellColors: new Uint8Array(12),
   variable: {
     id: "depth",
     label: "Depth",
@@ -64,7 +65,7 @@ const surface = {
   vertexValues: null,
   centreValues: null,
   corners: null,
-  subsPerCell: 1,
+  bary: new Float32Array(9),
   values: Float32Array.from([0.017]),
 };
 

@@ -310,27 +310,22 @@ export function surfaceGroundValues(geometry: SurfaceGeometry): Float32Array {
 //
 // A cell is the solver's unit of state, so the plain fill paints one
 // colour per cell and claims nothing between centres. Blending softens
-// the cell boundaries without moving what a cell says about itself.
+// the cell boundaries without moving what a cell says about itself: each
+// cell keeps its own colour at its centroid, corners take the mean of
+// the cells that meet there, and the two are mixed by a weight that is
+// one at the centroid and zero on every edge.
 //
-// The construction: split every cell into three sub-triangles meeting at
-// its centroid. The centroid carries the cell's own value; the corners
-// carry the mean of the cells that meet there. So the middle of a cell
-// reads exactly what the solver computed, two cells sharing an edge
-// interpolate between the same pair of corner values and therefore agree
-// along it, and all the blending happens in the band near the
-// boundaries.
+// The mixing happens per pixel, in `BlendedSurfaceLayer`. What is built
+// here is the two colour arrays it mixes and the barycentric basis it
+// reads them by — all per vertex of the same one-triangle-per-cell
+// geometry the plain fill uses.
 //
-// Averaging cell values onto the corners *alone* — the obvious approach,
-// and the one this replaced — destroys peaks: a corner mixes up to six
-// cells, so a local maximum is averaged away and appears nowhere. On the
-// SWMM 2D example the deepest cell in the mesh, at 0.9983 m, painted its
-// own centre at 0.5265 m, below the mesh average. In flood work the peak
-// is the number that matters.
-//
-// For a field that genuinely lives at the vertices — the ground — this
-// same construction is exact rather than a compromise: the centroid's
-// value is the mean of the three corners, which is what linear
-// interpolation already gives there, so subdividing changes nothing.
+// Averaging cell values onto the corners *alone* — an earlier version of
+// this — destroys peaks: a corner mixes up to six cells, so a local
+// maximum is averaged away and appears nowhere. On the SWMM 2D example
+// the deepest cell in the mesh, at 0.9983 m, painted its own centre at
+// 0.5265 m. In flood work the peak is the number that matters, which is
+// why the cell's own colour is kept at its middle.
 
 /**
  * The ground at each vertex, exactly as the mesh stores it — no
@@ -347,8 +342,8 @@ export function groundAtVertices(geometry: SurfaceGeometry): Float32Array {
  * A per-cell field carried to the vertices, each vertex taking the mean
  * of the cells that meet there.
  *
- * Used for the *corners* of the blended construction only. A cell's own
- * value is never replaced by this: see the note above.
+ * Used for the *corners* of the blend only. A cell's own value is never
+ * replaced by this: see the note above.
  */
 export function cellValuesAtVertices(
   geometry: SurfaceGeometry,
@@ -372,153 +367,102 @@ export function cellValuesAtVertices(
   return out;
 }
 
-/** Binary polygon data for the blended surface: a grid of sub-triangles
- * per cell, fine enough that the blend reads as smooth. */
-export interface SurfaceBlendedData extends SurfacePolygonData {
-  /** The parent cells' projected corners, six numbers per cell — what a
-   * reading at a point needs, since the polygon buffer above holds the
-   * sub-triangles rather than the cells. */
-  corners: Float64Array;
-  /** Segments per cell edge: the grid this was built at. */
-  segments: number;
-}
-
 /**
- * How finely a cell is subdivided for blending.
+ * The barycentric basis, per vertex of the drawn geometry: the three
+ * vertices of every cell get (1,0,0), (0,1,0) and (0,0,1).
  *
- * The blend is a smooth curve sampled on a grid and drawn straight
- * between the samples, so too coarse a grid shows its own facets: the
- * first version of this drew three sub-triangles meeting at the
- * centroid, and the seams from each corner to the middle of every cell
- * were plainly visible. Finer is smoother and costs triangles, so the
- * grid follows the mesh: a small mesh is drawn generously because its
- * cells are large on screen, and a large one is drawn coarsely because
- * its cells are not.
- *
- * Multiples of three only: the centroid must be a sample, or the cell's
- * own value never appears.
- *
- * Zero above the ceiling, meaning "do not blend this mesh". The cost is
- * the reason: the grid multiplies the drawn polygons by its square, and
- * at a million polygons the geometry alone runs to tens of megabytes and
- * is rebuilt whenever the colours change. A mesh that large draws cells
- * smaller than a pixel, where blending changes nothing anyone can see,
- * so the ceiling costs no picture and averts a stall.
+ * Static for a mesh — the blend weight is a function of position within
+ * a cell, not of anything a run produced — so this is built once and
+ * never rebuilt while stepping the timeline.
  */
-export const BLEND_CELL_CEILING = 50_000;
-
-export function blendSegments(nCells: number): number {
-  if (nCells <= 20_000) return 6; // 36 sub-triangles per cell
-  if (nCells <= BLEND_CELL_CEILING) return 3; // 9 per cell
-  return 0;
-}
-
-/** The barycentric grid for `n` segments: (w0, w1, w2) per sample. */
-function blendGrid(n: number): Float64Array {
-  const out: number[] = [];
-  for (let i = 0; i <= n; i++) {
-    for (let j = 0; j <= n - i; j++) {
-      out.push(i / n, j / n, (n - i - j) / n);
-    }
-  }
-  return Float64Array.from(out);
-}
-
-/** Sample index of grid point (i, j) for `n` segments. */
-function gridIndex(n: number, i: number, j: number): number {
-  // Rows are laid out by i, each of length (n - i + 1).
-  return ((2 * n + 3 - i) * i) / 2 + j;
-}
-
-/**
- * The blended surface's geometry: each cell as an `n × n` grid of
- * sub-triangles, in cell order.
- */
-export function surfaceBlendedPolygonData(
-  geometry: SurfaceGeometry,
-  project: (x: number, y: number) => [number, number] = (x, y) => [x, y],
-  segments: number = blendSegments(geometry.nCells),
-): SurfaceBlendedData {
-  const { nCells, positions, triangles } = geometry;
-  const n = segments;
-  const grid = blendGrid(n);
-  const samples = grid.length / 3;
-  const perCell = n * n;
-  const corners = new Float64Array(6 * nCells);
-  const value = new Float64Array(6 * perCell * nCells);
-  const startIndices = new Uint32Array(perCell * nCells);
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  const px = new Float64Array(samples);
-  const py = new Float64Array(samples);
-
+export function surfaceBarycentric(nCells: number): Float32Array {
+  const out = new Float32Array(9 * nCells);
   for (let ci = 0; ci < nCells; ci++) {
-    // The cell's own corners, projected once.
+    for (let k = 0; k < 3; k++) out[9 * ci + 3 * k + k] = 1;
+  }
+  return out;
+}
+
+/**
+ * Per-vertex RGBA from values held at the *corners* — the colours the
+ * blend interpolates between, and the whole picture on an edge.
+ *
+ * `depthAtVertices` masks as the flat path's depth does, but per corner,
+ * which puts the waterline inside the cells it crosses rather than on
+ * their boundaries. `null` for a field that is not water.
+ */
+export function surfaceCornerColors(
+  geometry: SurfaceGeometry,
+  vertexValues: Float32Array,
+  depthAtVertices: Float32Array | null,
+  variable: GenericVariable,
+): Uint8Array {
+  const { nVertices, nCells, triangles } = geometry;
+  // One ramp evaluation per vertex, then scattered to the cells that
+  // meet there: a vertex is shared by about six of them.
+  const rgba = new Uint8Array(4 * nVertices);
+  for (let vi = 0; vi < nVertices; vi++) {
+    if (depthAtVertices && !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M)) {
+      continue; // alpha stays 0
+    }
+    const [r, g, b, a] = genericRgba(
+      vertexValues[vi],
+      variable,
+      SURFACE_ALPHA,
+      "surface",
+    );
+    rgba[4 * vi] = r;
+    rgba[4 * vi + 1] = g;
+    rgba[4 * vi + 2] = b;
+    rgba[4 * vi + 3] = a;
+  }
+  const out = new Uint8Array(12 * nCells);
+  for (let ci = 0; ci < nCells; ci++) {
     for (let k = 0; k < 3; k++) {
       const vi = triangles[3 * ci + k];
-      const [x, y] = project(positions[3 * vi], positions[3 * vi + 1]);
-      corners[6 * ci + 2 * k] = x;
-      corners[6 * ci + 2 * k + 1] = y;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-    const x0 = corners[6 * ci];
-    const y0 = corners[6 * ci + 1];
-    const x1 = corners[6 * ci + 2];
-    const y1 = corners[6 * ci + 3];
-    const x2 = corners[6 * ci + 4];
-    const y2 = corners[6 * ci + 5];
-    // The grid's positions are linear in the corners, so they are taken
-    // in projected space rather than reprojected per sample.
-    for (let s = 0; s < samples; s++) {
-      const w0 = grid[3 * s];
-      const w1 = grid[3 * s + 1];
-      const w2 = grid[3 * s + 2];
-      px[s] = w0 * x0 + w1 * x1 + w2 * x2;
-      py[s] = w0 * y0 + w1 * y1 + w2 * y2;
-    }
-    let tri = 0;
-    const emit = (a: number, b: number, c: number) => {
-      const sub = perCell * ci + tri;
-      startIndices[sub] = 3 * sub;
-      const at = 6 * sub;
-      value[at] = px[a];
-      value[at + 1] = py[a];
-      value[at + 2] = px[b];
-      value[at + 3] = py[b];
-      value[at + 4] = px[c];
-      value[at + 5] = py[c];
-      tri += 1;
-    };
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n - i; j++) {
-        emit(
-          gridIndex(n, i, j),
-          gridIndex(n, i + 1, j),
-          gridIndex(n, i, j + 1),
-        );
-        if (j < n - i - 1) {
-          emit(
-            gridIndex(n, i + 1, j),
-            gridIndex(n, i + 1, j + 1),
-            gridIndex(n, i, j + 1),
-          );
-        }
-      }
+      const at = 12 * ci + 4 * k;
+      for (let j = 0; j < 4; j++) out[at + j] = rgba[4 * vi + j];
     }
   }
-  return {
-    length: perCell * nCells,
-    startIndices,
-    attributes: { getPolygon: { value, size: 2 } },
-    bounds: nCells > 0 ? [minX, minY, maxX, maxY] : null,
-    corners,
-    segments: n,
-  };
+  return out;
+}
+
+/**
+ * Per-vertex RGBA of each cell's own colour, repeated for its three
+ * vertices — what the blend mixes toward at a cell's middle.
+ *
+ * Handed the same values as the corners, this is the plain fill: every
+ * vertex of a cell carries the cell's colour and the mix has nothing to
+ * do.
+ */
+export function surfaceCellColors(
+  values: Float32Array,
+  /** Per-cell water depth, masking cells that hold none — or `null` for
+   * a variable that is not water. The ground under a dry cell is still
+   * there, and hiding it would be a claim about the terrain rather than
+   * about the flood. */
+  depth: Float32Array | null,
+  variable: GenericVariable,
+): Uint8Array {
+  const nCells = values.length;
+  const out = new Uint8Array(12 * nCells);
+  for (let ci = 0; ci < nCells; ci++) {
+    if (depth != null && !(depth[ci] > SURFACE_DRY_DEPTH_M)) continue;
+    const [r, g, b, a] = genericRgba(
+      values[ci],
+      variable,
+      SURFACE_ALPHA,
+      "surface",
+    );
+    for (let k = 0; k < 3; k++) {
+      const at = 12 * ci + 4 * k;
+      out[at] = r;
+      out[at + 1] = g;
+      out[at + 2] = b;
+      out[at + 3] = a;
+    }
+  }
+  return out;
 }
 
 /**
@@ -528,9 +472,12 @@ export function surfaceBlendedPolygonData(
  * own value lands exactly at its centroid: `Σ w·A + (cell − mean A)·B`,
  * where `B = 27·w0·w1·w2` is zero on every edge and one at the centroid.
  *
- * Being zero on the edges is what keeps neighbouring cells agreeing
- * along them; being smooth everywhere inside is what keeps the picture
- * free of the creases a piecewise-linear blend showed.
+ * This is the same weight the shader mixes colours by, so what the
+ * pointer reads and what the picture shows agree at the centre and along
+ * every edge. Between those they differ by whether the ramp is applied
+ * before or after the mixing, which is a question the solver does not
+ * answer either way: it holds one value per cell and says nothing about
+ * the inside of one.
  */
 export function blendedValue(
   w0: number,
@@ -545,116 +492,6 @@ export function blendedValue(
   if (cell == null) return linear;
   const bubble = 27 * w0 * w1 * w2;
   return linear + (cell - (a0 + a1 + a2) / 3) * bubble;
-}
-
-/**
- * Per-sub-vertex RGBA for the blended surface, sampled on the same grid
- * `surfaceBlendedPolygonData` built.
- *
- * `depthAtVertices` and `cellDepth` mask as the flat path's depth does,
- * through the same blend, so the waterline crosses the inside of a cell
- * rather than snapping to its boundary. Both are `null` for a field
- * that is not water.
- */
-export function surfaceBlendedColors(
-  geometry: SurfaceGeometry,
-  vertexValues: Float32Array,
-  cellValues: Float32Array | null,
-  depthAtVertices: Float32Array | null,
-  cellDepth: Float32Array | null,
-  variable: GenericVariable,
-  segments: number = blendSegments(geometry.nCells),
-): Uint8Array {
-  const { nCells, triangles } = geometry;
-  const n = segments;
-  const grid = blendGrid(n);
-  const samples = grid.length / 3;
-  const perCell = n * n;
-  const out = new Uint8Array(12 * perCell * nCells);
-  const rgba = new Uint8Array(4 * samples);
-
-  for (let ci = 0; ci < nCells; ci++) {
-    const v0 = triangles[3 * ci];
-    const v1 = triangles[3 * ci + 1];
-    const v2 = triangles[3 * ci + 2];
-    const a0 = vertexValues[v0];
-    const a1 = vertexValues[v1];
-    const a2 = vertexValues[v2];
-    const cell = cellValues ? cellValues[ci] : null;
-    const d0 = depthAtVertices ? depthAtVertices[v0] : null;
-    const cellD = cellDepth ? cellDepth[ci] : null;
-    for (let s = 0; s < samples; s++) {
-      const w0 = grid[3 * s];
-      const w1 = grid[3 * s + 1];
-      const w2 = grid[3 * s + 2];
-      if (depthAtVertices && d0 != null) {
-        const depth = blendedValue(
-          w0,
-          w1,
-          w2,
-          d0,
-          depthAtVertices[v1],
-          depthAtVertices[v2],
-          cellD,
-        );
-        if (!(depth > SURFACE_DRY_DEPTH_M)) {
-          rgba[4 * s + 3] = 0;
-          continue;
-        }
-      }
-      const [r, g, b, a] = genericRgba(
-        blendedValue(w0, w1, w2, a0, a1, a2, cell),
-        variable,
-        SURFACE_ALPHA,
-        "surface",
-      );
-      rgba[4 * s] = r;
-      rgba[4 * s + 1] = g;
-      rgba[4 * s + 2] = b;
-      rgba[4 * s + 3] = a;
-    }
-    let tri = 0;
-    const emit = (a: number, b: number, c: number) => {
-      const at = 12 * (perCell * ci + tri);
-      for (let k = 0; k < 4; k++) {
-        out[at + k] = rgba[4 * a + k];
-        out[at + 4 + k] = rgba[4 * b + k];
-        out[at + 8 + k] = rgba[4 * c + k];
-      }
-      tri += 1;
-    };
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n - i; j++) {
-        emit(
-          gridIndex(n, i, j),
-          gridIndex(n, i + 1, j),
-          gridIndex(n, i, j + 1),
-        );
-        if (j < n - i - 1) {
-          emit(
-            gridIndex(n, i + 1, j),
-            gridIndex(n, i + 1, j + 1),
-            gridIndex(n, i, j + 1),
-          );
-        }
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Which cell a picked polygon belongs to.
- *
- * The blended surface draws many sub-triangles per cell, so what deck
- * hands back from a pick indexes the *polygons*, not the cells. Reading
- * one as the other names a cell that may not exist and reads its
- * geometry from beyond the end of the array: the chip said "Cell 173"
- * of an eight-cell mesh, and its value came out as nothing at all.
- */
-export function pickedCell(polygonIndex: number, subsPerCell: number): number {
-  if (polygonIndex < 0 || subsPerCell < 1) return -1;
-  return Math.floor(polygonIndex / subsPerCell);
 }
 
 /**

@@ -8,20 +8,18 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
-  BLEND_CELL_CEILING,
   blendedValue,
-  blendSegments,
   cellValuesAtVertices,
   groundAtVertices,
   MESH_EDGE_MIN_PIXELS,
   meshEdgesLegible,
-  pickedCell,
   pixelsPerUnit,
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
   SURFACE_FOOTPRINT_ALPHA,
-  surfaceBlendedColors,
-  surfaceBlendedPolygonData,
+  surfaceBarycentric,
+  surfaceCellColors,
+  surfaceCornerColors,
   surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
@@ -258,89 +256,6 @@ describe("the water mask", () => {
   });
 });
 
-describe("blended shading", () => {
-  // The unit square split on its diagonal.
-  const g: SurfaceGeometry = {
-    nVertices: 4,
-    nCells: 2,
-    positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
-    triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
-  };
-
-  it("takes the ground from the vertices exactly", () => {
-    expect(Array.from(groundAtVertices(g))).toEqual([10, 11, 14, 13]);
-  });
-
-  it("carries a per-cell field to the corners by the mean", () => {
-    const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
-    expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
-  });
-
-  // The grid must be fine enough that a curve sampled on it reads as a
-  // curve, and must contain the centroid or the cell's own value has
-  // nowhere to land.
-  it("subdivides on a grid that always samples the centroid", () => {
-    for (const n of [
-      blendSegments(8),
-      blendSegments(7_500),
-      blendSegments(40_000),
-    ]) {
-      expect(n % 3).toBe(0);
-      expect(n).toBeGreaterThanOrEqual(3);
-    }
-    // Finer where cells are large on screen, coarser where they are not.
-    expect(blendSegments(8)).toBeGreaterThan(blendSegments(40_000));
-  });
-
-  /**
-   * The grid multiplies drawn polygons by its square, so a large mesh
-   * blended runs to a million polygons and tens of megabytes, rebuilt
-   * whenever the colours change. Cells that small are sub-pixel anyway,
-   * where blending changes nothing anyone can see.
-   */
-  it("refuses to blend a mesh too large to afford it", () => {
-    expect(blendSegments(BLEND_CELL_CEILING)).toBeGreaterThan(0);
-    expect(blendSegments(BLEND_CELL_CEILING + 1)).toBe(0);
-    const n = blendSegments(BLEND_CELL_CEILING);
-    expect(n * n * BLEND_CELL_CEILING).toBeLessThanOrEqual(500_000);
-  });
-
-  it("draws an n-by-n grid of sub-triangles per cell", () => {
-    const n = 3;
-    const d = surfaceBlendedPolygonData(g, undefined, n);
-    expect(d.segments).toBe(n);
-    expect(d.length).toBe(2 * n * n);
-    // Every sub-triangle is three points in the buffer, in order.
-    expect(Array.from(d.startIndices.slice(0, 3))).toEqual([0, 3, 6]);
-    // And it keeps the parent corners for reading a point.
-    expect(Array.from(d.corners.slice(0, 6))).toEqual([0, 0, 1, 0, 1, 1]);
-  });
-
-  // Two arrays indexed together: a colour per sub-vertex of the same
-  // grid. If the two ever disagreed about the grid, the surface would
-  // be painted from the wrong samples.
-  it("colours exactly the geometry it builds", () => {
-    const cells = Float32Array.from([2, 8]);
-    const v: GenericVariable = {
-      id: "depth",
-      label: "Depth",
-      ramp: { type: "sequential" },
-      min: 0,
-      max: 10,
-    };
-    const d = surfaceBlendedPolygonData(g);
-    const colors = surfaceBlendedColors(
-      g,
-      cellValuesAtVertices(g, cells),
-      cells,
-      null,
-      null,
-      v,
-    );
-    expect(colors.length).toBe(4 * 3 * d.length);
-  });
-});
-
 describe("blendedValue", () => {
   const A = [0.4, 0.5, 0.6] as const;
 
@@ -416,7 +331,7 @@ describe("valueAtPoint", () => {
     positions: new Float64Array([0, 0, 10, 12, 0, 20, 0, 12, 30]),
     triangles: new Uint32Array([0, 1, 2]),
   };
-  const corners = surfaceBlendedPolygonData(g).corners;
+  const corners = surfacePolygonData(g).attributes.getPolygon.value;
   const z = groundAtVertices(g);
 
   describe("a field held at the vertices (the ground)", () => {
@@ -494,44 +409,84 @@ describe("valueAtPoint", () => {
   });
 });
 
-describe("pickedCell", () => {
-  /**
-   * The defect: the blended surface draws many polygons per cell, and
-   * a pick names a polygon. Read as a cell index it named "Cell 173"
-   * of an eight-cell mesh and read that cell's corners from beyond the
-   * end of the array, so the chip showed no value at all.
-   */
-  it("turns a picked sub-triangle back into its cell", () => {
-    const subs = 36; // a 6-segment grid
-    expect(pickedCell(0, subs)).toBe(0);
-    expect(pickedCell(35, subs)).toBe(0);
-    expect(pickedCell(36, subs)).toBe(1);
-    expect(pickedCell(173, subs)).toBe(4);
-    // The plain fill draws one polygon per cell, so nothing changes.
-    expect(pickedCell(173, 1)).toBe(173);
+describe("blended shading", () => {
+  // The unit square split on its diagonal.
+  const g: SurfaceGeometry = {
+    nVertices: 4,
+    nCells: 2,
+    positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
+    triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  };
+  const v: GenericVariable = {
+    id: "depth",
+    label: "Depth",
+    ramp: { type: "sequential" },
+    min: 0,
+    max: 10,
+  };
+
+  it("takes the ground from the vertices exactly", () => {
+    expect(Array.from(groundAtVertices(g))).toEqual([10, 11, 14, 13]);
   });
 
-  it("passes a miss through as a miss", () => {
-    expect(pickedCell(-1, 36)).toBe(-1);
-    expect(pickedCell(-1, 1)).toBe(-1);
+  it("carries a per-cell field to the corners by the mean", () => {
+    const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
+    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; 0 and 2
+    // are shared.
+    expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
   });
 
-  // Every polygon of the geometry must map inside the mesh, or a hover
-  // near the end of it reads past the cells.
-  it("maps every polygon the blended geometry draws into the mesh", () => {
-    const g: SurfaceGeometry = {
-      nVertices: 4,
-      nCells: 2,
-      positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
-      triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
-    };
-    const d = surfaceBlendedPolygonData(g);
-    const subs = d.segments * d.segments;
-    for (let i = 0; i < d.length; i++) {
-      const ci = pickedCell(i, subs);
-      expect(ci).toBeGreaterThanOrEqual(0);
-      expect(ci).toBeLessThan(g.nCells);
-    }
-    expect(pickedCell(d.length - 1, subs)).toBe(g.nCells - 1);
+  /** The weight the shader mixes by is one at a cell's centroid and
+   * zero at its corners; the basis is what carries that into the
+   * fragment. */
+  it("gives each cell's three vertices the barycentric basis", () => {
+    const b = surfaceBarycentric(2);
+    expect(b.length).toBe(9 * 2);
+    expect(Array.from(b.slice(0, 9))).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(Array.from(b.slice(9, 18))).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  });
+
+  it("paints a cell's own colour on all three of its vertices", () => {
+    const colors = surfaceCellColors(Float32Array.from([2, 8]), null, v);
+    expect(colors.length).toBe(12 * g.nCells);
+    const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
+    expect(rgb(0)).toEqual(rgb(1));
+    expect(rgb(1)).toEqual(rgb(2));
+    expect(rgb(0)).toEqual(seqRgb(2 / 10, "surface"));
+    expect(rgb(3)).toEqual(seqRgb(8 / 10, "surface"));
+  });
+
+  it("paints a corner the same in every cell that meets there", () => {
+    const cells = Float32Array.from([2, 8]);
+    const colors = surfaceCornerColors(
+      g,
+      cellValuesAtVertices(g, cells),
+      null,
+      v,
+    );
+    const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
+    // Vertex 0 is the first vertex of both cells; vertex 2 is the third
+    // of cell 0 and the second of cell 1. A corner painted differently
+    // in two cells would seam along their shared edge.
+    expect(rgb(0)).toEqual(rgb(3));
+    expect(rgb(2)).toEqual(rgb(4));
+  });
+
+  /** The plain fill is the same layer handed the same colour twice, so
+   * its mix has nothing to do. */
+  it("is flat when a cell and its corners share a colour", () => {
+    const cells = Float32Array.from([2, 8]);
+    const flat = surfaceCellColors(cells, null, v);
+    expect(Array.from(flat.slice(0, 4))).toEqual(Array.from(flat.slice(4, 8)));
+  });
+
+  it("hides dry cells, and dry corners, but never the ground", () => {
+    const cells = Float32Array.from([1, 1]);
+    const dry = Float32Array.from([1, 0]);
+    const masked = surfaceCellColors(cells, dry, v);
+    expect(masked[3]).toBe(SURFACE_ALPHA);
+    expect(masked[15]).toBe(0);
+    // The ground passes no depth at all and is painted everywhere.
+    expect(surfaceCellColors(cells, null, v)[15]).toBe(SURFACE_ALPHA);
   });
 });
