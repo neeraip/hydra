@@ -18,7 +18,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
+  type SurfaceEdgeData,
   type SurfacePolygonData,
+  surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
   surfacePolygonData,
@@ -39,6 +41,9 @@ import {
 /** What MapCanvas draws, and what the hover chip reads. */
 export interface CanvasSurface {
   data: SurfacePolygonData;
+  /** The mesh's own structure, drawn where its cells are big enough on
+   * screen to be told apart (the canvas decides, per camera). */
+  edges: SurfaceEdgeData;
   colors: Uint8Array;
   /** The variable the colours carry, or `null` when the surface is drawn
    * as a footprint — a mesh with no run behind it yet. */
@@ -186,14 +191,18 @@ export function useSurfaceResults({
     };
   }, [projectId, scenarioId, meta, period]);
 
-  // Geometry → screen-space polygons: re-runs on CRS change or def
-  // registration, never on a timeline scrub.
+  // Geometry → screen space: the cells to fill and the edges to draw
+  // over them. Re-runs on a CRS change or a def registration, never on a
+  // timeline scrub — this is the mesh, and the mesh does not move.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reprojToken re-runs this once lazily fetched proj4 defs register
-  const polygons = useMemo(() => {
+  const projected = useMemo(() => {
     if (!geometry || !enabled) return null;
     const project = planProjector(sourceCrs);
     if (!project) return null;
-    return surfacePolygonData(geometry, project);
+    return {
+      data: surfacePolygonData(geometry, project),
+      edges: surfaceEdgeData(geometry, project),
+    };
   }, [geometry, sourceCrs, enabled, reprojToken]);
 
   const shown = useMemo(
@@ -203,8 +212,8 @@ export function useSurfaceResults({
   );
 
   const surface = useMemo(
-    () => (polygons && shown ? { data: polygons, ...shown } : null),
-    [polygons, shown],
+    () => (projected && shown ? { ...projected, ...shown } : null),
+    [projected, shown],
   );
   return { surface, surfaceMeta: meta, meshInfo };
 }

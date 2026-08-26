@@ -116,6 +116,7 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
+import { meshEdgesLegible, pixelsPerUnit } from "./surfaceMesh";
 import {
   pathIntersectsBox,
   pointInBox,
@@ -591,6 +592,12 @@ export const MapCanvas = memo(function MapCanvas({
   const hoveredLinkIdRef = useRef<string | null>(null);
   // Cursor-following value chip: the element under the pointer + its position.
   const [hoverTip, setHoverTip] = useState<HoverTip | null>(null);
+  // Whether the mesh's edges were legible at the camera the current
+  // layers were built for. A pan or zoom rebuilds only when that answer
+  // changes — the same "rebuild when it matters" rule the label culling
+  // above follows, rather than a rebuild per frame of a gesture.
+  const meshEdgesShownRef = useRef(false);
+  const meshMedianRef = useRef<number | null>(null);
   const sys = useUnitSystem();
   const selectedNodeIdRef = useRef<string | null>(selectedNodeId);
   const selectedLinkIdRef = useRef<string | null>(selectedLinkId);
@@ -1994,6 +2001,40 @@ export const MapCanvas = memo(function MapCanvas({
           },
         }),
       );
+
+      // The mesh's own structure, over its fill — but only while its
+      // cells are big enough on screen to be told apart. See
+      // `MESH_EDGE_MIN_PIXELS`: every edge of a fine mesh viewed whole
+      // is a dark wash that hides the surface it is drawn on.
+      const zoom = isSchematic
+        ? ((viewStateRef.current as SchematicViewState)?.zoom ?? 0)
+        : (mapRef.current?.getZoom() ?? 0);
+      const perUnit = pixelsPerUnit(isSchematic ? "orthographic" : "map", zoom);
+      const showEdges = meshEdgesLegible(surface.edges.medianLength, perUnit);
+      meshEdgesShownRef.current = showEdges;
+      meshMedianRef.current = surface.edges.medianLength;
+      if (showEdges && surface.edges.length > 0) {
+        layers.push(
+          new LineLayer({
+            id: "surface-2d-edges",
+            data: {
+              length: surface.edges.length,
+              attributes: surface.edges.attributes,
+            },
+            coordinateSystem: coordSystem,
+            // Darker than the fill rather than a colour of its own: the
+            // edges are the same surface seen more closely, not a second
+            // thing on the map.
+            getColor: [10, 30, 40, 90] as unknown as RGBA,
+            getWidth: 1,
+            widthUnits: "pixels",
+            widthMinPixels: 1,
+            pickable: false,
+          }),
+        );
+      }
+    } else {
+      meshMedianRef.current = null;
     }
 
     // Inlet couplings: the hydraulic path a dual-drainage model has where
@@ -2821,19 +2862,37 @@ export const MapCanvas = memo(function MapCanvas({
     buildLayersRef.current = buildLayers;
   }, [buildLayers]);
 
-  // Viewport-culled labels need a layer rebuild when the view moves. Tracked
-  // via refs + a rAF so pan/zoom with labels off costs nothing.
+  // Some layers are answers about the viewport, not about the network:
+  // culled labels, the schematic grid, and whether the 2D mesh's edges
+  // are legible at this zoom. They need a rebuild when the view moves.
+  // Tracked via refs + a rAF, so a move that changes none of those
+  // answers costs nothing.
   // What the grid on screen covers, so a pan only rebuilds when it leaves.
   const gridBuiltRef = useRef<GridCoverage | null>(null);
   const labelsOnRef = useRef(false);
   useEffect(() => {
     labelsOnRef.current = canvasLayers.nodeLabels || canvasLayers.linkLabels;
   }, [canvasLayers]);
-  const labelRefreshRafRef = useRef<number | null>(null);
-  const scheduleLabelRefresh = useCallback((mode: "map" | "schematic") => {
-    if (labelRefreshRafRef.current != null) return;
-    labelRefreshRafRef.current = requestAnimationFrame(() => {
-      labelRefreshRafRef.current = null;
+  /**
+   * Whether the mesh-edge verdict at this camera differs from the one
+   * the layers on screen were built with — the only reason a mesh model
+   * needs a rebuild while panning or zooming.
+   */
+  // Held in a ref, like the other viewport reporters here: the deck and
+  // map are created once, and a dependency would rebuild them.
+  const meshEdgeVerdictChangedRef = useRef(
+    (view: "map" | "orthographic", zoom: number) => {
+      const median = meshMedianRef.current;
+      if (median == null) return false;
+      const now = meshEdgesLegible(median, pixelsPerUnit(view, zoom));
+      return now !== meshEdgesShownRef.current;
+    },
+  );
+  const layerRefreshRafRef = useRef<number | null>(null);
+  const scheduleLayerRefresh = useCallback((mode: "map" | "schematic") => {
+    if (layerRefreshRafRef.current != null) return;
+    layerRefreshRafRef.current = requestAnimationFrame(() => {
+      layerRefreshRafRef.current = null;
       const layers = buildLayersRef.current();
       if (mode === "map") overlayRef.current?.setProps({ layers });
       else deckRef.current?.setProps({ layers });
@@ -2922,7 +2981,14 @@ export const MapCanvas = memo(function MapCanvas({
               },
             )
           ) {
-            scheduleLabelRefresh("schematic");
+            scheduleLayerRefresh("schematic");
+          } else if (
+            meshEdgeVerdictChangedRef.current(
+              "orthographic",
+              nextViewState.zoom,
+            )
+          ) {
+            scheduleLayerRefresh("schematic");
           }
           // Same report the map makes on "move": a plan view has a viewport
           // like any other, so the network list's dimming tracks it too.
@@ -2933,7 +2999,7 @@ export const MapCanvas = memo(function MapCanvas({
       deckRef.current = deck;
       return deck;
     },
-    [scheduleLabelRefresh],
+    [scheduleLayerRefresh],
   );
 
   useEffect(() => {
@@ -2988,8 +3054,11 @@ export const MapCanvas = memo(function MapCanvas({
 
     map.on("moveend", () => {
       flushViewportMovedRef.current();
-      if (labelsOnRef.current && viewModeRef.current === "map") {
-        scheduleLabelRefresh("map");
+      const meshMoved =
+        viewModeRef.current === "map" &&
+        meshEdgeVerdictChangedRef.current("map", map.getZoom());
+      if ((labelsOnRef.current && viewModeRef.current === "map") || meshMoved) {
+        scheduleLayerRefresh("map");
       }
     });
 
@@ -3166,7 +3235,7 @@ export const MapCanvas = memo(function MapCanvas({
       deckCanvasRef.current = null;
       mapRef.current = null;
     };
-  }, [markFirstFrame, measureSnapAt, scheduleLabelRefresh]);
+  }, [markFirstFrame, measureSnapAt, scheduleLayerRefresh]);
 
   // Frames the network on arrival and when the network itself changes — and
   // otherwise leaves the camera exactly where the user put it.

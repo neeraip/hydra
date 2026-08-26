@@ -36,6 +36,18 @@ export const SURFACE_ALPHA = 200;
  */
 export const SURFACE_FOOTPRINT_ALPHA = 46;
 
+/**
+ * How many pixels a cell edge must span before its edges are drawn.
+ *
+ * Edges say what a footprint cannot — where the cells are, and where the
+ * mesh is refined — but only while they can be told apart. A real mesh
+ * viewed whole is 100k+ cells across a few hundred pixels, where every
+ * edge drawn is a solid dark wash that hides the surface instead of
+ * describing it. So the mesh shows its structure on a coarse mesh, and
+ * on a fine one as soon as you zoom into a part of it.
+ */
+export const MESH_EDGE_MIN_PIXELS = 8;
+
 /** Binary polygon data for deck.gl's SolidPolygonLayer. */
 export interface SurfacePolygonData {
   length: number;
@@ -126,4 +138,131 @@ export function surfaceFillColors(
     }
   }
   return out;
+}
+
+/** Binary line data for deck.gl's LineLayer, plus what the legibility
+ * decision needs to know about the mesh it came from. */
+export interface SurfaceEdgeData {
+  length: number;
+  attributes: {
+    getSourcePosition: { value: Float64Array; size: 2 };
+    getTargetPosition: { value: Float64Array; size: 2 };
+  };
+  /** Median edge length in projected units — the mesh's own sense of
+   * scale, which is what decides whether its edges are legible. */
+  medianLength: number;
+}
+
+/** Edges sampled when taking the median: a mesh's scale is a property
+ * of the whole, and reading every one of 180k edges to learn it is work
+ * for no more answer. */
+const MEDIAN_SAMPLE_MAX = 2048;
+
+/**
+ * The mesh's unique undirected edges, projected, for drawing its
+ * structure. Cells share edges, so each is emitted once: an interior
+ * edge drawn twice is drawn at double opacity, which reads as a seam
+ * that is not there.
+ */
+export function surfaceEdgeData(
+  geometry: SurfaceGeometry,
+  project: (x: number, y: number) => [number, number] = (x, y) => [x, y],
+): SurfaceEdgeData {
+  const { nVertices, nCells, positions, triangles } = geometry;
+  // Project once per vertex, not once per edge end: a vertex is shared
+  // by ~6 edges, and proj4 is the expensive part of this build.
+  const xy = new Float64Array(2 * nVertices);
+  for (let vi = 0; vi < nVertices; vi++) {
+    const [x, y] = project(positions[3 * vi], positions[3 * vi + 1]);
+    xy[2 * vi] = x;
+    xy[2 * vi + 1] = y;
+  }
+
+  const seen = new Set<number>();
+  const src: number[] = [];
+  const dst: number[] = [];
+  for (let ci = 0; ci < nCells; ci++) {
+    const a = triangles[3 * ci];
+    const b = triangles[3 * ci + 1];
+    const c = triangles[3 * ci + 2];
+    for (const [u, v] of [
+      [a, b],
+      [b, c],
+      [c, a],
+    ]) {
+      // Undirected: order the pair so the two cells sharing an edge
+      // produce one key, not two.
+      const lo = u < v ? u : v;
+      const hi = u < v ? v : u;
+      // Packed into one number so the Set holds primitives. 2^26 caps
+      // the mesh at ~67M vertices, far past anything that renders.
+      const key = lo * 67_108_864 + hi;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      src.push(lo);
+      dst.push(hi);
+    }
+  }
+
+  const n = src.length;
+  const source = new Float64Array(2 * n);
+  const target = new Float64Array(2 * n);
+  for (let i = 0; i < n; i++) {
+    source[2 * i] = xy[2 * src[i]];
+    source[2 * i + 1] = xy[2 * src[i] + 1];
+    target[2 * i] = xy[2 * dst[i]];
+    target[2 * i + 1] = xy[2 * dst[i] + 1];
+  }
+
+  return {
+    length: n,
+    attributes: {
+      getSourcePosition: { value: source, size: 2 },
+      getTargetPosition: { value: target, size: 2 },
+    },
+    medianLength: medianEdgeLength(source, target),
+  };
+}
+
+/** The median length of a sample of the edges, in projected units. */
+function medianEdgeLength(source: Float64Array, target: Float64Array): number {
+  const n = source.length / 2;
+  if (n === 0) return 0;
+  const step = Math.max(1, Math.floor(n / MEDIAN_SAMPLE_MAX));
+  const lengths: number[] = [];
+  for (let i = 0; i < n; i += step) {
+    lengths.push(
+      Math.hypot(
+        target[2 * i] - source[2 * i],
+        target[2 * i + 1] - source[2 * i + 1],
+      ),
+    );
+  }
+  lengths.sort((a, b) => a - b);
+  return lengths[Math.floor(lengths.length / 2)];
+}
+
+/**
+ * Pixels one projected unit occupies at this camera.
+ *
+ * The two views measure in different units — the map's projected space
+ * is degrees of longitude, the orthographic view's is the model's own
+ * plan units — so the conversion is per view, and everything downstream
+ * can then think in pixels.
+ */
+export function pixelsPerUnit(
+  view: "map" | "orthographic",
+  zoom: number,
+): number {
+  // Web Mercator: the world is 512 pixels wide at zoom 0, spanning 360
+  // degrees. Orthographic: one unit is 2^zoom pixels (see `grid.ts`).
+  return view === "map" ? (512 * 2 ** zoom) / 360 : 2 ** zoom;
+}
+
+/** Whether this mesh's edges are worth drawing at this camera. */
+export function meshEdgesLegible(
+  medianLength: number,
+  pixelsPerProjectedUnit: number,
+): boolean {
+  return medianLength * pixelsPerProjectedUnit >= MESH_EDGE_MIN_PIXELS;
 }

@@ -37,6 +37,14 @@ const surface = {
       getPolygon: { value: new Float64Array(6), size: 2 as const },
     },
   },
+  edges: {
+    length: 0,
+    attributes: {
+      getSourcePosition: { value: new Float64Array(0), size: 2 as const },
+      getTargetPosition: { value: new Float64Array(0), size: 2 as const },
+    },
+    medianLength: 0,
+  },
   colors: new Uint8Array(12),
   variable: {
     id: "depth",

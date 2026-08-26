@@ -8,9 +8,13 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
+  MESH_EDGE_MIN_PIXELS,
+  meshEdgesLegible,
+  pixelsPerUnit,
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
   SURFACE_FOOTPRINT_ALPHA,
+  surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
   surfacePolygonData,
@@ -131,5 +135,73 @@ describe("surfaceFillColors", () => {
     expect(Array.from(colors.slice(0, 3))).not.toEqual(
       Array.from(colors.slice(12, 15)),
     );
+  });
+});
+
+describe("surfaceEdgeData", () => {
+  // The unit square split on its diagonal: 5 distinct edges, not 6 —
+  // the diagonal belongs to both cells and is one edge, drawn once.
+  it("emits each shared edge once", () => {
+    const e = surfaceEdgeData(geometry);
+    expect(e.length).toBe(5);
+    const drawn = new Set<string>();
+    for (let i = 0; i < e.length; i++) {
+      const s = e.attributes.getSourcePosition.value;
+      const t = e.attributes.getTargetPosition.value;
+      const a = `${s[2 * i]},${s[2 * i + 1]}`;
+      const b = `${t[2 * i]},${t[2 * i + 1]}`;
+      // Undirected: an edge and its reverse are the same edge.
+      drawn.add([a, b].sort().join("|"));
+    }
+    expect(drawn.size).toBe(5);
+  });
+
+  it("runs every endpoint through the projection", () => {
+    const e = surfaceEdgeData(geometry, (x, y) => [x + 100, y - 50]);
+    const s = e.attributes.getSourcePosition.value;
+    for (let i = 0; i < e.length; i++) {
+      expect(s[2 * i]).toBeGreaterThanOrEqual(100);
+      expect(s[2 * i + 1]).toBeLessThanOrEqual(-49);
+    }
+  });
+
+  it("measures the mesh by its median edge, in projected units", () => {
+    // Unit-square cells: four sides of 1 and a diagonal of √2, so the
+    // median is 1. The projection scales it with everything else.
+    expect(surfaceEdgeData(geometry).medianLength).toBe(1);
+    expect(
+      surfaceEdgeData(geometry, (x, y) => [10 * x, 10 * y]).medianLength,
+    ).toBe(10);
+  });
+});
+
+describe("the edge legibility decision", () => {
+  // The two views measure in different units; a decision in pixels has
+  // to come through their own conversions or it means nothing.
+  it("converts each view's units to pixels", () => {
+    // Orthographic: one unit is 2^zoom pixels (grid.ts' own convention).
+    expect(pixelsPerUnit("orthographic", 0)).toBe(1);
+    expect(pixelsPerUnit("orthographic", 4)).toBe(16);
+    // Web Mercator: 512 px spans 360° at zoom 0.
+    expect(pixelsPerUnit("map", 0)).toBeCloseTo(512 / 360);
+    expect(pixelsPerUnit("map", 10)).toBeCloseTo((512 * 1024) / 360);
+  });
+
+  it("draws edges only once a cell spans enough pixels to read", () => {
+    expect(meshEdgesLegible(1, MESH_EDGE_MIN_PIXELS)).toBe(true);
+    expect(meshEdgesLegible(1, MESH_EDGE_MIN_PIXELS - 1)).toBe(false);
+  });
+
+  /**
+   * The case the gate exists for: a 120k-cell mesh viewed whole. Its
+   * cells are sub-pixel, and drawing 180k edges there paints the domain
+   * a solid wash — worse than the plain footprint it covers.
+   */
+  it("refuses a fine mesh viewed whole, and allows it zoomed in", () => {
+    const cellMetres = 2; // a 2 m cell on a large mesh
+    const whole = pixelsPerUnit("orthographic", -4); // zoomed far out
+    const close = pixelsPerUnit("orthographic", 4);
+    expect(meshEdgesLegible(cellMetres, whole)).toBe(false);
+    expect(meshEdgesLegible(cellMetres, close)).toBe(true);
   });
 });
