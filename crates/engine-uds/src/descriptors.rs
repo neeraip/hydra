@@ -1107,6 +1107,24 @@ pub fn surface_variables() -> Vec<VariableDescriptor> {
     ]
 }
 
+/// Standing properties of the §15 mesh itself, in presentation order.
+///
+/// Separate from [`surface_variables`] because these do not vary with
+/// time and do not come from a run: the ground a mesh sits on is in the
+/// model, and is there to be looked at before anything is simulated.
+/// Keeping them apart also keeps that catalog's order meaning what it
+/// means, which is the §14.16 record's own column order.
+pub fn surface_properties() -> Vec<VariableDescriptor> {
+    // z is the bed elevation the mesh was authored with (§15.2).
+    vec![var(
+        "ground",
+        "Ground",
+        "z",
+        Some("elevation"),
+        RampHint::Sequential,
+    )]
+}
+
 fn var(
     id: &'static str,
     label: &'static str,
@@ -1437,7 +1455,7 @@ mod tests {
                 }
             }
         }
-        for v in surface_variables() {
+        for v in surface_variables().iter().chain(&surface_properties()) {
             if let Some(q) = v.quantity {
                 assert!(keys.contains(q), "surface variable {}: {q}", v.id);
             }
@@ -1447,6 +1465,24 @@ mod tests {
     /// The surface catalog is a sibling of the element catalogs: its ids
     /// are unique within it, and every variable carries a quantity — the
     /// canvas has no dimensionless surface rendering.
+    /// A mesh property is not a result: the two catalogs stay apart so
+    /// the results catalog's order keeps meaning the §14.16 record's own
+    /// column order, and so a static property is never asked of an
+    /// instant.
+    #[test]
+    fn mesh_properties_are_not_result_variables() {
+        let results: HashSet<&str> = surface_variables().iter().map(|v| v.id).collect();
+        for p in surface_properties() {
+            assert!(
+                !results.contains(p.id),
+                "{} is published as both a property and a result",
+                p.id
+            );
+            assert!(p.quantity.is_some(), "{} carries no quantity", p.id);
+        }
+        assert!(surface_properties().iter().any(|v| v.id == "ground"));
+    }
+
     #[test]
     fn surface_variables_are_unique_and_dimensioned() {
         let vars = surface_variables();
