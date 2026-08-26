@@ -1971,7 +1971,10 @@ export const MapCanvas = memo(function MapCanvas({
       const surfacePickable = tool === "select";
       layers.push(
         new SolidPolygonLayer({
-          id: "surface-2d",
+          // Keyed by projection: re-projecting replaces the layer
+          // rather than updating it, so deck can never draw a cached
+          // tesselation at coordinates that have moved.
+          id: `surface-2d-${surface.key}`,
           data: {
             length: surface.data.length,
             startIndices: surface.data.startIndices,
@@ -2024,7 +2027,7 @@ export const MapCanvas = memo(function MapCanvas({
       if (showEdges && surface.edges.length > 0) {
         layers.push(
           new LineLayer({
-            id: "surface-2d-edges",
+            id: `surface-2d-edges-${surface.key}`,
             data: {
               length: surface.edges.length,
               attributes: surface.edges.attributes,

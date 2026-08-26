@@ -30,6 +30,7 @@ function tip(over: Partial<HoverTip>): HoverTip {
 }
 
 const surface = {
+  key: "test",
   data: {
     length: 1,
     startIndices: new Uint32Array([0]),

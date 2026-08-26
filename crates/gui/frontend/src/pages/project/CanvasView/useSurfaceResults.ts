@@ -15,7 +15,7 @@
  * there is a surface.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
   type SurfaceEdgeData,
@@ -41,6 +41,18 @@ import {
 
 /** What MapCanvas draws, and what the hover chip reads. */
 export interface CanvasSurface {
+  /**
+   * Identity of the projection these coordinates were built with.
+   *
+   * The canvas keys its surface layers on it, so re-projecting the mesh
+   * (a changed coordinate system, or a proj4 definition arriving late)
+   * yields *new* layers rather than an update to existing ones. deck.gl
+   * tesselates a binary polygon layer once and caches it; a layer that
+   * kept its identity through a wholesale change of coordinates drew
+   * the cached geometry at the old place, which read as a mesh whose
+   * outlines were right and whose fill had vanished.
+   */
+  key: string;
   data: SurfacePolygonData;
   /** The mesh's own structure, drawn where its cells are big enough on
    * screen to be told apart (the canvas decides, per camera). */
@@ -198,12 +210,18 @@ export function useSurfaceResults({
   // Geometry → screen space: the cells to fill and the edges to draw
   // over them. Re-runs on a CRS change or a def registration, never on a
   // timeline scrub — this is the mesh, and the mesh does not move.
+  // Counted rather than derived from the CRS: a projection also changes
+  // when a proj4 definition lands for a code that already had a name,
+  // which no string built from the inputs would show.
+  const projectionEpoch = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reprojToken re-runs this once lazily fetched proj4 defs register
   const projected = useMemo(() => {
     if (!geometry || !enabled) return null;
     const project = planProjector(sourceCrs);
     if (!project) return null;
+    projectionEpoch.current += 1;
     return {
+      key: `${sourceCrs}:${projectionEpoch.current}`,
       data: surfacePolygonData(geometry, project),
       edges: surfaceEdgeData(geometry, project),
     };

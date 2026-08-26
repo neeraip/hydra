@@ -108,6 +108,7 @@ describe("HoverChip over an areal element", () => {
 
 describe("HoverChip over a surface cell", () => {
   const surface = {
+    key: "test",
     data: {
       length: 3,
       startIndices: new Uint32Array([0, 3, 6]),
