@@ -410,7 +410,9 @@ export function shownSurface(
       colors: surfaceBlendedColors(
         geometry,
         vertexValues,
-        values,
+        // Held at the vertices: the blend's lift is zero here anyway,
+        // since a cell's value is already the mean of its corners.
+        null,
         null,
         null,
         shown,

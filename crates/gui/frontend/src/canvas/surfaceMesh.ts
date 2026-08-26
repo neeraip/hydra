@@ -372,118 +372,261 @@ export function cellValuesAtVertices(
   return out;
 }
 
-/** Binary polygon data for the blended surface: three sub-triangles per
- * cell, meeting at its centroid. */
+/** Binary polygon data for the blended surface: a grid of sub-triangles
+ * per cell, fine enough that the blend reads as smooth. */
 export interface SurfaceBlendedData extends SurfacePolygonData {
   /** The parent cells' projected corners, six numbers per cell — what a
    * reading at a point needs, since the polygon buffer above holds the
    * sub-triangles rather than the cells. */
   corners: Float64Array;
+  /** Segments per cell edge: the grid this was built at. */
+  segments: number;
 }
 
 /**
- * The blended surface's geometry: each cell as three sub-triangles
- * meeting at its centroid, in cell order.
+ * How finely a cell is subdivided for blending.
+ *
+ * The blend is a smooth curve sampled on a grid and drawn straight
+ * between the samples, so too coarse a grid shows its own facets: the
+ * first version of this drew three sub-triangles meeting at the
+ * centroid, and the seams from each corner to the middle of every cell
+ * were plainly visible. Finer is smoother and costs triangles, so the
+ * grid follows the mesh: a small mesh is drawn generously because its
+ * cells are large on screen, and a large one is drawn coarsely because
+ * its cells are not.
+ *
+ * Multiples of three only: the centroid must be a sample, or the cell's
+ * own value never appears.
+ */
+export function blendSegments(nCells: number): number {
+  if (nCells <= 20_000) return 6; // 36 sub-triangles per cell
+  return 3; // 9 per cell
+}
+
+/** The barycentric grid for `n` segments: (w0, w1, w2) per sample. */
+function blendGrid(n: number): Float64Array {
+  const out: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= n - i; j++) {
+      out.push(i / n, j / n, (n - i - j) / n);
+    }
+  }
+  return Float64Array.from(out);
+}
+
+/** Sample index of grid point (i, j) for `n` segments. */
+function gridIndex(n: number, i: number, j: number): number {
+  // Rows are laid out by i, each of length (n - i + 1).
+  return ((2 * n + 3 - i) * i) / 2 + j;
+}
+
+/**
+ * The blended surface's geometry: each cell as an `n × n` grid of
+ * sub-triangles, in cell order.
  */
 export function surfaceBlendedPolygonData(
   geometry: SurfaceGeometry,
   project: (x: number, y: number) => [number, number] = (x, y) => [x, y],
+  segments: number = blendSegments(geometry.nCells),
 ): SurfaceBlendedData {
   const { nCells, positions, triangles } = geometry;
+  const n = segments;
+  const grid = blendGrid(n);
+  const samples = grid.length / 3;
+  const perCell = n * n;
   const corners = new Float64Array(6 * nCells);
-  const value = new Float64Array(18 * nCells);
-  const startIndices = new Uint32Array(3 * nCells);
+  const value = new Float64Array(6 * perCell * nCells);
+  const startIndices = new Uint32Array(perCell * nCells);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
+  const px = new Float64Array(samples);
+  const py = new Float64Array(samples);
+
   for (let ci = 0; ci < nCells; ci++) {
-    let cx = 0;
-    let cy = 0;
+    // The cell's own corners, projected once.
     for (let k = 0; k < 3; k++) {
       const vi = triangles[3 * ci + k];
       const [x, y] = project(positions[3 * vi], positions[3 * vi + 1]);
       corners[6 * ci + 2 * k] = x;
       corners[6 * ci + 2 * k + 1] = y;
-      cx += x / 3;
-      cy += y / 3;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
-    // Sub-triangle k spans corner k, corner k+1 and the centroid.
-    for (let k = 0; k < 3; k++) {
-      const sub = 3 * ci + k;
+    const x0 = corners[6 * ci];
+    const y0 = corners[6 * ci + 1];
+    const x1 = corners[6 * ci + 2];
+    const y1 = corners[6 * ci + 3];
+    const x2 = corners[6 * ci + 4];
+    const y2 = corners[6 * ci + 5];
+    // The grid's positions are linear in the corners, so they are taken
+    // in projected space rather than reprojected per sample.
+    for (let s = 0; s < samples; s++) {
+      const w0 = grid[3 * s];
+      const w1 = grid[3 * s + 1];
+      const w2 = grid[3 * s + 2];
+      px[s] = w0 * x0 + w1 * x1 + w2 * x2;
+      py[s] = w0 * y0 + w1 * y1 + w2 * y2;
+    }
+    let tri = 0;
+    const emit = (a: number, b: number, c: number) => {
+      const sub = perCell * ci + tri;
       startIndices[sub] = 3 * sub;
-      const at = 18 * ci + 6 * k;
-      const a = (k + 1) % 3;
-      value[at] = corners[6 * ci + 2 * k];
-      value[at + 1] = corners[6 * ci + 2 * k + 1];
-      value[at + 2] = corners[6 * ci + 2 * a];
-      value[at + 3] = corners[6 * ci + 2 * a + 1];
-      value[at + 4] = cx;
-      value[at + 5] = cy;
+      const at = 6 * sub;
+      value[at] = px[a];
+      value[at + 1] = py[a];
+      value[at + 2] = px[b];
+      value[at + 3] = py[b];
+      value[at + 4] = px[c];
+      value[at + 5] = py[c];
+      tri += 1;
+    };
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n - i; j++) {
+        emit(
+          gridIndex(n, i, j),
+          gridIndex(n, i + 1, j),
+          gridIndex(n, i, j + 1),
+        );
+        if (j < n - i - 1) {
+          emit(
+            gridIndex(n, i + 1, j),
+            gridIndex(n, i + 1, j + 1),
+            gridIndex(n, i, j + 1),
+          );
+        }
+      }
     }
   }
   return {
-    length: 3 * nCells,
+    length: perCell * nCells,
     startIndices,
     attributes: { getPolygon: { value, size: 2 } },
     bounds: nCells > 0 ? [minX, minY, maxX, maxY] : null,
     corners,
+    segments: n,
   };
 }
 
 /**
- * Per-sub-triangle-vertex RGBA for the blended surface: corners take the
- * neighbour-averaged value, centroids take the cell's own.
+ * The blended field at barycentric coordinates inside a cell.
+ *
+ * Linear between the corner values, lifted at the middle so the cell's
+ * own value lands exactly at its centroid: `Σ w·A + (cell − mean A)·B`,
+ * where `B = 27·w0·w1·w2` is zero on every edge and one at the centroid.
+ *
+ * Being zero on the edges is what keeps neighbouring cells agreeing
+ * along them; being smooth everywhere inside is what keeps the picture
+ * free of the creases a piecewise-linear blend showed.
+ */
+export function blendedValue(
+  w0: number,
+  w1: number,
+  w2: number,
+  a0: number,
+  a1: number,
+  a2: number,
+  cell: number | null,
+): number {
+  const linear = w0 * a0 + w1 * a1 + w2 * a2;
+  if (cell == null) return linear;
+  const bubble = 27 * w0 * w1 * w2;
+  return linear + (cell - (a0 + a1 + a2) / 3) * bubble;
+}
+
+/**
+ * Per-sub-vertex RGBA for the blended surface, sampled on the same grid
+ * `surfaceBlendedPolygonData` built.
  *
  * `depthAtVertices` and `cellDepth` mask as the flat path's depth does,
- * per corner and per centroid, so the waterline crosses the inside of a
- * cell rather than snapping to its boundary. Both are `null` for a field
+ * through the same blend, so the waterline crosses the inside of a cell
+ * rather than snapping to its boundary. Both are `null` for a field
  * that is not water.
  */
 export function surfaceBlendedColors(
   geometry: SurfaceGeometry,
   vertexValues: Float32Array,
-  cellValues: Float32Array,
+  cellValues: Float32Array | null,
   depthAtVertices: Float32Array | null,
   cellDepth: Float32Array | null,
   variable: GenericVariable,
+  segments: number = blendSegments(geometry.nCells),
 ): Uint8Array {
   const { nCells, triangles } = geometry;
-  const out = new Uint8Array(36 * nCells);
-  const wet = (v: number | null) => v == null || v > SURFACE_DRY_DEPTH_M;
+  const n = segments;
+  const grid = blendGrid(n);
+  const samples = grid.length / 3;
+  const perCell = n * n;
+  const out = new Uint8Array(12 * perCell * nCells);
+  const rgba = new Uint8Array(4 * samples);
+
   for (let ci = 0; ci < nCells; ci++) {
-    const centre = genericRgba(
-      cellValues[ci],
-      variable,
-      SURFACE_ALPHA,
-      "surface",
-    );
-    const centreWet = wet(cellDepth ? cellDepth[ci] : null);
-    for (let k = 0; k < 3; k++) {
-      const at = 36 * ci + 12 * k;
-      for (let j = 0; j < 2; j++) {
-        const vi = triangles[3 * ci + ((k + j) % 3)];
-        if (!wet(depthAtVertices ? depthAtVertices[vi] : null)) continue;
-        const [r, g, b, a] = genericRgba(
-          vertexValues[vi],
-          variable,
-          SURFACE_ALPHA,
-          "surface",
+    const v0 = triangles[3 * ci];
+    const v1 = triangles[3 * ci + 1];
+    const v2 = triangles[3 * ci + 2];
+    const a0 = vertexValues[v0];
+    const a1 = vertexValues[v1];
+    const a2 = vertexValues[v2];
+    const cell = cellValues ? cellValues[ci] : null;
+    const d0 = depthAtVertices ? depthAtVertices[v0] : null;
+    const cellD = cellDepth ? cellDepth[ci] : null;
+    for (let s = 0; s < samples; s++) {
+      const w0 = grid[3 * s];
+      const w1 = grid[3 * s + 1];
+      const w2 = grid[3 * s + 2];
+      if (depthAtVertices && d0 != null) {
+        const depth = blendedValue(
+          w0,
+          w1,
+          w2,
+          d0,
+          depthAtVertices[v1],
+          depthAtVertices[v2],
+          cellD,
         );
-        out[at + 4 * j] = r;
-        out[at + 4 * j + 1] = g;
-        out[at + 4 * j + 2] = b;
-        out[at + 4 * j + 3] = a;
+        if (!(depth > SURFACE_DRY_DEPTH_M)) {
+          rgba[4 * s + 3] = 0;
+          continue;
+        }
       }
-      if (centreWet) {
-        out[at + 8] = centre[0];
-        out[at + 9] = centre[1];
-        out[at + 10] = centre[2];
-        out[at + 11] = centre[3];
+      const [r, g, b, a] = genericRgba(
+        blendedValue(w0, w1, w2, a0, a1, a2, cell),
+        variable,
+        SURFACE_ALPHA,
+        "surface",
+      );
+      rgba[4 * s] = r;
+      rgba[4 * s + 1] = g;
+      rgba[4 * s + 2] = b;
+      rgba[4 * s + 3] = a;
+    }
+    let tri = 0;
+    const emit = (a: number, b: number, c: number) => {
+      const at = 12 * (perCell * ci + tri);
+      for (let k = 0; k < 4; k++) {
+        out[at + k] = rgba[4 * a + k];
+        out[at + 4 + k] = rgba[4 * b + k];
+        out[at + 8 + k] = rgba[4 * c + k];
+      }
+      tri += 1;
+    };
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n - i; j++) {
+        emit(
+          gridIndex(n, i, j),
+          gridIndex(n, i + 1, j),
+          gridIndex(n, i, j + 1),
+        );
+        if (j < n - i - 1) {
+          emit(
+            gridIndex(n, i + 1, j),
+            gridIndex(n, i + 1, j + 1),
+            gridIndex(n, i, j + 1),
+          );
+        }
       }
     }
   }
@@ -537,19 +680,13 @@ export function valueAtPoint(
     w2 = 0;
   }
   const t = geometry.triangles;
-  const a0 = vertexValues[t[3 * cellIndex]];
-  const a1 = vertexValues[t[3 * cellIndex + 1]];
-  const a2 = vertexValues[t[3 * cellIndex + 2]];
-  if (cellValues == null) return w0 * a0 + w1 * a1 + w2 * a2;
-
-  const w = [w0, w1, w2];
-  const a = [a0, a1, a2];
-  let m = 0;
-  if (w[1] < w[m]) m = 1;
-  if (w[2] < w[m]) m = 2;
-  let v = 3 * w[m] * cellValues[cellIndex];
-  for (let i = 0; i < 3; i++) {
-    if (i !== m) v += (w[i] - w[m]) * a[i];
-  }
-  return v;
+  return blendedValue(
+    w0,
+    w1,
+    w2,
+    vertexValues[t[3 * cellIndex]],
+    vertexValues[t[3 * cellIndex + 1]],
+    vertexValues[t[3 * cellIndex + 2]],
+    cellValues ? cellValues[cellIndex] : null,
+  );
 }

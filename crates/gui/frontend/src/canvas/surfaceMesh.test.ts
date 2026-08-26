@@ -8,6 +8,8 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
+  blendedValue,
+  blendSegments,
   cellValuesAtVertices,
   groundAtVertices,
   MESH_EDGE_MIN_PIXELS,
@@ -269,29 +271,40 @@ describe("blended shading", () => {
 
   it("carries a per-cell field to the corners by the mean", () => {
     const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
-    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; 0 and 2
-    // are shared.
     expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
   });
 
-  it("draws three sub-triangles per cell, meeting at its centroid", () => {
-    const d = surfaceBlendedPolygonData(g);
-    expect(d.length).toBe(6);
-    expect(Array.from(d.startIndices)).toEqual([0, 3, 6, 9, 12, 15]);
-    // Cell 0's centroid, repeated as the third point of each of its
-    // three sub-triangles.
-    const p = d.attributes.getPolygon.value;
-    const cx = (0 + 1 + 1) / 3;
-    const cy = (0 + 0 + 1) / 3;
-    for (let k = 0; k < 3; k++) {
-      expect(p[6 * k + 4]).toBeCloseTo(cx, 9);
-      expect(p[6 * k + 5]).toBeCloseTo(cy, 9);
+  // The grid must be fine enough that a curve sampled on it reads as a
+  // curve, and must contain the centroid or the cell's own value has
+  // nowhere to land.
+  it("subdivides on a grid that always samples the centroid", () => {
+    for (const n of [
+      blendSegments(8),
+      blendSegments(7_500),
+      blendSegments(120_000),
+    ]) {
+      expect(n % 3).toBe(0);
+      expect(n).toBeGreaterThanOrEqual(3);
     }
+    // Finer where cells are large on screen, coarser where they are not.
+    expect(blendSegments(8)).toBeGreaterThan(blendSegments(120_000));
+  });
+
+  it("draws an n-by-n grid of sub-triangles per cell", () => {
+    const n = 3;
+    const d = surfaceBlendedPolygonData(g, undefined, n);
+    expect(d.segments).toBe(n);
+    expect(d.length).toBe(2 * n * n);
+    // Every sub-triangle is three points in the buffer, in order.
+    expect(Array.from(d.startIndices.slice(0, 3))).toEqual([0, 3, 6]);
     // And it keeps the parent corners for reading a point.
     expect(Array.from(d.corners.slice(0, 6))).toEqual([0, 0, 1, 0, 1, 1]);
   });
 
-  it("paints each cell's centre with the cell's own value", () => {
+  // Two arrays indexed together: a colour per sub-vertex of the same
+  // grid. If the two ever disagreed about the grid, the surface would
+  // be painted from the wrong samples.
+  it("colours exactly the geometry it builds", () => {
     const cells = Float32Array.from([2, 8]);
     const v: GenericVariable = {
       id: "depth",
@@ -300,6 +313,7 @@ describe("blended shading", () => {
       min: 0,
       max: 10,
     };
+    const d = surfaceBlendedPolygonData(g);
     const colors = surfaceBlendedColors(
       g,
       cellValuesAtVertices(g, cells),
@@ -308,15 +322,75 @@ describe("blended shading", () => {
       null,
       v,
     );
-    const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
-    // Every sub-triangle's third point is the centroid, and all three
-    // carry the same colour: the cell's own.
-    expect(rgb(2)).toEqual(rgb(5));
-    expect(rgb(5)).toEqual(rgb(8));
-    expect(rgb(2)).toEqual(seqRgb(2 / 10, "surface"));
-    // A corner shared by both cells is painted the same in each, or the
-    // surface would seam along the diagonal.
-    expect(rgb(0)).toEqual(rgb(9)); // vertex 0, cell 0 and cell 1
+    expect(colors.length).toBe(4 * 3 * d.length);
+  });
+});
+
+describe("blendedValue", () => {
+  const A = [0.4, 0.5, 0.6] as const;
+
+  /**
+   * The defect this construction exists for: averaging cell values onto
+   * the corners alone destroyed peaks, so the deepest cell of the SWMM
+   * 2D example (0.9983 m) painted its own centre at 0.5265 m.
+   */
+  it("lands the cell's own value at the centroid", () => {
+    const v = blendedValue(1 / 3, 1 / 3, 1 / 3, A[0], A[1], A[2], 1.0);
+    expect(v).toBeCloseTo(1.0, 9);
+  });
+
+  it("is the corner values at the corners", () => {
+    expect(blendedValue(1, 0, 0, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.4, 9);
+    expect(blendedValue(0, 1, 0, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.5, 9);
+    expect(blendedValue(0, 0, 1, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.6, 9);
+  });
+
+  /** Zero on every edge is what keeps neighbouring cells agreeing along
+   * them, whatever either cell's own value is. */
+  it("owes nothing to the cell's value on an edge", () => {
+    for (const [w0, w1, w2] of [
+      [0.5, 0.5, 0],
+      [0.2, 0, 0.8],
+      [0, 0.7, 0.3],
+    ]) {
+      const lifted = blendedValue(w0, w1, w2, A[0], A[1], A[2], 99);
+      const plain = blendedValue(w0, w1, w2, A[0], A[1], A[2], null);
+      expect(lifted).toBeCloseTo(plain, 9);
+    }
+  });
+
+  /**
+   * Smooth, not merely continuous.
+   *
+   * The first version drew three sub-triangles meeting at the centroid,
+   * whose slope jumped across each seam — the creases the eye picked
+   * up. Tested by how the second difference scales rather than against
+   * a threshold: across a slope jump it falls off like the step, so
+   * halving the step halves it; on a smooth curve it falls off like the
+   * step squared, so halving the step quarters it.
+   */
+  it("changes smoothly across the middle of a cell", () => {
+    const at = (s: number) =>
+      blendedValue(s, (1 - s) / 2, (1 - s) / 2, A[0], A[1], A[2], 1.0);
+    const worstSecondDifference = (h: number) => {
+      let worst = 0;
+      for (let s = 0.15; s < 0.85; s += h) {
+        worst = Math.max(worst, Math.abs(at(s + h) - 2 * at(s) + at(s - h)));
+      }
+      return worst;
+    };
+    const coarse = worstSecondDifference(0.02);
+    const fine = worstSecondDifference(0.01);
+    // Four, within slack for where the samples land; a kink would give
+    // about two.
+    expect(coarse / fine).toBeGreaterThan(3.2);
+  });
+
+  it("is plain linear interpolation for a field held at the vertices", () => {
+    expect(blendedValue(0.25, 0.25, 0.5, 10, 20, 30, null)).toBeCloseTo(
+      22.5,
+      9,
+    );
   });
 });
 
@@ -355,6 +429,14 @@ describe("valueAtPoint", () => {
      */
     it("reads a cell's own value at its centre", () => {
       expect(read(4, 4)).toBeCloseTo(1.0, 6);
+    });
+
+    it("reads the same field the picture is sampled from", () => {
+      // The centroid, through both doors.
+      expect(read(4, 4)).toBeCloseTo(
+        blendedValue(1 / 3, 1 / 3, 1 / 3, 0.4, 0.5, 0.6, 1.0),
+        9,
+      );
     });
 
     it("reads the corner averages at the corners", () => {
