@@ -1079,6 +1079,34 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
     }
 }
 
+/// Result variables for the §15 overland surface, in presentation order.
+///
+/// Mesh cells are state, not §4 elements, so this is a sibling catalog of
+/// [`result_variables`] rather than a class inside it: the same
+/// engine-authored shape (§6), addressed by applications rendering the
+/// §14.16 surface results. Values are SI, per that section.
+pub fn surface_variables() -> Vec<VariableDescriptor> {
+    // Symbols: y flow depth, η water surface elevation, |v| speed (the
+    // §15.4.3 reconstructed velocity's magnitude).
+    vec![
+        var("depth", "Depth", "y", Some("depth"), RampHint::Sequential),
+        var(
+            "elevation",
+            "Water surface",
+            "η",
+            Some("elevation"),
+            RampHint::Sequential,
+        ),
+        var(
+            "speed",
+            "Speed",
+            "|v|",
+            Some("velocity"),
+            RampHint::Sequential,
+        ),
+    ]
+}
+
 fn var(
     id: &'static str,
     label: &'static str,
@@ -1409,6 +1437,25 @@ mod tests {
                 }
             }
         }
+        for v in surface_variables() {
+            if let Some(q) = v.quantity {
+                assert!(keys.contains(q), "surface variable {}: {q}", v.id);
+            }
+        }
+    }
+
+    /// The surface catalog is a sibling of the element catalogs: its ids
+    /// are unique within it, and every variable carries a quantity — the
+    /// canvas has no dimensionless surface rendering.
+    #[test]
+    fn surface_variables_are_unique_and_dimensioned() {
+        let vars = surface_variables();
+        let mut seen = HashSet::new();
+        for v in &vars {
+            assert!(seen.insert(v.id), "duplicate surface variable {}", v.id);
+            assert!(v.quantity.is_some(), "{} carries no quantity", v.id);
+        }
+        assert!(vars.iter().any(|v| v.id == "depth"));
     }
 
     #[test]
