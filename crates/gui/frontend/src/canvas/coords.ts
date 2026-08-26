@@ -226,6 +226,25 @@ export function ensureEpsgDef(epsg: string): boolean {
  * Throws if `fromEpsg` is unknown and cannot be auto-generated. The caller
  * should catch this and show the user a meaningful error.
  */
+/**
+ * Forward plan-coordinate transform for canvas layers that draw raw model
+ * coordinates (the 2D surface mesh, whose vertices never pass through the
+ * node pipeline). Mirrors the node path exactly: a local grid flips Y once
+ * for the orthographic view, WGS84 passes through, a projected CRS goes
+ * through the same proj4 forward as {@link reprojectNodes}. `null` when
+ * the CRS has no registered definition yet — the caller shows nothing
+ * rather than something misplaced.
+ */
+export function planProjector(
+  sourceCrs: string,
+): ((x: number, y: number) => [number, number]) | null {
+  if (sourceCrs === LOCAL_CRS) return (x, y) => [x, -y];
+  if (sourceCrs === "EPSG:4326") return (x, y) => [x, y];
+  if (!ensureEpsgDef(sourceCrs)) return null;
+  const converter = proj4(sourceCrs, "EPSG:4326");
+  return (x, y) => converter.forward([x, y]) as [number, number];
+}
+
 export function reprojectNodes(nodes: Node[], fromEpsg: string): Node[] {
   if (fromEpsg === "EPSG:4326") return nodes; // no-op
 

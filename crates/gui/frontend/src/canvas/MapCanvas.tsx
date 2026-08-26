@@ -9,6 +9,7 @@ import {
   PathLayer,
   PolygonLayer,
   ScatterplotLayer,
+  SolidPolygonLayer,
   TextLayer,
 } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
@@ -344,6 +345,14 @@ interface MapCanvasProps {
    * Drawn from their own rings wherever positions are real; in a topological
    * layout they are drawn from the glyphs that layout placed. */
   regions?: Region[];
+  /** The 2D overland surface for the current instant: pre-projected
+   * binary triangles with per-vertex colours (flat per cell, dry cells
+   * transparent), built by `useSurfaceResults`. `null` for every
+   * non-mesh run and outside map mode — a schematic invents positions;
+   * the mesh's are real. */
+  surface?:
+    | import("../pages/project/CanvasView/useSurfaceResults").CanvasSurface
+    | null;
   viewMode: ViewMode;
   /** Per-axis schematic spacing multipliers (`{x: 1, y: 1}` = the layout's
    * native 120:80). Scales distances between nodes only — radii and link widths
@@ -508,6 +517,7 @@ export const MapCanvas = memo(function MapCanvas({
   nodes,
   links,
   regions,
+  surface = null,
   viewMode,
   schematicScale = IDENTITY_SCALE,
   nodeScale = NODE_SCALE_DEFAULT,
@@ -1931,6 +1941,39 @@ export const MapCanvas = memo(function MapCanvas({
       }
     }
 
+    // The 2D overland surface: one instant's water, flat-coloured per
+    // cell, drawn above the catchment fills (the flood is the more
+    // specific claim) and below every network element, so glyphs and
+    // picking keep priority. Binary attributes throughout — at mesh
+    // scale (100k+ cells) per-object accessors would dominate the frame.
+    // Not drawn in a topological layout: its positions are invented and
+    // the mesh's are real. (A local grid renders orthographically at real
+    // positions — the surface belongs there too.)
+    if (surface && !topological) {
+      layers.push(
+        new SolidPolygonLayer({
+          id: "surface-2d",
+          data: {
+            length: surface.data.length,
+            startIndices: surface.data.startIndices,
+            attributes: {
+              getPolygon: surface.data.attributes.getPolygon,
+              getFillColor: {
+                value: surface.colors,
+                size: 4,
+                normalized: true,
+              },
+            },
+          },
+          // The triangles are already closed rings in draw order; deck
+          // must not re-wind or close them.
+          _normalize: false,
+          coordinateSystem: coordSystem,
+          pickable: false,
+        }),
+      );
+    }
+
     // Inlet couplings: the hydraulic path a dual-drainage model has where
     // no link exists. Drawn from the street conduit's midpoint to the node
     // it captures into, dashed and thin so it reads as "coupled to" rather
@@ -2695,6 +2738,7 @@ export const MapCanvas = memo(function MapCanvas({
     genNode,
     genLink,
     genRegion,
+    surface,
     viewMode,
     topological,
     kindRoles,

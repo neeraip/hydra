@@ -102,6 +102,7 @@ import { periodToFetch } from "./CanvasView/periodToFetch";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { toolAllowedBy, toolAvailableIn } from "./CanvasView/toolAvailability";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
+import { useSurfaceResults } from "./CanvasView/useSurfaceResults";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 import { wdsValuation } from "./criteriaValuation";
 import { linkResultsAt, nodeResultsAt } from "./mergeResults";
@@ -1944,6 +1945,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const shownLinks = placeable ? canvasLinks : EMPTY_LINKS;
   const shownRegions = placeable ? canvasRegions : EMPTY_REGIONS;
 
+  // The 2D overland surface, when this target's run produced one. Fetched
+  // and shaped in its own hook; the timeline index is the shared one, so
+  // the surface and the network always show the same instant.
+  const { surface: canvasSurface } = useSurfaceResults({
+    projectId: project?.id ?? null,
+    scenarioId: activeScenarioId,
+    resultMetaKey,
+    period: periodToFetch(currentHour, resultMeta?.times.length ?? 0),
+    sourceCrs,
+    reprojToken: posNodes,
+    // A topological layout invents positions the mesh cannot share; a
+    // local grid's orthographic view keeps real ones and qualifies.
+    enabled: placeable && viewMode !== "schematic",
+  });
+
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
     [allNodes],
@@ -2386,6 +2402,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 nodes={shownNodes}
                 links={shownLinks}
                 regions={shownRegions}
+                surface={canvasSurface}
                 couplings={inletCouplings}
                 periodResult={currentPeriodResult}
                 generic={genericCanvas}
