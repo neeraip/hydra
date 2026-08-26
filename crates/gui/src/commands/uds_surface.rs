@@ -119,24 +119,81 @@ pub(crate) fn surface_meta_of(path: &Path) -> Result<SurfaceMetaDto, String> {
     })
 }
 
-/// The geometry payload for a sidecar on disk (layout above).
-pub(crate) fn surface_geometry_of(path: &Path) -> Result<Vec<u8>, String> {
-    let r = OverlandResults::open(path)?;
-    let mut out = Vec::with_capacity(12 + 24 * r.verts.len() + 12 * r.cells.len());
+/// The geometry payload (layout above), from whichever mesh the caller
+/// holds. Written once so the two sources — the run's sidecar and the
+/// model itself — cannot drift into two dialects of one layout.
+fn encode_geometry(
+    n_vertices: usize,
+    n_cells: usize,
+    verts: impl Iterator<Item = (f64, f64, f64)>,
+    tris: impl Iterator<Item = [u32; 3]>,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(12 + 24 * n_vertices + 12 * n_cells);
     out.extend_from_slice(&SURFACE_GEOMETRY_VERSION.to_le_bytes());
-    out.extend_from_slice(&(r.verts.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(r.cells.len() as u32).to_le_bytes());
-    for (x, y, z) in &r.verts {
+    out.extend_from_slice(&(n_vertices as u32).to_le_bytes());
+    out.extend_from_slice(&(n_cells as u32).to_le_bytes());
+    for (x, y, z) in verts {
         for f in [x, y, z] {
             out.extend_from_slice(&f.to_le_bytes());
         }
     }
-    for c in &r.cells {
+    for c in tris {
         for i in c {
             out.extend_from_slice(&i.to_le_bytes());
         }
     }
-    Ok(out)
+    out
+}
+
+/// The geometry payload for a sidecar on disk (layout above).
+pub(crate) fn surface_geometry_of(path: &Path) -> Result<Vec<u8>, String> {
+    let r = OverlandResults::open(path)?;
+    Ok(encode_geometry(
+        r.verts.len(),
+        r.cells.len(),
+        r.verts.iter().copied(),
+        r.cells.iter().copied(),
+    ))
+}
+
+// ── The model's own mesh ──────────────────────────────────────────────────────
+//
+// A mesh is a property of the model, present from import; the sidecar
+// carries a copy only so a viewer can render a run without one. In the
+// app the model is already in memory, so the canvas takes its geometry
+// from here — which is what lets a mesh model show its surface before it
+// has ever been run.
+
+/// What the app needs to know a model carries a surface at all.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshInfoDto {
+    pub n_vertices: u32,
+    pub n_cells: u32,
+}
+
+/// The loaded model's mesh counts, or `None` when it carries no mesh
+/// (every water model, and every drainage model without 2D sections).
+pub(crate) fn mesh_info_of(net: &hydra::uds::model::Network) -> Option<MeshInfoDto> {
+    let mesh = net.overland.as_ref()?;
+    Some(MeshInfoDto {
+        n_vertices: mesh.verts.len() as u32,
+        n_cells: mesh.cells.len() as u32,
+    })
+}
+
+/// The loaded model's mesh as a geometry payload (layout above) — the
+/// same bytes the sidecar path serves, from the model instead.
+pub(crate) fn mesh_geometry_of(net: &hydra::uds::model::Network) -> Vec<u8> {
+    let Some(mesh) = net.overland.as_ref() else {
+        return encode_geometry(0, 0, std::iter::empty(), std::iter::empty());
+    };
+    encode_geometry(
+        mesh.verts.len(),
+        mesh.cells.len(),
+        mesh.verts.iter().map(|v| (v.x, v.y, v.z)),
+        mesh.cells.iter().map(|c| c.v),
+    )
 }
 
 /// One instant's cell values (layout above).
@@ -219,6 +276,36 @@ pub fn load_surface_period(
         Some(path) => surface_period_of(&path, period as usize).map(tauri::ipc::Response::new),
         None => Err("this target has no surface results".into()),
     }
+}
+
+/// Whether the loaded model carries a 2D surface, and how big it is.
+///
+/// Answered from the model, so it is true from import — before any run,
+/// and for a model that will never be run. `None` for a model with no
+/// mesh, which is every water model and most drainage ones.
+#[tauri::command(async)]
+pub fn load_mesh_info(
+    state: tauri::State<'_, super::network_dto::NetworkState>,
+) -> Option<MeshInfoDto> {
+    match &*state.0.lock() {
+        super::network_dto::NetworkStateInner::LoadedUds { network, .. } => mesh_info_of(network),
+        _ => None,
+    }
+}
+
+/// The loaded model's mesh geometry (binary, see `load_surface_geometry`).
+/// Empty counts when the model carries no mesh.
+#[tauri::command(async)]
+pub fn load_mesh_geometry(
+    state: tauri::State<'_, super::network_dto::NetworkState>,
+) -> tauri::ipc::Response {
+    let bytes = match &*state.0.lock() {
+        super::network_dto::NetworkStateInner::LoadedUds { network, .. } => {
+            mesh_geometry_of(network)
+        }
+        _ => encode_geometry(0, 0, std::iter::empty(), std::iter::empty()),
+    };
+    tauri::ipc::Response::new(bytes)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -314,6 +401,58 @@ mod tests {
         // Out of range is a named refusal, not a panic.
         let r = OverlandResults::open(&path).expect("open");
         assert!(surface_period_of(&path, r.periods).is_err());
+    }
+
+    // ── The model's own mesh ──────────────────────────────────────────
+
+    const MESH_MODEL: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+         [2D_VERTICES]\n0 0 10.0\n1 0 10.2\n1 1 10.4\n0 1 10.6\n\
+         [2D_TRIANGLES]\n0 1 2 0.02\n0 2 3 0.03\n\
+         [JUNCTIONS]\nJ1 9 4 0 0 0\n[OUTFALLS]\nO1 8 FREE\n\
+         [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+         [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
+
+    const FLAT_MODEL: &str = "[OPTIONS]\nFLOW_UNITS CMS\n\
+         [JUNCTIONS]\nJ1 9 4 0 0 0\n[OUTFALLS]\nO1 8 FREE\n\
+         [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+         [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
+
+    /// A mesh is known from the model, before any run — the fact the app
+    /// needs to say "this model is 2D" on a project nobody has simulated.
+    #[test]
+    fn a_models_mesh_is_known_without_running_it() {
+        let (net, _) = hydra::swmm::objects::parse_network(MESH_MODEL);
+        let info = mesh_info_of(&net).expect("the model carries a mesh");
+        assert_eq!((info.n_vertices, info.n_cells), (4, 2));
+
+        let (flat, _) = hydra::swmm::objects::parse_network(FLAT_MODEL);
+        assert!(
+            mesh_info_of(&flat).is_none(),
+            "a model without 2D sections carries no surface"
+        );
+    }
+
+    /// Both sources write one layout: the model's payload decodes by the
+    /// same rules as the sidecar's, and says the same thing about the
+    /// same mesh.
+    #[test]
+    fn the_model_and_the_sidecar_encode_one_geometry_layout() {
+        let (net, _) = hydra::swmm::objects::parse_network(MESH_MODEL);
+        let from_model = mesh_geometry_of(&net);
+        let dir = tempfile::tempdir().unwrap();
+        let from_run = surface_geometry_of(&sidecar(dir.path())).expect("geometry");
+        // Same mesh, same bytes — the sidecar's copy is the model's mesh.
+        assert_eq!(from_model, from_run);
+
+        // A model with no mesh answers in the same layout, empty.
+        let (flat, _) = hydra::swmm::objects::parse_network(FLAT_MODEL);
+        let empty = mesh_geometry_of(&flat);
+        assert_eq!(empty.len(), 12);
+        assert_eq!(
+            u32::from_le_bytes(empty[0..4].try_into().unwrap()),
+            SURFACE_GEOMETRY_VERSION
+        );
+        assert_eq!(u32::from_le_bytes(empty[8..12].try_into().unwrap()), 0);
     }
 
     #[test]

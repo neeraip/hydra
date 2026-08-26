@@ -112,6 +112,8 @@ fn main() {
             commands::get_network_title,
             commands::get_run_warnings,
             commands::load_result_meta,
+            commands::load_mesh_info,
+            commands::load_mesh_geometry,
             commands::load_surface_meta,
             commands::load_surface_geometry,
             commands::load_surface_period,
