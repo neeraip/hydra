@@ -634,6 +634,20 @@ export function surfaceBlendedColors(
 }
 
 /**
+ * Which cell a picked polygon belongs to.
+ *
+ * The blended surface draws many sub-triangles per cell, so what deck
+ * hands back from a pick indexes the *polygons*, not the cells. Reading
+ * one as the other names a cell that may not exist and reads its
+ * geometry from beyond the end of the array: the chip said "Cell 173"
+ * of an eight-cell mesh, and its value came out as nothing at all.
+ */
+export function pickedCell(polygonIndex: number, subsPerCell: number): number {
+  if (polygonIndex < 0 || subsPerCell < 1) return -1;
+  return Math.floor(polygonIndex / subsPerCell);
+}
+
+/**
  * The value the blended picture shows at a point inside a cell.
  *
  * With barycentric coordinates `w` in the cell and `m` the smallest of

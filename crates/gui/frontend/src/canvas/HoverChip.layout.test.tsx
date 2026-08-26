@@ -64,6 +64,7 @@ const surface = {
   vertexValues: null,
   centreValues: null,
   corners: null,
+  subsPerCell: 1,
   values: Float32Array.from([0.017]),
 };
 

@@ -80,6 +80,10 @@ export interface CanvasSurface {
   centreValues: Float32Array | null;
   /** The parent cells' projected corners, for reading a point. */
   corners: Float64Array | null;
+  /** Polygons drawn per cell: one for the plain fill, many for the
+   * blended grid. What a pick returns is a polygon, so this is what
+   * turns it back into a cell. */
+  subsPerCell: number;
 }
 
 export function useSurfaceResults({
@@ -246,12 +250,14 @@ export function useSurfaceResults({
     const blended = smooth
       ? surfaceBlendedPolygonData(geometry, project)
       : null;
+    const flat = blended ? null : surfacePolygonData(geometry, project);
     return {
       key: `${sourceCrs}:${smooth ? "blend" : "flat"}:${projectionEpoch.current}`,
-      data: blended ?? surfacePolygonData(geometry, project),
+      data: blended ?? (flat as SurfacePolygonData),
       corners: blended
         ? blended.corners
-        : surfacePolygonData(geometry, project).attributes.getPolygon.value,
+        : (flat as SurfacePolygonData).attributes.getPolygon.value,
+      subsPerCell: blended ? blended.segments * blended.segments : 1,
       edges: surfaceEdgeData(geometry, project),
     };
   }, [geometry, sourceCrs, enabled, reprojToken, smooth]);

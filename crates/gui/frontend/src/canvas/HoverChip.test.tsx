@@ -135,6 +135,7 @@ describe("HoverChip over a surface cell", () => {
     vertexValues: null,
     centreValues: null,
     corners: null,
+    subsPerCell: 1,
     variable: channel([], "depth").variable,
     values: Float32Array.from([0.1, 1.375, 0.4]),
   };

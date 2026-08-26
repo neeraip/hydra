@@ -14,6 +14,7 @@ import {
   groundAtVertices,
   MESH_EDGE_MIN_PIXELS,
   meshEdgesLegible,
+  pickedCell,
   pixelsPerUnit,
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
@@ -476,5 +477,47 @@ describe("valueAtPoint", () => {
   it("refuses a cell that is not there", () => {
     expect(valueAtPoint(g, corners, z, null, 1, 0, 0)).toBeNull();
     expect(valueAtPoint(g, corners, z, null, -1, 0, 0)).toBeNull();
+  });
+});
+
+describe("pickedCell", () => {
+  /**
+   * The defect: the blended surface draws many polygons per cell, and
+   * a pick names a polygon. Read as a cell index it named "Cell 173"
+   * of an eight-cell mesh and read that cell's corners from beyond the
+   * end of the array, so the chip showed no value at all.
+   */
+  it("turns a picked sub-triangle back into its cell", () => {
+    const subs = 36; // a 6-segment grid
+    expect(pickedCell(0, subs)).toBe(0);
+    expect(pickedCell(35, subs)).toBe(0);
+    expect(pickedCell(36, subs)).toBe(1);
+    expect(pickedCell(173, subs)).toBe(4);
+    // The plain fill draws one polygon per cell, so nothing changes.
+    expect(pickedCell(173, 1)).toBe(173);
+  });
+
+  it("passes a miss through as a miss", () => {
+    expect(pickedCell(-1, 36)).toBe(-1);
+    expect(pickedCell(-1, 1)).toBe(-1);
+  });
+
+  // Every polygon of the geometry must map inside the mesh, or a hover
+  // near the end of it reads past the cells.
+  it("maps every polygon the blended geometry draws into the mesh", () => {
+    const g: SurfaceGeometry = {
+      nVertices: 4,
+      nCells: 2,
+      positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
+      triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    };
+    const d = surfaceBlendedPolygonData(g);
+    const subs = d.segments * d.segments;
+    for (let i = 0; i < d.length; i++) {
+      const ci = pickedCell(i, subs);
+      expect(ci).toBeGreaterThanOrEqual(0);
+      expect(ci).toBeLessThan(g.nCells);
+    }
+    expect(pickedCell(d.length - 1, subs)).toBe(g.nCells - 1);
   });
 });

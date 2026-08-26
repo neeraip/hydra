@@ -117,7 +117,12 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
-import { meshEdgesLegible, pixelsPerUnit, valueAtPoint } from "./surfaceMesh";
+import {
+  meshEdgesLegible,
+  pickedCell,
+  pixelsPerUnit,
+  valueAtPoint,
+} from "./surfaceMesh";
 import {
   pathIntersectsBox,
   pointInBox,
@@ -1999,7 +2004,9 @@ export const MapCanvas = memo(function MapCanvas({
             coordinate?: number[];
           }) => {
             if (!surfacePickable) return;
-            const ci = info.index ?? -1;
+            // A pick names a polygon; the blended surface draws many of
+            // them per cell.
+            const ci = pickedCell(info.index ?? -1, surface.subsPerCell);
             // A smooth surface varies inside its cells, so the pointer
             // reads the value where it actually is rather than the one
             // number the whole cell would otherwise report.
