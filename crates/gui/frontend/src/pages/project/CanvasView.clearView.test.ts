@@ -47,7 +47,12 @@ describe("readGenericSelection", () => {
           region: "runoff",
         },
       }),
-    ).toEqual({ point: "depth", polyline: "flow", region: "runoff" });
+    ).toEqual({
+      point: "depth",
+      polyline: "flow",
+      region: "runoff",
+      surface: "",
+    });
   });
 
   // An id from another engine's catalog is not corruption — it is a
@@ -71,6 +76,7 @@ describe("readGenericSelection", () => {
         point: "",
         polyline: "",
         region: "",
+        surface: "",
       });
     }
   });
@@ -78,7 +84,7 @@ describe("readGenericSelection", () => {
   it("ignores non-string entries rather than storing them", () => {
     expect(
       readGenericSelection({ genericSelection: { point: 3, polyline: null } }),
-    ).toEqual({ point: "", polyline: "", region: "" });
+    ).toEqual({ point: "", polyline: "", region: "", surface: "" });
   });
 });
 

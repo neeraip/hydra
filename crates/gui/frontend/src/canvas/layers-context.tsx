@@ -31,6 +31,10 @@ export interface CanvasLayers {
    * that carry any; map mode only (rings are source-CRS geometry the
    * schematic layout knows nothing about). */
   regions: boolean;
+  /** The 2D overland surface (mesh models with results only). Real
+   * positions only: map mode and local grids, never the topological
+   * layout. */
+  surface: boolean;
   nodeLabels: boolean; // Node label text
   linkLabels: boolean; // Link label text
 }
@@ -49,6 +53,7 @@ const DEFAULT: CanvasLayers = {
   nodes: true,
   links: true,
   regions: true,
+  surface: true,
   nodeLabels: false,
   linkLabels: false,
 };

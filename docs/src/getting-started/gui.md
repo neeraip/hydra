@@ -26,7 +26,7 @@ Hydra organises work into **projects**. Each project holds a network model and o
 
 1. **Create a project.** On the Projects screen, click **New Project**. The wizard asks for the **engine** first, then project details, then a review. Choosing the engine up front is deliberate: `.inp` belongs to both EPANET and SWMM, so the file extension cannot decide the modelling domain on your behalf. With Water Distribution chosen, either import an existing EPANET `.inp` file or start from a blank network. Urban Drainage has no blank-network option: choose it and import a SWMM `.inp`. That is a limit on starting from nothing, not on editing: a drainage model is edited like any other once it is open. Hydra cannot represent a network with no elements at all, so a blank project opens onto a smallest-valid starter model, and only water distribution has one.
 2. **Configure and run.** Press **⌘R** (macOS) or **Ctrl+R** (Windows/Linux), or click the **Simulate** button in the scenario strip at the bottom of the screen. Select which scenarios to run and confirm.
-3. **Explore results.** After the simulation completes, the network map updates with colour-coded results. Click any node or link to inspect its time-series values (pressure, head, flow, velocity, water age, etc.). Use the timeline scrubber to step through reporting periods.
+3. **Explore results.** After the simulation completes, the network map updates with colour-coded results. Click any node or link to inspect its time-series values (pressure, head, flow, velocity, water age, etc.). Use the timeline scrubber to step through reporting periods. A drainage model with a 2D mesh also shows its surface on the map: cells coloured by water depth (or surface elevation or speed, from the legend's picker), dry cells transparent, stepping with the same timeline. A toolbar button toggles the surface layer.
 
 Press **⌘K** (macOS) or **Ctrl+K** (Windows/Linux) at any time to open the command palette, which lists every action (running simulations, switching views, imports and exports), filtered as you type by substring match. Type `#` in the palette to find any node or link by ID and zoom to it.
 
@@ -101,7 +101,7 @@ Hydra GUI is tuned to stay responsive on larger models.
 
 ## Exporting and Output Files
 
-Hydra saves simulation results inside the project folder on disk. To open the folder for a scenario, go to the **Scenarios** panel and click the **Open in Finder** icon next to the scenario name; it reveals the folder in your platform's file manager (Finder, Explorer, or the Linux equivalent). The folder contains `results.out`: binary output in the format of the model's own engine, EPANET-compatible for a water distribution model and SWMM-compatible for a drainage one, readable by post-processing tools built for either.
+Hydra saves simulation results inside the project folder on disk. To open the folder for a scenario, go to the **Scenarios** panel and click the **Open in Finder** icon next to the scenario name; it reveals the folder in your platform's file manager (Finder, Explorer, or the Linux equivalent). The folder contains `results.out`: binary output in the format of the model's own engine, EPANET-compatible for a water distribution model and SWMM-compatible for a drainage one, readable by post-processing tools built for either. A drainage model with a 2D mesh also keeps `results.2d.out` there, the surface results the canvas renders.
 
 Other formats are available from the command palette (**⌘K** / **Ctrl+K**):
 

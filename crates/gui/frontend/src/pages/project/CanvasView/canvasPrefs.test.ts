@@ -40,6 +40,7 @@ describe("a project with nothing saved", () => {
         point: CANVAS_PREF_DEFAULTS.nodeVar,
         polyline: CANVAS_PREF_DEFAULTS.linkVar,
         region: "",
+        surface: "",
       },
     });
   });
@@ -98,7 +99,12 @@ describe("a variable selection", () => {
    */
   it("survives an id no current catalog holds", () => {
     const resolved = resolveCanvasPrefs({
-      genericSelection: { point: "depth", polyline: "capacity", region: "" },
+      genericSelection: {
+        point: "depth",
+        polyline: "capacity",
+        region: "",
+        surface: "",
+      },
     });
     expect(resolved.genericSelection.point).toBe("depth");
     expect(resolved.genericSelection.polyline).toBe("capacity");
@@ -117,10 +123,26 @@ describe("a variable selection", () => {
     const resolved = resolveCanvasPrefs({
       nodeVar: "head",
       linkVar: "flow",
-      genericSelection: { point: "quality", polyline: "status", region: "" },
+      genericSelection: {
+        point: "quality",
+        polyline: "status",
+        region: "",
+        surface: "",
+      },
     });
     expect(resolved.genericSelection.point).toBe("quality");
     expect(resolved.genericSelection.polyline).toBe("status");
+  });
+
+  /** Prefs saved before the surface class existed carry a three-key
+   *  selection; the missing key must come back as "the catalog's first",
+   *  never as undefined leaking through the Record type. */
+  it("fills the surface key a pre-surface selection lacks", () => {
+    const resolved = resolveCanvasPrefs({
+      genericSelection: { point: "depth", polyline: "", region: "" },
+    } as unknown as Partial<CanvasPrefs>);
+    expect(resolved.genericSelection.surface).toBe("");
+    expect(resolved.genericSelection.point).toBe("depth");
   });
 
   /** A legacy pair that is itself junk seeds the default, not the junk. */
@@ -133,6 +155,17 @@ describe("a variable selection", () => {
 });
 
 describe("the scale mode and the criteria toggle", () => {
+  /** The legacy single boolean predates the surface class, and no
+   *  criteria catalog judges surface variables — it must not switch
+   *  surface judging on. */
+  it("keeps surface criteria off through the legacy-boolean migration", () => {
+    const resolved = resolveCanvasPrefs({
+      criteriaScale: true,
+    } as unknown as Partial<CanvasPrefs>);
+    expect(resolved.criteriaScale.point).toBe(true);
+    expect(resolved.criteriaScale.surface).toBe(false);
+  });
+
   /** Prefs written before the two keys merged, read as two again. */
   it("migrates the pre-merge pair, keeping both answers", () => {
     const judging = resolveCanvasPrefs({
@@ -165,6 +198,9 @@ describe("the scale mode and the criteria toggle", () => {
       point: true,
       polyline: true,
       region: true,
+      // The surface class postdates every merged mode, and no criteria
+      // judge surface variables.
+      surface: false,
     });
     expect(resolved.scaleMode).toBe("run");
   });

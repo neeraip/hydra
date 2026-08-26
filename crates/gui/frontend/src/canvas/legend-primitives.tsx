@@ -168,6 +168,27 @@ export function LinkGlyph() {
   );
 }
 
+/** The 2D overland surface: a mesh triangle. */
+export function SurfaceGlyph() {
+  return (
+    <svg
+      width={10}
+      height={10}
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M5 1.5 L9 8.5 L1 8.5 Z"
+        fill="none"
+        stroke="var(--text-secondary)"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function RegionGlyph() {
   return (
     <svg

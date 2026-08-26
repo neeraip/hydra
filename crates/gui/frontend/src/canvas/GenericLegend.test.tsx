@@ -45,7 +45,7 @@ function renderLegend(
     <GenericLegend
       meta={meta()}
       hasRegions={false}
-      selection={{ point: "", polyline: "", region: "" }}
+      selection={{ point: "", polyline: "", region: "", surface: "" }}
       onSelect={vi.fn()}
       scaleMode="run"
       onScaleModeChange={onScaleModeChange}
@@ -70,6 +70,22 @@ describe("GenericLegend", () => {
     renderLegend();
     expect(screen.getAllByText("Depth").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Flow").length).toBeGreaterThan(0);
+  });
+
+  // The surface class exists exactly when the run produced a surface:
+  // its variables arrive from the surface provider, not the element
+  // meta, and an empty list must not leave an empty section behind.
+  it("offers the surface class only when surface variables exist", () => {
+    renderLegend({
+      surfaceVars: [v({ id: "depth", label: "Water depth" })],
+    });
+    expect(screen.getAllByText("Water depth").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Surface variable")).toBeTruthy();
+  });
+
+  it("shows no surface section without surface variables", () => {
+    renderLegend();
+    expect(screen.queryByLabelText("Surface variable")).toBeNull();
   });
 
   // The engine says which states exist and what they are called. Dropping
@@ -338,7 +354,7 @@ describe("what the animation toggle says it applies to", () => {
   it("names only variables the catalog on screen publishes", () => {
     const hint = hintFor({
       meta: drainage,
-      selection: { point: "", polyline: "capacity", region: "" },
+      selection: { point: "", polyline: "capacity", region: "", surface: "" },
       animation: animation(["flow", "velocity"]),
     });
     expect(hint).toBe("Animation applies to Flow and Velocity");
@@ -348,7 +364,7 @@ describe("what the animation toggle says it applies to", () => {
   it("does not offer another engine's variables", () => {
     const hint = hintFor({
       meta: drainage,
-      selection: { point: "", polyline: "capacity", region: "" },
+      selection: { point: "", polyline: "capacity", region: "", surface: "" },
       animation: animation(["flow", "velocity", "headloss", "quality"]),
     });
     expect(hint).not.toContain("headloss");
@@ -358,7 +374,7 @@ describe("what the animation toggle says it applies to", () => {
   it("says nothing applies when nothing does", () => {
     const hint = hintFor({
       meta: drainage,
-      selection: { point: "", polyline: "capacity", region: "" },
+      selection: { point: "", polyline: "capacity", region: "", surface: "" },
       animation: animation([]),
     });
     expect(hint).toBe("Animation does not apply to this model");
@@ -399,7 +415,12 @@ describe("the animation toggle", () => {
   it("stays usable over a variable that does not move", () => {
     const btn = toggle({
       meta: drainage,
-      selection: { point: "depth", polyline: "capacity", region: "" },
+      selection: {
+        point: "depth",
+        polyline: "capacity",
+        region: "",
+        surface: "",
+      },
       animation: animation(),
     });
     expect(btn?.disabled).toBe(false);
@@ -408,7 +429,7 @@ describe("the animation toggle", () => {
   it("still yields to Reduce motion, which nothing can grant", () => {
     const btn = toggle({
       meta: drainage,
-      selection: { point: "depth", polyline: "flow", region: "" },
+      selection: { point: "depth", polyline: "flow", region: "", surface: "" },
       animation: animation({ reducedMotion: true }),
     });
     expect(btn?.disabled).toBe(true);
@@ -418,7 +439,12 @@ describe("the animation toggle", () => {
     const onToggle = vi.fn();
     const btn = toggle({
       meta: drainage,
-      selection: { point: "depth", polyline: "capacity", region: "" },
+      selection: {
+        point: "depth",
+        polyline: "capacity",
+        region: "",
+        surface: "",
+      },
       animation: animation({ onToggle }),
     });
     // Nothing on screen moves, and the setting still changes.
@@ -463,6 +489,7 @@ describe("classIsHidden", () => {
     nodes: true,
     links: true,
     regions: true,
+    surface: true,
     nodeLabels: false,
     linkLabels: false,
   };
@@ -471,6 +498,7 @@ describe("classIsHidden", () => {
     expect(classIsHidden("point", { ...allOn, nodes: false })).toBe(true);
     expect(classIsHidden("polyline", { ...allOn, links: false })).toBe(true);
     expect(classIsHidden("region", { ...allOn, regions: false })).toBe(true);
+    expect(classIsHidden("surface", { ...allOn, surface: false })).toBe(true);
   });
 
   it("dims only the class that was switched off", () => {
@@ -480,7 +508,7 @@ describe("classIsHidden", () => {
   });
 
   it("dims nothing when everything is on show", () => {
-    for (const cls of ["point", "polyline", "region"] as const) {
+    for (const cls of ["point", "polyline", "region", "surface"] as const) {
       expect(classIsHidden(cls, allOn)).toBe(false);
     }
   });

@@ -51,16 +51,26 @@ describe("readScaleMode", () => {
 });
 
 describe("readCriteriaScale", () => {
-  const ALL_ON = { point: true, polyline: true, region: true };
-  const ALL_OFF = { point: false, polyline: false, region: false };
+  const ALL_ON = { point: true, polyline: true, region: true, surface: false };
+  const ALL_OFF = {
+    point: false,
+    polyline: false,
+    region: false,
+    surface: false,
+  };
 
   it("reads the current per-class key", () => {
     expect(readCriteriaScale({ criteriaScale: ALL_ON })).toEqual(ALL_ON);
     expect(
       readCriteriaScale({
-        criteriaScale: { point: true, polyline: false, region: false },
+        criteriaScale: {
+          point: true,
+          polyline: false,
+          region: false,
+          surface: false,
+        },
       }),
-    ).toEqual({ point: true, polyline: false, region: false });
+    ).toEqual({ point: true, polyline: false, region: false, surface: false });
   });
 
   it("fills in a class the stored object does not mention", () => {
@@ -71,6 +81,7 @@ describe("readCriteriaScale", () => {
       point: true,
       polyline: false,
       region: false,
+      surface: false,
     });
   });
 

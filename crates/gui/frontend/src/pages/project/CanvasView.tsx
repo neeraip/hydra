@@ -1948,7 +1948,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // The 2D overland surface, when this target's run produced one. Fetched
   // and shaped in its own hook; the timeline index is the shared one, so
   // the surface and the network always show the same instant.
-  const { surface: canvasSurface } = useSurfaceResults({
+  const { surface: canvasSurface, surfaceMeta } = useSurfaceResults({
     projectId: project?.id ?? null,
     scenarioId: activeScenarioId,
     resultMetaKey,
@@ -1958,6 +1958,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // A topological layout invents positions the mesh cannot share; a
     // local grid's orthographic view keeps real ones and qualifies.
     enabled: placeable && viewMode !== "schematic",
+    variableId: genericSelection.surface,
   });
 
   const nodeMap = useMemo(
@@ -2477,6 +2478,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             <GenericLegend
               meta={genericMeta}
               hasRegions={canvasRegions.length > 0}
+              surfaceVars={surfaceMeta?.variables}
               selection={genericSelection}
               onSelect={handleGenericSelect}
               scaleMode={scaleMode}
@@ -2575,6 +2577,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
           {/* Toolbar overlay — left offset tracks the floating rail width */}
           <CanvasToolbar
+            hasSurface={surfaceMeta != null}
             canMoveElements={editing.geometry}
             canAddElements={editing.create}
             viewMode={viewMode}

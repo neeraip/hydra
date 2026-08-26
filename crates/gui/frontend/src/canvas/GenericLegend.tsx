@@ -47,6 +47,7 @@ import {
   ScaleControl,
   type ScaleMode,
   SECTION_LABEL_STYLE,
+  SurfaceGlyph,
 } from "./legend-primitives";
 import { animationAppliesHint } from "./linkPulse";
 import {
@@ -63,7 +64,7 @@ import {
   scaleOptions,
 } from "./scaleOptions";
 
-export type GenericClassKey = "point" | "polyline" | "region";
+export type GenericClassKey = "point" | "polyline" | "region" | "surface";
 
 /** Selected variable id per element class ("" = the catalog's first). */
 export type GenericSelection = Record<GenericClassKey, string>;
@@ -246,6 +247,7 @@ const LAYER_FOR_CLASS: Record<GenericClassKey, keyof CanvasLayers> = {
   point: "nodes",
   polyline: "links",
   region: "regions",
+  surface: "surface",
 };
 
 /**
@@ -296,6 +298,7 @@ export interface AnimationControl {
 export function GenericLegend({
   meta,
   hasRegions,
+  surfaceVars,
   selection,
   onSelect,
   scaleMode,
@@ -317,6 +320,10 @@ export function GenericLegend({
   /** Whether the canvas is showing region polygons — hides the region
    * picker for models without areal elements. */
   hasRegions: boolean;
+  /** The engine's surface-variable catalog with this run's ranges, for
+   * mesh runs. Separate from `meta`: mesh cells are engine state, not
+   * catalogued elements. Absent or empty = no surface class shown. */
+  surfaceVars?: GenericVariable[];
   selection: GenericSelection;
   onSelect: (cls: GenericClassKey, id: string) => void;
   /** What the ramps are scaled against. */
@@ -421,6 +428,16 @@ export function GenericLegend({
           },
         ]
       : []),
+    // The 2D overland surface, for the mesh runs that have one. Its
+    // variables arrive from the surface provider rather than meta: mesh
+    // cells are engine state, not catalogued elements, so the element
+    // meta cannot carry them.
+    {
+      key: "surface" as const,
+      variables: surfaceVars ?? [],
+      glyph: <SurfaceGlyph />,
+      pickerLabel: "Surface variable",
+    },
   ].filter((c) => c.variables.length > 0);
 
   const selected = (c: ClassConfig): GenericVariable =>

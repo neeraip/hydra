@@ -50,6 +50,7 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
  * `data-toolbar-dropdown` markers rendered here).
  */
 export function CanvasToolbar({
+  hasSurface = false,
   canMoveElements,
   canAddElements,
   viewMode,
@@ -76,6 +77,10 @@ export function CanvasToolbar({
   measureDistanceM,
   onClearAnnotations,
 }: {
+  /** This target's run produced a 2D surface — offers its toggle.
+   * Result state, not network state: the model says whether a mesh
+   * exists, but only a finished run has a surface to show. */
+  hasSurface?: boolean;
   /** Whether model-editing tools (edit, add node, add link) appear. */
   /** Positions can be changed — offers the edit tool. */
   canMoveElements: boolean;
@@ -117,6 +122,9 @@ export function CanvasToolbar({
   // Region polygons exist only for models that drew any — the toggle
   // follows the data, not the engine.
   const hasRegions = useRegions().length > 0;
+  // Result state, not network state, so it arrives as a prop: the model
+  // says whether a mesh exists, but only a finished run has a surface.
+
   const basemapProviders = useBasemapProviders();
   const basemapVisibility = useBasemapVisibility();
 
@@ -647,6 +655,29 @@ export function CanvasToolbar({
                 borderRadius: 2,
                 border: "1.5px solid currentColor",
                 transform: "skewX(-8deg)",
+              }}
+            />
+          </button>
+        )}
+
+        {hasSurface && (
+          <button
+            type="button"
+            className={`tool-btn${canvasLayers.surface ? " active" : ""}`}
+            onClick={() => setLayer("surface", !canvasLayers.surface)}
+            data-tooltip="Toggle 2D surface"
+            data-tooltip-pos="bottom"
+            aria-label="Toggle 2D surface"
+            style={ICON_BTN_STYLE}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 0,
+                height: 0,
+                borderLeft: "6px solid transparent",
+                borderRight: "6px solid transparent",
+                borderBottom: "9px solid currentColor",
               }}
             />
           </button>

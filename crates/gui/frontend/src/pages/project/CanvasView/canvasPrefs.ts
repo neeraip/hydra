@@ -126,9 +126,14 @@ export const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeScale: NODE_SCALE_DEFAULT,
   canvasBackground: DEFAULT_CANVAS_BACKGROUND,
   scaleMode: "run",
-  criteriaScale: { point: false, polyline: false, region: false },
+  criteriaScale: {
+    point: false,
+    polyline: false,
+    region: false,
+    surface: false,
+  },
   legendOpen: false,
-  genericSelection: { point: "", polyline: "", region: "" },
+  genericSelection: { point: "", polyline: "", region: "", surface: "" },
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -166,7 +171,7 @@ const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step"];
  * a project that has never chosen.
  */
 export function readGenericSelection(raw: unknown): GenericSelection {
-  const empty = { point: "", polyline: "", region: "" };
+  const empty = { point: "", polyline: "", region: "", surface: "" };
   if (typeof raw !== "object" || raw === null) return empty;
   const sel = (raw as { genericSelection?: unknown }).genericSelection;
   if (typeof sel !== "object" || sel === null) return empty;
@@ -176,6 +181,7 @@ export function readGenericSelection(raw: unknown): GenericSelection {
     point: str(s.point),
     polyline: str(s.polyline),
     region: str(s.region),
+    surface: str(s.surface),
   };
 }
 
@@ -222,7 +228,14 @@ export function readScaleMode(raw: unknown): ScaleMode {
 export function readCriteriaScale(
   raw: unknown,
 ): Record<GenericClassKey, boolean> {
-  const all = (on: boolean) => ({ point: on, polyline: on, region: on });
+  // `surface` stays false in the legacy-boolean migration: no criteria
+  // catalog judges surface variables, so nothing older can have meant it.
+  const all = (on: boolean) => ({
+    point: on,
+    polyline: on,
+    region: on,
+    surface: false,
+  });
   if (typeof raw !== "object" || raw === null) return all(false);
   const p = raw as Record<string, unknown>;
   const stored = p.criteriaScale;
@@ -234,6 +247,7 @@ export function readCriteriaScale(
       point: flag("point"),
       polyline: flag("polyline"),
       region: flag("region"),
+      surface: flag("surface"),
     };
   }
   return all(p.scaleMode === "criteria" || p.colorMode === "threshold");

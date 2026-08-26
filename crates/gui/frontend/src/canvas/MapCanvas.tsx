@@ -1949,7 +1949,7 @@ export const MapCanvas = memo(function MapCanvas({
     // Not drawn in a topological layout: its positions are invented and
     // the mesh's are real. (A local grid renders orthographically at real
     // positions — the surface belongs there too.)
-    if (surface && !topological) {
+    if (surface && !topological && canvasLayers.surface) {
       layers.push(
         new SolidPolygonLayer({
           id: "surface-2d",

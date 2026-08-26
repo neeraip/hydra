@@ -43,6 +43,7 @@ export function useSurfaceResults({
   sourceCrs,
   reprojToken,
   enabled,
+  variableId,
 }: {
   projectId: string | null;
   scenarioId: string | null;
@@ -58,6 +59,8 @@ export function useSurfaceResults({
   /** False outside map mode (a schematic's positions are invented; the
    * mesh's are real) — clears the surface without dropping the fetch. */
   enabled: boolean;
+  /** Selected surface variable id ("" = the catalog's first, depth). */
+  variableId?: string;
 }): { surface: CanvasSurface | null; surfaceMeta: SurfaceMeta | null } {
   const [meta, setMeta] = useState<SurfaceMeta | null>(null);
   const [geometry, setGeometry] = useState<SurfaceGeometry | null>(null);
@@ -138,18 +141,18 @@ export function useSurfaceResults({
     return surfacePolygonData(geometry, project);
   }, [geometry, sourceCrs, enabled, reprojToken]);
 
-  // Colours: the depth variable through the engine's ramp, dry cells
-  // transparent. (Variable selection joins in a later phase; depth is the
-  // catalog's first variable and the flooding question the surface
-  // exists to answer.)
+  // Colours: the selected variable through the engine's ramp, dry cells
+  // transparent. An id the catalog does not carry (a stale preference)
+  // falls back to the first variable, the legend's own rule.
   const colors = useMemo(() => {
     if (!meta || !periodData || !polygons) return null;
-    const variable = meta.variables[0];
+    const variable =
+      meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
     if (!variable) return null;
     const values = surfaceColumn(periodData, variable.id);
     if (!values) return null;
     return surfaceFillColors(values, periodData.depth, variable);
-  }, [meta, periodData, polygons]);
+  }, [meta, periodData, polygons, variableId]);
 
   const surface = useMemo(
     () => (polygons && colors ? { data: polygons, colors } : null),
