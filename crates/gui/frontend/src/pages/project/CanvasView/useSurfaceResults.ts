@@ -12,13 +12,13 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-
 import { planProjector } from "../../../canvas/coords";
 import {
   type SurfacePolygonData,
   surfaceFillColors,
   surfacePolygonData,
 } from "../../../canvas/surfaceMesh";
+import type { GenericVariable } from "../../../hooks/results";
 import {
   getSurfaceGeometry,
   getSurfaceMeta,
@@ -29,10 +29,15 @@ import {
   surfaceColumn,
 } from "../../../hooks/surface";
 
-/** What MapCanvas draws: binary polygons and per-vertex colours. */
+/** What MapCanvas draws: binary polygons and per-vertex colours, plus
+ * the on-show variable and its per-cell values for the hover chip. */
 export interface CanvasSurface {
   data: SurfacePolygonData;
   colors: Uint8Array;
+  /** The selected surface variable (resolved, never a stale id). */
+  variable: GenericVariable;
+  /** That variable's per-cell SI values at the shown instant. */
+  values: Float32Array;
 }
 
 export function useSurfaceResults({
@@ -144,19 +149,23 @@ export function useSurfaceResults({
   // Colours: the selected variable through the engine's ramp, dry cells
   // transparent. An id the catalog does not carry (a stale preference)
   // falls back to the first variable, the legend's own rule.
-  const colors = useMemo(() => {
+  const shown = useMemo(() => {
     if (!meta || !periodData || !polygons) return null;
     const variable =
       meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
     if (!variable) return null;
     const values = surfaceColumn(periodData, variable.id);
     if (!values) return null;
-    return surfaceFillColors(values, periodData.depth, variable);
+    return {
+      variable,
+      values,
+      colors: surfaceFillColors(values, periodData.depth, variable),
+    };
   }, [meta, periodData, polygons, variableId]);
 
   const surface = useMemo(
-    () => (polygons && colors ? { data: polygons, colors } : null),
-    [polygons, colors],
+    () => (polygons && shown ? { data: polygons, ...shown } : null),
+    [polygons, shown],
   );
   return { surface, surfaceMeta: meta };
 }

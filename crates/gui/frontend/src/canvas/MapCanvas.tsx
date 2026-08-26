@@ -1950,6 +1950,10 @@ export const MapCanvas = memo(function MapCanvas({
     // the mesh's are real. (A local grid renders orthographically at real
     // positions — the surface belongs there too.)
     if (surface && !topological && canvasLayers.surface) {
+      // Hover only where nothing sits above: the surface is the lowest
+      // network layer, so deck's topmost-wins picking hands a cell the
+      // pointer only when no node, link or region claims it first.
+      const surfacePickable = tool === "select";
       layers.push(
         new SolidPolygonLayer({
           id: "surface-2d",
@@ -1969,7 +1973,25 @@ export const MapCanvas = memo(function MapCanvas({
           // must not re-wind or close them.
           _normalize: false,
           coordinateSystem: coordSystem,
-          pickable: false,
+          pickable: surfacePickable,
+          onHover: (info: { index?: number; x?: number; y?: number }) => {
+            if (!surfacePickable) return;
+            const ci = info.index ?? -1;
+            setHoverTip((prev) =>
+              ci >= 0 && info.x != null && info.y != null
+                ? {
+                    x: info.x,
+                    y: info.y,
+                    kind: "surface",
+                    type: "surface",
+                    si: ci,
+                    id: `Cell ${ci}`,
+                  }
+                : prev?.kind === "surface"
+                  ? null
+                  : prev,
+            );
+          },
         }),
       );
     }
@@ -3575,6 +3597,7 @@ export const MapCanvas = memo(function MapCanvas({
         tip={hoverTip}
         periodResult={periodResult}
         generic={generic}
+        surface={surface}
         nodeVar={nodeVar}
         linkVar={linkVar}
         sys={sys}

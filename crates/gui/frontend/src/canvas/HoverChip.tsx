@@ -5,7 +5,9 @@
 
 import { TypeBadge } from "../components/ui/TypeBadge";
 import { formatGenericValue, type PeriodResults } from "../hooks";
+import type { CanvasSurface } from "../pages/project/CanvasView/useSurfaceResults";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
+import { SurfaceGlyph } from "./legend-primitives";
 import { statusLabel } from "./MapCanvas/colorUtils";
 import type { GenericCanvasResults, LinkVariable, NodeVariable } from "./types";
 
@@ -18,7 +20,7 @@ export interface HoverTip {
    * array, which is a different sequence from the node and link ones —
    * reading it against the wrong channel prints a real number for the
    * wrong element, which is worse than printing nothing. */
-  kind: "node" | "link" | "region";
+  kind: "node" | "link" | "region" | "surface";
   /** Specific element type ("junction", "pump", "subcatchment", …) — drives
    * the letter badge. `kind` alone cannot: it only distinguishes classes. */
   type: string;
@@ -87,6 +89,20 @@ function hoverTipValue(
   return null;
 }
 
+/** Value line for a hovered surface cell: the on-show variable's value,
+ * converted with the engine's quantity descriptor like every generic
+ * value. A cell is not an element — no id, no badge — so its chip
+ * carries the mesh glyph and its index instead. */
+function surfaceTipValue(
+  tip: HoverTip,
+  surface: CanvasSurface,
+  sys: ReturnType<typeof useUnitSystem>,
+): string | null {
+  const v = surface.values[tip.si];
+  if (v == null || !Number.isFinite(v)) return null;
+  return formatGenericValue(v, surface.variable.quantity, sys);
+}
+
 /** Value line for the engine-generic channels: the hovered element's value
  * for its class's selected variable, converted to the active display
  * system with the engine's quantity descriptor. */
@@ -110,6 +126,7 @@ export function HoverChip({
   tip,
   periodResult,
   generic = null,
+  surface = null,
   nodeVar,
   linkVar,
   sys,
@@ -117,16 +134,22 @@ export function HoverChip({
   tip: HoverTip | null;
   periodResult: PeriodResults | null;
   generic?: GenericCanvasResults | null;
+  surface?: CanvasSurface | null;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   sys: ReturnType<typeof useUnitSystem>;
 }) {
   if (!tip) return null;
-  const value = generic
-    ? genericTipValue(tip, generic, sys)
-    : periodResult
-      ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
-      : null;
+  const value =
+    tip.kind === "surface"
+      ? surface
+        ? surfaceTipValue(tip, surface, sys)
+        : null
+      : generic
+        ? genericTipValue(tip, generic, sys)
+        : periodResult
+          ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
+          : null;
   return (
     <div
       style={{
@@ -151,10 +174,27 @@ export function HoverChip({
     >
       {/* Wrapper carries the spacing and baseline alignment the chip's
           inline layout needs; the badge itself stays metric-identical to
-          the one the panels render. */}
-      <span style={{ marginRight: 5, verticalAlign: "text-bottom" }}>
-        <TypeBadge type={tip.type} size="sm" />
-      </span>
+          the one the panels render. The glyph wrapper is inline-flex
+          because the preflight reset makes every svg block-level, and a
+          block glyph takes the chip's first line for itself. */}
+      {tip.kind === "surface" ? (
+        <span
+          style={{
+            marginRight: 5,
+            display: "inline-flex",
+            verticalAlign: "middle",
+            // Cap the box at the text line so a 10px glyph cannot
+            // stretch the chip past the badge chip's height.
+            maxHeight: "1em",
+          }}
+        >
+          <SurfaceGlyph />
+        </span>
+      ) : (
+        <span style={{ marginRight: 5, verticalAlign: "text-bottom" }}>
+          <TypeBadge type={tip.type} size="sm" />
+        </span>
+      )}
       <span style={{ fontWeight: 600 }}>{tip.id}</span>
       {value != null && (
         <span style={{ color: "var(--text-secondary)" }}> · {value}</span>

@@ -106,6 +106,59 @@ describe("HoverChip over an areal element", () => {
   });
 });
 
+describe("HoverChip over a surface cell", () => {
+  const surface = {
+    data: {
+      length: 3,
+      startIndices: new Uint32Array([0, 3, 6]),
+      attributes: {
+        getPolygon: { value: new Float64Array(18), size: 2 as const },
+      },
+    },
+    colors: new Uint8Array(36),
+    variable: channel([], "depth").variable,
+    values: Float32Array.from([0.1, 1.375, 0.4]),
+  };
+
+  // A cell is not an element: no id, no badge — the chip names it by
+  // index and reads the on-show surface variable, converted like every
+  // generic value.
+  it("names the cell and reads the surface channel", () => {
+    chip({
+      tip: tip({ kind: "surface", type: "surface", si: 1, id: "Cell 1" }),
+      surface,
+    });
+    expect(screen.getByText("Cell 1")).toBeTruthy();
+    expect(screen.getByText(/1\.375/)).toBeTruthy();
+  });
+
+  // The surface channel is its own sequence; a cell index must never be
+  // read against an element channel, and element tips must never read
+  // the surface values.
+  it("does not read element channels for a cell, nor cells for elements", () => {
+    const first = chip({
+      tip: tip({ kind: "surface", type: "surface", si: 1, id: "Cell 1" }),
+      // generic present and would answer 80 for si=1 on the link channel.
+      surface,
+    });
+    expect(screen.queryByText(/80/)).toBeNull();
+    first.unmount();
+    chip({
+      tip: tip({ kind: "link", type: "conduit", si: 1, id: "C2" }),
+      surface,
+    });
+    expect(screen.queryByText(/1\.375/)).toBeNull();
+  });
+
+  it("still names the cell when the surface channel is absent", () => {
+    chip({
+      tip: tip({ kind: "surface", type: "surface", si: 0, id: "Cell 0" }),
+      surface: null,
+    });
+    expect(screen.getByText("Cell 0")).toBeTruthy();
+  });
+});
+
 describe("HoverChip over the other classes", () => {
   it("still reads each class against its own channel", () => {
     chip({ tip: tip({ kind: "node", type: "junction", id: "J1", si: 0 }) });
