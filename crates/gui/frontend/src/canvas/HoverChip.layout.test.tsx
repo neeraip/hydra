@@ -62,6 +62,8 @@ const surface = {
     max: 2,
   },
   vertexValues: null,
+  centreValues: null,
+  corners: null,
   values: Float32Array.from([0.017]),
 };
 

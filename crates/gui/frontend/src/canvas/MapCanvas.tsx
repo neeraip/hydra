@@ -2004,11 +2004,12 @@ export const MapCanvas = memo(function MapCanvas({
             // reads the value where it actually is rather than the one
             // number the whole cell would otherwise report.
             const at =
-              surface.vertexValues && info.coordinate
+              surface.vertexValues && surface.corners && info.coordinate
                 ? (valueAtPoint(
                     surface.geometry,
-                    surface.data,
+                    surface.corners,
                     surface.vertexValues,
+                    surface.centreValues,
                     ci,
                     info.coordinate[0],
                     info.coordinate[1],

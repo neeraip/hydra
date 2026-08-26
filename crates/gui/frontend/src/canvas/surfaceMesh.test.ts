@@ -16,12 +16,13 @@ import {
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
   SURFACE_FOOTPRINT_ALPHA,
+  surfaceBlendedColors,
+  surfaceBlendedPolygonData,
   surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
-  surfaceSmoothColors,
   valueAtPoint,
 } from "./surfaceMesh";
 
@@ -253,9 +254,8 @@ describe("the water mask", () => {
   });
 });
 
-describe("smooth shading", () => {
-  // The unit square split on its diagonal, with a distinct height at
-  // each corner.
+describe("blended shading", () => {
+  // The unit square split on its diagonal.
   const g: SurfaceGeometry = {
     nVertices: 4,
     nCells: 2,
@@ -263,39 +263,60 @@ describe("smooth shading", () => {
     triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
   };
 
-  // The mesh stores the ground at its vertices. Smoothing shows it as
-  // stored: no averaging, nothing invented.
   it("takes the ground from the vertices exactly", () => {
     expect(Array.from(groundAtVertices(g))).toEqual([10, 11, 14, 13]);
   });
 
-  // A result is held per cell, so carrying it to the vertices *is* an
-  // interpolation, and each vertex takes the mean of the cells at it.
-  it("carries a per-cell field to the vertices by the mean", () => {
+  it("carries a per-cell field to the corners by the mean", () => {
     const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
-    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; vertices
-    // 0 and 2 are shared by both.
+    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; 0 and 2
+    // are shared.
     expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
   });
 
-  it("gives each vertex of a cell its own colour", () => {
+  it("draws three sub-triangles per cell, meeting at its centroid", () => {
+    const d = surfaceBlendedPolygonData(g);
+    expect(d.length).toBe(6);
+    expect(Array.from(d.startIndices)).toEqual([0, 3, 6, 9, 12, 15]);
+    // Cell 0's centroid, repeated as the third point of each of its
+    // three sub-triangles.
+    const p = d.attributes.getPolygon.value;
+    const cx = (0 + 1 + 1) / 3;
+    const cy = (0 + 0 + 1) / 3;
+    for (let k = 0; k < 3; k++) {
+      expect(p[6 * k + 4]).toBeCloseTo(cx, 9);
+      expect(p[6 * k + 5]).toBeCloseTo(cy, 9);
+    }
+    // And it keeps the parent corners for reading a point.
+    expect(Array.from(d.corners.slice(0, 6))).toEqual([0, 0, 1, 0, 1, 1]);
+  });
+
+  it("paints each cell's centre with the cell's own value", () => {
+    const cells = Float32Array.from([2, 8]);
     const v: GenericVariable = {
-      id: "ground",
-      label: "Ground",
+      id: "depth",
+      label: "Depth",
       ramp: { type: "sequential" },
-      min: 10,
-      max: 14,
+      min: 0,
+      max: 10,
     };
-    const colors = surfaceSmoothColors(g, groundAtVertices(g), null, v);
+    const colors = surfaceBlendedColors(
+      g,
+      cellValuesAtVertices(g, cells),
+      cells,
+      null,
+      null,
+      v,
+    );
     const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
-    // Cell 0's three vertices sit at 10, 11 and 14: three colours, not
-    // one repeated, which is what makes the triangle interpolate.
-    expect(rgb(0)).not.toEqual(rgb(1));
-    expect(rgb(1)).not.toEqual(rgb(2));
-    // A vertex shared by both cells is painted the same in each, or the
+    // Every sub-triangle's third point is the centroid, and all three
+    // carry the same colour: the cell's own.
+    expect(rgb(2)).toEqual(rgb(5));
+    expect(rgb(5)).toEqual(rgb(8));
+    expect(rgb(2)).toEqual(seqRgb(2 / 10, "surface"));
+    // A corner shared by both cells is painted the same in each, or the
     // surface would seam along the diagonal.
-    expect(rgb(0)).toEqual(rgb(3)); // vertex 0 in cell 0 and cell 1
-    expect(rgb(2)).toEqual(rgb(4)); // vertex 2 in both
+    expect(rgb(0)).toEqual(rgb(9)); // vertex 0, cell 0 and cell 1
   });
 });
 
@@ -303,36 +324,75 @@ describe("valueAtPoint", () => {
   const g: SurfaceGeometry = {
     nVertices: 3,
     nCells: 1,
-    positions: new Float64Array([0, 0, 10, 10, 0, 20, 0, 10, 30]),
+    positions: new Float64Array([0, 0, 10, 12, 0, 20, 0, 12, 30]),
     triangles: new Uint32Array([0, 1, 2]),
   };
-  const polygons = surfacePolygonData(g);
+  const corners = surfaceBlendedPolygonData(g).corners;
   const z = groundAtVertices(g);
 
-  it("reads each corner as its own value", () => {
-    expect(valueAtPoint(g, polygons, z, 0, 0, 0)).toBeCloseTo(10, 6);
-    expect(valueAtPoint(g, polygons, z, 0, 10, 0)).toBeCloseTo(20, 6);
-    expect(valueAtPoint(g, polygons, z, 0, 0, 10)).toBeCloseTo(30, 6);
+  describe("a field held at the vertices (the ground)", () => {
+    it("reads each corner as its own value, and interpolates between", () => {
+      expect(valueAtPoint(g, corners, z, null, 0, 0, 0)).toBeCloseTo(10, 6);
+      expect(valueAtPoint(g, corners, z, null, 0, 12, 0)).toBeCloseTo(20, 6);
+      expect(valueAtPoint(g, corners, z, null, 0, 6, 0)).toBeCloseTo(15, 6);
+      expect(valueAtPoint(g, corners, z, null, 0, 4, 4)).toBeCloseTo(20, 6);
+    });
   });
 
-  it("interpolates between them", () => {
-    // The centroid is the mean of the three.
-    expect(valueAtPoint(g, polygons, z, 0, 10 / 3, 10 / 3)).toBeCloseTo(20, 6);
-    // Halfway along the base is halfway between its ends.
-    expect(valueAtPoint(g, polygons, z, 0, 5, 0)).toBeCloseTo(15, 6);
+  describe("a field held per cell (a result)", () => {
+    // Corner averages deliberately far from the cell's own value: this
+    // is the peak case the construction exists for.
+    const atCorners = Float32Array.from([0.4, 0.5, 0.6]);
+    const cells = Float32Array.from([1.0]);
+    const read = (x: number, y: number) =>
+      valueAtPoint(g, corners, atCorners, cells, 0, x, y) as number;
+
+    /**
+     * The defect this replaced: averaging cell values onto the corners
+     * alone destroyed peaks, so the deepest cell of the SWMM 2D example
+     * (0.9983 m) painted its own centre at 0.5265 m — below the mesh
+     * average, and a number the solver never computed.
+     */
+    it("reads a cell's own value at its centre", () => {
+      expect(read(4, 4)).toBeCloseTo(1.0, 6);
+    });
+
+    it("reads the corner averages at the corners", () => {
+      expect(read(0, 0)).toBeCloseTo(0.4, 6);
+      expect(read(12, 0)).toBeCloseTo(0.5, 6);
+      expect(read(0, 12)).toBeCloseTo(0.6, 6);
+    });
+
+    /** Two cells sharing an edge must agree along it, or the surface
+     * seams. On an edge only the two corner values are in play. */
+    it("reads an edge from its corners alone", () => {
+      expect(read(6, 0)).toBeCloseTo(0.45, 6);
+    });
+
+    it("stays between the cell's value and its corners", () => {
+      for (const [x, y] of [
+        [1, 1],
+        [8, 2],
+        [2, 8],
+        [5, 5],
+        [3, 6],
+      ]) {
+        const v = read(x, y);
+        expect(v).toBeGreaterThanOrEqual(0.4 - 1e-9);
+        expect(v).toBeLessThanOrEqual(1.0 + 1e-9);
+      }
+    });
   });
 
-  // Picking has a tolerance, so the pointer can land a hair outside the
-  // triangle it picked; that must still answer, from the edge.
   it("answers just outside the triangle rather than refusing", () => {
-    const v = valueAtPoint(g, polygons, z, 0, 5.2, -0.2);
+    const v = valueAtPoint(g, corners, z, null, 0, 6.2, -0.2);
     expect(v).not.toBeNull();
     expect(v as number).toBeGreaterThanOrEqual(10);
     expect(v as number).toBeLessThanOrEqual(30);
   });
 
   it("refuses a cell that is not there", () => {
-    expect(valueAtPoint(g, polygons, z, 1, 0, 0)).toBeNull();
-    expect(valueAtPoint(g, polygons, z, -1, 0, 0)).toBeNull();
+    expect(valueAtPoint(g, corners, z, null, 1, 0, 0)).toBeNull();
+    expect(valueAtPoint(g, corners, z, null, -1, 0, 0)).toBeNull();
   });
 });

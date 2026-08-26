@@ -22,12 +22,13 @@ import {
   groundAtVertices,
   type SurfaceEdgeData,
   type SurfacePolygonData,
+  surfaceBlendedColors,
+  surfaceBlendedPolygonData,
   surfaceEdgeData,
   surfaceFillColors,
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
-  surfaceSmoothColors,
 } from "../../../canvas/surfaceMesh";
 import { type GenericVariable, selectedVariable } from "../../../hooks/results";
 import {
@@ -69,10 +70,16 @@ export interface CanvasSurface {
   variable: GenericVariable | null;
   /** That variable's per-cell SI values, `null` alongside `variable`. */
   values: Float32Array | null;
-  /** The same field carried to the vertices, present only while the
-   * surface is drawn smooth. It is what the picture interpolates, so it
-   * is also what the pointer reads. */
+  /** The field at the mesh's corners, present only while the surface is
+   * blended. It is what the picture interpolates near the boundaries,
+   * so it is also part of what the pointer reads. */
   vertexValues: Float32Array | null;
+  /** The cells' own values, which the blended picture keeps at their
+   * centres. `null` for a field held at the vertices (the ground),
+   * where plain linear interpolation is already exact. */
+  centreValues: Float32Array | null;
+  /** The parent cells' projected corners, for reading a point. */
+  corners: Float64Array | null;
 }
 
 export function useSurfaceResults({
@@ -233,12 +240,21 @@ export function useSurfaceResults({
     const project = planProjector(sourceCrs);
     if (!project) return null;
     projectionEpoch.current += 1;
+    // The blended picture is drawn from three sub-triangles per cell, so
+    // its geometry differs from the plain fill's and is built only while
+    // it is on show.
+    const blended = smooth
+      ? surfaceBlendedPolygonData(geometry, project)
+      : null;
     return {
-      key: `${sourceCrs}:${projectionEpoch.current}`,
-      data: surfacePolygonData(geometry, project),
+      key: `${sourceCrs}:${smooth ? "blend" : "flat"}:${projectionEpoch.current}`,
+      data: blended ?? surfacePolygonData(geometry, project),
+      corners: blended
+        ? blended.corners
+        : surfacePolygonData(geometry, project).attributes.getPolygon.value,
       edges: surfaceEdgeData(geometry, project),
     };
-  }, [geometry, sourceCrs, enabled, reprojToken]);
+  }, [geometry, sourceCrs, enabled, reprojToken, smooth]);
 
   const shown = useMemo(
     () =>
@@ -262,6 +278,7 @@ export function useSurfaceResults({
         : null,
     [geometry, projected, shown],
   );
+
   const surfaceVariables = useMemo(
     () =>
       geometry
@@ -316,12 +333,14 @@ export function shownSurface(
   variable: GenericVariable | null;
   values: Float32Array | null;
   vertexValues: Float32Array | null;
+  centreValues: Float32Array | null;
   colors: Uint8Array;
 } {
   const footprint = {
     variable: null,
     values: null,
     vertexValues: null,
+    centreValues: null,
     colors: surfaceFootprintColors(geometry.nCells),
   };
 
@@ -342,18 +361,27 @@ export function shownSurface(
         variable,
         values: column,
         vertexValues: null,
+        centreValues: null,
         colors: surfaceFillColors(column, periodData.depth, variable),
       };
     }
-    // A result smoothed is a stated interpolation: the solver holds one
-    // value per cell and says nothing about the inside of one.
+    // Blended: the corners take the neighbour mean and the cell keeps
+    // its own value at its centre, so a peak stays a peak.
     const vertexValues = cellValuesAtVertices(geometry, column);
-    const wet = cellValuesAtVertices(geometry, periodData.depth);
+    const wetCorners = cellValuesAtVertices(geometry, periodData.depth);
     return {
       variable,
       values: column,
       vertexValues,
-      colors: surfaceSmoothColors(geometry, vertexValues, wet, variable),
+      centreValues: column,
+      colors: surfaceBlendedColors(
+        geometry,
+        vertexValues,
+        column,
+        wetCorners,
+        periodData.depth,
+        variable,
+      ),
     };
   }
 
@@ -365,23 +393,36 @@ export function shownSurface(
   const shown = property ?? properties[0];
   if (!shown) return footprint;
 
+  const values = surfaceGroundValues(geometry);
   if (smooth) {
     // The ground needs no averaging: the mesh holds it at the vertices,
-    // and the flat fill was this renderer throwing that away.
+    // and the flat fill was this renderer throwing that away. The same
+    // construction serves it exactly, since a cell's centre value is
+    // already the mean of its corners.
     const vertexValues = groundAtVertices(geometry);
     return {
       variable: shown,
-      values: surfaceGroundValues(geometry),
+      values,
       vertexValues,
-      colors: surfaceSmoothColors(geometry, vertexValues, null, shown),
+      // Held at the vertices, so plain linear interpolation is exact and
+      // a reading needs no centre term.
+      centreValues: null,
+      colors: surfaceBlendedColors(
+        geometry,
+        vertexValues,
+        values,
+        null,
+        null,
+        shown,
+      ),
     };
   }
-  const values = surfaceGroundValues(geometry);
   // No water mask: the ground under a dry cell is still ground.
   return {
     variable: shown,
     values,
     vertexValues: null,
+    centreValues: null,
     colors: surfaceFillColors(values, null, shown),
   };
 }

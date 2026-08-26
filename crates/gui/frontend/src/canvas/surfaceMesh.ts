@@ -306,15 +306,31 @@ export function surfaceGroundValues(geometry: SurfaceGeometry): Float32Array {
   return out;
 }
 
-// ── Smooth shading ───────────────────────────────────────────────────────────
+// ── Blended shading ──────────────────────────────────────────────────────────
 //
-// A cell is the solver's unit of state, so a run's values are painted
-// flat: one colour per cell, claiming nothing between centres. The
-// ground is different — the mesh stores it *at the vertices*, and the
-// flat fill is this renderer averaging it away. Smooth shading gives
-// each vertex its own colour and lets the triangle interpolate, which
-// for the ground is the more faithful picture and for a result is a
-// stated smoothing of one.
+// A cell is the solver's unit of state, so the plain fill paints one
+// colour per cell and claims nothing between centres. Blending softens
+// the cell boundaries without moving what a cell says about itself.
+//
+// The construction: split every cell into three sub-triangles meeting at
+// its centroid. The centroid carries the cell's own value; the corners
+// carry the mean of the cells that meet there. So the middle of a cell
+// reads exactly what the solver computed, two cells sharing an edge
+// interpolate between the same pair of corner values and therefore agree
+// along it, and all the blending happens in the band near the
+// boundaries.
+//
+// Averaging cell values onto the corners *alone* — the obvious approach,
+// and the one this replaced — destroys peaks: a corner mixes up to six
+// cells, so a local maximum is averaged away and appears nowhere. On the
+// SWMM 2D example the deepest cell in the mesh, at 0.9983 m, painted its
+// own centre at 0.5265 m, below the mesh average. In flood work the peak
+// is the number that matters.
+//
+// For a field that genuinely lives at the vertices — the ground — this
+// same construction is exact rather than a compromise: the centroid's
+// value is the mean of the three corners, which is what linear
+// interpolation already gives there, so subdividing changes nothing.
 
 /**
  * The ground at each vertex, exactly as the mesh stores it — no
@@ -331,9 +347,8 @@ export function groundAtVertices(geometry: SurfaceGeometry): Float32Array {
  * A per-cell field carried to the vertices, each vertex taking the mean
  * of the cells that meet there.
  *
- * This is an interpolation, and the caller is asserting that a smoothed
- * picture is what it wants: the solver never said the value varies
- * inside a cell.
+ * Used for the *corners* of the blended construction only. A cell's own
+ * value is never replaced by this: see the note above.
  */
 export function cellValuesAtVertices(
   geometry: SurfaceGeometry,
@@ -357,74 +372,157 @@ export function cellValuesAtVertices(
   return out;
 }
 
+/** Binary polygon data for the blended surface: three sub-triangles per
+ * cell, meeting at its centroid. */
+export interface SurfaceBlendedData extends SurfacePolygonData {
+  /** The parent cells' projected corners, six numbers per cell — what a
+   * reading at a point needs, since the polygon buffer above holds the
+   * sub-triangles rather than the cells. */
+  corners: Float64Array;
+}
+
 /**
- * Per-triangle-vertex RGBA from values held at the vertices: each
- * vertex takes its own colour and the triangle interpolates between
- * them, so the mesh reads as one surface rather than a mosaic.
- *
- * `depthAtVertices` masks as the flat path's depth does, but per vertex,
- * which puts the waterline inside the cells it crosses instead of on
- * the cell boundaries.
+ * The blended surface's geometry: each cell as three sub-triangles
+ * meeting at its centroid, in cell order.
  */
-export function surfaceSmoothColors(
+export function surfaceBlendedPolygonData(
+  geometry: SurfaceGeometry,
+  project: (x: number, y: number) => [number, number] = (x, y) => [x, y],
+): SurfaceBlendedData {
+  const { nCells, positions, triangles } = geometry;
+  const corners = new Float64Array(6 * nCells);
+  const value = new Float64Array(18 * nCells);
+  const startIndices = new Uint32Array(3 * nCells);
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (let ci = 0; ci < nCells; ci++) {
+    let cx = 0;
+    let cy = 0;
+    for (let k = 0; k < 3; k++) {
+      const vi = triangles[3 * ci + k];
+      const [x, y] = project(positions[3 * vi], positions[3 * vi + 1]);
+      corners[6 * ci + 2 * k] = x;
+      corners[6 * ci + 2 * k + 1] = y;
+      cx += x / 3;
+      cy += y / 3;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    // Sub-triangle k spans corner k, corner k+1 and the centroid.
+    for (let k = 0; k < 3; k++) {
+      const sub = 3 * ci + k;
+      startIndices[sub] = 3 * sub;
+      const at = 18 * ci + 6 * k;
+      const a = (k + 1) % 3;
+      value[at] = corners[6 * ci + 2 * k];
+      value[at + 1] = corners[6 * ci + 2 * k + 1];
+      value[at + 2] = corners[6 * ci + 2 * a];
+      value[at + 3] = corners[6 * ci + 2 * a + 1];
+      value[at + 4] = cx;
+      value[at + 5] = cy;
+    }
+  }
+  return {
+    length: 3 * nCells,
+    startIndices,
+    attributes: { getPolygon: { value, size: 2 } },
+    bounds: nCells > 0 ? [minX, minY, maxX, maxY] : null,
+    corners,
+  };
+}
+
+/**
+ * Per-sub-triangle-vertex RGBA for the blended surface: corners take the
+ * neighbour-averaged value, centroids take the cell's own.
+ *
+ * `depthAtVertices` and `cellDepth` mask as the flat path's depth does,
+ * per corner and per centroid, so the waterline crosses the inside of a
+ * cell rather than snapping to its boundary. Both are `null` for a field
+ * that is not water.
+ */
+export function surfaceBlendedColors(
   geometry: SurfaceGeometry,
   vertexValues: Float32Array,
+  cellValues: Float32Array,
   depthAtVertices: Float32Array | null,
+  cellDepth: Float32Array | null,
   variable: GenericVariable,
 ): Uint8Array {
   const { nCells, triangles } = geometry;
-  const out = new Uint8Array(12 * nCells);
+  const out = new Uint8Array(36 * nCells);
+  const wet = (v: number | null) => v == null || v > SURFACE_DRY_DEPTH_M;
   for (let ci = 0; ci < nCells; ci++) {
+    const centre = genericRgba(
+      cellValues[ci],
+      variable,
+      SURFACE_ALPHA,
+      "surface",
+    );
+    const centreWet = wet(cellDepth ? cellDepth[ci] : null);
     for (let k = 0; k < 3; k++) {
-      const vi = triangles[3 * ci + k];
-      if (
-        depthAtVertices != null &&
-        !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M)
-      ) {
-        continue; // alpha stays 0
+      const at = 36 * ci + 12 * k;
+      for (let j = 0; j < 2; j++) {
+        const vi = triangles[3 * ci + ((k + j) % 3)];
+        if (!wet(depthAtVertices ? depthAtVertices[vi] : null)) continue;
+        const [r, g, b, a] = genericRgba(
+          vertexValues[vi],
+          variable,
+          SURFACE_ALPHA,
+          "surface",
+        );
+        out[at + 4 * j] = r;
+        out[at + 4 * j + 1] = g;
+        out[at + 4 * j + 2] = b;
+        out[at + 4 * j + 3] = a;
       }
-      const [r, g, b, a] = genericRgba(
-        vertexValues[vi],
-        variable,
-        SURFACE_ALPHA,
-        "surface",
-      );
-      const at = 12 * ci + 4 * k;
-      out[at] = r;
-      out[at + 1] = g;
-      out[at + 2] = b;
-      out[at + 3] = a;
+      if (centreWet) {
+        out[at + 8] = centre[0];
+        out[at + 9] = centre[1];
+        out[at + 10] = centre[2];
+        out[at + 11] = centre[3];
+      }
     }
   }
   return out;
 }
 
 /**
- * The value at a point inside a cell, interpolated from the cell's own
- * vertices — what the smooth picture is showing under the cursor,
- * rather than the one number the whole cell would otherwise report.
+ * The value the blended picture shows at a point inside a cell.
  *
- * `x, y` are in the projected space the polygons were built in. Weights
+ * With barycentric coordinates `w` in the cell and `m` the smallest of
+ * them, the piecewise-linear field over the three sub-triangles is
+ * `Σ(w_i − w_m)·A_i + 3·w_m·cell`, where `A` are the corner values. It
+ * returns the cell's own value at the centre, a corner's average at a
+ * corner, and the same number from either side of a shared edge.
+ *
+ * `cellValues` is `null` for a field held at the vertices (the ground),
+ * where the plain linear interpolation is already exact.
+ *
+ * `x, y` are in the projected space the corners were built in. Weights
  * are clamped and renormalised so a point on an edge, or a hair outside
  * it from picking tolerance, still answers.
  */
 export function valueAtPoint(
   geometry: SurfaceGeometry,
-  polygons: SurfacePolygonData,
+  corners: Float64Array,
   vertexValues: Float32Array,
+  cellValues: Float32Array | null,
   cellIndex: number,
   x: number,
   y: number,
 ): number | null {
   if (cellIndex < 0 || cellIndex >= geometry.nCells) return null;
-  const p = polygons.attributes.getPolygon.value;
   const at = 6 * cellIndex;
-  const x0 = p[at];
-  const y0 = p[at + 1];
-  const x1 = p[at + 2];
-  const y1 = p[at + 3];
-  const x2 = p[at + 4];
-  const y2 = p[at + 5];
+  const x0 = corners[at];
+  const y0 = corners[at + 1];
+  const x1 = corners[at + 2];
+  const y1 = corners[at + 3];
+  const x2 = corners[at + 4];
+  const y2 = corners[at + 5];
   const det = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
   if (!Number.isFinite(det) || det === 0) return null;
   let w0 = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / det;
@@ -433,16 +531,25 @@ export function valueAtPoint(
   w1 = Math.min(1, Math.max(0, w1));
   let w2 = 1 - w0 - w1;
   if (w2 < 0) {
-    // The clamp pushed the point off the triangle; renormalise onto it.
     const s = w0 + w1;
     w0 /= s;
     w1 /= s;
     w2 = 0;
   }
   const t = geometry.triangles;
-  return (
-    w0 * vertexValues[t[3 * cellIndex]] +
-    w1 * vertexValues[t[3 * cellIndex + 1]] +
-    w2 * vertexValues[t[3 * cellIndex + 2]]
-  );
+  const a0 = vertexValues[t[3 * cellIndex]];
+  const a1 = vertexValues[t[3 * cellIndex + 1]];
+  const a2 = vertexValues[t[3 * cellIndex + 2]];
+  if (cellValues == null) return w0 * a0 + w1 * a1 + w2 * a2;
+
+  const w = [w0, w1, w2];
+  const a = [a0, a1, a2];
+  let m = 0;
+  if (w[1] < w[m]) m = 1;
+  if (w[2] < w[m]) m = 2;
+  let v = 3 * w[m] * cellValues[cellIndex];
+  for (let i = 0; i < 3; i++) {
+    if (i !== m) v += (w[i] - w[m]) * a[i];
+  }
+  return v;
 }

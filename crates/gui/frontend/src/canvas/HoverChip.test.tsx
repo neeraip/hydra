@@ -133,6 +133,8 @@ describe("HoverChip over a surface cell", () => {
     },
     colors: new Uint8Array(36),
     vertexValues: null,
+    centreValues: null,
+    corners: null,
     variable: channel([], "depth").variable,
     values: Float32Array.from([0.1, 1.375, 0.4]),
   };

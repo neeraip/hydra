@@ -16,6 +16,8 @@ import { describe, expect, it } from "vitest";
 import {
   SURFACE_DRY_DEPTH_M,
   SURFACE_FOOTPRINT_ALPHA,
+  surfaceBlendedPolygonData,
+  valueAtPoint,
 } from "../../../canvas/surfaceMesh";
 import type { GenericVariable } from "../../../hooks/results";
 import { selectedVariable } from "../../../hooks/results";
@@ -36,13 +38,19 @@ const variable = (id: string): GenericVariable => ({
 
 const GROUND: GenericVariable[] = [{ ...variable("ground"), min: 10, max: 11 }];
 
-/** `nCells` triangles, each vertex a step higher than the last. */
+/**
+ * `nCells` separate triangles, each a unit right triangle of its own and
+ * each vertex a step higher than the last. Kept non-degenerate: a
+ * zero-area cell has no barycentric coordinates, and a reading inside
+ * one is refused rather than invented.
+ */
 const geometry = (nCells: number): SurfaceGeometry => {
   const nVertices = 3 * nCells;
   const positions = new Float64Array(3 * nVertices);
   for (let v = 0; v < nVertices; v++) {
-    positions[3 * v] = v;
-    positions[3 * v + 1] = v;
+    const corner = v % 3;
+    positions[3 * v] = 10 * Math.floor(v / 3) + (corner === 1 ? 1 : 0);
+    positions[3 * v + 1] = corner === 2 ? 1 : 0;
     positions[3 * v + 2] = 10 + v / 10;
   }
   return {
@@ -242,9 +250,39 @@ describe("the smooth surface", () => {
     expect(shown.vertexValues?.length).toBe(g.nVertices);
     // Vertex 0's own z, untouched by any averaging.
     expect(shown.vertexValues?.[0]).toBeCloseTo(g.positions[2], 6);
+    // Held at the vertices, so a reading needs no centre term.
+    expect(shown.centreValues).toBeNull();
   });
 
-  it("carries a run's values to the vertices as a stated mean", () => {
+  /**
+   * The peak case, end to end: a run's values reach the picture with
+   * the cell's own number kept at its centre. Corner averaging alone
+   * put the SWMM 2D example's deepest cell below the mesh average.
+   */
+  it("keeps a cell's own value at its centre", () => {
+    const g = geometry(4);
+    const shown = shownSurface(g, GROUND, meta(4), period(4), "depth", true);
+    expect(shown.centreValues).toBe(shown.values);
+    const deepest = shown.values?.[0];
+    expect(deepest).toBeCloseTo(0.5, 6);
+    // Read at the centroid of that cell, through the same function the
+    // pointer uses.
+    const corners = surfaceBlendedPolygonData(g).corners;
+    const cx = (corners[0] + corners[2] + corners[4]) / 3;
+    const cy = (corners[1] + corners[3] + corners[5]) / 3;
+    const at = valueAtPoint(
+      g,
+      corners,
+      shown.vertexValues as Float32Array,
+      shown.centreValues,
+      0,
+      cx,
+      cy,
+    );
+    expect(at).toBeCloseTo(deepest as number, 6);
+  });
+
+  it("carries a run's values to the corners as a stated mean", () => {
     const shown = shownSurface(
       geometry(4),
       GROUND,
