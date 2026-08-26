@@ -151,6 +151,23 @@ pub(crate) fn run_meta_path(results_path: &std::path::Path) -> std::path::PathBu
     results_path.with_file_name("run.json")
 }
 
+/// §14.16 surface-results sidecar beside a results file: `results.out`
+/// becomes `results.2d.out`, the CLI's stem convention. Only a mesh run
+/// writes one, but the name is fixed by the results path alone so every
+/// lifecycle step (publish, clear, size) can address it without asking
+/// the engine.
+pub(crate) fn surface_results_path(results_path: &std::path::Path) -> std::path::PathBuf {
+    let name = results_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name = match name.strip_suffix(".out") {
+        Some(stem) => format!("{stem}.2d.out"),
+        None => format!("{name}.2d.out"),
+    };
+    results_path.with_file_name(name)
+}
+
 /// Hydra's own metadata about a run, kept beside the results rather than
 /// inside them.
 ///
@@ -462,6 +479,41 @@ where
         }
     }
 
+    // §14.16: a mesh model's surface results stream to a sidecar beside
+    // results.out, through the same tmp-then-promote lifecycle. Attached
+    // only when the results stream itself started: the sidecar describes
+    // the results.out it sits beside, never a run that was not persisted.
+    let surface_path = out_path.as_ref().map(|p| surface_results_path(p));
+    let surface_tmp = surface_path.as_ref().map(|p| {
+        let mut name = p.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(".tmp");
+        p.with_file_name(name)
+    });
+    let mut surface_streamed = false;
+    if streamed {
+        if let (Some(tmp), Some(sim)) = (surface_tmp.as_ref(), es.as_uds_mut()) {
+            if sim.has_overland() {
+                match std::fs::File::create(tmp) {
+                    Ok(file) => {
+                        match hydra::swmm::session::begin_overland_results(sim, Box::new(file)) {
+                            Ok(()) => surface_streamed = true,
+                            Err(e) => tracing::warn!(
+                                path = %tmp.display(),
+                                error = %e,
+                                "could not start surface results stream"
+                            ),
+                        }
+                    }
+                    Err(e) => tracing::warn!(
+                        path = %tmp.display(),
+                        error = %e,
+                        "could not create surface results stream"
+                    ),
+                }
+            }
+        }
+    }
+
     let mut simulated_seconds = 0.0_f64;
     let mut last_emit_at = Instant::now();
     let mut last_percent_bucket = -1_i64;
@@ -577,6 +629,33 @@ where
                 run_err = Some(RunLoopError::Failed(msg));
             }
         } else {
+            remove_tmp_or_warn(tmp);
+        }
+    }
+
+    // The sidecar follows the results file it describes: promoted with a
+    // published results.out, discarded on failure or cancel (the previous
+    // pair survives together), and *cleared* when a published run wrote
+    // none — a stale surface beside fresh results must never be served.
+    if let (Some(tmp), Some(final_path)) = (surface_tmp.as_ref(), surface_path.as_ref()) {
+        if streamed && run_err.is_none() {
+            if surface_streamed {
+                if let Err(e) = std::fs::rename(tmp, final_path) {
+                    // The primary artifact is published and stands; the
+                    // surface alone is lost, loudly, with no stale file
+                    // left masquerading as this run's.
+                    remove_tmp_or_warn(tmp);
+                    let _ = std::fs::remove_file(final_path);
+                    tracing::warn!(
+                        path = %final_path.display(),
+                        error = %e,
+                        "surface results could not be published"
+                    );
+                }
+            } else {
+                let _ = std::fs::remove_file(final_path);
+            }
+        } else if surface_streamed {
             remove_tmp_or_warn(tmp);
         }
     }
@@ -749,6 +828,119 @@ mod tests {
             run_meta.network_digest.is_none(),
             "uds runs carry no digest"
         );
+    }
+
+    // ── §14.16 surface sidecar lifecycle ──────────────────────────────────
+
+    #[test]
+    fn surface_results_path_is_the_cli_stem_convention() {
+        let p = surface_results_path(std::path::Path::new("/a/b/results.out"));
+        assert_eq!(p, std::path::Path::new("/a/b/results.2d.out"));
+        // A name without .out still gets a distinct sidecar name.
+        let p = surface_results_path(std::path::Path::new("/a/b/results"));
+        assert_eq!(p, std::path::Path::new("/a/b/results.2d.out"));
+    }
+
+    /// A mesh model run through the queue's loop publishes the §14.16
+    /// sidecar beside results.out, complete and readable, with no tmp
+    /// left behind.
+    #[test]
+    fn run_sim_loops_publishes_the_surface_sidecar_for_a_mesh_model() {
+        let model = "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n\
+                     START_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+                     END_DATE 01/01/2024\nEND_TIME 00:10:00\nREPORT_STEP 00:05:00\n\
+                     [2D_VERTICES]\n0 0 10.0\n1 0 10.2\n1 1 10.4\n0 1 10.6\n\
+                     [2D_TRIANGLES]\n0 1 2 0.02 0.05\n0 2 3 0.03 0.05\n\
+                     [2D_VERTEX_NODE_MAP]\n0 J1\n\
+                     [JUNCTIONS]\nJ1 9 4 0 0 0\n[OUTFALLS]\nO1 8 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n\
+                     [REPORT]\nNODES ALL\nLINKS ALL\n";
+        let (sim, _diags, _findings) = hydra::swmm::session::open(model).expect("open mesh model");
+        assert!(sim.has_overland(), "the model must carry a mesh");
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let (_es, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_uds(sim),
+            Some(out.clone()),
+            RunContext {
+                duration_seconds: 600.0,
+                run_quality: false,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "mesh run must succeed: {err:?}");
+        assert!(out.exists(), "results.out published");
+        let sidecar = surface_results_path(&out);
+        assert!(sidecar.exists(), "surface sidecar published beside it");
+        assert!(
+            !surface_results_path(&out)
+                .with_file_name("results.2d.out.tmp")
+                .exists(),
+            "no surface tmp left behind"
+        );
+        // Complete and readable: the engine's own reader accepts it and
+        // the record count matches the reporting clock.
+        let r = hydra::swmm::out_reader::OverlandResults::open(&sidecar).expect("readable");
+        assert_eq!(r.cells.len(), 2);
+        assert_eq!(r.verts.len(), 4);
+        assert!(r.periods > 0, "records written");
+    }
+
+    /// A published run that wrote no surface clears a stale sidecar: a
+    /// previous mesh run's surface must never be served beside results
+    /// it does not describe (the model may have lost its mesh).
+    #[test]
+    fn run_sim_loops_clears_a_stale_sidecar_on_a_meshless_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let stale = surface_results_path(&out);
+        std::fs::write(&stale, b"previous mesh run's surface").unwrap();
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
+            Some(out.clone()),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "run must succeed: {err:?}");
+        assert!(out.exists(), "results.out published");
+        assert!(!stale.exists(), "stale surface sidecar cleared");
+    }
+
+    /// A cancelled run keeps the previous pair together: results.out and
+    /// its sidecar both survive untouched.
+    #[test]
+    fn run_sim_loops_cancel_keeps_the_previous_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        std::fs::write(&out, b"previous successful run").unwrap();
+        let sidecar = surface_results_path(&out);
+        std::fs::write(&sidecar, b"previous run's surface").unwrap();
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
+            Some(out.clone()),
+            RunContext {
+                duration_seconds: 0.0,
+                run_quality: false,
+                network_digest: Some(0),
+                pre_run_warnings: Vec::new(),
+            },
+            |_, _, _, _, _| {},
+            || true, // cancel immediately
+        );
+        assert!(matches!(err, Some(RunLoopError::Cancelled)));
+        assert!(out.exists(), "previous results survive a cancel");
+        assert!(sidecar.exists(), "previous surface survives with them");
     }
 
     // ── run_sim_loops results.out tmp/rename flow ─────────────────────────

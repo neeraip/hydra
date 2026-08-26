@@ -1051,17 +1051,23 @@ pub(crate) fn remove_results_file(path: &std::path::Path) -> Result<bool, String
     // Best-effort, like every other write of this file: an orphaned warnings
     // file is a diagnostic annoyance, not a reason to fail the clear.
     let _ = std::fs::remove_file(super::simulation::run_warnings_path(path));
+    // A mesh run's §14.16 surface sidecar goes with the results it
+    // describes, same reasoning as the warnings.
+    let _ = std::fs::remove_file(super::simulation::surface_results_path(path));
     Ok(removed)
 }
 
 /// Bytes on disk for one target's run artifacts — `results.out` plus the
-/// `warnings.json` beside it. Zero when the target has never been simulated.
+/// `warnings.json` and any `results.2d.out` surface sidecar beside it.
+/// Zero when the target has never been simulated.
 ///
 /// Counts exactly what a clear would remove, so the figure shown before
 /// confirming is the space actually reclaimed.
 fn results_bytes(path: &std::path::Path) -> u64 {
     let file_len = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-    file_len(path) + file_len(&super::simulation::run_warnings_path(path))
+    file_len(path)
+        + file_len(&super::simulation::run_warnings_path(path))
+        + file_len(&super::simulation::surface_results_path(path))
 }
 
 /// Every project id on disk, in directory order.
