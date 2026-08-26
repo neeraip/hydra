@@ -75,6 +75,7 @@ mod uds_attrs;
 mod uds_create;
 mod uds_delete;
 mod uds_results;
+mod uds_surface;
 mod uds_view;
 mod wds_attrs;
 
@@ -98,3 +99,4 @@ pub use simulation::*;
 pub use sketch::*;
 pub use storage::*;
 pub use uds_attrs::*;
+pub use uds_surface::*;
