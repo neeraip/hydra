@@ -194,6 +194,23 @@ export interface GenericVariable {
   max: number;
 }
 
+/**
+ * Which variable of a class is on show: the one chosen, or the first
+ * the catalog publishes.
+ *
+ * One rule, in one place, because two places once disagreed about it.
+ * The legend resolved the surface class over its own merged list while
+ * the canvas resolved it over the run's alone, so the legend named the
+ * ground while the map painted depth — the label and the picture
+ * describing different things, which is worse than either being absent.
+ */
+export function selectedVariable(
+  variables: GenericVariable[],
+  id?: string,
+): GenericVariable | undefined {
+  return variables.find((v) => v.id === id) ?? variables[0];
+}
+
 /** SI value → the active display system. */
 export function genericToDisplay(
   value: number,

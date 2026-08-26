@@ -18,12 +18,13 @@ import {
   SURFACE_FOOTPRINT_ALPHA,
 } from "../../../canvas/surfaceMesh";
 import type { GenericVariable } from "../../../hooks/results";
+import { selectedVariable } from "../../../hooks/results";
 import type {
   SurfaceGeometry,
   SurfaceMeta,
   SurfacePeriod,
 } from "../../../hooks/surface";
-import { shownSurface } from "./useSurfaceResults";
+import { shownSurface, surfaceVariableList } from "./useSurfaceResults";
 
 const variable = (id: string): GenericVariable => ({
   id,
@@ -184,5 +185,45 @@ describe("shownSurface", () => {
     );
     expect(shown.variable?.id).toBe("speed");
     expect(Array.from(shown.values ?? [])).toEqual([0.25, 0.25, 0.25, 0.25]);
+  });
+});
+
+/**
+ * The legend names the surface variable; the canvas paints it. They
+ * resolve it separately, so they must resolve it the *same* — and once
+ * did not: the legend read a merged list whose first entry was the
+ * ground while the canvas read the run's list whose first was depth, so
+ * the legend said Ground over a map painted by depth.
+ */
+describe("the legend and the canvas agree on what is shown", () => {
+  const cases: Array<[string, SurfaceMeta | null, SurfacePeriod | null]> = [
+    ["a run that corresponds", meta(4), period(4)],
+    ["a run of a different mesh", meta(9), period(9)],
+    ["no run at all", null, null],
+  ];
+
+  for (const [name, m, p] of cases) {
+    for (const id of ["", "depth", "ground", "speed", "elevation"]) {
+      it(`${name}, asked for "${id}"`, () => {
+        const g = geometry(4);
+        // What the legend would name…
+        const named = selectedVariable(surfaceVariableList(g, GROUND, m), id);
+        // …and what the canvas paints.
+        const painted = shownSurface(g, GROUND, m, p, id);
+        expect(painted.variable?.id).toBe(named?.id);
+      });
+    }
+  }
+
+  it("offers a run's variables only where they can be shown", () => {
+    const g = geometry(4);
+    const ids = (m: SurfaceMeta | null) =>
+      surfaceVariableList(g, GROUND, m).map((v) => v.id);
+    // A corresponding run leads with its results; the ground follows.
+    expect(ids(meta(4))).toEqual(["depth", "speed", "ground"]);
+    // A run of a different mesh offers none of them: picking one could
+    // only ever show something other than what it names.
+    expect(ids(meta(9))).toEqual(["ground"]);
+    expect(ids(null)).toEqual(["ground"]);
   });
 });

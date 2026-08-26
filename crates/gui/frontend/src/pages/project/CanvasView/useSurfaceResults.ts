@@ -26,7 +26,7 @@ import {
   surfaceGroundValues,
   surfacePolygonData,
 } from "../../../canvas/surfaceMesh";
-import type { GenericVariable } from "../../../hooks/results";
+import { type GenericVariable, selectedVariable } from "../../../hooks/results";
 import {
   getMeshGeometry,
   getMeshInfo,
@@ -86,6 +86,9 @@ export function useSurfaceResults({
   surface: CanvasSurface | null;
   surfaceMeta: SurfaceMeta | null;
   meshInfo: MeshInfo | null;
+  /** The surface's variables in offer order — the legend's list, and the
+   * canvas's, so the two cannot name different things. */
+  surfaceVariables: GenericVariable[];
 } {
   const [meshInfo, setMeshInfo] = useState<MeshInfo | null>(null);
   const [geometry, setGeometry] = useState<SurfaceGeometry | null>(null);
@@ -224,7 +227,15 @@ export function useSurfaceResults({
     () => (projected && shown ? { ...projected, ...shown } : null),
     [projected, shown],
   );
-  return { surface, surfaceMeta: meta, meshInfo };
+  const surfaceVariables = useMemo(
+    () =>
+      geometry
+        ? surfaceVariableList(geometry, meshInfo?.properties ?? [], meta)
+        : [],
+    [geometry, meshInfo, meta],
+  );
+
+  return { surface, surfaceMeta: meta, meshInfo, surfaceVariables };
 }
 
 /**
@@ -238,6 +249,25 @@ export function useSurfaceResults({
  * answering two questions. Exported and pure so that rule is a thing a
  * test can hold, rather than a branch buried in an effect.
  */
+/**
+ * The surface's variables in the order they are offered, which is also
+ * the order that decides the default.
+ *
+ * A run's variables come first when they can be shown, so a simulated
+ * mesh opens on its results like every other class; the mesh's own
+ * properties follow, and are all there is before a run. One list, built
+ * once and given to both the legend and the canvas, so the name on the
+ * legend is always the picture on the map.
+ */
+export function surfaceVariableList(
+  geometry: SurfaceGeometry,
+  properties: GenericVariable[],
+  meta: SurfaceMeta | null,
+): GenericVariable[] {
+  const usable = meta != null && meta.nCells === geometry.nCells;
+  return [...(usable ? meta.variables : []), ...properties];
+}
+
 export function shownSurface(
   geometry: SurfaceGeometry,
   /** The mesh's own properties (the ground), always available. */
@@ -250,37 +280,49 @@ export function shownSurface(
   values: Float32Array | null;
   colors: Uint8Array;
 } {
-  // A run's values are usable only where they belong to the mesh on
-  // screen: a run of a different mesh has values for cells that are not
-  // these cells.
-  const usable =
-    meta != null && periodData != null && meta.nCells === geometry.nCells;
-  const property = properties.find((v) => v.id === variableId);
+  // Resolved over the same list, by the same rule, as the legend that
+  // names it — see `surfaceVariableList` and `selectedVariable`.
+  const variable = selectedVariable(
+    surfaceVariableList(geometry, properties, meta),
+    variableId,
+  );
+  if (!variable) {
+    return {
+      variable: null,
+      values: null,
+      colors: surfaceFootprintColors(geometry.nCells),
+    };
+  }
 
-  /** The ground: asked for, or all that can be shown. */
-  const ground = () => {
-    const v = property ?? properties[0];
-    if (!v) {
-      return {
-        variable: null,
-        values: null,
-        colors: surfaceFootprintColors(geometry.nCells),
-      };
-    }
-    const values = surfaceGroundValues(geometry);
-    // No water mask: the ground under a dry cell is still ground.
-    return { variable: v, values, colors: surfaceFillColors(values, null, v) };
-  };
+  // A result is a variable the instant has a column for; anything else
+  // is a property of the mesh, and the ground is the one there is.
+  const column = periodData ? surfaceColumn(periodData, variable.id) : null;
+  if (column && periodData) {
+    return {
+      variable,
+      values: column,
+      colors: surfaceFillColors(column, periodData.depth, variable),
+    };
+  }
 
-  if (property || !usable) return ground();
-  const variable =
-    meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
-  if (!variable) return ground();
-  const values = surfaceColumn(periodData, variable.id);
-  if (!values) return ground();
+  // A result variable with no instant behind it yet (the first frame
+  // after a scenario switch) must not be drawn from the ground and
+  // labelled as water: the label would name one thing and the map show
+  // another. Fall to the ground under its own name instead.
+  const property = properties.find((v) => v.id === variable.id);
+  const shown = property ?? properties[0];
+  if (!shown) {
+    return {
+      variable: null,
+      values: null,
+      colors: surfaceFootprintColors(geometry.nCells),
+    };
+  }
+  const values = surfaceGroundValues(geometry);
+  // No water mask: the ground under a dry cell is still ground.
   return {
-    variable,
+    variable: shown,
     values,
-    colors: surfaceFillColors(values, periodData.depth, variable),
+    colors: surfaceFillColors(values, null, shown),
   };
 }

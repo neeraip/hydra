@@ -1950,8 +1950,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // the surface and the network always show the same instant.
   const {
     surface: canvasSurface,
-    surfaceMeta,
     meshInfo,
+    surfaceVariables,
   } = useSurfaceResults({
     projectId: project?.id ?? null,
     scenarioId: activeScenarioId,
@@ -2488,10 +2488,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // The mesh's own properties first, then whatever a run
               // produced: the ground is there to be picked whether or
               // not anyone has simulated.
-              surfaceVars={[
-                ...(meshInfo?.properties ?? []),
-                ...(surfaceMeta?.variables ?? []),
-              ]}
+              // The very list the canvas resolves its own colours over,
+              // so the legend can only ever name what is on the map.
+              surfaceVars={surfaceVariables}
               selection={genericSelection}
               onSelect={handleGenericSelect}
               scaleMode={scaleMode}

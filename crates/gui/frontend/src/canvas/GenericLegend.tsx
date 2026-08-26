@@ -26,6 +26,7 @@ import {
   type GenericResultMeta,
   type GenericVariable,
   genericUnitLabel,
+  selectedVariable,
 } from "../hooks/results";
 import { useUnitSystem } from "../units";
 import { type CanvasLayers, useCanvasLayers } from "./layers-context";
@@ -440,8 +441,10 @@ export function GenericLegend({
     },
   ].filter((c) => c.variables.length > 0);
 
+  // The same rule the canvas resolves its own colours by, so the name
+  // here is always the picture there (`selectedVariable`).
   const selected = (c: ClassConfig): GenericVariable =>
-    c.variables.find((v) => v.id === selection[c.key]) ?? c.variables[0];
+    selectedVariable(c.variables, selection[c.key]) ?? c.variables[0];
 
   /**
    * Whether `variableId` in class `key` is being judged against criteria
