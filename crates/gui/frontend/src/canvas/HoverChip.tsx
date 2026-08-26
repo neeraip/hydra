@@ -98,6 +98,9 @@ function surfaceTipValue(
   surface: CanvasSurface,
   sys: ReturnType<typeof useUnitSystem>,
 ): string | null {
+  // A footprint carries no values: the cell is real and has no number
+  // yet, which the chip says by naming the cell and stopping there.
+  if (surface.variable == null || surface.values == null) return null;
   const v = surface.values[tip.si];
   if (v == null || !Number.isFinite(v)) return null;
   return formatGenericValue(v, surface.variable.quantity, sys);

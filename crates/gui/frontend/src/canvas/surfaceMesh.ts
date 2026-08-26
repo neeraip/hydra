@@ -14,7 +14,7 @@
 
 import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
-import { genericRgba } from "./MapCanvas/colorUtils";
+import { genericRgba, seqRgb } from "./MapCanvas/colorUtils";
 
 /**
  * Below this depth (m) a cell renders fully transparent. A display
@@ -27,6 +27,14 @@ export const SURFACE_DRY_DEPTH_M = 0.001;
 /** Fill alpha for wet cells. Below opaque so the basemap's context and
  * the flooding's extent read together. */
 export const SURFACE_ALPHA = 200;
+
+/**
+ * Fill alpha for a mesh with no run behind it: present, and plainly
+ * carrying no data. Faint enough that the network reads through it,
+ * strong enough to answer "does this model have a 2D surface" without
+ * simulating anything first.
+ */
+export const SURFACE_FOOTPRINT_ALPHA = 46;
 
 /** Binary polygon data for deck.gl's SolidPolygonLayer. */
 export interface SurfacePolygonData {
@@ -64,6 +72,26 @@ export function surfacePolygonData(
     startIndices,
     attributes: { getPolygon: { value, size: 2 } },
   };
+}
+
+/**
+ * Per-triangle-vertex RGBA for a mesh with no values: every cell the
+ * same faint tint, so the surface's extent is visible and its silence
+ * about depth is obvious.
+ */
+export function surfaceFootprintColors(nCells: number): Uint8Array {
+  const out = new Uint8Array(12 * nCells);
+  // The family's midpoint, so a footprint reads as the same material the
+  // coloured surface is made of rather than as a fourth kind of thing.
+  const [r, g, b] = seqRgb(0.5, "surface");
+  for (let i = 0; i < nCells * 3; i++) {
+    const at = 4 * i;
+    out[at] = r;
+    out[at + 1] = g;
+    out[at + 2] = b;
+    out[at + 3] = SURFACE_FOOTPRINT_ALPHA;
+  }
+  return out;
 }
 
 /**

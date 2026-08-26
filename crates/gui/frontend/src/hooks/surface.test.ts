@@ -89,6 +89,31 @@ describe("the transport guard", () => {
   });
 });
 
+describe("getMeshGeometry", () => {
+  // The shared layout says "no mesh" with zero counts, which is a
+  // sound payload rather than a missing one. The caller is asking about
+  // presence, so the empty answer must read as absent, not as a mesh of
+  // no cells that something downstream then tries to draw.
+  it("reads the empty-counts payload as no mesh at all", async () => {
+    const { getMeshGeometry } = await import("./surface");
+    const ipc = await import("./ipc");
+    const empty = new ArrayBuffer(12);
+    new DataView(empty).setUint32(0, SURFACE_GEOMETRY_VERSION, true);
+    const spy = vi.spyOn(ipc, "tryInvoke").mockResolvedValue(empty);
+    await expect(getMeshGeometry()).resolves.toBeNull();
+    spy.mockRestore();
+  });
+
+  it("decodes a real mesh", async () => {
+    const { getMeshGeometry } = await import("./surface");
+    const ipc = await import("./ipc");
+    const spy = vi.spyOn(ipc, "tryInvoke").mockResolvedValue(geometryPayload());
+    const g = await getMeshGeometry();
+    expect(g?.nCells).toBe(2);
+    spy.mockRestore();
+  });
+});
+
 describe("decodeSurfacePeriod", () => {
   it("serves the three columns and the instant", () => {
     const p = decodeSurfacePeriod(periodPayload());

@@ -10,7 +10,9 @@ import { seqRgb } from "./MapCanvas/colorUtils";
 import {
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
+  SURFACE_FOOTPRINT_ALPHA,
   surfaceFillColors,
+  surfaceFootprintColors,
   surfacePolygonData,
 } from "./surfaceMesh";
 
@@ -46,6 +48,28 @@ describe("surfacePolygonData", () => {
     const d = surfacePolygonData(geometry, (x, y) => [x + 100, y - 50]);
     expect(d.attributes.getPolygon.value[0]).toBe(100);
     expect(d.attributes.getPolygon.value[1]).toBe(-50);
+  });
+});
+
+describe("surfaceFootprintColors", () => {
+  // What a mesh looks like before anyone runs it: present and plainly
+  // silent about depth, rather than absent.
+  it("tints every cell alike, faintly, in the surface family", () => {
+    const colors = surfaceFootprintColors(2);
+    expect(colors.length).toBe(24);
+    for (let i = 0; i < 6; i++) {
+      expect(colors[4 * i + 3]).toBe(SURFACE_FOOTPRINT_ALPHA);
+    }
+    expect(Array.from(colors.slice(0, 3))).toEqual(seqRgb(0.5, "surface"));
+    // Every vertex of every cell carries the same colour: a footprint
+    // makes no claim that varies across the mesh.
+    expect(Array.from(colors.slice(0, 4))).toEqual(
+      Array.from(colors.slice(20, 24)),
+    );
+  });
+
+  it("is fainter than a cell carrying a value", () => {
+    expect(SURFACE_FOOTPRINT_ALPHA).toBeLessThan(SURFACE_ALPHA);
   });
 });
 

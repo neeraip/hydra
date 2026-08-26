@@ -1,4 +1,5 @@
 import { useLinks, useNodes, useRegions } from "../../hooks";
+import { useMeshInfo } from "../../hooks/surface";
 import { Kpi, KpiGrid } from "../../pages/project/OverviewView/primitives";
 
 /** Pluralised drainage-kind label for a composition sub-line. */
@@ -55,6 +56,11 @@ export function UdsOverviewComposition({
   const nodes = useNodes();
   const links = useLinks();
   const regions = useRegions();
+  // A 2D surface is a property of the model, so it is stated here from
+  // import: the canvas shows one only where the model is placeable, and
+  // before this the app said nothing at all about a mesh until a run
+  // had produced results to colour it with.
+  const mesh = useMeshInfo(networkLoaded);
 
   if (!networkLoaded) {
     return (
@@ -108,6 +114,13 @@ export function UdsOverviewComposition({
         value={outfalls.toLocaleString()}
         sub={outfalls === 0 ? "no discharge points" : "discharge points"}
       />
+      {mesh && (
+        <Kpi
+          label="Surface cells"
+          value={mesh.nCells.toLocaleString()}
+          sub={`2D overland mesh, ${mesh.nVertices.toLocaleString()} vertices`}
+        />
+      )}
     </KpiGrid>
   );
 }

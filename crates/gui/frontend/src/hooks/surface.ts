@@ -11,6 +11,7 @@
  * sides.
  */
 
+import { useEffect, useState } from "react";
 import { tryInvoke } from "./ipc";
 import type { GenericVariable } from "./results";
 
@@ -29,6 +30,12 @@ export interface SurfaceMeta {
   /** The engine's surface catalog with this run's SI ranges, in
    * presentation order — the period payload's column order. */
   variables: GenericVariable[];
+}
+
+/** What the model says about its own surface, known from import. */
+export interface MeshInfo {
+  nVertices: number;
+  nCells: number;
 }
 
 /** The mesh a viewer renders without the model: SI metres, model CRS. */
@@ -128,6 +135,58 @@ export function surfaceColumn(
     default:
       return null;
   }
+}
+
+/**
+ * Whether the loaded model carries a 2D surface, from the model itself —
+ * so it is answerable from import, before and without any run. `null`
+ * for a model with no mesh, and outside Tauri.
+ */
+export async function getMeshInfo(): Promise<MeshInfo | null> {
+  return await tryInvoke<MeshInfo | null>("load_mesh_info", {});
+}
+
+/**
+ * The loaded model's mesh, for surfaces that only need to know whether
+ * there is one and how big it is. Re-asked when a network loads.
+ */
+export function useMeshInfo(networkLoaded: boolean): MeshInfo | null {
+  const [info, setInfo] = useState<MeshInfo | null>(null);
+  useEffect(() => {
+    if (!networkLoaded) {
+      setInfo(null);
+      return;
+    }
+    let cancelled = false;
+    getMeshInfo()
+      .then((m) => {
+        if (!cancelled) setInfo(m);
+      })
+      .catch(() => {
+        if (!cancelled) setInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkLoaded]);
+  return info;
+}
+
+/**
+ * The loaded model's mesh geometry. This is the mesh the canvas draws:
+ * it is the one the user has open, present before any run, and a run's
+ * sidecar carries a copy of it rather than a mesh of its own.
+ */
+export async function getMeshGeometry(): Promise<SurfaceGeometry | null> {
+  const buf = await tryInvoke<ArrayBuffer>("load_mesh_geometry", {});
+  if (buf === null) return null;
+  const geometry = decodeSurfaceGeometry(
+    requireArrayBuffer(buf, "load_mesh_geometry"),
+  );
+  // Empty counts are the "no mesh" answer in the shared layout, not a
+  // mesh of no cells: nothing to draw either way, but the caller asks
+  // about presence, so say absent.
+  return geometry.nCells > 0 ? geometry : null;
 }
 
 /**

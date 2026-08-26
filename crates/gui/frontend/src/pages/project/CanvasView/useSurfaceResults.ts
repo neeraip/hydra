@@ -1,14 +1,18 @@
 /**
- * Surface results for the canvas: the 2D overland mesh and one instant's
- * cell colours, fetched and shaped for MapCanvas's surface layer.
+ * The 2D overland surface for the canvas: the model's mesh, and the
+ * values a run painted onto it.
  *
- * Owns: the per-target surface meta + geometry fetch (reloaded with the
- * same freshness token as the network results), the per-instant value
- * fetch on the shared timeline index, the plan-coordinate projection of
- * the mesh (the same forward transform the node pipeline applies), and
- * the colour build. Everything it computes is `null` for a target with
- * no surface results — every non-mesh run — so the canvas below stays
- * surface-blind unless there is a surface to draw.
+ * Two sources, deliberately separated. The **mesh** comes from the model
+ * — it is present from import, so a mesh model shows its surface before
+ * it has ever been run, and the canvas draws the mesh the user actually
+ * has open. The **values** come from the run's `.2d.out` sidecar, which
+ * carries its own copy of the mesh only so a viewer could render without
+ * a model; here that copy serves one purpose, as the check that the
+ * run's values belong to the mesh on screen.
+ *
+ * Everything is `null` for a model with no mesh — every water model and
+ * most drainage ones — so the canvas below stays surface-blind unless
+ * there is a surface.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,28 +20,31 @@ import { planProjector } from "../../../canvas/coords";
 import {
   type SurfacePolygonData,
   surfaceFillColors,
+  surfaceFootprintColors,
   surfacePolygonData,
 } from "../../../canvas/surfaceMesh";
 import type { GenericVariable } from "../../../hooks/results";
 import {
-  getSurfaceGeometry,
+  getMeshGeometry,
+  getMeshInfo,
   getSurfaceMeta,
   getSurfacePeriod,
+  type MeshInfo,
   type SurfaceGeometry,
   type SurfaceMeta,
   type SurfacePeriod,
   surfaceColumn,
 } from "../../../hooks/surface";
 
-/** What MapCanvas draws: binary polygons and per-vertex colours, plus
- * the on-show variable and its per-cell values for the hover chip. */
+/** What MapCanvas draws, and what the hover chip reads. */
 export interface CanvasSurface {
   data: SurfacePolygonData;
   colors: Uint8Array;
-  /** The selected surface variable (resolved, never a stale id). */
-  variable: GenericVariable;
-  /** That variable's per-cell SI values at the shown instant. */
-  values: Float32Array;
+  /** The variable the colours carry, or `null` when the surface is drawn
+   * as a footprint — a mesh with no run behind it yet. */
+  variable: GenericVariable | null;
+  /** That variable's per-cell SI values, `null` alongside `variable`. */
+  values: Float32Array | null;
 }
 
 export function useSurfaceResults({
@@ -49,11 +56,12 @@ export function useSurfaceResults({
   reprojToken,
   enabled,
   variableId,
+  networkToken,
 }: {
   projectId: string | null;
   scenarioId: string | null;
   /** Freshness token shared with the network results: a new run is a new
-   * key, and the surface reloads with it. `null` = no results settled. */
+   * key, and the surface values reload with it. `null` = no results. */
   resultMetaKey: string | null;
   /** Clamped timeline period index; `null` when the timeline is empty. */
   period: number | null;
@@ -66,46 +74,88 @@ export function useSurfaceResults({
   enabled: boolean;
   /** Selected surface variable id ("" = the catalog's first, depth). */
   variableId?: string;
-}): { surface: CanvasSurface | null; surfaceMeta: SurfaceMeta | null } {
-  const [meta, setMeta] = useState<SurfaceMeta | null>(null);
+  /** Identity of the loaded network: a new one is a new mesh question. */
+  networkToken: unknown;
+}): {
+  surface: CanvasSurface | null;
+  surfaceMeta: SurfaceMeta | null;
+  meshInfo: MeshInfo | null;
+} {
+  const [meshInfo, setMeshInfo] = useState<MeshInfo | null>(null);
   const [geometry, setGeometry] = useState<SurfaceGeometry | null>(null);
+  const [meta, setMeta] = useState<SurfaceMeta | null>(null);
   const [periodData, setPeriodData] = useState<SurfacePeriod | null>(null);
 
-  // Meta + geometry, once per target per run. Cleared only when the
-  // absence is settled, mirroring the network period fetch's latch.
+  // Does this model carry a mesh? Cheap, and asked of the model, so the
+  // answer holds before any run.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: networkToken is the re-ask signal, see above
   useEffect(() => {
-    if (!projectId || resultMetaKey == null) {
-      setMeta(null);
+    if (!projectId) {
+      setMeshInfo(null);
+      return;
+    }
+    let cancelled = false;
+    getMeshInfo()
+      .then((m) => {
+        if (!cancelled) setMeshInfo(m);
+      })
+      .catch(() => {
+        if (!cancelled) setMeshInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, networkToken]);
+
+  // The mesh itself, once per model. Keyed on its counts rather than on
+  // the network's identity: the geometry can run to megabytes, and every
+  // ordinary edit leaves the mesh alone (the app has no mesh editor).
+  const meshKey = meshInfo
+    ? `${projectId}:${scenarioId ?? "base"}:${meshInfo.nVertices}:${meshInfo.nCells}`
+    : null;
+  useEffect(() => {
+    if (meshKey == null) {
       setGeometry(null);
+      return;
+    }
+    let cancelled = false;
+    getMeshGeometry()
+      .then((g) => {
+        if (!cancelled) setGeometry(g);
+      })
+      .catch(() => {
+        if (!cancelled) setGeometry(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [meshKey]);
+
+  // The run's surface values, if this target has been run. Asked only of
+  // a mesh model: nothing else writes a sidecar.
+  useEffect(() => {
+    if (!projectId || meshInfo == null || resultMetaKey == null) {
+      setMeta(null);
       setPeriodData(null);
       return;
     }
     let cancelled = false;
     getSurfaceMeta(projectId, scenarioId)
-      .then(async (m) => {
-        if (cancelled) return;
-        if (!m) {
-          setMeta(null);
-          setGeometry(null);
-          setPeriodData(null);
-          return;
-        }
-        const g = await getSurfaceGeometry(projectId, scenarioId);
+      .then((m) => {
         if (cancelled) return;
         setMeta(m);
-        setGeometry(g);
+        if (!m) setPeriodData(null);
       })
       .catch(() => {
         if (!cancelled) {
           setMeta(null);
-          setGeometry(null);
           setPeriodData(null);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, resultMetaKey]);
+  }, [projectId, scenarioId, meshInfo, resultMetaKey]);
 
   // One instant's values, on the shared timeline index. The sidecar is
   // written at the same reporting instants as results.out, so the same
@@ -146,26 +196,55 @@ export function useSurfaceResults({
     return surfacePolygonData(geometry, project);
   }, [geometry, sourceCrs, enabled, reprojToken]);
 
-  // Colours: the selected variable through the engine's ramp, dry cells
-  // transparent. An id the catalog does not carry (a stale preference)
-  // falls back to the first variable, the legend's own rule.
-  const shown = useMemo(() => {
-    if (!meta || !periodData || !polygons) return null;
-    const variable =
-      meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
-    if (!variable) return null;
-    const values = surfaceColumn(periodData, variable.id);
-    if (!values) return null;
-    return {
-      variable,
-      values,
-      colors: surfaceFillColors(values, periodData.depth, variable),
-    };
-  }, [meta, periodData, polygons, variableId]);
+  const shown = useMemo(
+    () =>
+      geometry ? shownSurface(geometry, meta, periodData, variableId) : null,
+    [geometry, meta, periodData, variableId],
+  );
 
   const surface = useMemo(
     () => (polygons && shown ? { data: polygons, ...shown } : null),
     [polygons, shown],
   );
-  return { surface, surfaceMeta: meta };
+  return { surface, surfaceMeta: meta, meshInfo };
+}
+
+/**
+ * What the mesh is painted with: a run's values, or the footprint that
+ * says "there is a surface here" before any run.
+ *
+ * Values are used only where they belong to the mesh on screen. A run
+ * whose cell count differs is a run of a *different* mesh, and painting
+ * cell `i` of this one with cell `i` of that one is a confident wrong
+ * answer — the shape of defect this codebase keeps finding, one index
+ * answering two questions. Exported and pure so that rule is a thing a
+ * test can hold, rather than a branch buried in an effect.
+ */
+export function shownSurface(
+  geometry: SurfaceGeometry,
+  meta: SurfaceMeta | null,
+  periodData: SurfacePeriod | null,
+  variableId?: string,
+): {
+  variable: GenericVariable | null;
+  values: Float32Array | null;
+  colors: Uint8Array;
+} {
+  const footprint = {
+    variable: null,
+    values: null,
+    colors: surfaceFootprintColors(geometry.nCells),
+  };
+  if (meta == null || periodData == null) return footprint;
+  if (meta.nCells !== geometry.nCells) return footprint;
+  const variable =
+    meta.variables.find((v) => v.id === variableId) ?? meta.variables[0];
+  if (!variable) return footprint;
+  const values = surfaceColumn(periodData, variable.id);
+  if (!values) return footprint;
+  return {
+    variable,
+    values,
+    colors: surfaceFillColors(values, periodData.depth, variable),
+  };
 }
