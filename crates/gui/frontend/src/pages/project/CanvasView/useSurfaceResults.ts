@@ -358,6 +358,9 @@ export function shownSurface(
       values,
       vertexValues: null,
       centreValues: null,
+      // One array for both: the shader mixes a cell's colour into its
+      // corners', and the same colour on both sides is what makes the
+      // fill flat.
       colors,
       cellColors: colors,
     };

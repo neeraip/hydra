@@ -316,3 +316,42 @@ describe("the smooth surface", () => {
     }
   });
 });
+
+/**
+ * The plain fill and the blend are the same layer, and which one is
+ * drawn is decided entirely by the two colour arrays: the shader mixes
+ * a cell's colour into its corners', so handing it one colour twice
+ * leaves nothing to mix.
+ *
+ * Nothing else enforces that. If the flat path ever returned corner
+ * colours of its own, every cell would quietly start blending, and the
+ * flat fill would stop being flat without a single test failing.
+ */
+describe("what makes the fill flat", () => {
+  it("gives a cell and its corners the same colours", () => {
+    const shown = shownSurface(
+      geometry(4),
+      GROUND,
+      meta(4),
+      period(4),
+      "depth",
+      false,
+    );
+    expect(Array.from(shown.cellColors)).toEqual(Array.from(shown.colors));
+  });
+
+  it("gives them different colours once blended", () => {
+    const g = geometry(4);
+    // Neighbouring cells must differ for the corner means to differ
+    // from the cells: this fixture's cells share no vertices, so the
+    // ground is the field that shows it.
+    const shown = shownSurface(g, GROUND, null, null, "ground", true);
+    expect(shown.colors.length).toBe(shown.cellColors.length);
+    expect(Array.from(shown.colors)).not.toEqual(Array.from(shown.cellColors));
+  });
+
+  it("draws a footprint with nothing to mix either", () => {
+    const shown = shownSurface(geometry(2), [], null, null, "", true);
+    expect(Array.from(shown.cellColors)).toEqual(Array.from(shown.colors));
+  });
+});

@@ -21,7 +21,6 @@ import {
   surfaceCellColors,
   surfaceCornerColors,
   surfaceEdgeData,
-  surfaceFillColors,
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
@@ -85,9 +84,9 @@ describe("surfaceFootprintColors", () => {
   });
 });
 
-describe("surfaceFillColors", () => {
+describe("surfaceCellColors", () => {
   it("colours wet cells through the ramp and hides dry ones", () => {
-    const colors = surfaceFillColors(
+    const colors = surfaceCellColors(
       new Float32Array([0.8, 0.2]),
       // Cell 1 sits below the display drying depth: dry. (Not exactly at
       // it — 0.001 rounds *up* through f32, which is the storage type.)
@@ -103,15 +102,16 @@ describe("surfaceFillColors", () => {
     expect(Array.from(colors.slice(0, 4))).toEqual(
       Array.from(colors.slice(8, 12)),
     );
-    // Dry cell: fully transparent, whatever its value.
-    expect(Array.from(colors.slice(12, 24))).toEqual(new Array(12).fill(0));
+    // Dry cell: every vertex transparent, whatever its value. Its hue
+    // is kept rather than zeroed — see the note below on the blend.
+    for (let k = 0; k < 3; k++) expect(colors[12 + 4 * k + 3]).toBe(0);
   });
 
   it("masks by depth even when another variable is on show", () => {
     // Speed on show: the dry cell has a (zero) speed, but renders
     // transparent because it holds no water.
     const speedVar: GenericVariable = { ...depthVar, id: "speed", max: 2 };
-    const colors = surfaceFillColors(
+    const colors = surfaceCellColors(
       new Float32Array([1.5, 0]),
       new Float32Array([0.5, 0]),
       speedVar,
@@ -124,7 +124,7 @@ describe("surfaceFillColors", () => {
   // the same family or the swatch describes colours that are not on
   // screen. Pinned against seqRgb("surface") itself, not a copy.
   it("colours through the surface family the legend samples", () => {
-    const colors = surfaceFillColors(
+    const colors = surfaceCellColors(
       new Float32Array([1]),
       new Float32Array([1]),
       depthVar,
@@ -135,7 +135,7 @@ describe("surfaceFillColors", () => {
   });
 
   it("distinct values take distinct ramp colours", () => {
-    const colors = surfaceFillColors(
+    const colors = surfaceCellColors(
       new Float32Array([0.05, 0.95]),
       new Float32Array([1, 1]),
       depthVar,
@@ -242,15 +242,31 @@ describe("the water mask", () => {
   };
 
   it("hides dry cells for a water variable", () => {
-    const colors = surfaceFillColors(new Float32Array([1, 1]), wet, v);
+    const colors = surfaceCellColors(new Float32Array([1, 1]), wet, v);
     expect(colors[3]).toBe(SURFACE_ALPHA);
     expect(colors[15]).toBe(0);
+  });
+
+  /**
+   * A dry sample keeps its colour and loses only its alpha. The blend
+   * mixes the colour channels as well as the alpha, so a dry sample left
+   * black drags the hue toward black across the waterline rather than
+   * fading it. Invisible while the fill was flat — nothing draws an
+   * alpha-zero pixel — and plain to see once a neighbouring pixel is a
+   * mix of the two.
+   */
+  it("keeps a dry cell's hue, dropping only its alpha", () => {
+    const colors = surfaceCellColors(new Float32Array([1, 1]), wet, v);
+    const dryRgb = Array.from(colors.slice(12, 15));
+    const wetRgb = Array.from(colors.slice(0, 3));
+    expect(dryRgb).toEqual(wetRgb);
+    expect(dryRgb).not.toEqual([0, 0, 0]);
   });
 
   // The ground under a dry cell is still ground: masking it would be a
   // claim about the terrain rather than about the flood.
   it("paints every cell when there is no water to mask by", () => {
-    const colors = surfaceFillColors(new Float32Array([1, 1]), null, v);
+    const colors = surfaceCellColors(new Float32Array([1, 1]), null, v);
     expect(colors[3]).toBe(SURFACE_ALPHA);
     expect(colors[15]).toBe(SURFACE_ALPHA);
   });
@@ -488,5 +504,31 @@ describe("blended shading", () => {
     expect(masked[15]).toBe(0);
     // The ground passes no depth at all and is painted everywhere.
     expect(surfaceCellColors(cells, null, v)[15]).toBe(SURFACE_ALPHA);
+  });
+});
+
+describe("a dry corner", () => {
+  const g: SurfaceGeometry = {
+    nVertices: 4,
+    nCells: 2,
+    positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
+    triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  };
+  const v: GenericVariable = {
+    id: "depth",
+    label: "Depth",
+    ramp: { type: "sequential" },
+    min: 0,
+    max: 10,
+  };
+
+  it("keeps its hue too, for the same reason", () => {
+    const values = Float32Array.from([5, 5, 5, 5]);
+    const depth = Float32Array.from([1, 1, 0, 1]); // vertex 2 is dry
+    const colors = surfaceCornerColors(g, values, depth, v);
+    // Vertex 2 is the third vertex of cell 0.
+    const dry = Array.from(colors.slice(8, 12));
+    expect(dry[3]).toBe(0);
+    expect(dry.slice(0, 3)).toEqual(seqRgb(0.5, "surface"));
   });
 });

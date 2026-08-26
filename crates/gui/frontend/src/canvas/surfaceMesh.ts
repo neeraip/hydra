@@ -122,44 +122,6 @@ export function surfaceFootprintColors(nCells: number): Uint8Array {
   return out;
 }
 
-/**
- * Per-triangle-vertex RGBA for one instant: the selected variable's
- * value through the engine's ramp, dry cells transparent. `depth` masks
- * whatever variable is on show — a dry cell has no water surface or
- * speed worth colouring either.
- */
-export function surfaceFillColors(
-  values: Float32Array,
-  /** Per-cell water depth, masking cells that hold none — or `null` for
-   * a variable that is not water. The ground under a dry cell is still
-   * there, and hiding it would be a claim about the terrain rather than
-   * about the flood. */
-  depth: Float32Array | null,
-  variable: GenericVariable,
-): Uint8Array {
-  const nCells = values.length;
-  const out = new Uint8Array(12 * nCells);
-  for (let ci = 0; ci < nCells; ci++) {
-    if (depth != null && !(depth[ci] > SURFACE_DRY_DEPTH_M)) continue; // alpha stays 0
-    const [r, g, b, a] = genericRgba(
-      values[ci],
-      variable,
-      SURFACE_ALPHA,
-      // The surface's own hue family — the same key the legend samples,
-      // so the swatch and the map cannot disagree.
-      "surface",
-    );
-    for (let k = 0; k < 3; k++) {
-      const at = 12 * ci + 4 * k;
-      out[at] = r;
-      out[at + 1] = g;
-      out[at + 2] = b;
-      out[at + 3] = a;
-    }
-  }
-  return out;
-}
-
 /** Binary line data for deck.gl's LineLayer, plus what the legibility
  * decision needs to know about the mesh it came from. */
 export interface SurfaceEdgeData {
@@ -402,19 +364,24 @@ export function surfaceCornerColors(
   // meet there: a vertex is shared by about six of them.
   const rgba = new Uint8Array(4 * nVertices);
   for (let vi = 0; vi < nVertices; vi++) {
-    if (depthAtVertices && !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M)) {
-      continue; // alpha stays 0
-    }
+    const dry =
+      depthAtVertices != null && !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M);
     const [r, g, b, a] = genericRgba(
       vertexValues[vi],
       variable,
       SURFACE_ALPHA,
       "surface",
     );
+    // A dry sample keeps its colour and loses only its alpha. The blend
+    // mixes the colour channels too, so leaving a dry sample black drags
+    // the hue toward black across the waterline instead of fading it —
+    // invisible while the fill was flat, because nothing ever drew an
+    // alpha-zero pixel, and plain to see once a neighbouring pixel is a
+    // mix of the two.
     rgba[4 * vi] = r;
     rgba[4 * vi + 1] = g;
     rgba[4 * vi + 2] = b;
-    rgba[4 * vi + 3] = a;
+    rgba[4 * vi + 3] = dry ? 0 : a;
   }
   const out = new Uint8Array(12 * nCells);
   for (let ci = 0; ci < nCells; ci++) {
@@ -447,19 +414,20 @@ export function surfaceCellColors(
   const nCells = values.length;
   const out = new Uint8Array(12 * nCells);
   for (let ci = 0; ci < nCells; ci++) {
-    if (depth != null && !(depth[ci] > SURFACE_DRY_DEPTH_M)) continue;
+    const dry = depth != null && !(depth[ci] > SURFACE_DRY_DEPTH_M);
     const [r, g, b, a] = genericRgba(
       values[ci],
       variable,
       SURFACE_ALPHA,
       "surface",
     );
+    // Colour kept, alpha dropped — see `surfaceCornerColors`.
     for (let k = 0; k < 3; k++) {
       const at = 12 * ci + 4 * k;
       out[at] = r;
       out[at + 1] = g;
       out[at + 2] = b;
-      out[at + 3] = a;
+      out[at + 3] = dry ? 0 : a;
     }
   }
   return out;
