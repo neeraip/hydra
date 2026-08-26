@@ -37,6 +37,7 @@ import {
   SolidPolygonLayer,
   type SolidPolygonLayerProps,
 } from "@deck.gl/layers";
+import { BLEND_BUBBLE_SCALE } from "./surfaceMesh";
 
 export type BlendedSurfaceLayerProps<DataT = unknown> = {
   /** Per-vertex barycentric basis: (1,0,0), (0,1,0), (0,0,1) for a
@@ -78,10 +79,13 @@ export class BlendedSurfaceLayer<DataT = unknown> extends SolidPolygonLayer<
     });
   }
 
-  override getShaders() {
-    // The base layer picks its own shaders by whether the polygons are
-    // extruded; ours are flat, and either way the injection is the same.
-    const shaders = super.getShaders("top" as never);
+  override getShaders(type: "top" | "side") {
+    // Forwarded, not assumed: an extruded polygon layer builds a second
+    // model for its sides and asks for that model's shaders by name.
+    // Answering "top" to both would draw the sides with the wrong vertex
+    // shader. This layer never extrudes, so the case is latent — which
+    // is exactly when a wrong answer survives unnoticed.
+    const shaders = super.getShaders(type);
     return {
       ...shaders,
       inject: {
@@ -105,7 +109,8 @@ in vec4 vBlendCellColor;
         // outside the triangle along its edges.
         "fs:DECKGL_FILTER_COLOR": `
   float blendWeight = clamp(
-    27.0 * vBlendBary.x * vBlendBary.y * vBlendBary.z, 0.0, 1.0);
+    ${BLEND_BUBBLE_SCALE}.0 * vBlendBary.x * vBlendBary.y * vBlendBary.z,
+    0.0, 1.0);
   color = mix(color, vBlendCellColor, blendWeight);
 `,
       },

@@ -8,6 +8,7 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
+  BLEND_BUBBLE_SCALE,
   blendedValue,
   cellValuesAtVertices,
   groundAtVertices,
@@ -280,6 +281,16 @@ describe("blendedValue", () => {
    * the corners alone destroyed peaks, so the deepest cell of the SWMM
    * 2D example (0.9983 m) painted its own centre at 0.5265 m.
    */
+  /**
+   * The scale is the same constant the fragment shader mixes by, so
+   * this also holds the picture and the pointer to one weight: change
+   * it and the centroid stops reading the cell's own value here, while
+   * the shader stops showing the cell's own colour there.
+   */
+  it("weighs the centroid by the shared bubble scale", () => {
+    expect(BLEND_BUBBLE_SCALE * (1 / 3) ** 3).toBeCloseTo(1, 12);
+  });
+
   it("lands the cell's own value at the centroid", () => {
     const v = blendedValue(1 / 3, 1 / 3, 1 / 3, A[0], A[1], A[2], 1.0);
     expect(v).toBeCloseTo(1.0, 9);

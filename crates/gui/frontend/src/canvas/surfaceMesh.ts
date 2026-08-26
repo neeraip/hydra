@@ -447,6 +447,18 @@ export function surfaceCellColors(
  * answer either way: it holds one value per cell and says nothing about
  * the inside of one.
  */
+/**
+ * The blend's weight at the centroid of a cell, and the scale of the
+ * bubble `w0·w1·w2` that carries it.
+ *
+ * Named because the weight is computed twice: here, for what the pointer
+ * reads, and in `BlendedSurfaceLayer`'s fragment shader, for what the
+ * picture shows. Those two must be the same function or the chip and the
+ * map describe different surfaces, and a constant written out in GLSL
+ * and again in TypeScript is one nobody would think to change in both.
+ */
+export const BLEND_BUBBLE_SCALE = 27;
+
 export function blendedValue(
   w0: number,
   w1: number,
@@ -458,21 +470,16 @@ export function blendedValue(
 ): number {
   const linear = w0 * a0 + w1 * a1 + w2 * a2;
   if (cell == null) return linear;
-  const bubble = 27 * w0 * w1 * w2;
+  const bubble = BLEND_BUBBLE_SCALE * w0 * w1 * w2;
   return linear + (cell - (a0 + a1 + a2) / 3) * bubble;
 }
 
 /**
- * The value the blended picture shows at a point inside a cell.
- *
- * With barycentric coordinates `w` in the cell and `m` the smallest of
- * them, the piecewise-linear field over the three sub-triangles is
- * `Σ(w_i − w_m)·A_i + 3·w_m·cell`, where `A` are the corner values. It
- * returns the cell's own value at the centre, a corner's average at a
- * corner, and the same number from either side of a shared edge.
+ * The value the blended picture shows at a point inside a cell: the
+ * point's barycentric coordinates in the cell, through `blendedValue`.
  *
  * `cellValues` is `null` for a field held at the vertices (the ground),
- * where the plain linear interpolation is already exact.
+ * where plain linear interpolation is already exact.
  *
  * `x, y` are in the projected space the corners were built in. Weights
  * are clamped and renormalised so a point on an edge, or a hair outside
