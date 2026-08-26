@@ -80,6 +80,7 @@ import {
   fitMapExtents,
   geoBounds,
   orthoCenterFromMap,
+  type PlanBounds,
   roughGeoViewState,
   visibleMapPadding,
 } from "./MapCanvas/geoUtils";
@@ -596,6 +597,10 @@ export const MapCanvas = memo(function MapCanvas({
   // layers were built for. A pan or zoom rebuilds only when that answer
   // changes — the same "rebuild when it matters" rule the label culling
   // above follows, rather than a rebuild per frame of a gesture.
+  // The mesh's projected extent, for the camera fits. Held in a ref for
+  // the same reason as the reporters below: the deck and the map are
+  // created once, and framing must not rebuild them.
+  const surfaceBoundsRef = useRef<PlanBounds | null>(null);
   const meshEdgesShownRef = useRef(false);
   const meshMedianRef = useRef<number | null>(null);
   const sys = useUnitSystem();
@@ -1151,7 +1156,10 @@ export const MapCanvas = memo(function MapCanvas({
       const deck = deckRef.current;
       if (!deck) return;
       const coords = renderCoordsRef.current;
-      const { zoom: fitZoom } = orthoCenterFromMap(coords);
+      const { zoom: fitZoom } = orthoCenterFromMap(
+        coords,
+        surfaceBoundsRef.current,
+      );
       if (nodeId) {
         const target = coords.get(nodeId);
         if (!target) return;
@@ -2899,6 +2907,10 @@ export const MapCanvas = memo(function MapCanvas({
     });
   }, []);
 
+  useEffect(() => {
+    surfaceBoundsRef.current = surface?.data.bounds ?? null;
+  }, [surface]);
+
   // Clear the drag-position override once geoCoords has been rebuilt with the
   // updated coordinates from the backend.  Keying on geoCoords (not nodes)
   // ensures the new coordMap is in place before buildLayers uses it.
@@ -2921,7 +2933,8 @@ export const MapCanvas = memo(function MapCanvas({
     (initial?: SchematicViewState) => {
       if (deckRef.current || !deckCanvasRef.current) return deckRef.current;
       const initialViewState =
-        initial ?? orthoCenterFromMap(renderCoordsRef.current);
+        initial ??
+        orthoCenterFromMap(renderCoordsRef.current, surfaceBoundsRef.current);
       viewStateRef.current = initialViewState;
       const deck = new Deck({
         // Our own canvas, not one deck makes for us. `deck.getCanvas()`
@@ -3031,6 +3044,7 @@ export const MapCanvas = memo(function MapCanvas({
     if (nodesRef.current.length > 0) {
       fitMapExtents(nodesRef.current, map, {
         padding: visibleMapPadding(map),
+        extra: surfaceBoundsRef.current,
       });
     }
 
@@ -3090,6 +3104,7 @@ export const MapCanvas = memo(function MapCanvas({
         }
         fitMapExtents(nodesRef.current, map, {
           padding: visibleMapPadding(map),
+          extra: surfaceBoundsRef.current,
         });
         return;
       }
@@ -3303,7 +3318,7 @@ export const MapCanvas = memo(function MapCanvas({
 
     const vs = plan.useSaved
       ? (savedOrthoViewRef.current[plan.space] as SchematicViewState)
-      : orthoCenterFromMap(renderCoords);
+      : orthoCenterFromMap(renderCoords, surfaceBoundsRef.current);
 
     // Framed before the deck exists, so the deck can be born looking at the
     // right place rather than corrected a frame later.
@@ -3485,6 +3500,7 @@ export const MapCanvas = memo(function MapCanvas({
         } else {
           fitMapExtents(nodesRef.current, map, {
             padding: visibleMapPadding(map),
+            extra: surfaceBoundsRef.current,
           });
         }
       }
@@ -3520,7 +3536,10 @@ export const MapCanvas = memo(function MapCanvas({
     if (viewMode === "schematic") {
       const deck = ensureDeck();
       if (!deck) return;
-      const { target, zoom } = orthoCenterFromMap(renderCoords);
+      const { target, zoom } = orthoCenterFromMap(
+        renderCoords,
+        surfaceBoundsRef.current,
+      );
       const to: SchematicViewState = { target, zoom };
 
       // deck flies it. This was a hand-rolled frame loop, because a
@@ -3537,10 +3556,11 @@ export const MapCanvas = memo(function MapCanvas({
     } else {
       const map = mapRef.current;
       if (!map) return;
-      const bounds = geoBounds(nodes);
+      const bounds = geoBounds(nodes, surfaceBoundsRef.current);
       if (bounds) {
         fitMapExtents(nodes, map, {
           padding: visibleMapPadding(map),
+          extra: surfaceBoundsRef.current,
           animate,
           duration: FIT_DURATION_MS,
         });

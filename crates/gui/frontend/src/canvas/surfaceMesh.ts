@@ -55,6 +55,10 @@ export interface SurfacePolygonData {
   attributes: {
     getPolygon: { value: Float64Array; size: 2 };
   };
+  /** The mesh's projected extent, `[minX, minY, maxX, maxY]`, so a
+   * camera fit can frame the surface and not only the network it
+   * accompanies. `null` for a mesh with no cells. */
+  bounds: [number, number, number, number] | null;
 }
 
 /**
@@ -70,6 +74,10 @@ export function surfacePolygonData(
   const { nCells, positions, triangles } = geometry;
   const value = new Float64Array(6 * nCells);
   const startIndices = new Uint32Array(nCells);
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
   for (let ci = 0; ci < nCells; ci++) {
     startIndices[ci] = 3 * ci;
     for (let k = 0; k < 3; k++) {
@@ -77,12 +85,20 @@ export function surfacePolygonData(
       const [x, y] = project(positions[3 * vi], positions[3 * vi + 1]);
       value[6 * ci + 2 * k] = x;
       value[6 * ci + 2 * k + 1] = y;
+      // Taken here rather than from the vertices: the extent that
+      // matters is the one on screen, after projection, and an unused
+      // vertex is not on screen.
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
   }
   return {
     length: nCells,
     startIndices,
     attributes: { getPolygon: { value, size: 2 } },
+    bounds: nCells > 0 ? [minX, minY, maxX, maxY] : null,
   };
 }
 

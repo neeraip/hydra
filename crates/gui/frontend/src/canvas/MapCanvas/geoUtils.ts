@@ -4,10 +4,22 @@ import * as maplibregl from "maplibre-gl";
 import type { Node } from "../../hooks";
 
 /** Bounding box of all node coordinates. Returns null when nodes is empty. */
+/**
+ * A projected bounding box, `[minX, minY, maxX, maxY]`, for drawn
+ * geometry that is not a node — today the 2D overland mesh.
+ *
+ * A camera fit that reads only nodes frames the pipes, not the picture.
+ * An overland mesh routinely covers ground the network does not, which
+ * is the whole reason it exists, so fitting to the nodes cropped the
+ * surface off the edges of the very view meant to show everything.
+ */
+export type PlanBounds = [number, number, number, number];
+
 export function geoBounds(
   nodes: Node[],
+  extra?: PlanBounds | null,
 ): [[number, number], [number, number]] | null {
-  if (nodes.length === 0) return null;
+  if (nodes.length === 0 && !extra) return null;
   // Iterative min/max avoids Math.min(...spread) which stack-overflows on
   // large networks (> ~100k nodes) because of JS argument-count limits.
   // Nodes with x===0 && y===0 are the backend sentinel for "no [COORDINATES]"
@@ -24,6 +36,15 @@ export function geoBounds(
     if (n.x > maxLon) maxLon = n.x;
     if (n.y < minLat) minLat = n.y;
     if (n.y > maxLat) maxLat = n.y;
+  }
+  if (extra) {
+    // Real geometry, so it is merged whatever the nodes said — a mesh
+    // with no placed nodes beside it still has an extent to frame.
+    seen = true;
+    if (extra[0] < minLon) minLon = extra[0];
+    if (extra[2] > maxLon) maxLon = extra[2];
+    if (extra[1] < minLat) minLat = extra[1];
+    if (extra[3] > maxLat) maxLat = extra[3];
   }
   if (!seen) return null;
   // Expand degenerate single-point bounds so cameraForBounds doesn't over-zoom.
@@ -87,9 +108,11 @@ export function fitMapExtents(
      *  travelled, which across a national network is several seconds. */
     duration?: number;
     padding?: maplibregl.PaddingOptions;
+    /** Drawn geometry beyond the nodes (the 2D mesh); see `PlanBounds`. */
+    extra?: PlanBounds | null;
   } = {},
 ): void {
-  const bounds = geoBounds(nodes);
+  const bounds = geoBounds(nodes, opts.extra);
   if (!bounds) return;
   // Silently bail when coordinates are outside WGS84 range (e.g. UTM).
   const [[minLon, minLat], [maxLon, maxLat]] = bounds;
@@ -117,11 +140,14 @@ export function fitMapExtents(
   }
 }
 
-export function orthoCenterFromMap(coords: Map<string, [number, number]>): {
+export function orthoCenterFromMap(
+  coords: Map<string, [number, number]>,
+  extra?: PlanBounds | null,
+): {
   target: [number, number, number];
   zoom: number;
 } {
-  if (coords.size === 0) return { target: [0, 0, 0], zoom: 0 };
+  if (coords.size === 0 && !extra) return { target: [0, 0, 0], zoom: 0 };
   let minX = Infinity,
     maxX = -Infinity,
     minY = Infinity,
@@ -131,6 +157,12 @@ export function orthoCenterFromMap(coords: Map<string, [number, number]>): {
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
+  }
+  if (extra) {
+    if (extra[0] < minX) minX = extra[0];
+    if (extra[2] > maxX) maxX = extra[2];
+    if (extra[1] < minY) minY = extra[1];
+    if (extra[3] > maxY) maxY = extra[3];
   }
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;

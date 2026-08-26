@@ -114,6 +114,7 @@ describe("HoverChip over a surface cell", () => {
       attributes: {
         getPolygon: { value: new Float64Array(18), size: 2 as const },
       },
+      bounds: null,
     },
     edges: {
       length: 0,

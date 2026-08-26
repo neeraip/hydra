@@ -36,6 +36,7 @@ const surface = {
     attributes: {
       getPolygon: { value: new Float64Array(6), size: 2 as const },
     },
+    bounds: null,
   },
   edges: {
     length: 0,
