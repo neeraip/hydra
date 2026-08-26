@@ -85,7 +85,9 @@ export function surfaceFillColors(
       values[ci],
       variable,
       SURFACE_ALPHA,
-      "region",
+      // The surface's own hue family — the same key the legend samples,
+      // so the swatch and the map cannot disagree.
+      "surface",
     );
     for (let k = 0; k < 3; k++) {
       const at = 12 * ci + 4 * k;

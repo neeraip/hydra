@@ -50,6 +50,14 @@ const SEQ_FAMILIES: Record<string, SeqFamily> = {
     [47, 143, 82],
     [200, 245, 207],
   ],
+  /** The 2D overland surface: water teal — reads as water, and sits far
+   * enough from the node blue that a depth-coloured junction stays
+   * legible on a flooded pad. */
+  surface: [
+    [7, 42, 58],
+    [23, 130, 152],
+    [196, 246, 250],
+  ],
 };
 
 /**

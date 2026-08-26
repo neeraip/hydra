@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
+import { seqRgb } from "./MapCanvas/colorUtils";
 import {
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
@@ -81,6 +82,20 @@ describe("surfaceFillColors", () => {
     );
     expect(colors[3]).toBe(SURFACE_ALPHA);
     expect(colors[15]).toBe(0);
+  });
+
+  // The legend samples the ramp by class key; the map must paint from
+  // the same family or the swatch describes colours that are not on
+  // screen. Pinned against seqRgb("surface") itself, not a copy.
+  it("colours through the surface family the legend samples", () => {
+    const colors = surfaceFillColors(
+      new Float32Array([1]),
+      new Float32Array([1]),
+      depthVar,
+    );
+    expect(Array.from(colors.slice(0, 3))).toEqual(seqRgb(1, "surface"));
+    expect(Array.from(colors.slice(0, 3))).not.toEqual(seqRgb(1, "region"));
+    expect(Array.from(colors.slice(0, 3))).not.toEqual(seqRgb(1, "point"));
   });
 
   it("distinct values take distinct ramp colours", () => {
