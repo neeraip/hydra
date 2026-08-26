@@ -117,7 +117,7 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
-import { meshEdgesLegible, pixelsPerUnit } from "./surfaceMesh";
+import { meshEdgesLegible, pixelsPerUnit, valueAtPoint } from "./surfaceMesh";
 import {
   pathIntersectsBox,
   pointInBox,
@@ -1992,9 +1992,28 @@ export const MapCanvas = memo(function MapCanvas({
           _normalize: false,
           coordinateSystem: coordSystem,
           pickable: surfacePickable,
-          onHover: (info: { index?: number; x?: number; y?: number }) => {
+          onHover: (info: {
+            index?: number;
+            x?: number;
+            y?: number;
+            coordinate?: number[];
+          }) => {
             if (!surfacePickable) return;
             const ci = info.index ?? -1;
+            // A smooth surface varies inside its cells, so the pointer
+            // reads the value where it actually is rather than the one
+            // number the whole cell would otherwise report.
+            const at =
+              surface.vertexValues && info.coordinate
+                ? (valueAtPoint(
+                    surface.geometry,
+                    surface.data,
+                    surface.vertexValues,
+                    ci,
+                    info.coordinate[0],
+                    info.coordinate[1],
+                  ) ?? undefined)
+                : undefined;
             setHoverTip((prev) =>
               ci >= 0 && info.x != null && info.y != null
                 ? {
@@ -2004,6 +2023,7 @@ export const MapCanvas = memo(function MapCanvas({
                     type: "surface",
                     si: ci,
                     id: `Cell ${ci}`,
+                    value: at,
                   }
                 : prev?.kind === "surface"
                   ? null

@@ -305,3 +305,144 @@ export function surfaceGroundValues(geometry: SurfaceGeometry): Float32Array {
   }
   return out;
 }
+
+// ── Smooth shading ───────────────────────────────────────────────────────────
+//
+// A cell is the solver's unit of state, so a run's values are painted
+// flat: one colour per cell, claiming nothing between centres. The
+// ground is different — the mesh stores it *at the vertices*, and the
+// flat fill is this renderer averaging it away. Smooth shading gives
+// each vertex its own colour and lets the triangle interpolate, which
+// for the ground is the more faithful picture and for a result is a
+// stated smoothing of one.
+
+/**
+ * The ground at each vertex, exactly as the mesh stores it — no
+ * averaging, no invention.
+ */
+export function groundAtVertices(geometry: SurfaceGeometry): Float32Array {
+  const { nVertices, positions } = geometry;
+  const out = new Float32Array(nVertices);
+  for (let v = 0; v < nVertices; v++) out[v] = positions[3 * v + 2];
+  return out;
+}
+
+/**
+ * A per-cell field carried to the vertices, each vertex taking the mean
+ * of the cells that meet there.
+ *
+ * This is an interpolation, and the caller is asserting that a smoothed
+ * picture is what it wants: the solver never said the value varies
+ * inside a cell.
+ */
+export function cellValuesAtVertices(
+  geometry: SurfaceGeometry,
+  cellValues: Float32Array,
+): Float32Array {
+  const { nVertices, nCells, triangles } = geometry;
+  const sum = new Float64Array(nVertices);
+  const count = new Uint32Array(nVertices);
+  for (let ci = 0; ci < nCells; ci++) {
+    const v = cellValues[ci];
+    for (let k = 0; k < 3; k++) {
+      const vi = triangles[3 * ci + k];
+      sum[vi] += v;
+      count[vi] += 1;
+    }
+  }
+  const out = new Float32Array(nVertices);
+  for (let vi = 0; vi < nVertices; vi++) {
+    out[vi] = count[vi] > 0 ? sum[vi] / count[vi] : 0;
+  }
+  return out;
+}
+
+/**
+ * Per-triangle-vertex RGBA from values held at the vertices: each
+ * vertex takes its own colour and the triangle interpolates between
+ * them, so the mesh reads as one surface rather than a mosaic.
+ *
+ * `depthAtVertices` masks as the flat path's depth does, but per vertex,
+ * which puts the waterline inside the cells it crosses instead of on
+ * the cell boundaries.
+ */
+export function surfaceSmoothColors(
+  geometry: SurfaceGeometry,
+  vertexValues: Float32Array,
+  depthAtVertices: Float32Array | null,
+  variable: GenericVariable,
+): Uint8Array {
+  const { nCells, triangles } = geometry;
+  const out = new Uint8Array(12 * nCells);
+  for (let ci = 0; ci < nCells; ci++) {
+    for (let k = 0; k < 3; k++) {
+      const vi = triangles[3 * ci + k];
+      if (
+        depthAtVertices != null &&
+        !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M)
+      ) {
+        continue; // alpha stays 0
+      }
+      const [r, g, b, a] = genericRgba(
+        vertexValues[vi],
+        variable,
+        SURFACE_ALPHA,
+        "surface",
+      );
+      const at = 12 * ci + 4 * k;
+      out[at] = r;
+      out[at + 1] = g;
+      out[at + 2] = b;
+      out[at + 3] = a;
+    }
+  }
+  return out;
+}
+
+/**
+ * The value at a point inside a cell, interpolated from the cell's own
+ * vertices — what the smooth picture is showing under the cursor,
+ * rather than the one number the whole cell would otherwise report.
+ *
+ * `x, y` are in the projected space the polygons were built in. Weights
+ * are clamped and renormalised so a point on an edge, or a hair outside
+ * it from picking tolerance, still answers.
+ */
+export function valueAtPoint(
+  geometry: SurfaceGeometry,
+  polygons: SurfacePolygonData,
+  vertexValues: Float32Array,
+  cellIndex: number,
+  x: number,
+  y: number,
+): number | null {
+  if (cellIndex < 0 || cellIndex >= geometry.nCells) return null;
+  const p = polygons.attributes.getPolygon.value;
+  const at = 6 * cellIndex;
+  const x0 = p[at];
+  const y0 = p[at + 1];
+  const x1 = p[at + 2];
+  const y1 = p[at + 3];
+  const x2 = p[at + 4];
+  const y2 = p[at + 5];
+  const det = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+  if (!Number.isFinite(det) || det === 0) return null;
+  let w0 = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / det;
+  let w1 = ((y2 - y0) * (x - x2) + (x0 - x2) * (y - y2)) / det;
+  w0 = Math.min(1, Math.max(0, w0));
+  w1 = Math.min(1, Math.max(0, w1));
+  let w2 = 1 - w0 - w1;
+  if (w2 < 0) {
+    // The clamp pushed the point off the triangle; renormalise onto it.
+    const s = w0 + w1;
+    w0 /= s;
+    w1 /= s;
+    w2 = 0;
+  }
+  const t = geometry.triangles;
+  return (
+    w0 * vertexValues[t[3 * cellIndex]] +
+    w1 * vertexValues[t[3 * cellIndex + 1]] +
+    w2 * vertexValues[t[3 * cellIndex + 2]]
+  );
+}

@@ -300,6 +300,8 @@ export function GenericLegend({
   meta,
   hasRegions,
   surfaceVars,
+  surfaceSmooth = false,
+  onSurfaceSmoothChange,
   selection,
   onSelect,
   scaleMode,
@@ -325,6 +327,10 @@ export function GenericLegend({
    * mesh runs. Separate from `meta`: mesh cells are engine state, not
    * catalogued elements. Absent or empty = no surface class shown. */
   surfaceVars?: GenericVariable[];
+  /** Whether the 2D surface is drawn as a continuous field, and how to
+   * change it. Absent when there is no surface on the canvas. */
+  surfaceSmooth?: boolean;
+  onSurfaceSmoothChange?: (on: boolean) => void;
   selection: GenericSelection;
   onSelect: (cls: GenericClassKey, id: string) => void;
   /** What the ramps are scaled against. */
@@ -776,26 +782,67 @@ export function GenericLegend({
           </div>
         </button>
         <div className="tool-divider" />
-        {classes.map((c) => (
-          <PickerButton
-            key={c.key}
-            value={selected(c).id}
-            options={c.variables.map((v) => ({
-              value: v.id,
-              label: optionLabel(v, sys),
-            }))}
-            icon={c.glyph}
-            pickerLabel={c.pickerLabel}
-            animating={classIsAnimating(animation, selected(c).id)}
-            dimmed={classIsHidden(c.key, canvasLayers)}
-            isOpen={openPicker === c.key}
-            onToggle={() => setOpenPicker((p) => (p === c.key ? null : c.key))}
-            onSelect={(id) => {
-              onSelect(c.key, id);
-              setOpenPicker(null);
+        {/* A class with one variable has nothing to pick: the ramp
+            popover still explains its colours, but a dropdown that can
+            only reselect what is already shown is furniture. */}
+        {classes
+          .filter((c) => c.variables.length > 1)
+          .map((c) => (
+            <PickerButton
+              key={c.key}
+              value={selected(c).id}
+              options={c.variables.map((v) => ({
+                value: v.id,
+                label: optionLabel(v, sys),
+              }))}
+              icon={c.glyph}
+              pickerLabel={c.pickerLabel}
+              animating={classIsAnimating(animation, selected(c).id)}
+              dimmed={classIsHidden(c.key, canvasLayers)}
+              isOpen={openPicker === c.key}
+              onToggle={() =>
+                setOpenPicker((p) => (p === c.key ? null : c.key))
+              }
+              onSelect={(id) => {
+                onSelect(c.key, id);
+                setOpenPicker(null);
+              }}
+            />
+          ))}
+        {/* Beside the animation toggle, because it is the same kind of
+            control: how the picture is drawn, not what it shows. */}
+        {onSurfaceSmoothChange && (
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => onSurfaceSmoothChange(!surfaceSmooth)}
+            aria-label="Smooth the 2D surface"
+            aria-pressed={surfaceSmooth}
+            data-tooltip={
+              surfaceSmooth
+                ? "Draw the surface cell by cell"
+                : "Blend the surface between cells"
+            }
+            data-tooltip-pos="top"
+            style={{
+              ...PICKER_BTN_STYLE,
+              padding: "4px 7px",
+              borderRadius: 6,
+              color: surfaceSmooth ? "var(--accent)" : "var(--text-secondary)",
             }}
-          />
-        ))}
+          >
+            <span
+              aria-hidden
+              style={{
+                display: "block",
+                width: 12,
+                height: 9,
+                borderRadius: 2,
+                background: "linear-gradient(90deg, currentColor, transparent)",
+              }}
+            />
+          </button>
+        )}
         {animation &&
           (() => {
             // Only a global "reduce motion" can refuse the wish; which

@@ -75,12 +75,44 @@ describe("GenericLegend", () => {
   // The surface class exists exactly when the run produced a surface:
   // its variables arrive from the surface provider, not the element
   // meta, and an empty list must not leave an empty section behind.
-  it("offers the surface class only when surface variables exist", () => {
+  // A class with one variable has nothing to pick, so it gets no
+  // dropdown — but its colours are still explained in the popover,
+  // which is what a legend is for.
+  it("explains a lone surface variable without offering a picker", () => {
     renderLegend({
-      surfaceVars: [v({ id: "depth", label: "Water depth" })],
+      surfaceVars: [v({ id: "ground", label: "Ground" })],
     });
-    expect(screen.getAllByText("Water depth").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Ground").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Surface variable")).toBeNull();
+  });
+
+  it("offers a picker once the surface has a choice to make", () => {
+    renderLegend({
+      surfaceVars: [
+        v({ id: "ground", label: "Ground" }),
+        v({ id: "depth", label: "Water depth" }),
+      ],
+    });
     expect(screen.getByLabelText("Surface variable")).toBeTruthy();
+  });
+
+  // How the surface is drawn, beside the animation toggle, because it
+  // is the same kind of control: not what is shown, but how.
+  it("offers the smoothing toggle only where there is a surface", () => {
+    const onSurfaceSmoothChange = vi.fn();
+    renderLegend({
+      surfaceVars: [v({ id: "ground", label: "Ground" })],
+      onSurfaceSmoothChange,
+    });
+    const btn = screen.getByLabelText("Smooth the 2D surface");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(btn);
+    expect(onSurfaceSmoothChange).toHaveBeenCalledWith(true);
+  });
+
+  it("hides the smoothing toggle when no surface is drawn", () => {
+    renderLegend();
+    expect(screen.queryByLabelText("Smooth the 2D surface")).toBeNull();
   });
 
   it("shows no surface section without surface variables", () => {

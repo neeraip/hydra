@@ -18,6 +18,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
+  cellValuesAtVertices,
+  groundAtVertices,
   type SurfaceEdgeData,
   type SurfacePolygonData,
   surfaceEdgeData,
@@ -25,6 +27,7 @@ import {
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
+  surfaceSmoothColors,
 } from "../../../canvas/surfaceMesh";
 import { type GenericVariable, selectedVariable } from "../../../hooks/results";
 import {
@@ -53,6 +56,9 @@ export interface CanvasSurface {
    * outlines were right and whose fill had vanished.
    */
   key: string;
+  /** The mesh itself, for readings that need its topology (the value
+   * under a pointer, interpolated from the cell's own vertices). */
+  geometry: SurfaceGeometry;
   data: SurfacePolygonData;
   /** The mesh's own structure, drawn where its cells are big enough on
    * screen to be told apart (the canvas decides, per camera). */
@@ -63,6 +69,10 @@ export interface CanvasSurface {
   variable: GenericVariable | null;
   /** That variable's per-cell SI values, `null` alongside `variable`. */
   values: Float32Array | null;
+  /** The same field carried to the vertices, present only while the
+   * surface is drawn smooth. It is what the picture interpolates, so it
+   * is also what the pointer reads. */
+  vertexValues: Float32Array | null;
 }
 
 export function useSurfaceResults({
@@ -74,6 +84,7 @@ export function useSurfaceResults({
   reprojToken,
   enabled,
   variableId,
+  smooth,
   networkToken,
 }: {
   projectId: string | null;
@@ -92,6 +103,8 @@ export function useSurfaceResults({
   enabled: boolean;
   /** Selected surface variable id ("" = the catalog's first, depth). */
   variableId?: string;
+  /** Draw the field continuous rather than one flat colour per cell. */
+  smooth?: boolean;
   /** Identity of the loaded network: a new one is a new mesh question. */
   networkToken: unknown;
 }): {
@@ -236,14 +249,18 @@ export function useSurfaceResults({
             meta,
             periodData,
             variableId,
+            smooth,
           )
         : null,
-    [geometry, meshInfo, meta, periodData, variableId],
+    [geometry, meshInfo, meta, periodData, variableId, smooth],
   );
 
   const surface = useMemo(
-    () => (projected && shown ? { ...projected, ...shown } : null),
-    [projected, shown],
+    () =>
+      projected && shown && geometry
+        ? { geometry, ...projected, ...shown }
+        : null,
+    [geometry, projected, shown],
   );
   const surfaceVariables = useMemo(
     () =>
@@ -293,33 +310,50 @@ export function shownSurface(
   meta: SurfaceMeta | null,
   periodData: SurfacePeriod | null,
   variableId?: string,
+  /** Draw the field as a continuous surface rather than a mosaic. */
+  smooth = false,
 ): {
   variable: GenericVariable | null;
   values: Float32Array | null;
+  vertexValues: Float32Array | null;
   colors: Uint8Array;
 } {
+  const footprint = {
+    variable: null,
+    values: null,
+    vertexValues: null,
+    colors: surfaceFootprintColors(geometry.nCells),
+  };
+
   // Resolved over the same list, by the same rule, as the legend that
   // names it — see `surfaceVariableList` and `selectedVariable`.
   const variable = selectedVariable(
     surfaceVariableList(geometry, properties, meta),
     variableId,
   );
-  if (!variable) {
-    return {
-      variable: null,
-      values: null,
-      colors: surfaceFootprintColors(geometry.nCells),
-    };
-  }
+  if (!variable) return footprint;
 
   // A result is a variable the instant has a column for; anything else
   // is a property of the mesh, and the ground is the one there is.
   const column = periodData ? surfaceColumn(periodData, variable.id) : null;
   if (column && periodData) {
+    if (!smooth) {
+      return {
+        variable,
+        values: column,
+        vertexValues: null,
+        colors: surfaceFillColors(column, periodData.depth, variable),
+      };
+    }
+    // A result smoothed is a stated interpolation: the solver holds one
+    // value per cell and says nothing about the inside of one.
+    const vertexValues = cellValuesAtVertices(geometry, column);
+    const wet = cellValuesAtVertices(geometry, periodData.depth);
     return {
       variable,
       values: column,
-      colors: surfaceFillColors(column, periodData.depth, variable),
+      vertexValues,
+      colors: surfaceSmoothColors(geometry, vertexValues, wet, variable),
     };
   }
 
@@ -329,11 +363,17 @@ export function shownSurface(
   // another. Fall to the ground under its own name instead.
   const property = properties.find((v) => v.id === variable.id);
   const shown = property ?? properties[0];
-  if (!shown) {
+  if (!shown) return footprint;
+
+  if (smooth) {
+    // The ground needs no averaging: the mesh holds it at the vertices,
+    // and the flat fill was this renderer throwing that away.
+    const vertexValues = groundAtVertices(geometry);
     return {
-      variable: null,
-      values: null,
-      colors: surfaceFootprintColors(geometry.nCells),
+      variable: shown,
+      values: surfaceGroundValues(geometry),
+      vertexValues,
+      colors: surfaceSmoothColors(geometry, vertexValues, null, shown),
     };
   }
   const values = surfaceGroundValues(geometry);
@@ -341,6 +381,7 @@ export function shownSurface(
   return {
     variable: shown,
     values,
+    vertexValues: null,
     colors: surfaceFillColors(values, null, shown),
   };
 }

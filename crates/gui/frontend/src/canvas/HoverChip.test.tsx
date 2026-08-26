@@ -109,6 +109,12 @@ describe("HoverChip over an areal element", () => {
 describe("HoverChip over a surface cell", () => {
   const surface = {
     key: "test",
+    geometry: {
+      nVertices: 3,
+      nCells: 1,
+      positions: new Float64Array(9),
+      triangles: new Uint32Array([0, 1, 2]),
+    },
     data: {
       length: 3,
       startIndices: new Uint32Array([0, 3, 6]),
@@ -126,6 +132,7 @@ describe("HoverChip over a surface cell", () => {
       medianLength: 0,
     },
     colors: new Uint8Array(36),
+    vertexValues: null,
     variable: channel([], "depth").variable,
     values: Float32Array.from([0.1, 1.375, 0.4]),
   };
@@ -157,6 +164,23 @@ describe("HoverChip over a surface cell", () => {
       tip: tip({ kind: "link", type: "conduit", si: 1, id: "C2" }),
       surface,
     });
+    expect(screen.queryByText(/1\.375/)).toBeNull();
+  });
+
+  // A smooth surface varies inside its cells, so the pointer's own
+  // reading is the honest one and it wins over the cell's single value.
+  it("prefers the value read at the pointer", () => {
+    chip({
+      tip: tip({
+        kind: "surface",
+        type: "surface",
+        si: 1,
+        id: "Cell 1",
+        value: 12.5,
+      }),
+      surface,
+    });
+    expect(screen.getByText(/12\.5/)).toBeTruthy();
     expect(screen.queryByText(/1\.375/)).toBeNull();
   });
 

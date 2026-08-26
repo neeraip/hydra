@@ -26,6 +26,10 @@ export interface HoverTip {
   type: string;
   si: number;
   id: string;
+  /** The value at the pointer, where the pointer's own position decides
+   * it rather than the element it is over — a smoothed surface varies
+   * inside its cells. SI, formatted by the variable's own quantity. */
+  value?: number;
 }
 
 function hoverTipValue(
@@ -100,8 +104,9 @@ function surfaceTipValue(
 ): string | null {
   // A footprint carries no values: the cell is real and has no number
   // yet, which the chip says by naming the cell and stopping there.
-  if (surface.variable == null || surface.values == null) return null;
-  const v = surface.values[tip.si];
+  if (surface.variable == null) return null;
+  // The pointer's own reading wins where there is one.
+  const v = tip.value ?? (surface.values ? surface.values[tip.si] : null);
   if (v == null || !Number.isFinite(v)) return null;
   return formatGenericValue(v, surface.variable.quantity, sys);
 }

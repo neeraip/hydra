@@ -107,6 +107,12 @@ export interface CanvasPrefs {
    * falls back to the first variable when an id is not in it.
    */
   genericSelection: GenericSelection;
+  /** Draw the 2D surface as a continuous field rather than one flat
+   * colour per cell. A reading choice, so it is remembered with the
+   * others: the ground is stored at the mesh's vertices and smoothing
+   * shows it as stored, while a result smoothed is an interpolation of
+   * values the solver holds per cell. */
+  surfaceSmooth: boolean;
 }
 
 /**
@@ -134,6 +140,7 @@ export const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   },
   legendOpen: false,
   genericSelection: { point: "", polyline: "", region: "", surface: "" },
+  surfaceSmooth: false,
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -315,6 +322,7 @@ export function resolveCanvasPrefs(
     scaleMode: readScaleMode(stored),
     criteriaScale: readCriteriaScale(stored),
     legendOpen: pick("legendOpen", (v) => typeof v === "boolean"),
+    surfaceSmooth: pick("surfaceSmooth", (v) => typeof v === "boolean"),
     nodeVar,
     linkVar,
     genericSelection: {

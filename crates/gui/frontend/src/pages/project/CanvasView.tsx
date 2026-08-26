@@ -535,6 +535,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     [],
   );
   const [legendOpen, setLegendOpen] = useState(CANVAS_PREF_DEFAULTS.legendOpen);
+  const [surfaceSmooth, setSurfaceSmooth] = useState(
+    CANVAS_PREF_DEFAULTS.surfaceSmooth,
+  );
   const [genericSelection, setGenericSelection] = useState<GenericSelection>(
     CANVAS_PREF_DEFAULTS.genericSelection,
   );
@@ -660,6 +663,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setScaleMode(prefs.scaleMode);
     setCriteriaScale(prefs.criteriaScale);
     setLegendOpen(prefs.legendOpen);
+    setSurfaceSmooth(prefs.surfaceSmooth);
     setGenericSelection(prefs.genericSelection);
     setSchematicAspect(prefs.schematicAspect);
     setNodeScale(prefs.nodeScale);
@@ -689,6 +693,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       criteriaScale,
       legendOpen,
       genericSelection,
+      surfaceSmooth,
     };
     writeCanvasPrefs(id, prefs);
   }, [
@@ -705,6 +710,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     scaleMode,
     criteriaScale,
     legendOpen,
+    surfaceSmooth,
     genericSelection,
   ]);
 
@@ -1963,6 +1969,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // local grid's orthographic view keeps real ones and qualifies.
     enabled: placeable && viewMode !== "schematic",
     variableId: genericSelection.surface,
+    smooth: surfaceSmooth,
     // A different network is a different mesh question; the array's
     // identity changes whenever one is loaded.
     networkToken: baseNodes,
@@ -2491,6 +2498,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // The very list the canvas resolves its own colours over,
               // so the legend can only ever name what is on the map.
               surfaceVars={surfaceVariables}
+              surfaceSmooth={surfaceSmooth}
+              onSurfaceSmoothChange={
+                canvasSurface ? setSurfaceSmooth : undefined
+              }
               selection={genericSelection}
               onSelect={handleGenericSelect}
               scaleMode={scaleMode}

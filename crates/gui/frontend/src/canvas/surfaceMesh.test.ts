@@ -8,6 +8,8 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
+  cellValuesAtVertices,
+  groundAtVertices,
   MESH_EDGE_MIN_PIXELS,
   meshEdgesLegible,
   pixelsPerUnit,
@@ -19,6 +21,8 @@ import {
   surfaceFootprintColors,
   surfaceGroundValues,
   surfacePolygonData,
+  surfaceSmoothColors,
+  valueAtPoint,
 } from "./surfaceMesh";
 
 const geometry: SurfaceGeometry = {
@@ -246,5 +250,89 @@ describe("the water mask", () => {
     const colors = surfaceFillColors(new Float32Array([1, 1]), null, v);
     expect(colors[3]).toBe(SURFACE_ALPHA);
     expect(colors[15]).toBe(SURFACE_ALPHA);
+  });
+});
+
+describe("smooth shading", () => {
+  // The unit square split on its diagonal, with a distinct height at
+  // each corner.
+  const g: SurfaceGeometry = {
+    nVertices: 4,
+    nCells: 2,
+    positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
+    triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  };
+
+  // The mesh stores the ground at its vertices. Smoothing shows it as
+  // stored: no averaging, nothing invented.
+  it("takes the ground from the vertices exactly", () => {
+    expect(Array.from(groundAtVertices(g))).toEqual([10, 11, 14, 13]);
+  });
+
+  // A result is held per cell, so carrying it to the vertices *is* an
+  // interpolation, and each vertex takes the mean of the cells at it.
+  it("carries a per-cell field to the vertices by the mean", () => {
+    const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
+    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; vertices
+    // 0 and 2 are shared by both.
+    expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
+  });
+
+  it("gives each vertex of a cell its own colour", () => {
+    const v: GenericVariable = {
+      id: "ground",
+      label: "Ground",
+      ramp: { type: "sequential" },
+      min: 10,
+      max: 14,
+    };
+    const colors = surfaceSmoothColors(g, groundAtVertices(g), null, v);
+    const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
+    // Cell 0's three vertices sit at 10, 11 and 14: three colours, not
+    // one repeated, which is what makes the triangle interpolate.
+    expect(rgb(0)).not.toEqual(rgb(1));
+    expect(rgb(1)).not.toEqual(rgb(2));
+    // A vertex shared by both cells is painted the same in each, or the
+    // surface would seam along the diagonal.
+    expect(rgb(0)).toEqual(rgb(3)); // vertex 0 in cell 0 and cell 1
+    expect(rgb(2)).toEqual(rgb(4)); // vertex 2 in both
+  });
+});
+
+describe("valueAtPoint", () => {
+  const g: SurfaceGeometry = {
+    nVertices: 3,
+    nCells: 1,
+    positions: new Float64Array([0, 0, 10, 10, 0, 20, 0, 10, 30]),
+    triangles: new Uint32Array([0, 1, 2]),
+  };
+  const polygons = surfacePolygonData(g);
+  const z = groundAtVertices(g);
+
+  it("reads each corner as its own value", () => {
+    expect(valueAtPoint(g, polygons, z, 0, 0, 0)).toBeCloseTo(10, 6);
+    expect(valueAtPoint(g, polygons, z, 0, 10, 0)).toBeCloseTo(20, 6);
+    expect(valueAtPoint(g, polygons, z, 0, 0, 10)).toBeCloseTo(30, 6);
+  });
+
+  it("interpolates between them", () => {
+    // The centroid is the mean of the three.
+    expect(valueAtPoint(g, polygons, z, 0, 10 / 3, 10 / 3)).toBeCloseTo(20, 6);
+    // Halfway along the base is halfway between its ends.
+    expect(valueAtPoint(g, polygons, z, 0, 5, 0)).toBeCloseTo(15, 6);
+  });
+
+  // Picking has a tolerance, so the pointer can land a hair outside the
+  // triangle it picked; that must still answer, from the edge.
+  it("answers just outside the triangle rather than refusing", () => {
+    const v = valueAtPoint(g, polygons, z, 0, 5.2, -0.2);
+    expect(v).not.toBeNull();
+    expect(v as number).toBeGreaterThanOrEqual(10);
+    expect(v as number).toBeLessThanOrEqual(30);
+  });
+
+  it("refuses a cell that is not there", () => {
+    expect(valueAtPoint(g, polygons, z, 1, 0, 0)).toBeNull();
+    expect(valueAtPoint(g, polygons, z, -1, 0, 0)).toBeNull();
   });
 });

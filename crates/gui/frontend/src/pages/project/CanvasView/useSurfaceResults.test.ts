@@ -227,3 +227,54 @@ describe("the legend and the canvas agree on what is shown", () => {
     expect(ids(null)).toEqual(["ground"]);
   });
 });
+
+/**
+ * Smoothing says something different about a property than about a
+ * result, and the difference is worth keeping straight: the mesh holds
+ * the ground at its vertices, so smoothing shows it as stored, while a
+ * result lives per cell and smoothing it is an interpolation the solver
+ * never made.
+ */
+describe("the smooth surface", () => {
+  it("takes the ground from the vertices, not from cell means", () => {
+    const g = geometry(4);
+    const shown = shownSurface(g, GROUND, null, null, "ground", true);
+    expect(shown.vertexValues?.length).toBe(g.nVertices);
+    // Vertex 0's own z, untouched by any averaging.
+    expect(shown.vertexValues?.[0]).toBeCloseTo(g.positions[2], 6);
+  });
+
+  it("carries a run's values to the vertices as a stated mean", () => {
+    const shown = shownSurface(
+      geometry(4),
+      GROUND,
+      meta(4),
+      period(4),
+      "speed",
+      true,
+    );
+    expect(shown.variable?.id).toBe("speed");
+    expect(shown.vertexValues?.length).toBe(geometry(4).nVertices);
+    // Every cell reads 0.25, so every vertex does too.
+    expect(Array.from(shown.vertexValues ?? []).every((v) => v === 0.25)).toBe(
+      true,
+    );
+  });
+
+  it("holds no vertex values while the surface is drawn flat", () => {
+    const flat = shownSurface(geometry(4), GROUND, null, null, "ground", false);
+    expect(flat.vertexValues).toBeNull();
+    // The per-cell field is there either way: it is what the flat
+    // picture paints and what a flat hover reads.
+    expect(flat.values?.length).toBe(4);
+  });
+
+  it("still names what the legend names", () => {
+    for (const id of ["", "ground", "depth"]) {
+      const g = geometry(4);
+      const flat = shownSurface(g, GROUND, meta(4), period(4), id, false);
+      const smooth = shownSurface(g, GROUND, meta(4), period(4), id, true);
+      expect(smooth.variable?.id).toBe(flat.variable?.id);
+    }
+  });
+});

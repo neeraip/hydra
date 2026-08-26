@@ -31,6 +31,12 @@ function tip(over: Partial<HoverTip>): HoverTip {
 
 const surface = {
   key: "test",
+  geometry: {
+    nVertices: 3,
+    nCells: 1,
+    positions: new Float64Array(9),
+    triangles: new Uint32Array([0, 1, 2]),
+  },
   data: {
     length: 1,
     startIndices: new Uint32Array([0]),
@@ -55,6 +61,7 @@ const surface = {
     min: 0,
     max: 2,
   },
+  vertexValues: null,
   values: Float32Array.from([0.017]),
 };
 
