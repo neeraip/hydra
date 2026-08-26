@@ -496,6 +496,85 @@ C1  CIRCULAR  0.5  0  0  0
         Marcher::build(mesh, &topo)
     }
 
+    /// §15.7: rain reaches the mesh from the model's gages, and a
+    /// rain-on-mesh model is one whose parcels do *not* capture the
+    /// storm — most often because it has none at all.
+    ///
+    /// The surface compartment used to return nothing for a model
+    /// without parcels or RDII, so the gages were never read and a whole
+    /// run fell on a dry mesh with no diagnostic to say so.
+    #[test]
+    fn rain_reaches_a_mesh_in_a_model_with_no_parcels() {
+        const INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+FLOW_ROUTING  DYNWAVE
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[RAINGAGES]
+RG1  INTENSITY  0:05  1.0  TIMESERIES  TS1
+
+[TIMESERIES]
+TS1  0:00  50.0
+TS1  0:20  50.0
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[2D_OPTIONS]
+RAINFALL_MODE  SYSTEM
+
+[2D_VERTICES]
+0  0  102.0
+1  0  102.0
+1  1  102.0
+0  1  102.0
+
+[2D_TRIANGLES]
+0  1  2  0.05
+0  2  3  0.05
+
+[2D_VERTEX_NODE_MAP]
+0  J1  0.65  0.05
+";
+        let (mut sim, diags, _) = crate::dialect::session::open(INP).expect("open");
+        assert!(
+            !diags.iter().any(|d| d.kind.is_error()),
+            "{:?}",
+            diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .collect::<Vec<_>>()
+        );
+        sim.run();
+
+        let rpt = sim.report_inputs();
+        let overland = rpt.overland.expect("the run carries a surface");
+        // 50 mm/h over 20 minutes is ~16.7 mm on every cell; what
+        // matters here is that it is not zero, and that the ledger
+        // closes around it.
+        assert!(
+            overland.ledger.rain_in > 0.0,
+            "no rain reached the mesh: {:?}",
+            overland.ledger
+        );
+        assert!(overland.ledger.error.abs() < 1e-6, "ledger closes");
+    }
+
     /// An unknown coupled node name is a refusal, not a silent skip.
     #[test]
     fn an_unknown_coupling_node_refuses() {

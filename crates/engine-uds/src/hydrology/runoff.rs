@@ -325,8 +325,18 @@ impl Surface {
     /// series times anchor at `start_epoch` (s). Parcels invoking
     /// compartments this stage does not evaluate are refused.
     pub fn build(net: &Network, start_epoch: f64) -> Result<Option<Surface>, SurfaceRefusal> {
-        // RDII-only models still need the gage records resolved.
-        if net.parcels.is_empty() && net.rdii.is_empty() {
+        // A model with no parcels can still need its gages read: RDII
+        // convolves them, and §15.7 rains them onto the mesh. A mesh
+        // model without parcels is the ordinary shape of a rain-on-mesh
+        // study — §15.7's `NONE` mode exists for the opposite case, the
+        // model whose parcels already capture the storm — and this
+        // compartment returning nothing there left the surface dry for a
+        // whole run without saying so.
+        let mesh_takes_rain = net
+            .overland
+            .as_ref()
+            .is_some_and(|m| m.options.rainfall_mode != crate::overland::RainfallMode::None);
+        if net.parcels.is_empty() && net.rdii.is_empty() && !mesh_takes_rain {
             return Ok(None);
         }
 
