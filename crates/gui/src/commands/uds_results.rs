@@ -431,7 +431,6 @@ mod tests {
             Some(out.clone()),
             crate::commands::simulation::RunContext {
                 duration_seconds: 3600.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },
@@ -574,7 +573,6 @@ mod tests {
             Some(out.clone()),
             crate::commands::simulation::RunContext {
                 duration_seconds: 3600.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },

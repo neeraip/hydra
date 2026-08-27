@@ -825,7 +825,6 @@ async fn run_sim_for_queue(
             Some(out_path),
             RunContext {
                 duration_seconds,
-                run_quality,
                 network_digest,
                 pre_run_warnings,
             },

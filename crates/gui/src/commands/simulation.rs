@@ -391,8 +391,6 @@ pub(crate) fn progress_percent(simulated_seconds: f64, duration_seconds: f64) ->
 pub(crate) struct RunContext {
     /// Simulated seconds the run covers, for progress reporting.
     pub duration_seconds: f64,
-    /// Whether the run carries a quality solve.
-    pub run_quality: bool,
     /// Topology digest of the network being run, recorded beside the
     /// results so a consumer can tell later that the model has been
     /// edited since. `None` for engines whose model has no digest yet.
@@ -424,7 +422,6 @@ where
 {
     let RunContext {
         duration_seconds,
-        run_quality,
         network_digest,
         pre_run_warnings,
     } = run;
@@ -537,18 +534,15 @@ where
     let mut run_err: Option<RunLoopError> = None;
 
     // Wire phase codes are the session's phases mapped to the frontend's
-    // vocabulary; a quality-free wds run keeps reporting "hydraulics" so its
-    // event stream is unchanged from before the session abstraction.
+    // vocabulary. Both engines now report a single phase: water distribution
+    // advances quality alongside its hydraulics rather than in a pass of its
+    // own, so there is no longer a separate quality stage to report. The
+    // frontend already handles "simulation", which is what drainage runs have
+    // always emitted.
     let to_code = |phase: &str| -> &'static str {
         match phase {
             "Hydraulics" => "hydraulics",
-            "Water quality" => {
-                if run_quality {
-                    "quality"
-                } else {
-                    "hydraulics"
-                }
-            }
+            "Water quality" => "quality",
             _ => "simulation",
         }
     };
@@ -816,7 +810,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 3600.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },
@@ -883,7 +876,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 600.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },
@@ -922,7 +914,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -948,7 +939,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -970,7 +960,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -998,7 +987,6 @@ mod tests {
             Some(out.clone()),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -1100,7 +1088,6 @@ mod tests {
             Some(out),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -1137,7 +1124,6 @@ mod tests {
             Some(out),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: opening.clone(),
             },
@@ -1189,7 +1175,6 @@ Duration  0
             Some(out),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },
@@ -1219,7 +1204,6 @@ Duration  0
             Some(out),
             RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(0),
                 pre_run_warnings: Vec::new(),
             },

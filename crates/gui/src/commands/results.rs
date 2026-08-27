@@ -1493,7 +1493,6 @@ Duration  0
             Some(out.clone()),
             crate::commands::simulation::RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: Some(digest),
                 pre_run_warnings: Vec::new(),
             },
@@ -1709,7 +1708,6 @@ Duration  0
             Some(out.clone()),
             crate::commands::simulation::RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },
@@ -1818,7 +1816,6 @@ Duration  0
             Some(out.clone()),
             crate::commands::simulation::RunContext {
                 duration_seconds: 0.0,
-                run_quality: false,
                 network_digest: None,
                 pre_run_warnings: Vec::new(),
             },
