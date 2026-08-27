@@ -403,6 +403,27 @@ After the data model is fully populated — whether via file parsing or programm
 
 The following quantities are available from the session API at each **reporting time step** (every $\Delta t_{\text{report}}$ seconds, starting at `report_start`). The unit system in which values are delivered is an implementation decision (see `../model/spec.md` §3).
 
+**Retention.** A session holds the state of one instant: the one it has most
+recently advanced to. It accumulates no history. The result API answers for
+that instant, and a caller wanting a series attaches a result stream (§8.3)
+and reads the series back from the serialized results.
+
+This bounds a session's working memory by the size of the network rather than
+by the length of the run. The alternative — retaining every reporting instant
+so the result API can be asked for any of them — costs
+`nodes x sizeof(node state) + links x sizeof(link state)` per reporting
+instant, which on a large network over a long horizon exceeds the memory of
+the machine before it exceeds the patience of the user.
+
+> **DEVIATION from EPANET:** EPANET runs hydraulics to completion, spilling the
+> flow field to a temporary file, and then replays that file to advance
+> quality. The arrangement buys the ability to re-run quality under new
+> settings without re-solving hydraulics, and costs a full history of the run.
+> Hydra advances quality within the step that produces the flow field it rides
+> on (`../quality/spec.md` §1: quality steps sub-divide each hydraulic period),
+> so no history is held and no replay occurs. Re-running quality alone is not
+> offered; a caller changing quality settings re-runs the simulation.
+
 #### 8.2.1 Reported Quantities
 
 The "Dimension" column gives the physical quantity; the unit in which it is delivered is an implementation decision (`../model/spec.md` §3).
@@ -480,18 +501,16 @@ session = create() // allocate empty project
 load(session, network) // accept a parsed Network (or programmatically built)
 // → validates data model; error on failure
 
-run_hydraulics(session) // full hydraulic EPS in one call
+run(session) // the whole extended-period simulation in one call
 -- or --
-step_hydraulics(session) → Δt // one hydraulic step; returns actual step taken
+step(session) → Δt // one hydraulic step together with the quality sub-steps
+// that sub-divide it; returns the hydraulic step taken
 // caller may modify model properties between steps
 
-run_quality(session) // full quality EPS in one call (requires hydraulics done)
--- or --
-step_quality(session) → Δt // one quality sub-cycle
-
 // ── Result retrieval ──
-get_node_result(session, node_id, quantity, time) → value
-get_link_result(session, link_id, quantity, time) → value
+// Answers for the instant the session has most recently advanced to; see §8.2.
+get_node_result(session, node_id, quantity) → value
+get_link_result(session, link_id, quantity) → value
 get_pump_energy(session, pump_id) → EnergyStats
 get_mass_balance(session) → MassBalance
 get_flow_balance(session) → FlowBalance
@@ -512,21 +531,24 @@ destroy(session) // release all resources
 **Streaming serialization**: an implementation may additionally serialize
 results incrementally while the session is being stepped, rather than in one
 call after the run. A report period may be emitted to the stream only once
-every value it carries is **final** — its snapshot can no longer change as the
-session advances. With no quality analysis configured, a snapshot is final as
-soon as the hydraulic phase records it. With quality enabled, a snapshot's
-quality and reaction values are provisional until the quality phase — which
-replays the hydraulic history after hydraulics completes — has advanced
-through that snapshot's time and written its results back
-(`../quality/spec.md`); only then is the snapshot final. Emitting a period
-before it is final is non-conforming: the stream would persist provisional
-values that the completed run no longer holds.
+every value it carries is **final** — it can no longer change as the session
+advances. With no quality analysis configured, a period is final as soon as
+the hydraulic step that produced it completes. With quality enabled, a period
+is final once quality has advanced to that period's instant, which happens
+within a bounded number of steps of the solve that opened it and never waits
+for the run to end. Emitting a period before it is final is non-conforming:
+the stream would persist provisional values that the completed run no longer
+holds.
+
+Because no period stays provisional until the run ends, streaming is the
+ordinary way results leave a session rather than an optimisation available to
+some configurations.
 
 **Invariants**:
 
 - Multiple session objects may coexist in the same process. Sessions share no mutable state.
 - A session is not thread-safe with respect to itself — concurrent calls on the same session are not supported; the outcome is unspecified. Concurrent calls on different sessions are safe.
-- Property setters that change a value affecting the sparse matrix structure (e.g. adding a node or link) are only valid before `run_hydraulics` / `step_hydraulics` begins. Property setters that change only values (e.g. roughness, demand, pump speed) may be called between steps.
+- Property setters that change a value affecting the sparse matrix structure (e.g. adding a node or link) are only valid before the first `step` is taken. Property setters that change only values (e.g. roughness, demand, pump speed) may be called between steps.
 - The unit system of values passed to and returned from the API is an implementation decision. The solver operates in the internal unit system (`../model/spec.md` §3); the API may expose internal units directly (requiring callers to convert) or may accept a unit selection and convert at the API boundary. Either approach is conforming, provided the solver itself never performs unit-dependent branching.
 
 **Mutation semantics**: A property mutation must change subsequent simulation behaviour — never only the stored model. If an implementation caches quantities derived from a mutable property, the mutation must refresh those caches. Mutations never alter results already recorded; a value takes effect from the next hydraulic solve (or, for initial quality, from quality initialisation) onward. The precise semantics per property:
@@ -536,7 +558,7 @@ values that the completed run no longer holds.
   - **Before the first hydraulic step**: the link's live state — status, setting, and initial flow estimate — is re-derived under the same initialisation rules applied at load (`../hydraulics/spec.md` §3.10, including the valve `ACTIVE` status resolution). The simulation must produce the same results as if the network had been loaded with the mutated value from the start.
   - **After stepping has begun**: the value is applied to the link's live state as an operational status/setting change under the same rules as a control action (§4.2.3), taking effect from the next hydraulic solve. The link's current flow is preserved as the next Newton-Raphson initial iterate; completed steps are unaffected.
 - **Node elevation** (`set_node_property`): the stored elevation is updated together with every cached elevation-derived quantity the solver consumes: the elevation datum used to convert pressure-based valve settings to heads (`../hydraulics/spec.md` §3.5, §3.9) and the tank head limits corresponding to minimum and maximum levels (`../hydraulics/spec.md` §3.9). Quantities derived live from the stored elevation — fixed-grade reservoir head (re-derived every step), pressure-dependent demand, tank level-to-head conversion at tank updates, and pressure reporting — pick the new value up without further action. Before the first hydraulic step, initial reservoir and tank heads are re-derived from the new elevation; after stepping has begun, a tank's current level and volume are preserved and its head is re-derived from the new elevation at the next tank level update.
-- **Initial node quality** (`set_node_property`): consumed at quality initialisation (`../quality/spec.md`); mutations at any time before the quality phase initialises take effect. Mutations after quality initialisation do not retroactively change the quality state.
+- **Initial node quality** (`set_node_property`): consumed at quality initialisation (`../quality/spec.md`), which occurs at the first `step`. A mutation before the first step takes effect; one after it does not retroactively change the quality state. Quality initialising with the run, rather than after hydraulics complete, narrows this window: a caller that set initial quality between hydraulic steps was previously in time and no longer is.
 
 ### 8.4 Error Handling
 
