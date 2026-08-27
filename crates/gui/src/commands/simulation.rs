@@ -457,8 +457,18 @@ where
         match std::fs::File::create(p) {
             // The queue checkpoints a run it may pause, so the engine
             // keeps what one carries (§12.3).
+            //
+            // Buffered, as every CLI sink is: the results stream writes
+            // one scalar at a time, so an unbuffered file costs a
+            // syscall per value. Both streams are flushed by
+            // `finish_results` before the file is promoted.
             Ok(file) => {
-                match es.begin_results(Box::new(file), hydra::engines::MayCheckpoint::Yes, "", "") {
+                match es.begin_results(
+                    Box::new(std::io::BufWriter::new(file)),
+                    hydra::engines::MayCheckpoint::Yes,
+                    "",
+                    "",
+                ) {
                     Ok(()) => streamed = true,
                     Err(e) => {
                         tracing::warn!(
@@ -495,7 +505,14 @@ where
             if sim.has_overland() {
                 match std::fs::File::create(tmp) {
                     Ok(file) => {
-                        match hydra::swmm::session::begin_overland_results(sim, Box::new(file)) {
+                        // Buffered for the same reason, and more sharply:
+                        // an instant of a 7,500-cell mesh is 30,000
+                        // values, which unbuffered took 33 ms of syscalls
+                        // to write and buffered takes well under one.
+                        match hydra::swmm::session::begin_overland_results(
+                            sim,
+                            Box::new(std::io::BufWriter::new(file)),
+                        ) {
                             Ok(()) => surface_streamed = true,
                             Err(e) => tracing::warn!(
                                 path = %tmp.display(),
