@@ -8,7 +8,7 @@ impl Simulation {
     /// network that had the mutated value from the start (§8.3 mutation
     /// semantics).
     fn before_first_hydraulic_step(&self) -> bool {
-        self.phase == Phase::Loaded && self.current_t == 0.0 && self.hyd_snapshots.is_empty()
+        self.phase == Phase::Loaded && self.current_t == 0.0 && !self.has_stepped
     }
 
     /// Modify a node property (§8.3 `set_node_property()`).

@@ -62,6 +62,17 @@ pub struct Simulation {
     next_report_t: f64,  // next report time boundary
     report_count: usize, // number of report boundaries passed
 
+    // Whether a hydraulic step has been taken for the currently loaded
+    // network. Distinct from "a snapshot exists": with `report_start` beyond
+    // zero and quality disabled, steps are taken before any instant is
+    // recorded, so the history cannot answer this question.
+    has_stepped: bool,
+
+    // The solved state at the first step, kept for quality initialisation.
+    // Retained explicitly rather than read back out of the history, which is
+    // going away (§8.2 Retention).
+    initial_states: Option<(Vec<NodeState>, Vec<LinkState>)>,
+
     // Hydraulic result history.
     hyd_snapshots: Vec<HydSnapshot>,
 
@@ -169,6 +180,10 @@ impl Simulation {
             return;
         }
 
+        if self.initial_states.is_none() {
+            self.initial_states = Some((self.node_states.clone(), self.link_states.clone()));
+        }
+
         let quality_enabled = network.options.quality_mode != QualityMode::None;
         let at_or_past_report = new_t >= self.next_report_t - 1e-6;
         if quality_enabled || at_or_past_report {
@@ -216,11 +231,12 @@ impl Simulation {
             .filter(|&i| (self.hyd_snapshots[i].t - t).abs() < 0.5)
     }
 
-    /// Return initial states from the first snapshot (or live states if no
-    /// snapshot was recorded yet) without cloning.
-    fn first_snapshot_states(&self) -> (&[NodeState], &[LinkState]) {
-        match self.hyd_snapshots.first() {
-            Some(s) => (&s.node_states, &s.link_states),
+    /// Return the solved states of the first step, for quality initialisation,
+    /// or the live states if no step has been taken. Kept explicitly rather
+    /// than read back out of the result history (§8.2 Retention).
+    fn initial_step_states(&self) -> (&[NodeState], &[LinkState]) {
+        match &self.initial_states {
+            Some((ns, ls)) => (ns, ls),
             None => (&self.node_states, &self.link_states),
         }
     }
@@ -670,6 +686,36 @@ mod tests {
         );
         // No tanks → numerator/denominator = outflow/inflow ≈ 1.
         assert!(ratio >= 0.0);
+    }
+
+    /// "A step has been taken" and "an instant has been recorded" are two
+    /// questions. They were answered by one field, `hyd_snapshots.is_empty()`,
+    /// and they come apart exactly here: with reporting starting after the run
+    /// does and quality disabled, the session steps for an hour before it
+    /// records anything. Only the separate `current_t` guard kept the old
+    /// conflation from mis-classifying a mutation as a pre-run one.
+    #[test]
+    fn stepping_and_recording_are_independent_questions() {
+        let mut net = simple_network();
+        net.options.duration = 4.0 * 3600.0;
+        net.options.hyd_step = 3600.0;
+        net.options.report_step = 3600.0;
+        // Reporting begins an hour into a run that starts at zero.
+        net.options.report_start = 3600.0;
+        net.options.quality_mode = QualityMode::None;
+
+        let mut sess = Simulation::create();
+        sess.load(net).expect("load");
+        assert!(!sess.has_stepped, "no step taken yet");
+        assert!(sess.hyd_snapshots.is_empty(), "nothing recorded yet");
+
+        sess.step_hydraulics().expect("first step");
+        assert!(sess.has_stepped, "a step has been taken");
+        assert!(
+            sess.hyd_snapshots.is_empty(),
+            "the first reported instant is still an hour away, so the history \
+             cannot answer whether a step was taken"
+        );
     }
 
     #[test]

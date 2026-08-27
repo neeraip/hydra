@@ -20,6 +20,8 @@ impl Simulation {
             current_t: 0.0,
             next_report_t: 0.0,
             report_count: 0,
+            has_stepped: false,
+            initial_states: None,
             hyd_snapshots: vec![],
             quality_state: None,
             quality_t: 0.0,
@@ -91,6 +93,8 @@ impl Simulation {
         self.link_states = link_states;
         self.current_t = 0.0;
         self.next_report_t = next_report;
+        self.has_stepped = false;
+        self.initial_states = None;
         self.hyd_snapshots = vec![];
         self.quality_state = None;
         self.quality_t = 0.0;
@@ -171,6 +175,10 @@ impl Simulation {
             self.phase = Phase::HydraulicsDone;
             return Ok(0.0);
         }
+        // Past the termination check, this call takes a step. Recorded here
+        // rather than inferred from the history, which does not receive an
+        // instant on every step (§8.2).
+        self.has_stepped = true;
 
         // Apply pump speed patterns: setting = init_setting × pattern_factor.
         // Done before simple controls so controls can override (matches EPANET).
@@ -654,7 +662,7 @@ impl Simulation {
             return Ok(());
         }
         // Use first snapshot states for initialisation.
-        let (init_ns, init_ls) = self.first_snapshot_states();
+        let (init_ns, init_ls) = self.initial_step_states();
         let qs = quality::init_quality(network, init_ns, init_ls)
             .map_err(SessionError::QualityEngine)?;
 
@@ -713,7 +721,7 @@ impl Simulation {
                 self.phase = Phase::QualityDone;
                 return Ok(0.0);
             }
-            let (init_ns, init_ls) = self.first_snapshot_states();
+            let (init_ns, init_ls) = self.initial_step_states();
             let qs = quality::init_quality(network, init_ns, init_ls)
                 .map_err(SessionError::QualityEngine)?;
             if let Some(snap0) = self.hyd_snapshots.first_mut() {
