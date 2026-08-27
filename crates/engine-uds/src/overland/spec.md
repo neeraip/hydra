@@ -615,6 +615,14 @@ Typed, per §1.8 — each is a named absence, not an approximation:
 - **Mesh infiltration: resolved** as §15.7's initial-loss/continuing-
   loss model. A soil column (Green–Ampt with recovery) remains absent;
   the initial loss never recovers.
+- **Sub-grid bathymetry.** A cell's terrain is the plane through its
+  three vertex elevations, and under the FLAT closure the mean of them:
+  resolution and accuracy are therefore coupled, and terrain finer than
+  the mesh is not represented. Engines that decouple them (elevation–
+  volume and face elevation–conveyance curves tabulated from a fine
+  terrain model, held per cell and per face) are a different modelling
+  philosophy, not a refinement of this one; §15.3's closure interface is
+  the seam one would attach to. Absent here as in the predecessor.
 - **Overland constituent transport**, **mesh adaptivity**: absent here
   as in the predecessor.
 - **Report additions: resolved.** §14.9 specifies the overland flow
