@@ -396,6 +396,48 @@ fn ov_read_f32(f: &mut File) -> Result<f32, String> {
     Ok(f32::from_le_bytes(b))
 }
 
+/// `n` bytes in one read, for the two places that consume a whole
+/// section: the header's geometry and a record.
+///
+/// The scalar readers above cost a syscall each, which is nothing for
+/// the dozen fields of a header and everything for a mesh: at 7,500
+/// cells, reading the geometry a field at a time took 12.7 ms and a
+/// record 11.0 ms, and the canvas asks for a record on every timeline
+/// step. Same shape as `read_f32_vec`, which the §14.9 reader has
+/// always used for the same reason.
+fn ov_read_block(f: &mut File, n: usize) -> Result<Vec<u8>, String> {
+    let mut b = vec![0u8; n];
+    f.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(b)
+}
+
+/// The `i`th little-endian f32 of a block.
+fn le_f32(b: &[u8], i: usize) -> f32 {
+    let at = 4 * i;
+    f32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
+
+/// The `i`th little-endian u32 of a block.
+fn le_u32(b: &[u8], i: usize) -> u32 {
+    let at = 4 * i;
+    u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
+
+/// The `i`th little-endian f64 of a block.
+fn le_f64(b: &[u8], i: usize) -> f64 {
+    let at = 8 * i;
+    f64::from_le_bytes([
+        b[at],
+        b[at + 1],
+        b[at + 2],
+        b[at + 3],
+        b[at + 4],
+        b[at + 5],
+        b[at + 6],
+        b[at + 7],
+    ])
+}
+
 /// One §14.16 record: an instant's whole surface.
 #[derive(Debug, Clone)]
 pub struct OverlandRecord {
@@ -480,27 +522,32 @@ impl OverlandResults {
                 path.display()
             ));
         }
-        // The geometry, read once.
+        // The geometry, read once — and in one read: it is the bulk of
+        // the header, and a mesh has as many fields as it has cells.
         f.seek(SeekFrom::Start((4 * 5 + 8 * 3) as u64))
             .map_err(|e| ctx(e.to_string()))?;
-        let mut verts = Vec::with_capacity(nv);
-        for _ in 0..nv {
-            let x = ov_read_f64(&mut f).map_err(ctx)?;
-            let y = ov_read_f64(&mut f).map_err(ctx)?;
-            let z = ov_read_f64(&mut f).map_err(ctx)?;
-            verts.push((x, y, z));
-        }
-        let mut cells = Vec::with_capacity(nc);
-        for _ in 0..nc {
-            let a = ov_read_u32(&mut f).map_err(ctx)?;
-            let b = ov_read_u32(&mut f).map_err(ctx)?;
-            let c = ov_read_u32(&mut f).map_err(ctx)?;
-            cells.push([a, b, c]);
-        }
-        let mut point_cells = Vec::with_capacity(np);
-        for _ in 0..np {
-            point_cells.push(ov_read_u32(&mut f).map_err(ctx)?);
-        }
+        let geom = ov_read_block(&mut f, 24 * nv + 12 * nc + 4 * np).map_err(ctx)?;
+        let verts = (0..nv)
+            .map(|i| {
+                (
+                    le_f64(&geom, 3 * i),
+                    le_f64(&geom, 3 * i + 1),
+                    le_f64(&geom, 3 * i + 2),
+                )
+            })
+            .collect();
+        let tris = &geom[24 * nv..];
+        let cells = (0..nc)
+            .map(|i| {
+                [
+                    le_u32(tris, 3 * i),
+                    le_u32(tris, 3 * i + 1),
+                    le_u32(tris, 3 * i + 2),
+                ]
+            })
+            .collect();
+        let points = &tris[12 * nc..];
+        let point_cells = (0..np).map(|i| le_u32(points, i)).collect();
         Ok(OverlandResults {
             path: path.to_path_buf(),
             verts,
@@ -530,22 +577,27 @@ impl OverlandResults {
             self.records_at + record_len(nc, np) * i as u64,
         ))
         .map_err(|e| ctx(e.to_string()))?;
-        let t = ov_read_f64(&mut f).map_err(ctx)?;
-        let mut cells = Vec::with_capacity(nc);
-        for _ in 0..nc {
-            let mut c = [0.0f32; 4];
-            for v in &mut c {
-                *v = ov_read_f32(&mut f).map_err(ctx)?;
-            }
-            cells.push(c);
-        }
-        let mut exchange = Vec::with_capacity(np);
-        for _ in 0..np {
-            exchange.push(ov_read_f32(&mut f).map_err(ctx)?);
-        }
+        // One read, then decode: a record is one f64 and four f32 per
+        // cell, and the canvas asks for a whole one on every step.
+        let block = ov_read_block(&mut f, record_len(nc, np) as usize).map_err(ctx)?;
+        let t = le_f64(&block, 0);
+        let vals = &block[8..];
+        let cells = (0..nc)
+            .map(|i| {
+                [
+                    le_f32(vals, 4 * i),
+                    le_f32(vals, 4 * i + 1),
+                    le_f32(vals, 4 * i + 2),
+                    le_f32(vals, 4 * i + 3),
+                ]
+            })
+            .collect();
+        let ex = &vals[16 * nc..];
+        let exchange = (0..np).map(|i| le_f32(ex, i)).collect();
+        let led = &ex[4 * np..];
         let mut ledger = [0.0f64; 11];
-        for v in &mut ledger {
-            *v = ov_read_f64(&mut f).map_err(ctx)?;
+        for (i, v) in ledger.iter_mut().enumerate() {
+            *v = le_f64(led, i);
         }
         Ok(OverlandRecord {
             t,
