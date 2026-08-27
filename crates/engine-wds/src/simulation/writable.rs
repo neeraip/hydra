@@ -23,20 +23,12 @@ impl WritableSimulation for Simulation {
         self.network.is_some()
     }
 
-    fn snapshots(&self) -> &[HydSnapshot] {
-        &self.hyd_snapshots
+    fn current_instant(&self) -> Option<&HydSnapshot> {
+        self.current_instant.as_ref()
     }
 
-    fn finalized_through(&self) -> f64 {
-        // Quality now advances within the step that records an instant, so
-        // an instant carries its final quality the moment it is recorded and
-        // nothing is provisional (§8.3, streaming serialization). The
-        // frontier existed only to hold periods back until the second pass
-        // wrote through their time, and there is no second pass.
-        match self.network.as_ref() {
-            None => f64::NEG_INFINITY,
-            Some(_) => f64::INFINITY,
-        }
+    fn instants_recorded(&self) -> u64 {
+        self.instants_recorded
     }
 
     fn pump_energy_at(&self, link_index: usize) -> Option<&PumpEnergy> {
@@ -91,15 +83,16 @@ mod tests {
     /// specifically to let integrators call.
     #[test]
     fn writing_before_a_model_is_loaded_is_an_error_not_a_panic() {
-        use crate::dialect::{out_writer::write_binary_output, rpt_writer};
+        use crate::dialect::{out_writer::OutStreamWriter, rpt_writer};
         use crate::FlowUnits;
 
         let sim = Simulation::create();
         assert!(!sim.has_network());
 
-        let mut buf = std::io::Cursor::new(Vec::new());
-        let err = write_binary_output(&mut buf, &sim, "in.inp", "out.rpt", FlowUnits::Gpm)
-            .expect_err("no network loaded");
+        let buf = std::io::Cursor::new(Vec::new());
+        let err = OutStreamWriter::begin(buf, &sim, "in.inp", "out.rpt", FlowUnits::Gpm)
+            .err()
+            .expect("no network loaded");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         assert!(err.to_string().contains("no network loaded"), "{err}");
 
@@ -137,17 +130,19 @@ mod tests {
     }
 
     #[test]
-    fn net_and_snapshots_mirror_session_state() {
+    fn net_and_held_instant_mirror_session_state() {
         let sess = run_session(QualityMode::None);
         let net = WritableSimulation::net(&sess);
         let ids: Vec<&str> = net.nodes.iter().map(|n| n.base.id.as_str()).collect();
         assert_eq!(ids, sess.node_ids());
 
-        let snap_times: Vec<f64> = WritableSimulation::snapshots(&sess)
-            .iter()
-            .map(|s| s.t)
-            .collect();
-        assert_eq!(snap_times, sess.snapshot_times());
+        // The trait and the inherent accessors describe the same held instant.
+        let held = WritableSimulation::current_instant(&sess).map(|inst| inst.t);
+        assert_eq!(held, sess.current_time());
+        assert!(
+            WritableSimulation::instants_recorded(&sess) > 1,
+            "a completed run recorded more than one instant, keeping only the last"
+        );
     }
 
     #[test]
@@ -205,49 +200,51 @@ mod tests {
     }
 
     #[test]
-    fn every_instant_is_final_when_it_is_recorded() {
-        // The frontier existed to hold periods back until a second pass wrote
-        // quality through their time. Quality now advances inside the step
-        // that records the instant, so nothing is ever provisional and the
-        // answer is the same with quality on as with it off (§8.3).
-        for mode in [QualityMode::None, QualityMode::Age] {
-            let mut sess = Simulation::from_network(pump_network(mode)).expect("load");
-            assert_eq!(sess.finalized_through(), f64::INFINITY, "{mode:?} at load");
-            sess.step_hydraulics().expect("one step");
-            assert_eq!(
-                sess.finalized_through(),
-                f64::INFINITY,
-                "{mode:?} mid-run: the instant just recorded is already final"
-            );
-            sess.run().expect("run");
-            assert_eq!(sess.finalized_through(), f64::INFINITY, "{mode:?} at end");
-        }
-    }
-
-    /// The CLI/GUI stream periods out while stepping. A streamed file must be
-    /// byte-identical to one serialized after the full run — in particular,
-    /// quality must not be frozen at initial values because the hydraulic
-    /// phase's appends consumed the snapshots before quality was written back
-    /// (simulation spec §8.3, streaming serialization).
-    #[test]
-    fn streamed_out_is_byte_identical_to_post_run_out() {
-        use crate::dialect::out_writer::{write_binary_output, OutStreamWriter};
+    fn an_instant_reaches_the_stream_in_the_step_that_records_it() {
+        use crate::dialect::out_writer::OutStreamWriter;
         use crate::FlowUnits;
         use std::io::Cursor;
 
-        // Batch reference: full run, then serialize.
-        let mut batch = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
-        batch.run().expect("run");
-        let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &batch, "t.inp", "", FlowUnits::Gpm).expect("write");
-        let batch_bytes = buf.into_inner();
+        // A frontier used to hold periods back until a second pass wrote
+        // quality through their time; with quality advancing inside the step
+        // that records the instant, nothing is provisional and the frontier is
+        // gone (§8.3). Observed where it matters: the period is written by the
+        // very next append, with quality on exactly as with it off.
+        for mode in [QualityMode::None, QualityMode::Age] {
+            let mut sess = Simulation::from_network(pump_network(mode)).expect("load");
+            let mut stream =
+                OutStreamWriter::begin(Cursor::new(Vec::new()), &sess, "t.inp", "", FlowUnits::Gpm)
+                    .expect("begin");
+            sess.step_hydraulics().expect("one step");
+            stream.append_available(&sess).expect("append");
+            let bytes = stream.finish(&sess).expect("finish").into_inner();
 
-        // Streamed in lockstep, exactly as the CLI/GUI run loops do.
+            let n =
+                i32::from_le_bytes(bytes[bytes.len() - 12..bytes.len() - 8].try_into().unwrap());
+            assert_eq!(n, 1, "{mode:?}: the first instant was held back");
+        }
+    }
+
+    /// A streamed run carries quality that has actually advanced.
+    ///
+    /// This was a comparison against a batch serialization, which existed to
+    /// catch quality being frozen at its initial values when the hydraulic
+    /// appends consumed snapshots before the second pass wrote back. There is
+    /// no second pass and no batch path: a session holds one instant (§8.2),
+    /// so streaming is the only way a file gets written. What remains worth
+    /// asserting is that the file is not full of initial values. Whole-file
+    /// agreement is pinned by the byte gate over the benchmark corpus
+    /// (scripts/wds_byte_gate.sh).
+    #[test]
+    fn a_streamed_run_carries_advanced_quality() {
+        use crate::dialect::out_writer::OutStreamWriter;
+        use crate::FlowUnits;
+        use std::io::Cursor;
+
         let mut live = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
         let mut stream =
             OutStreamWriter::begin(Cursor::new(Vec::new()), &live, "t.inp", "", FlowUnits::Gpm)
                 .expect("begin");
-        stream.append_available(&live).expect("append");
         loop {
             let dt = live.step_hydraulics().expect("hydraulics step");
             stream.append_available(&live).expect("append");
@@ -255,56 +252,65 @@ mod tests {
                 break;
             }
         }
-        loop {
-            let dt = live.step_quality().expect("quality step");
-            stream.append_available(&live).expect("append");
-            if dt == 0.0 {
-                break;
-            }
-        }
-        let streamed_bytes = stream.finish(&live).expect("finish").into_inner();
+        let bytes = stream.finish(&live).expect("finish").into_inner();
 
-        assert_eq!(streamed_bytes, batch_bytes);
-
-        // Guard against trivially passing on frozen values: the last period's
-        // node quality (water age) must have advanced beyond its initial 0.
-        let n_nodes = batch.node_ids().len();
-        let n_links = batch.link_ids().len();
+        let n_nodes = live.node_ids().len();
+        let n_links = live.link_ids().len();
         let record = (4 * n_nodes + 8 * n_links) * 4;
-        let last_period = batch_bytes.len() - 12 - 16 - record;
+        let last_period = bytes.len() - 12 - 16 - record;
         let quality_column = last_period + 3 * n_nodes * 4;
         let ages: Vec<f32> = (0..n_nodes)
             .map(|i| {
                 let at = quality_column + i * 4;
-                f32::from_le_bytes(batch_bytes[at..at + 4].try_into().unwrap())
+                f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
             })
             .collect();
         assert!(
             ages.iter().any(|a| *a > 0.5),
-            "final-period ages should be nonzero, got {ages:?}"
+            "final-period ages should have advanced past their initial 0, got {ages:?}"
         );
     }
 
-    /// A stream closed as soon as the run ends carries every period. This
-    /// used to close with zero: with quality replayed afterwards, no period
-    /// was final while hydraulics was still the only thing that had run.
+    /// A stream driven per step holds every period; one left behind says so.
+    ///
+    /// A session holds one instant (§8.2), so running to completion and then
+    /// appending once cannot work: the instants in between are gone. That
+    /// used to silently produce a short file. It is now an error naming what
+    /// happened, because a results file with holes in it that calls itself a
+    /// run is worse than no file.
     #[test]
-    fn a_stream_closed_at_the_end_of_the_run_holds_every_period() {
+    fn a_stream_must_be_appended_every_step_and_says_so_if_not() {
         use crate::dialect::out_writer::OutStreamWriter;
         use crate::FlowUnits;
         use std::io::Cursor;
 
+        // Driven properly: every period lands.
         let mut sess = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
         let mut stream =
             OutStreamWriter::begin(Cursor::new(Vec::new()), &sess, "t.inp", "", FlowUnits::Gpm)
                 .expect("begin");
-        sess.run_hydraulics().expect("hydraulics");
-        stream.append_available(&sess).expect("append");
+        loop {
+            let dt = sess.step_hydraulics().expect("step");
+            stream.append_available(&sess).expect("append");
+            if dt == 0.0 {
+                break;
+            }
+        }
         let bytes = stream.finish(&sess).expect("finish").into_inner();
-
         let n_periods =
             i32::from_le_bytes(bytes[bytes.len() - 12..bytes.len() - 8].try_into().unwrap());
         // Two hours reported hourly from zero: t = 0, 3600, 7200.
-        assert_eq!(n_periods, 3, "every period is final and written");
+        assert_eq!(n_periods, 3, "every period is written");
+
+        // Left behind: refused, rather than written short.
+        let mut late = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
+        let mut stream =
+            OutStreamWriter::begin(Cursor::new(Vec::new()), &late, "t.inp", "", FlowUnits::Gpm)
+                .expect("begin");
+        late.run_hydraulics().expect("run");
+        let err = stream
+            .append_available(&late)
+            .expect_err("a stream that missed instants must refuse");
+        assert!(err.to_string().contains("fell behind"), "{err}");
     }
 }

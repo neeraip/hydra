@@ -43,8 +43,7 @@ tank corrector fixture
 
 /// Tank level (head, m internal) at the end of the run.
 fn final_tank_head(sim: &Simulation) -> f64 {
-    let t_end = *sim.snapshot_times().last().expect("snapshots");
-    sim.get_node_result("T1", NodeQuantity::Head, t_end)
+    sim.get_node_result("T1", NodeQuantity::Head)
         .expect("tank head")
 }
 
@@ -89,25 +88,30 @@ fn disabling_error_control_reproduces_first_order_euler_exactly() {
     network.options.level_err_tol = 0.0;
     let mut sim = Simulation::from_network(network).expect("loads");
 
-    let q0 = {
-        // One step; a tank's Demand result is its net inflow — the exact
-        // quantity the Euler update integrates, not the pipe flow, which
-        // matches it only to solver tolerance.
-        sim.step_hydraulics().expect("step");
-        sim.get_node_result("T1", NodeQuantity::Demand, 0.0)
-            .expect("tank net inflow at t=0")
-    };
+    // One step, then read t = 0. A session holds one instant (spec §8.2), so
+    // both readings are taken while the run stands on the instant they belong
+    // to rather than afterwards.
+    sim.step_hydraulics().expect("step 1");
+    // A tank's Demand result is its net inflow — the exact quantity the Euler
+    // update integrates, not the pipe flow, which matches it only to solver
+    // tolerance.
+    let q0 = sim
+        .get_node_result("T1", NodeQuantity::Demand)
+        .expect("tank net inflow at t=0");
     let h0 = sim
-        .get_node_result("T1", NodeQuantity::Head, 0.0)
+        .get_node_result("T1", NodeQuantity::Head)
         .expect("tank head at t=0");
+    assert_eq!(sim.current_time(), Some(0.0), "the first instant is t = 0");
+
+    // The second step records t = 3600, which is where the Euler update lands.
+    sim.step_hydraulics().expect("step 2");
+    assert_eq!(
+        sim.current_time(),
+        Some(3600.0),
+        "the second instant is 1 h"
+    );
     let h1 = sim
-        .get_node_result("T1", NodeQuantity::Head, 3600.0)
-        .or_else(|_| {
-            // Head at 3600 s is not yet snapshotted until the next step
-            // records it; step once more and re-read.
-            sim.step_hydraulics().expect("step 2");
-            sim.get_node_result("T1", NodeQuantity::Head, 3600.0)
-        })
+        .get_node_result("T1", NodeQuantity::Head)
         .expect("tank head at 1 h");
 
     // Cylindrical tank: Δh = Q·Δt / A, A = π(D/2)². The 40 ft diameter is
@@ -157,9 +161,7 @@ no tanks
         network.options.level_err_tol = tol;
         let mut sim = Simulation::from_network(network).expect("loads");
         sim.run().expect("runs");
-        let t_end = *sim.snapshot_times().last().expect("snapshots");
-        sim.get_node_result("J1", NodeQuantity::Head, t_end)
-            .expect("head")
+        sim.get_node_result("J1", NodeQuantity::Head).expect("head")
     };
     // Bit-identical, not approximately equal: with no differential state the
     // corrector must not run at all.

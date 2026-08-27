@@ -22,7 +22,8 @@ impl Simulation {
             report_count: 0,
             states_at_t: (vec![], vec![]),
             has_stepped: false,
-            hyd_snapshots: vec![],
+            current_instant: None,
+            instants_recorded: 0,
             quality_state: None,
             quality_t: 0.0,
             accounting: None,
@@ -95,7 +96,8 @@ impl Simulation {
         self.next_report_t = next_report;
         self.states_at_t = (vec![], vec![]);
         self.has_stepped = false;
-        self.hyd_snapshots = vec![];
+        self.current_instant = None;
+        self.instants_recorded = 0;
         self.quality_state = None;
         self.quality_t = 0.0;
         self.accounting = Some(accounting);
@@ -148,7 +150,7 @@ impl Simulation {
     /// This is the easiest entry point for most users:
     /// 1. [`Simulation::load`]
     /// 2. `run()`
-    /// 3. query results via [`Simulation::snapshot_times`],
+    /// 3. query the instant it holds via [`Simulation::current_time`],
     ///    [`Simulation::get_node_result`], and [`Simulation::get_link_result`].
     pub fn run(&mut self) -> Result<(), SessionError> {
         self.run_hydraulics()?;
@@ -770,10 +772,31 @@ Headloss  H-W
 [END]
 ";
 
-    /// The demand delivered at J1 at time `t`, in the internal unit.
-    fn j1_demand(sess: &Simulation, t: f64) -> f64 {
-        sess.get_node_result("J1", crate::NodeQuantity::Demand, t)
+    /// The demand delivered at J1 at the instant the session holds.
+    fn j1_demand(sess: &Simulation) -> f64 {
+        sess.get_node_result("J1", crate::NodeQuantity::Demand)
             .expect("demand")
+    }
+
+    /// Demand at each reporting instant of a run, in order.
+    ///
+    /// A session holds one instant (§8.2), so a per-hour claim is made by
+    /// walking the run and reading as each instant is recorded.
+    fn j1_demand_by_instant(sess: &mut Simulation) -> Vec<f64> {
+        let mut out = Vec::new();
+        let mut last = None;
+        loop {
+            let dt = sess.step_hydraulics().expect("step");
+            let t = sess.current_time();
+            if t.is_some() && t != last {
+                out.push(j1_demand(sess));
+                last = t;
+            }
+            if dt == 0.0 {
+                break;
+            }
+        }
+        out
     }
 
     /// A caller's patterns must apply even when the caller never built the
@@ -793,17 +816,18 @@ Headloss  H-W
         network.pattern_index = Default::default();
 
         let mut sess = Simulation::from_network(network).expect("loads");
-        sess.run_hydraulics().expect("runs");
+        let demands = j1_demand_by_instant(&mut sess);
 
+        assert!(demands.len() >= 2, "expected at least two instants");
         assert!(
-            (j1_demand(&sess, 0.0) - 0.010).abs() < 1e-9,
+            (demands[0] - 0.010).abs() < 1e-9,
             "first hour should draw the base demand, got {}",
-            j1_demand(&sess, 0.0)
+            demands[0]
         );
         assert!(
-            (j1_demand(&sess, 3600.0) - 0.020).abs() < 1e-9,
+            (demands[1] - 0.020).abs() < 1e-9,
             "second hour should follow the pattern, got {}",
-            j1_demand(&sess, 3600.0)
+            demands[1]
         );
     }
 
@@ -829,9 +853,9 @@ Headloss  H-W
         );
 
         let mut sess = Simulation::from_network(network).expect("loads");
-        sess.run_hydraulics().expect("runs");
+        let demands = j1_demand_by_instant(&mut sess);
 
-        let second_hour = j1_demand(&sess, 3600.0);
+        let second_hour = demands[1];
         assert!(
             (second_hour - 0.020).abs() < 1e-9,
             "should follow WANTED (×2), got {second_hour}"
@@ -865,15 +889,14 @@ Headloss  H-W
         sess.run().expect("run");
         assert_eq!(sess.phase, Phase::QualityDone);
 
-        let times = sess.snapshot_times();
-        assert_eq!(*times.last().expect("snapshots"), 4.0 * 3600.0);
+        assert_eq!(sess.current_time(), Some(4.0 * 3600.0));
         let head = sess
-            .get_node_result("J1", crate::NodeQuantity::Head, *times.last().unwrap())
+            .get_node_result("J1", crate::NodeQuantity::Head)
             .expect("head");
         assert!(head.is_finite() && head > 0.0, "head = {head}");
         // Age at the reservoir stays 0; downstream junction age is positive.
         let age = sess
-            .get_node_result("J2", crate::NodeQuantity::Quality, *times.last().unwrap())
+            .get_node_result("J2", crate::NodeQuantity::Quality)
             .expect("age");
         assert!(age > 0.0, "age = {age}");
     }
@@ -944,11 +967,14 @@ Headloss  H-W
     fn reload_after_completed_run_resets_session() {
         let mut sess = Simulation::from_network(eps_network(QualityMode::Age)).expect("load");
         sess.run().expect("first run");
-        assert!(!sess.snapshot_times().is_empty());
+        assert!(sess.current_time().is_some());
 
         sess.load(eps_network(QualityMode::None)).expect("reload");
         assert_eq!(sess.phase, Phase::Loaded);
-        assert!(sess.snapshot_times().is_empty(), "snapshots must be reset");
+        assert!(
+            sess.current_time().is_none(),
+            "the held instant must be dropped on reload"
+        );
         assert!(sess.warnings().is_empty(), "warnings must be reset");
 
         sess.run().expect("second run");

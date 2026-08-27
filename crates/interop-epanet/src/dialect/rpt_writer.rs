@@ -540,6 +540,11 @@ mod tests {
     struct MockSession {
         network: crate::engine_api::Network,
         snapshots: Vec<crate::dialect::HydSnapshot>,
+        /// How many of `snapshots` the mock has "recorded", so it hands them to a
+        /// writer one at a time the way a real session does. A session holds one
+        /// instant, so a writer that is handed the lot at once is not being tested
+        /// against the contract it has to satisfy.
+        taken: std::cell::Cell<usize>,
         warnings: Vec<crate::dialect::SimWarning>,
         begun: Option<std::time::SystemTime>,
         ended: Option<std::time::SystemTime>,
@@ -551,8 +556,14 @@ mod tests {
         fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
-            &self.snapshots
+        fn current_instant(&self) -> Option<&crate::dialect::HydSnapshot> {
+            self.taken
+                .get()
+                .checked_sub(1)
+                .and_then(|i| self.snapshots.get(i))
+        }
+        fn instants_recorded(&self) -> u64 {
+            self.taken.get() as u64
         }
         fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
@@ -614,6 +625,7 @@ mod tests {
                 node_states,
                 link_states,
             }],
+            taken: std::cell::Cell::new(0),
             warnings: Vec::new(),
             begun: Some(std::time::UNIX_EPOCH),
             ended: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(3600)),

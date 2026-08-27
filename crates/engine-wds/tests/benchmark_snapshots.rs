@@ -72,15 +72,33 @@ fn run_benchmark(name: &str) -> Option<Simulation> {
         }
     };
     let network = io::parse(&bytes).unwrap_or_else(|e| panic!("parse {name}: {e}"));
-    let mut sim = Simulation::from_network(network).unwrap_or_else(|e| panic!("load {name}: {e}"));
-    sim.run().unwrap_or_else(|e| panic!("run {name}: {e}"));
-    Some(sim)
+    Some(Simulation::from_network(network).unwrap_or_else(|e| panic!("load {name}: {e}")))
 }
 
-/// Sample times: first, middle, and last recorded snapshot.
-fn sample_times(sim: &Simulation) -> Vec<f64> {
-    let times = sim.snapshot_times();
-    assert!(!times.is_empty(), "no snapshots recorded");
+/// Sample times: first, middle, and last reporting instant.
+///
+/// A session holds one instant and no history (simulation spec §8.2), so the
+/// series is collected by walking a run rather than by asking a finished
+/// session for its times.
+fn recorded_times(sim: &mut Simulation) -> Vec<f64> {
+    let mut times = Vec::new();
+    loop {
+        let dt = sim.step_hydraulics().expect("step");
+        if let Some(t) = sim.current_time() {
+            if times.last() != Some(&t) {
+                times.push(t);
+            }
+        }
+        if dt == 0.0 {
+            break;
+        }
+    }
+    times
+}
+
+/// First, middle and last of a set of recorded times.
+fn sample_of(times: &[f64]) -> Vec<f64> {
+    assert!(!times.is_empty(), "no instants recorded");
     let mut picks = vec![times[0]];
     if times.len() > 2 {
         picks.push(times[times.len() / 2]);
@@ -109,19 +127,17 @@ fn assert_close(actual: f64, expected: f64, what: &str) {
     );
 }
 
-/// Network-wide sums at the final snapshot: (Σ head over all nodes, Σ |flow|
+/// Network-wide sums at the final instant: (Σ head over all nodes, Σ |flow|
 /// over all links).
 fn network_sums(sim: &Simulation) -> (f64, f64) {
-    let times = sample_times(sim);
-    let t_final = *times.last().expect("non-empty");
     let head_sum: f64 = sim
-        .all_node_results_at(t_final)
+        .all_node_results()
         .expect("node results")
         .iter()
         .map(|r| r.head)
         .sum();
     let abs_flow_sum: f64 = sim
-        .all_link_results_at(t_final)
+        .all_link_results()
         .expect("link results")
         .iter()
         .map(|r| r.flow.abs())
@@ -129,31 +145,66 @@ fn network_sums(sim: &Simulation) -> (f64, f64) {
     (head_sum, abs_flow_sum)
 }
 
+/// Drive the run and check each golden as the instant it names goes past.
+///
+/// The goldens pin values at three sampled times. A session holds one instant
+/// (simulation spec §8.2), so they are checked while the run is at that
+/// instant rather than by querying a finished session. The pinned values are
+/// unchanged: only when they are read has moved.
 fn check_against_golden(
-    sim: &Simulation,
+    sim: &mut Simulation,
     golden_nodes: &[(&str, f64, f64, f64)],
     golden_links: &[(&str, f64, f64)],
     golden_sums: (f64, f64),
     quality_mode: QualityMode,
 ) {
-    for &(id, t, head, quality) in golden_nodes {
-        let actual_head = sim
-            .get_node_result(id, NodeQuantity::Head, t)
-            .unwrap_or_else(|e| panic!("head {id}@{t}: {e}"));
-        assert_close(actual_head, head, &format!("head {id}@{t}"));
-        if quality_mode != QualityMode::None {
-            let actual_q = sim
-                .get_node_result(id, NodeQuantity::Quality, t)
-                .unwrap_or_else(|e| panic!("quality {id}@{t}: {e}"));
-            assert_close(actual_q, quality, &format!("quality {id}@{t}"));
+    let mut checked = 0usize;
+    let mut seen = 0u64;
+    loop {
+        let dt = sim.step_hydraulics().expect("step");
+        // Several hydraulic steps can pass between reporting instants, and
+        // `current_time` keeps answering with the last one recorded. Check a
+        // golden when its instant is *new*, or every step in between counts
+        // as another match.
+        let is_new = sim.instants_recorded() > seen;
+        seen = sim.instants_recorded();
+        if let (true, Some(t)) = (is_new, sim.current_time()) {
+            for &(id, gt, head, quality) in golden_nodes {
+                if (gt - t).abs() >= 0.5 {
+                    continue;
+                }
+                let actual_head = sim
+                    .get_node_result(id, NodeQuantity::Head)
+                    .unwrap_or_else(|e| panic!("head {id}@{gt}: {e}"));
+                assert_close(actual_head, head, &format!("head {id}@{gt}"));
+                if quality_mode != QualityMode::None {
+                    let actual_q = sim
+                        .get_node_result(id, NodeQuantity::Quality)
+                        .unwrap_or_else(|e| panic!("quality {id}@{gt}: {e}"));
+                    assert_close(actual_q, quality, &format!("quality {id}@{gt}"));
+                }
+                checked += 1;
+            }
+            for &(id, gt, flow) in golden_links {
+                if (gt - t).abs() >= 0.5 {
+                    continue;
+                }
+                let actual_flow = sim
+                    .get_link_result(id, LinkQuantity::Flow)
+                    .unwrap_or_else(|e| panic!("flow {id}@{gt}: {e}"));
+                assert_close(actual_flow, flow, &format!("flow {id}@{gt}"));
+                checked += 1;
+            }
+        }
+        if dt == 0.0 {
+            break;
         }
     }
-    for &(id, t, flow) in golden_links {
-        let actual_flow = sim
-            .get_link_result(id, LinkQuantity::Flow, t)
-            .unwrap_or_else(|e| panic!("flow {id}@{t}: {e}"));
-        assert_close(actual_flow, flow, &format!("flow {id}@{t}"));
-    }
+    assert_eq!(
+        checked,
+        golden_nodes.len() + golden_links.len(),
+        "not every golden instant was reached: the run's reporting times moved"
+    );
 
     let (head_sum, abs_flow_sum) = network_sums(sim);
     assert_close(head_sum, golden_sums.0, "Σ head at t_final");
@@ -257,11 +308,11 @@ const GOLDEN_RICHMOND_SUMS: (f64, f64) = (179792.18407915116, 1.5442684300735035
 
 #[test]
 fn nytunnels_matches_golden_fingerprint() {
-    let Some(sim) = run_benchmark("nytunnels") else {
+    let Some(mut sim) = run_benchmark("nytunnels") else {
         return;
     };
     check_against_golden(
-        &sim,
+        &mut sim,
         GOLDEN_NYTUNNELS_NODES,
         GOLDEN_NYTUNNELS_LINKS,
         GOLDEN_NYTUNNELS_SUMS,
@@ -271,11 +322,11 @@ fn nytunnels_matches_golden_fingerprint() {
 
 #[test]
 fn balerma_matches_golden_fingerprint() {
-    let Some(sim) = run_benchmark("balerma") else {
+    let Some(mut sim) = run_benchmark("balerma") else {
         return;
     };
     check_against_golden(
-        &sim,
+        &mut sim,
         GOLDEN_BALERMA_NODES,
         GOLDEN_BALERMA_LINKS,
         GOLDEN_BALERMA_SUMS,
@@ -285,11 +336,11 @@ fn balerma_matches_golden_fingerprint() {
 
 #[test]
 fn richmond_matches_golden_fingerprint() {
-    let Some(sim) = run_benchmark("richmond") else {
+    let Some(mut sim) = run_benchmark("richmond") else {
         return;
     };
     check_against_golden(
-        &sim,
+        &mut sim,
         GOLDEN_RICHMOND_NODES,
         GOLDEN_RICHMOND_LINKS,
         GOLDEN_RICHMOND_SUMS,
@@ -306,41 +357,62 @@ fn richmond_matches_golden_fingerprint() {
 fn print_golden_fingerprints() {
     for name in ["nytunnels", "balerma", "richmond"] {
         let start = std::time::Instant::now();
-        let Some(sim) = run_benchmark(name) else {
+        let Some(mut sim) = run_benchmark(name) else {
             continue;
         };
-        let times = sample_times(&sim);
         let node_ids: Vec<String> = sim.node_ids().iter().map(|s| s.to_string()).collect();
         let link_ids: Vec<String> = sim.link_ids().iter().map(|s| s.to_string()).collect();
+
+        // Walk once to learn the reporting times, then again to read values at
+        // the sampled ones: a session holds one instant, so a value has to be
+        // read while the run is standing on it.
+        let mut probe = run_benchmark(name).expect("reload");
+        let times = sample_of(&recorded_times(&mut probe));
+        let want: std::collections::HashMap<u64, f64> =
+            times.iter().map(|&t| (t.to_bits(), t)).collect();
+        let mut heads: Vec<(usize, f64, f64, f64)> = Vec::new();
+        let mut flows: Vec<(usize, f64, f64)> = Vec::new();
+        loop {
+            let dt = sim.step_hydraulics().expect("step");
+            if let Some(t) = sim.current_time() {
+                if want.contains_key(&t.to_bits()) {
+                    for &i in &sample_indices(node_ids.len()) {
+                        let head = sim
+                            .get_node_result(&node_ids[i], NodeQuantity::Head)
+                            .expect("head");
+                        let quality = sim
+                            .get_node_result(&node_ids[i], NodeQuantity::Quality)
+                            .expect("quality");
+                        heads.push((i, t, head, quality));
+                    }
+                    for &i in &sample_indices(link_ids.len()) {
+                        let flow = sim
+                            .get_link_result(&link_ids[i], LinkQuantity::Flow)
+                            .expect("flow");
+                        flows.push((i, t, flow));
+                    }
+                }
+            }
+            if dt == 0.0 {
+                break;
+            }
+        }
 
         println!("// ── {name} (ran in {:?}) ──", start.elapsed());
         println!(
             "const GOLDEN_{}_NODES: &[(&str, f64, f64, f64)] = &[",
             name.to_uppercase()
         );
-        for &i in &sample_indices(node_ids.len()) {
-            for &t in &times {
-                let head = sim
-                    .get_node_result(&node_ids[i], NodeQuantity::Head, t)
-                    .expect("head");
-                let quality = sim
-                    .get_node_result(&node_ids[i], NodeQuantity::Quality, t)
-                    .expect("quality");
-                println!("    ({:?}, {t:?}, {head:?}, {quality:?}),", node_ids[i]);
-            }
+        for &(i, t, head, quality) in &heads {
+            println!("    ({:?}, {t:?}, {head:?}, {quality:?}),", node_ids[i]);
         }
         println!("];");
         println!(
             "const GOLDEN_{}_LINKS: &[(&str, f64, f64)] = &[",
             name.to_uppercase()
         );
-        for &i in &sample_indices(link_ids.len()) {
-            for &t in &times {
-                let flow = sim
-                    .get_link_result(&link_ids[i], LinkQuantity::Flow, t)
-                    .expect("flow");
-                println!("    ({:?}, {t:?}, {flow:?}),", link_ids[i]);
-            }
+        for &(i, t, flow) in &flows {
+            println!("    ({:?}, {t:?}, {flow:?}),", link_ids[i]);
         }
         println!("];");
         let sums = network_sums(&sim);

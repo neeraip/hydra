@@ -1096,17 +1096,16 @@ mod tests {
         let mut session = Simulation::from_network(network).expect("load network");
         session.run_hydraulics().expect("run_hydraulics");
 
-        let times = session.snapshot_times();
-        assert!(!times.is_empty(), "expected at least one snapshot");
-
-        let t0 = times[0];
+        let t = session
+            .current_time()
+            .expect("the run recorded a reporting instant");
         for id in session.node_ids() {
             let head = session
-                .get_node_result(id, NodeQuantity::Head, t0)
+                .get_node_result(id, NodeQuantity::Head)
                 .expect("get_node_result");
             assert!(
                 head.is_finite(),
-                "head for node {id} at t={t0} is not finite: {head}"
+                "head for node {id} at t={t} is not finite: {head}"
             );
         }
     }

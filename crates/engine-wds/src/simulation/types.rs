@@ -17,11 +17,12 @@ pub enum SessionError {
     ValidationFailed(Vec<ValidationError>),
     /// The requested object ID does not exist in the loaded network.
     UnknownId(String),
-    /// A result was requested for a time that has no recorded snapshot.
-    NoSnapshotAtTime {
-        /// The requested simulation time (seconds).
-        requested_t: f64,
-    },
+    /// A result was requested before the session recorded any instant.
+    ///
+    /// A session holds one instant and no history (§8.2 Retention), so the
+    /// result API answers for the instant most recently recorded. Before the
+    /// first reporting time there is nothing to answer with.
+    NoResultsYet,
     /// The operation is not valid in the current session phase.
     InvalidPhase {
         /// Phase name expected for this operation.
@@ -43,8 +44,8 @@ impl std::fmt::Display for SessionError {
                 write!(f, "validation failed: {} error(s)", errs.len())
             }
             Self::UnknownId(id) => write!(f, "unknown object ID: '{id}'"),
-            Self::NoSnapshotAtTime { requested_t } => {
-                write!(f, "no result snapshot at t={requested_t}")
+            Self::NoResultsYet => {
+                write!(f, "no results yet: the session has recorded no instant")
             }
             Self::InvalidPhase { expected, actual } => {
                 write!(f, "invalid phase: expected {expected}, actual {actual}")
@@ -131,9 +132,9 @@ mod tests {
     }
 
     #[test]
-    fn session_error_display_no_snapshot_at_time() {
-        let msg = SessionError::NoSnapshotAtTime { requested_t: 42.0 }.to_string();
-        assert!(msg.contains("42"), "got: {msg}");
+    fn session_error_display_no_results_yet() {
+        let msg = SessionError::NoResultsYet.to_string();
+        assert!(msg.contains("no results yet"), "got: {msg}");
     }
 
     #[test]

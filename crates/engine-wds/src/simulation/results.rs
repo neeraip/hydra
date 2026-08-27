@@ -34,25 +34,25 @@ impl Simulation {
     ///
     /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
     /// times further than 0.5 s from any snapshot yield
-    /// `Err(SessionError::NoSnapshotAtTime)`.
+    /// `Err(SessionError::NoResultsYet)`.
     ///
     /// Returns `Err(SessionError::UnknownId)` if `node_id` is not in the network
-    /// and `Err(SessionError::NoSnapshotAtTime)` if no hydraulic snapshot was
+    /// and `Err(SessionError::NoResultsYet)` if no hydraulic snapshot was
     /// recorded at or near `t`. All returned values are in the internal SI unit
     /// system (head/pressure in m, demand in m³/s, quality in mg/L or h or %).
     pub fn get_node_result(
         &self,
         node_id: &str,
         quantity: NodeQuantity,
-        t: f64,
     ) -> Result<f64, SessionError> {
         let network = self.require_loaded_network()?;
         let node_index = self
             .node_index_by_id(node_id)
             .ok_or_else(|| SessionError::UnknownId(node_id.to_string()))?;
         let snapshot = self
-            .snapshot_near(t)
-            .ok_or(SessionError::NoSnapshotAtTime { requested_t: t })?;
+            .current_instant
+            .as_ref()
+            .ok_or(SessionError::NoResultsYet)?;
         let node_state = &snapshot.node_states[node_index];
         let node = &network.nodes[node_index];
         let elevation = node.base.elevation;
@@ -88,20 +88,20 @@ impl Simulation {
     ///
     /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
     /// times further than 0.5 s from any snapshot yield
-    /// `Err(SessionError::NoSnapshotAtTime)`.
+    /// `Err(SessionError::NoResultsYet)`.
     pub fn get_link_result(
         &self,
         link_id: &str,
         quantity: LinkQuantity,
-        t: f64,
     ) -> Result<f64, SessionError> {
         let network = self.require_loaded_network()?;
         let link_index = self
             .link_index_by_id(link_id)
             .ok_or_else(|| SessionError::UnknownId(link_id.to_string()))?;
         let snapshot = self
-            .snapshot_near(t)
-            .ok_or(SessionError::NoSnapshotAtTime { requested_t: t })?;
+            .current_instant
+            .as_ref()
+            .ok_or(SessionError::NoResultsYet)?;
         let link_state = &snapshot.link_states[link_index];
         let link = &network.links[link_index];
 
@@ -198,28 +198,40 @@ impl Simulation {
         })
     }
 
-    /// Return the times at which hydraulic snapshots were recorded (§8.2.1).
+    /// How many reporting instants the run has recorded so far.
     ///
-    /// The returned `Vec<f64>` is in ascending order and contains one entry per
-    /// reporting timestep that was stored during `run_hydraulics()` or
-    /// successive `step_hydraulics()` calls.
-    pub fn snapshot_times(&self) -> Vec<f64> {
-        self.hyd_snapshots.iter().map(|s| s.t).collect()
+    /// The session holds only the most recent of them (§8.2 Retention). This
+    /// is what a result stream compares against its own count to notice it has
+    /// fallen behind, and what a caller uses to know how long a run was
+    /// without keeping the run.
+    pub fn instants_recorded(&self) -> u64 {
+        self.instants_recorded
+    }
+
+    /// The reporting time the session currently holds, if it has recorded one.
+    ///
+    /// A session keeps one instant and accumulates no history (§8.2
+    /// Retention), so there is no list of times to return. A caller wanting
+    /// every reporting time reads them from the serialized results, where the
+    /// reader publishes them.
+    pub fn current_time(&self) -> Option<f64> {
+        self.current_instant.as_ref().map(|inst| inst.t)
     }
 
     /// Return all node results at a given simulation time, indexed by position.
     ///
     /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
     /// times further than 0.5 s from any snapshot yield
-    /// `Err(SessionError::NoSnapshotAtTime)`.
+    /// `Err(SessionError::NoResultsYet)`.
     ///
     /// Returns one `NodeResult` per node in the same order as `node_ids()`.
     /// Uses direct index access — O(N) with no string lookups.
-    pub fn all_node_results_at(&self, t: f64) -> Result<Vec<NodeResult>, SessionError> {
+    pub fn all_node_results(&self) -> Result<Vec<NodeResult>, SessionError> {
         let network = self.require_loaded_network()?;
         let snapshot = self
-            .snapshot_near(t)
-            .ok_or(SessionError::NoSnapshotAtTime { requested_t: t })?;
+            .current_instant
+            .as_ref()
+            .ok_or(SessionError::NoResultsYet)?;
 
         let mut results = Vec::with_capacity(network.nodes.len());
         for (i, ns) in snapshot.node_states.iter().enumerate() {
@@ -252,15 +264,16 @@ impl Simulation {
     ///
     /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
     /// times further than 0.5 s from any snapshot yield
-    /// `Err(SessionError::NoSnapshotAtTime)`.
+    /// `Err(SessionError::NoResultsYet)`.
     ///
     /// Returns one `LinkResult` per link in the same order as `link_ids()`.
     /// Uses direct index access — O(L) with no string lookups.
-    pub fn all_link_results_at(&self, t: f64) -> Result<Vec<LinkResult>, SessionError> {
+    pub fn all_link_results(&self) -> Result<Vec<LinkResult>, SessionError> {
         let network = self.require_loaded_network()?;
         let snapshot = self
-            .snapshot_near(t)
-            .ok_or(SessionError::NoSnapshotAtTime { requested_t: t })?;
+            .current_instant
+            .as_ref()
+            .ok_or(SessionError::NoResultsYet)?;
 
         let mut results = Vec::with_capacity(network.links.len());
         for (i, ls) in snapshot.link_states.iter().enumerate() {
@@ -478,25 +491,24 @@ mod tests {
     #[test]
     fn queries_before_any_step_report_no_snapshot() {
         let sess = Simulation::from_network(eps_network(QualityMode::None)).expect("load");
-        let err = sess.get_node_result("J1", NodeQuantity::Head, 0.0);
-        assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
-        let err = sess.all_node_results_at(0.0);
-        assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
+        let err = sess.get_node_result("J1", NodeQuantity::Head);
+        assert!(matches!(err, Err(SessionError::NoResultsYet)));
+        let err = sess.all_node_results();
+        assert!(matches!(err, Err(SessionError::NoResultsYet)));
     }
 
     #[test]
     fn all_node_results_agree_with_scalar_queries() {
         let sess = run_session(eps_network(QualityMode::None));
-        let t = *sess.snapshot_times().last().expect("snapshots");
-        let all = sess.all_node_results_at(t).expect("all_node_results_at");
+        let all = sess.all_node_results().expect("all_node_results_at");
         let ids = sess.node_ids();
         assert_eq!(all.len(), ids.len());
         for (i, id) in ids.iter().enumerate() {
-            let head = sess.get_node_result(id, NodeQuantity::Head, t).unwrap();
+            let head = sess.get_node_result(id, NodeQuantity::Head).unwrap();
             let pressure = sess
-                .get_node_result(id, NodeQuantity::GaugePressure, t)
+                .get_node_result(id, NodeQuantity::GaugePressure)
                 .unwrap();
-            let demand = sess.get_node_result(id, NodeQuantity::Demand, t).unwrap();
+            let demand = sess.get_node_result(id, NodeQuantity::Demand).unwrap();
             approx::assert_abs_diff_eq!(all[i].head, head, epsilon = 1e-12);
             approx::assert_abs_diff_eq!(all[i].pressure, pressure, epsilon = 1e-12);
             approx::assert_abs_diff_eq!(all[i].demand, demand, epsilon = 1e-12);
@@ -506,16 +518,15 @@ mod tests {
     #[test]
     fn all_link_results_agree_with_scalar_queries() {
         let sess = run_session(eps_network(QualityMode::None));
-        let t = *sess.snapshot_times().last().expect("snapshots");
-        let all = sess.all_link_results_at(t).expect("all_link_results_at");
+        let all = sess.all_link_results().expect("all_link_results_at");
         let ids = sess.link_ids();
         assert_eq!(all.len(), ids.len());
         for (i, id) in ids.iter().enumerate() {
-            let flow = sess.get_link_result(id, LinkQuantity::Flow, t).unwrap();
+            let flow = sess.get_link_result(id, LinkQuantity::Flow).unwrap();
             let velocity = sess
-                .get_link_result(id, LinkQuantity::MeanVelocity, t)
+                .get_link_result(id, LinkQuantity::MeanVelocity)
                 .unwrap();
-            let status = sess.get_link_result(id, LinkQuantity::Status, t).unwrap();
+            let status = sess.get_link_result(id, LinkQuantity::Status).unwrap();
             approx::assert_abs_diff_eq!(all[i].flow, flow, epsilon = 1e-12);
             approx::assert_abs_diff_eq!(all[i].velocity, velocity, epsilon = 1e-12);
             approx::assert_abs_diff_eq!(all[i].status, status, epsilon = 1e-12);
@@ -523,9 +534,22 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_times_ascend_and_cover_full_horizon() {
-        let sess = run_session(eps_network(QualityMode::None));
-        let times = sess.snapshot_times();
+    fn reporting_instants_ascend_and_cover_the_full_horizon() {
+        // A session holds one instant, so the series is observed by walking
+        // the run rather than by asking it for a list afterwards.
+        let mut sess = Simulation::from_network(eps_network(QualityMode::None)).expect("load");
+        let mut times = Vec::new();
+        loop {
+            let dt = sess.step_hydraulics().expect("step");
+            if let Some(t) = sess.current_time() {
+                if times.last() != Some(&t) {
+                    times.push(t);
+                }
+            }
+            if dt == 0.0 {
+                break;
+            }
+        }
         assert!(!times.is_empty());
         assert_eq!(times[0], 0.0);
         assert!(times.windows(2).all(|w| w[0] < w[1]), "times = {times:?}");

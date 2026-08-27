@@ -76,8 +76,15 @@ pub struct Simulation {
     // rather than the advance brought forward.
     states_at_t: (Vec<NodeState>, Vec<LinkState>),
 
-    // Hydraulic result history.
-    hyd_snapshots: Vec<HydSnapshot>,
+    // The instant most recently recorded. A session holds one, never a
+    // history (§8.2 Retention): a caller wanting the series attaches a
+    // result stream and reads it back from the serialized results.
+    current_instant: Option<HydSnapshot>,
+
+    // How many instants have been recorded. A streaming writer compares this
+    // against its own count so falling behind is an error it can report,
+    // rather than instants going missing without anyone noticing.
+    instants_recorded: u64,
 
     // Quality.
     quality_state: Option<QualityState>,
@@ -190,11 +197,23 @@ impl Simulation {
         // instants, so the results file never contained them.
         let at_or_past_report = new_t >= self.next_report_t - 1e-6;
         if at_or_past_report {
-            self.hyd_snapshots.push(HydSnapshot {
-                t: new_t,
-                node_states: self.node_states.clone(),
-                link_states: self.link_states.clone(),
-            });
+            match self.current_instant.as_mut() {
+                // Reuse the buffers rather than allocating an instant per
+                // reporting time; the previous one has been streamed out.
+                Some(inst) => {
+                    inst.t = new_t;
+                    inst.node_states.clone_from(&self.node_states);
+                    inst.link_states.clone_from(&self.link_states);
+                }
+                None => {
+                    self.current_instant = Some(HydSnapshot {
+                        t: new_t,
+                        node_states: self.node_states.clone(),
+                        link_states: self.link_states.clone(),
+                    })
+                }
+            }
+            self.instants_recorded += 1;
         }
 
         // Advance the report-time marker independently of snapshot count.
@@ -204,34 +223,6 @@ impl Simulation {
             self.report_count += 1;
             self.next_report_t = report_start + report_step * (self.report_count as f64);
         }
-    }
-
-    /// Find the snapshot closest to `t` (within 0.5 s tolerance).
-    fn snapshot_near(&self, t: f64) -> Option<&HydSnapshot> {
-        self.find_snapshot_index_at(t)
-            .map(|i| &self.hyd_snapshots[i])
-    }
-
-    /// Find the index of the snapshot closest to `t` (within 0.5 s tolerance).
-    ///
-    /// Uses binary search — snapshots are always in ascending time order.
-    fn find_snapshot_index_at(&self, t: f64) -> Option<usize> {
-        if self.hyd_snapshots.is_empty() {
-            return None;
-        }
-        // Binary search for the insertion point, then check the immediate neighbours.
-        let idx = self.hyd_snapshots.partition_point(|s| s.t < t);
-        let candidates = [idx.checked_sub(1), Some(idx)]
-            .into_iter()
-            .flatten()
-            .filter(|&i| i < self.hyd_snapshots.len());
-        candidates
-            .min_by(|&a, &b| {
-                let da = (self.hyd_snapshots[a].t - t).abs();
-                let db = (self.hyd_snapshots[b].t - t).abs();
-                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .filter(|&i| (self.hyd_snapshots[i].t - t).abs() < 0.5)
     }
 
     /// Write the quality engine's current concentrations onto the live states,
@@ -555,8 +546,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        // At least one snapshot should be recorded.
-        assert!(!sess.hyd_snapshots.is_empty());
+        // The run recorded at least one instant and is holding it.
+        assert!(sess.current_time().is_some());
     }
 
     #[test]
@@ -564,10 +555,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        // Get node result at first snapshot time.
-        let snap_t = sess.hyd_snapshots[0].t;
         let head = sess
-            .get_node_result("R1", NodeQuantity::Head, snap_t)
+            .get_node_result("R1", NodeQuantity::Head)
             .expect("get_node_result failed");
         // Reservoir head should be its elevation (100 ft).
         assert!((head - 100.0).abs() < 1.0, "head = {head}");
@@ -578,9 +567,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        let snap_t = sess.hyd_snapshots[0].t;
         let flow = sess
-            .get_link_result("P1", LinkQuantity::Flow, snap_t)
+            .get_link_result("P1", LinkQuantity::Flow)
             .expect("get_link_result failed");
         // Flow must be non-negative (demand-driven network).
         assert!(flow >= 0.0, "flow = {flow}");
@@ -603,9 +591,8 @@ mod tests {
         );
         sess.load(network).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        let snap_t = sess.hyd_snapshots[0].t;
         let f = sess
-            .get_link_result("P1", LinkQuantity::FrictionFactor, snap_t)
+            .get_link_result("P1", LinkQuantity::FrictionFactor)
             .expect("get_link_result failed");
 
         assert!(f > 0.0, "friction factor should be reported, got {f}");
@@ -622,9 +609,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(network).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        let snap_t = sess.hyd_snapshots[0].t;
         let friction_factor = sess
-            .get_link_result("P1", LinkQuantity::FrictionFactor, snap_t)
+            .get_link_result("P1", LinkQuantity::FrictionFactor)
             .expect("get_link_result failed");
 
         assert!(
@@ -645,9 +631,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(network).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
-        let snap_t = sess.hyd_snapshots[0].t;
         let friction_factor = sess
-            .get_link_result("P1", LinkQuantity::FrictionFactor, snap_t)
+            .get_link_result("P1", LinkQuantity::FrictionFactor)
             .expect("get_link_result failed");
 
         assert_eq!(friction_factor, 0.0);
@@ -658,8 +643,7 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().unwrap();
-        let t = sess.hyd_snapshots[0].t;
-        let err = sess.get_node_result("ZZZZ", NodeQuantity::Head, t);
+        let err = sess.get_node_result("ZZZZ", NodeQuantity::Head);
         assert!(matches!(err, Err(SessionError::UnknownId(_))));
     }
 
@@ -713,7 +697,7 @@ mod tests {
     }
 
     /// "A step has been taken" and "an instant has been recorded" are two
-    /// questions. They were answered by one field, `hyd_snapshots.is_empty()`,
+    /// questions. They were answered by one field, the emptiness of the history,
     /// and they come apart exactly here: with reporting starting after the run
     /// does and quality disabled, the session steps for an hour before it
     /// records anything. Only the separate `current_t` guard kept the old
@@ -731,12 +715,12 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(net).expect("load");
         assert!(!sess.has_stepped, "no step taken yet");
-        assert!(sess.hyd_snapshots.is_empty(), "nothing recorded yet");
+        assert!(sess.current_time().is_none(), "nothing recorded yet");
 
         sess.step_hydraulics().expect("first step");
         assert!(sess.has_stepped, "a step has been taken");
         assert!(
-            sess.hyd_snapshots.is_empty(),
+            sess.current_time().is_none(),
             "the first reported instant is still an hour away, so the history \
              cannot answer whether a step was taken"
         );
@@ -799,22 +783,24 @@ mod tests {
             }
         }
 
-        // Both sessions must produce the same quality at every snapshot.
-        let times_a = sess_a.snapshot_times();
-        let times_b = sess_b.snapshot_times();
-        assert_eq!(times_a, times_b);
-        for &t in &times_a {
-            let q_a = sess_a
-                .get_node_result("J1", NodeQuantity::Quality, t)
-                .unwrap();
-            let q_b = sess_b
-                .get_node_result("J1", NodeQuantity::Quality, t)
-                .unwrap();
-            assert!(
-                (q_a - q_b).abs() < 1e-9,
-                "quality mismatch at t={t}: run={q_a}, stepped={q_b}"
-            );
-        }
+        // A session holds one instant, so the two runs are compared by what
+        // they walked through and where they finished: the same number of
+        // reporting instants, the same final time, and the same quality
+        // there. A drive mode that skipped or doubled a step would move the
+        // count even where it happened to land on the same final value.
+        assert_eq!(
+            sess_a.instants_recorded(),
+            sess_b.instants_recorded(),
+            "the two drive modes recorded different numbers of instants"
+        );
+        assert_eq!(sess_a.current_time(), sess_b.current_time());
+        let t = sess_a.current_time().expect("an instant");
+        let q_a = sess_a.get_node_result("J1", NodeQuantity::Quality).unwrap();
+        let q_b = sess_b.get_node_result("J1", NodeQuantity::Quality).unwrap();
+        assert!(
+            (q_a - q_b).abs() < 1e-9,
+            "quality mismatch at t={t}: run={q_a}, stepped={q_b}"
+        );
     }
 
     #[test]
@@ -836,9 +822,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let v = sess
-            .get_link_result("P1", LinkQuantity::MeanVelocity, t)
+            .get_link_result("P1", LinkQuantity::MeanVelocity)
             .expect("get_link_result");
         assert!(v > 0.0, "expected positive velocity, got {v}");
     }
@@ -848,9 +833,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let uhl = sess
-            .get_link_result("P1", LinkQuantity::UnitHeadLoss, t)
+            .get_link_result("P1", LinkQuantity::UnitHeadLoss)
             .expect("get_link_result");
         assert!(uhl > 0.0, "expected positive unit head loss, got {uhl}");
     }
@@ -860,9 +844,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let status = sess
-            .get_link_result("P1", LinkQuantity::Status, t)
+            .get_link_result("P1", LinkQuantity::Status)
             .expect("get_link_result");
         // Pipe is Open → encoding 1.0.
         assert_eq!(status, 1.0);
@@ -873,9 +856,8 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let setting = sess
-            .get_link_result("P1", LinkQuantity::Setting, t)
+            .get_link_result("P1", LinkQuantity::Setting)
             .expect("get_link_result");
         // Pipe initial_setting = 1.0; roughness-based pipes pass setting through.
         assert!(setting.is_finite(), "setting = {setting}");
@@ -886,12 +868,11 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let head = sess
-            .get_node_result("J1", NodeQuantity::Head, t)
+            .get_node_result("J1", NodeQuantity::Head)
             .expect("head");
         let gp = sess
-            .get_node_result("J1", NodeQuantity::GaugePressure, t)
+            .get_node_result("J1", NodeQuantity::GaugePressure)
             .expect("gauge_pressure");
         // J1 elevation = 0.0, so GaugePressure = Head − 0.
         assert!((gp - head).abs() < 1e-9, "gp={gp}, head={head}");
@@ -902,21 +883,26 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let t = sess.hyd_snapshots[0].t;
         let demand = sess
-            .get_node_result("R1", NodeQuantity::Demand, t)
+            .get_node_result("R1", NodeQuantity::Demand)
             .expect("demand");
         // Reservoir net_flow should be negative (outflow to supply junction).
         assert!(demand < 0.0, "reservoir net_flow = {demand}");
     }
 
+    /// Asking for a result before the run has recorded anything is an error,
+    /// not a zero. There is no time to ask for any more (§8.2), so the only
+    /// way to have no answer is to have taken no step.
     #[test]
-    fn no_snapshot_at_time_returns_error() {
+    fn results_before_the_first_instant_are_an_error() {
         let mut sess = Simulation::create();
         sess.load(simple_network()).expect("load");
-        sess.run_hydraulics().expect("run_hydraulics");
-        let err = sess.get_node_result("J1", NodeQuantity::Head, 999_999.0);
-        assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
+        let err = sess.get_node_result("J1", NodeQuantity::Head);
+        assert!(matches!(err, Err(SessionError::NoResultsYet)), "{err:?}");
+
+        sess.step_hydraulics().expect("one step");
+        sess.get_node_result("J1", NodeQuantity::Head)
+            .expect("answers once an instant exists");
     }
 
     #[test]
@@ -1047,9 +1033,10 @@ mod tests {
         let mut sess = Simulation::create();
         sess.load(net).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
-        let ts = sess.snapshot_times();
 
-        assert_eq!(ts, vec![0.0, 7200.0]);
+        // Reporting every two hours over three: instants at t = 0 and 7200.
+        assert_eq!(sess.instants_recorded(), 2);
+        assert_eq!(sess.current_time(), Some(7200.0));
     }
 
     /// Enabling quality used to multiply what a run retained: every hydraulic
@@ -1069,15 +1056,16 @@ mod tests {
             let mut sess = Simulation::create();
             sess.load(net).expect("load");
             sess.run_hydraulics().expect("run_hydraulics");
-            sess.snapshot_times()
+            (sess.instants_recorded(), sess.current_time())
         };
 
         let without = build(QualityMode::None);
         let with = build(QualityMode::Age);
 
-        // Reporting every two hours over three: t = 0 and 7200. The hourly
-        // hydraulic steps at 3600 and 10800 are computed and not kept.
-        assert_eq!(without, vec![0.0, 7200.0]);
+        // Reporting every two hours over three: instants at t = 0 and 7200.
+        // The hourly hydraulic steps at 3600 and 10800 are computed and not
+        // recorded.
+        assert_eq!(without, (2, Some(7200.0)));
         assert_eq!(
             with, without,
             "quality must not cost instants: was {with:?}, hydraulics-only {without:?}"

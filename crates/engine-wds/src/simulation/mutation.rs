@@ -208,9 +208,8 @@ mod tests {
             .expect("set_node_property before the run");
         sess.run_hydraulics().expect("run_hydraulics");
 
-        let t_final = *sess.snapshot_times().last().expect("snapshots");
         let quality = sess
-            .get_node_result("J1", NodeQuantity::Quality, t_final)
+            .get_node_result("J1", NodeQuantity::Quality)
             .expect("quality");
         approx::assert_relative_eq!(quality, 5.0, max_relative = 1e-6);
 
@@ -219,9 +218,8 @@ mod tests {
         late.run_hydraulics().expect("run_hydraulics");
         late.set_node_property("R1", NodeProperty::InitialQuality, 5.0)
             .expect("accepted");
-        let t_final = *late.snapshot_times().last().expect("snapshots");
         let after = late
-            .get_node_result("J1", NodeQuantity::Quality, t_final)
+            .get_node_result("J1", NodeQuantity::Quality)
             .expect("quality");
         assert!(
             (after - 5.0).abs() > 1e-6,
@@ -306,14 +304,37 @@ mod tests {
     }
 
     /// Run hydraulics and return (J1 head, P1 flow) at time `t`.
-    fn head_and_flow(sess: &Simulation, t: f64) -> (f64, f64) {
+    /// Heads and flows at the instant a session is holding.
+    fn head_and_flow(sess: &Simulation) -> (f64, f64) {
         let head = sess
-            .get_node_result("J1", NodeQuantity::Head, t)
+            .get_node_result("J1", NodeQuantity::Head)
             .expect("head");
         let flow = sess
-            .get_link_result("P1", crate::LinkQuantity::Flow, t)
+            .get_link_result("P1", crate::LinkQuantity::Flow)
             .expect("flow");
         (head, flow)
+    }
+
+    /// Step several runs together, calling `check` at every instant.
+    ///
+    /// A session holds one instant (§8.2), so a claim about every reporting
+    /// time is made by walking the runs in lockstep rather than by asking a
+    /// finished session for its history. This compares at every hydraulic
+    /// step, which is more than the reporting instants the old form saw.
+    fn in_lockstep(sessions: &mut [&mut Simulation], mut check: impl FnMut(&[&mut Simulation])) {
+        let mut instants = 0usize;
+        loop {
+            let mut dt = 0.0;
+            for sess in sessions.iter_mut() {
+                dt = sess.step_hydraulics().expect("step");
+            }
+            check(sessions);
+            instants += 1;
+            if dt == 0.0 {
+                break;
+            }
+        }
+        assert!(instants > 1, "the runs took no steps to compare");
     }
 
     #[test]
@@ -327,32 +348,25 @@ mod tests {
         mutated
             .set_link_property("P1", LinkProperty::Roughness, 50.0)
             .expect("set roughness");
-        mutated.run_hydraulics().expect("run mutated");
-
         let mut fresh =
             Simulation::from_network(eps_network_with(100.0, 50.0)).expect("load fresh");
-        fresh.run_hydraulics().expect("run fresh");
-
         let mut baseline =
             Simulation::from_network(eps_network_with(100.0, 100.0)).expect("load baseline");
-        baseline.run_hydraulics().expect("run baseline");
 
-        let times = mutated.snapshot_times();
-        assert!(!times.is_empty());
-        for &t in &times {
-            let (h_mut, q_mut) = head_and_flow(&mutated, t);
-            let (h_fresh, q_fresh) = head_and_flow(&fresh, t);
+        in_lockstep(&mut [&mut mutated, &mut fresh, &mut baseline], |s| {
+            let (h_mut, q_mut) = head_and_flow(s[0]);
+            let (h_fresh, q_fresh) = head_and_flow(s[1]);
             approx::assert_relative_eq!(h_mut, h_fresh, max_relative = 1e-12);
             approx::assert_relative_eq!(q_mut, q_fresh, max_relative = 1e-12);
 
             // Rougher pipe (lower Hazen-Williams C) → more head loss → lower
             // downstream head than the baseline.
-            let (h_base, _) = head_and_flow(&baseline, t);
+            let (h_base, _) = head_and_flow(s[2]);
             assert!(
                 h_mut < h_base - 1e-6,
                 "mutation had no effect: h_mut = {h_mut}, h_base = {h_base}"
             );
-        }
+        });
     }
 
     #[test]
@@ -362,28 +376,24 @@ mod tests {
         mutated
             .set_link_property("P1", LinkProperty::InitialStatus, 0.0)
             .expect("set closed");
-        mutated.run_hydraulics().expect("run mutated");
-
         // Same network loaded with the pipe closed from the start.
         let mut closed_net = eps_network_with(100.0, 100.0);
         closed_net.links[0].base.initial_status = LinkStatus::Closed;
         let mut fresh = Simulation::from_network(closed_net).expect("load fresh");
-        fresh.run_hydraulics().expect("run fresh");
 
-        let times = mutated.snapshot_times();
-        assert!(!times.is_empty());
-        for &t in &times {
-            let (h_mut, q_mut) = head_and_flow(&mutated, t);
-            let (h_fresh, q_fresh) = head_and_flow(&fresh, t);
+        in_lockstep(&mut [&mut mutated, &mut fresh], |s| {
+            let (h_mut, q_mut) = head_and_flow(s[0]);
+            let (h_fresh, q_fresh) = head_and_flow(s[1]);
+            let t = s[0].current_time().unwrap_or(f64::NAN);
             assert_eq!(q_mut, 0.0, "closed pipe must carry zero flow at t = {t}");
             assert_eq!(q_fresh, 0.0);
             approx::assert_relative_eq!(h_mut, h_fresh, max_relative = 1e-12);
 
-            let status = mutated
-                .get_link_result("P1", crate::LinkQuantity::Status, t)
+            let status = s[0]
+                .get_link_result("P1", crate::LinkQuantity::Status)
                 .expect("status");
             assert_eq!(status, 0.0);
-        }
+        });
     }
 
     #[test]
@@ -391,33 +401,39 @@ mod tests {
         // §8.3 mutation semantics: a mid-run roughness mutation applies from
         // the next hydraulic solve; already-recorded steps are unaffected.
         let mut sess = Simulation::from_network(eps_network_with(100.0, 100.0)).expect("load");
-        let dt = sess.step_hydraulics().expect("first step");
-        assert!(dt > 0.0);
-        sess.set_link_property("P1", LinkProperty::Roughness, 50.0)
-            .expect("mutate mid-run");
-        loop {
-            if sess.step_hydraulics().expect("step") == 0.0 {
-                break;
-            }
-        }
-
         let mut baseline =
             Simulation::from_network(eps_network_with(100.0, 100.0)).expect("load baseline");
-        baseline.run_hydraulics().expect("run baseline");
         let mut fresh =
             Simulation::from_network(eps_network_with(100.0, 50.0)).expect("load fresh");
-        fresh.run_hydraulics().expect("run fresh");
+
+        // A session holds one instant, so each comparison is made while the
+        // runs are standing on it rather than afterwards.
+        let dt = sess.step_hydraulics().expect("first step");
+        assert!(dt > 0.0);
+        baseline.step_hydraulics().expect("baseline first step");
+        fresh.step_hydraulics().expect("fresh first step");
 
         // The step solved before the mutation matches the baseline.
-        let (h0, _) = head_and_flow(&sess, 0.0);
-        let (h0_base, _) = head_and_flow(&baseline, 0.0);
+        let (h0, _) = head_and_flow(&sess);
+        let (h0_base, _) = head_and_flow(&baseline);
         approx::assert_relative_eq!(h0, h0_base, max_relative = 1e-12);
+
+        sess.set_link_property("P1", LinkProperty::Roughness, 50.0)
+            .expect("mutate mid-run");
 
         // Steps solved after the mutation match a network that always had the
         // new roughness (the network is steady, so per-time comparison holds).
-        let (h1, _) = head_and_flow(&sess, 3600.0);
-        let (h1_fresh, _) = head_and_flow(&fresh, 3600.0);
-        approx::assert_relative_eq!(h1, h1_fresh, max_relative = 1e-12);
+        let mut h1;
+        loop {
+            let dt = sess.step_hydraulics().expect("step");
+            fresh.step_hydraulics().expect("fresh step");
+            h1 = head_and_flow(&sess).0;
+            let (h1_fresh, _) = head_and_flow(&fresh);
+            approx::assert_relative_eq!(h1, h1_fresh, max_relative = 1e-12);
+            if dt == 0.0 {
+                break;
+            }
+        }
         assert!(
             h1 < h0 - 1e-6,
             "mid-run mutation had no effect: h0 = {h0}, h1 = {h1}"
@@ -429,6 +445,11 @@ mod tests {
         let mut sess = Simulation::from_network(eps_network_with(100.0, 100.0)).expect("load");
         let dt = sess.step_hydraulics().expect("first step");
         assert!(dt > 0.0);
+
+        // Before the mutation the pipe carried the junction demand …
+        let (_, q0) = head_and_flow(&sess);
+        assert!(q0 > 0.0, "expected positive pre-mutation flow, got {q0}");
+
         sess.set_link_property("P1", LinkProperty::InitialStatus, 0.0)
             .expect("close mid-run");
         loop {
@@ -437,14 +458,11 @@ mod tests {
             }
         }
 
-        // Before the mutation the pipe carried the junction demand …
-        let (_, q0) = head_and_flow(&sess, 0.0);
-        assert!(q0 > 0.0, "expected positive pre-mutation flow, got {q0}");
         // … afterwards it is closed and carries none.
-        let (_, q1) = head_and_flow(&sess, 3600.0);
+        let (_, q1) = head_and_flow(&sess);
         assert_eq!(q1, 0.0, "closed pipe must carry zero flow after mutation");
         let status = sess
-            .get_link_result("P1", crate::LinkQuantity::Status, 3600.0)
+            .get_link_result("P1", crate::LinkQuantity::Status)
             .expect("status");
         assert_eq!(status, 0.0);
     }
@@ -463,29 +481,22 @@ mod tests {
         mutated
             .set_node_property("R1", NodeProperty::Elevation, target_elevation)
             .expect("set elevation");
-        mutated.run_hydraulics().expect("run mutated");
-
         let mut fresh = Simulation::from_network(fresh_net).expect("load fresh");
-        fresh.run_hydraulics().expect("run fresh");
-
         let mut baseline =
             Simulation::from_network(eps_network_with(100.0, 100.0)).expect("load baseline");
-        baseline.run_hydraulics().expect("run baseline");
 
-        let times = mutated.snapshot_times();
-        assert!(!times.is_empty());
-        for &t in &times {
-            let (h_mut, q_mut) = head_and_flow(&mutated, t);
-            let (h_fresh, q_fresh) = head_and_flow(&fresh, t);
+        in_lockstep(&mut [&mut mutated, &mut fresh, &mut baseline], |s| {
+            let (h_mut, q_mut) = head_and_flow(s[0]);
+            let (h_fresh, q_fresh) = head_and_flow(s[1]);
             approx::assert_relative_eq!(h_mut, h_fresh, max_relative = 1e-12);
             approx::assert_relative_eq!(q_mut, q_fresh, max_relative = 1e-12);
 
-            let (h_base, _) = head_and_flow(&baseline, t);
+            let (h_base, _) = head_and_flow(s[2]);
             assert!(
                 h_mut > h_base + 1e-6,
                 "elevation mutation had no effect: h_mut = {h_mut}, h_base = {h_base}"
             );
-        }
+        });
     }
 
     #[test]
@@ -497,6 +508,13 @@ mod tests {
         let mut sess = Simulation::from_network(net).expect("load");
         let dt = sess.step_hydraulics().expect("first step");
         assert!(dt > 0.0);
+
+        // The instant already recorded keeps the original elevation …
+        let r0 = sess
+            .get_node_result("R1", NodeQuantity::Head)
+            .expect("head at the first instant");
+        approx::assert_relative_eq!(r0, original_elevation, max_relative = 1e-12);
+
         sess.set_node_property("R1", NodeProperty::Elevation, target_elevation)
             .expect("mutate mid-run");
         loop {
@@ -505,13 +523,10 @@ mod tests {
             }
         }
 
-        let r0 = sess
-            .get_node_result("R1", NodeQuantity::Head, 0.0)
-            .expect("head at t=0");
-        approx::assert_relative_eq!(r0, original_elevation, max_relative = 1e-12);
+        // … and every instant from the next step on carries the new one.
         let r1 = sess
-            .get_node_result("R1", NodeQuantity::Head, 3600.0)
-            .expect("head at t=3600");
+            .get_node_result("R1", NodeQuantity::Head)
+            .expect("head at the final instant");
         approx::assert_relative_eq!(r1, target_elevation, max_relative = 1e-12);
     }
 

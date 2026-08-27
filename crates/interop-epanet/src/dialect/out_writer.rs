@@ -92,7 +92,8 @@ pub struct OutStreamWriter<W: Write + Seek> {
     energy_offset: u64,
     report_step: i64,
     next_rtime: i64,
-    next_snapshot_index: usize,
+    /// How many instants have been taken from the session.
+    instants_taken: u64,
     n_periods: i32,
     /// `Some` when `STATISTIC != NONE`: report periods are folded into a single
     /// aggregated period on `finish` rather than streamed individually (§4.3).
@@ -137,7 +138,7 @@ impl<W: Write + Seek> OutStreamWriter<W> {
             energy_offset,
             report_step: options.report_step.round() as i64,
             next_rtime: options.report_start.round() as i64,
-            next_snapshot_index: 0,
+            instants_taken: 0,
             n_periods: 0,
             stats: if options.statistic == StatisticType::Series {
                 None
@@ -148,47 +149,56 @@ impl<W: Write + Seek> OutStreamWriter<W> {
         })
     }
 
-    /// Append newly available report-boundary snapshots.
+    /// Take the instant the session is holding, if it has not been taken yet.
     ///
-    /// "Available" means final (simulation spec §8.3): with quality enabled,
-    /// a snapshot's quality values are provisional until the quality phase
-    /// has written back through its time, so it is held here — not consumed —
-    /// until `finalized_through` passes it.
+    /// A session keeps one instant and no history (simulation spec §8.2), so
+    /// this must be called after each step. Every instant is final when it is
+    /// recorded, because quality advances within the step that records it, so
+    /// nothing is ever held back.
+    ///
+    /// Falling more than one instant behind means instants were recorded and
+    /// never collected. That is a caller error and is reported: emitting a
+    /// file with holes in it and calling it a run would be worse.
     pub fn append_available(&mut self, session: &impl WritableSimulation) -> std::io::Result<()> {
+        let recorded = session.instants_recorded();
+        if recorded == self.instants_taken {
+            return Ok(());
+        }
+        if recorded > self.instants_taken + 1 {
+            return Err(std::io::Error::other(format!(
+                "results stream fell behind the session: {} instants recorded, \
+                 {} taken. A session holds one instant, so the stream must be \
+                 appended after every step.",
+                recorded, self.instants_taken
+            )));
+        }
+        let Some(instant) = session.current_instant() else {
+            return Ok(());
+        };
+        self.instants_taken = recorded;
+
         let network = session.net();
-        let snapshots = session.snapshots();
-        let frontier = session.finalized_through();
-
-        for snapshot in snapshots.iter().skip(self.next_snapshot_index) {
-            if snapshot.t > frontier {
-                break;
-            }
-            self.next_snapshot_index += 1;
-            let snapshot_time = snapshot.t.round() as i64;
-
-            if snapshot_time < self.next_rtime {
-                continue;
-            }
-
-            while snapshot_time >= self.next_rtime + self.report_step && self.report_step > 0 {
-                self.next_rtime += self.report_step;
-            }
-
-            let period_bytes = dynamic_snapshot_bytes(network, snapshot, &self.ucf);
-            if let Some(stats) = &mut self.stats {
-                // STATISTIC aggregation: fold this period in; the single
-                // aggregated period is emitted on finish().
-                stats.accumulate(&period_bytes);
-            } else {
-                self.writer.write_all(&period_bytes)?;
-                self.n_periods += 1;
-            }
-
-            if self.report_step > 0 {
-                self.next_rtime += self.report_step;
-            }
+        let instant_time = instant.t.round() as i64;
+        if instant_time < self.next_rtime {
+            return Ok(());
+        }
+        while instant_time >= self.next_rtime + self.report_step && self.report_step > 0 {
+            self.next_rtime += self.report_step;
         }
 
+        let period_bytes = dynamic_snapshot_bytes(network, instant, &self.ucf);
+        if let Some(stats) = &mut self.stats {
+            // STATISTIC aggregation: fold this period in; the single
+            // aggregated period is emitted on finish().
+            stats.accumulate(&period_bytes);
+        } else {
+            self.writer.write_all(&period_bytes)?;
+            self.n_periods += 1;
+        }
+
+        if self.report_step > 0 {
+            self.next_rtime += self.report_step;
+        }
         Ok(())
     }
 
@@ -223,32 +233,33 @@ impl<W: Write + Seek> OutStreamWriter<W> {
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-/// Write an EPANET-compatible binary output file.
+/// Drive a session's instants through a stream and finish it, for tests.
 ///
-/// `output_units` controls the unit system used for all numeric values in the
-/// file.  Pass `session.net().options.flow_units` to use the model's
-/// declared units (the default behaviour when no `--output-units` flag is given).
-///
-/// `input_file` and `report_file` are written into the prolog as fixed-width
-/// strings (up to 259 chars each).  The caller is responsible for managing the
-/// writer and flushing it after this function returns.
-pub fn write_binary_output<W: Write + Seek>(
+/// Stands in for the removed batch writer. A session holds one instant and no
+/// history (simulation spec §8.2), so there is no way to serialize a completed
+/// run in a single call any more, and a test that wants a whole file has to
+/// drive the stream the way a run loop does. `advance` moves the session on to
+/// its next instant.
+#[cfg(test)]
+pub(crate) fn write_all_instants<W, S>(
     w: &mut W,
-    session: &impl WritableSimulation,
+    session: &S,
+    instants: usize,
+    advance: impl Fn(usize),
     input_file: &str,
     report_file: &str,
     output_units: FlowUnits,
-) -> std::io::Result<()> {
-    if !session.has_network() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "no network loaded: open a model on the session before writing results",
-        ));
-    }
+) -> std::io::Result<()>
+where
+    W: Write + Seek,
+    S: WritableSimulation,
+{
     let mut stream = OutStreamWriter::begin(w, session, input_file, report_file, output_units)?;
-    stream.append_available(session)?;
+    for i in 1..=instants {
+        advance(i);
+        stream.append_available(session)?;
+    }
     let _ = stream.finish(session)?;
-
     Ok(())
 }
 
@@ -1034,6 +1045,11 @@ mod tests {
     struct MockSession {
         network: crate::engine_api::Network,
         snapshots: Vec<crate::dialect::HydSnapshot>,
+        /// How many of `snapshots` the mock has "recorded", so it hands them to a
+        /// writer one at a time the way a real session does. A session holds one
+        /// instant, so a writer that is handed the lot at once is not being tested
+        /// against the contract it has to satisfy.
+        taken: std::cell::Cell<usize>,
         warnings: Vec<crate::dialect::SimWarning>,
         begun: Option<std::time::SystemTime>,
         ended: Option<std::time::SystemTime>,
@@ -1043,8 +1059,14 @@ mod tests {
         fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
-            &self.snapshots
+        fn current_instant(&self) -> Option<&crate::dialect::HydSnapshot> {
+            self.taken
+                .get()
+                .checked_sub(1)
+                .and_then(|i| self.snapshots.get(i))
+        }
+        fn instants_recorded(&self) -> u64 {
+            self.taken.get() as u64
         }
         fn pump_energy_at(&self, _link_index: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
@@ -1104,6 +1126,7 @@ mod tests {
                 node_states,
                 link_states,
             }],
+            taken: std::cell::Cell::new(0),
             warnings: Vec::new(),
             begun: None,
             ended: None,
@@ -1169,8 +1192,16 @@ mod tests {
         session.snapshots.push(snap2);
 
         let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &session, "a.inp", "b.rpt", FlowUnits::Gpm)
-            .expect("write output");
+        crate::dialect::out_writer::write_all_instants(
+            &mut buf,
+            &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
+            "a.inp",
+            "b.rpt",
+            FlowUnits::Gpm,
+        )
+        .expect("write output");
         let data = buf.into_inner();
 
         // Prolog report-statistic code (offset 44) = 1 (Average).
@@ -1182,8 +1213,16 @@ mod tests {
         // Series (default) keeps both periods, for contrast.
         session.network.options.statistic = StatisticType::Series;
         let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &session, "a.inp", "b.rpt", FlowUnits::Gpm)
-            .expect("write output");
+        crate::dialect::out_writer::write_all_instants(
+            &mut buf,
+            &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
+            "a.inp",
+            "b.rpt",
+            FlowUnits::Gpm,
+        )
+        .expect("write output");
         let data = buf.into_inner();
         let n = i32::from_le_bytes(data[data.len() - 12..data.len() - 8].try_into().unwrap());
         assert_eq!(n, 2, "series mode keeps both periods");
@@ -1214,8 +1253,16 @@ mod tests {
     fn write_binary_output_writes_expected_magic_and_version() {
         let session = mock_session("single_pipe_hw.inp");
         let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Gpm)
-            .expect("write binary output");
+        crate::dialect::out_writer::write_all_instants(
+            &mut buf,
+            &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
+            "test.inp",
+            "test.rpt",
+            FlowUnits::Gpm,
+        )
+        .expect("write binary output");
         let data = buf.into_inner();
         assert_eq!(i32::from_le_bytes(data[0..4].try_into().unwrap()), MAGIC);
         assert_eq!(i32::from_le_bytes(data[4..8].try_into().unwrap()), VERSION);
@@ -1242,8 +1289,16 @@ mod tests {
         };
         let write = |session: &MockSession| -> Vec<u8> {
             let mut buf = Cursor::new(Vec::new());
-            write_binary_output(&mut buf, session, "test.inp", "test.rpt", FlowUnits::Gpm)
-                .expect("write binary output");
+            crate::dialect::out_writer::write_all_instants(
+                &mut buf,
+                session,
+                session.snapshots.len(),
+                |i| session.taken.set(i),
+                "test.inp",
+                "test.rpt",
+                FlowUnits::Gpm,
+            )
+            .expect("write binary output");
             buf.into_inner()
         };
 
@@ -1291,8 +1346,16 @@ mod tests {
     fn written_files_are_epanet_20012_with_the_classic_tail() {
         let session = mock_session("single_pipe_hw.inp");
         let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Gpm)
-            .expect("write binary output");
+        crate::dialect::out_writer::write_all_instants(
+            &mut buf,
+            &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
+            "test.inp",
+            "test.rpt",
+            FlowUnits::Gpm,
+        )
+        .expect("write binary output");
         let data = buf.into_inner();
 
         let out = crate::dialect::out_reader::parse(&data).expect("parse .out");
@@ -1325,8 +1388,11 @@ mod tests {
             fn net(&self) -> &crate::engine_api::Network {
                 &self.network
             }
-            fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
-                &[]
+            fn current_instant(&self) -> Option<&crate::dialect::HydSnapshot> {
+                None
+            }
+            fn instants_recorded(&self) -> u64 {
+                0
             }
             fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
                 None
@@ -1387,8 +1453,11 @@ mod tests {
         fn net(&self) -> &crate::engine_api::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::dialect::HydSnapshot] {
-            &[]
+        fn current_instant(&self) -> Option<&crate::dialect::HydSnapshot> {
+            None
+        }
+        fn instants_recorded(&self) -> u64 {
+            0
         }
         fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             Some(&self.pe)
@@ -1466,8 +1535,16 @@ mod tests {
         // single_pipe_dw.inp: LPS units, D-W, roughness 0.5 mm (internal 0.0005 m).
         let session = mock_session("single_pipe_dw.inp");
         let mut buf = Cursor::new(Vec::new());
-        write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Lps)
-            .expect("write binary output");
+        crate::dialect::out_writer::write_all_instants(
+            &mut buf,
+            &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
+            "test.inp",
+            "test.rpt",
+            FlowUnits::Lps,
+        )
+        .expect("write binary output");
         let out = crate::dialect::out_reader::parse(&buf.into_inner()).expect("parse .out");
 
         assert_eq!(out.periods.len(), 1);

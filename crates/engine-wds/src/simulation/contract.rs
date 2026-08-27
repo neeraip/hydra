@@ -237,18 +237,19 @@ pub trait WritableSimulation {
     fn has_network(&self) -> bool {
         true
     }
-    /// All hydraulic snapshots stored during the simulation.
-    fn snapshots(&self) -> &[HydSnapshot];
-    /// Simulation time (s) through which recorded snapshots are **final** —
-    /// no longer subject to change as the session advances (simulation spec
-    /// §8.3, streaming serialization). With quality enabled, snapshots carry
-    /// provisional quality values until the quality phase writes its results
-    /// back through their time; a streaming writer must not emit a snapshot
-    /// whose time lies beyond this frontier. The default suits completed
-    /// simulations, where every snapshot is final.
-    fn finalized_through(&self) -> f64 {
-        f64::INFINITY
-    }
+    /// The instant the session currently holds, if it has recorded one.
+    ///
+    /// A session keeps one instant and no history (simulation spec §8.2
+    /// Retention), so a writer consumes each as it appears rather than
+    /// walking a stored run.
+    fn current_instant(&self) -> Option<&HydSnapshot>;
+    /// How many instants the session has recorded since it was loaded.
+    ///
+    /// A writer compares this against its own count. One ahead means there is
+    /// exactly one new instant to take; more than one ahead means instants
+    /// were recorded and never collected, and the writer says so rather than
+    /// silently emitting a file with holes in it.
+    fn instants_recorded(&self) -> u64;
     /// Pump energy record at `link_index`, or `None` if no accounting state is
     /// available (e.g. hydraulics not yet run).
     fn pump_energy_at(&self, link_index: usize) -> Option<&PumpEnergy>;

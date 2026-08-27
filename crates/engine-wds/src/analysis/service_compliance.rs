@@ -359,14 +359,25 @@ mod tests {
     struct MockSession {
         network: crate::Network,
         snapshots: Vec<crate::simulation::contract::HydSnapshot>,
+        /// How many of `snapshots` the mock has "recorded", so it hands them to a
+        /// writer one at a time the way a real session does. A session holds one
+        /// instant, so a writer that is handed the lot at once is not being tested
+        /// against the contract it has to satisfy.
+        taken: std::cell::Cell<usize>,
     }
 
     impl crate::simulation::contract::WritableSimulation for MockSession {
         fn net(&self) -> &crate::Network {
             &self.network
         }
-        fn snapshots(&self) -> &[crate::simulation::contract::HydSnapshot] {
-            &self.snapshots
+        fn current_instant(&self) -> Option<&crate::simulation::contract::HydSnapshot> {
+            self.taken
+                .get()
+                .checked_sub(1)
+                .and_then(|i| self.snapshots.get(i))
+        }
+        fn instants_recorded(&self) -> u64 {
+            self.taken.get() as u64
         }
         fn pump_energy_at(&self, _: usize) -> Option<&crate::dialect::PumpEnergy> {
             None
@@ -434,12 +445,15 @@ mod tests {
                 node_states,
                 link_states,
             }],
+            taken: std::cell::Cell::new(0),
         };
 
         let mut buf = std::io::Cursor::new(Vec::new());
-        crate::dialect::out_writer::write_binary_output(
+        crate::dialect::out_writer::write_all_instants(
             &mut buf,
             &session,
+            session.snapshots.len(),
+            |i| session.taken.set(i),
             "test.inp",
             "",
             crate::FlowUnits::Lps,
