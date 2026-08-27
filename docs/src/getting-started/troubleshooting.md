@@ -110,6 +110,25 @@ The hydraulic solver could not find a balanced solution for one or more time ste
 
 Hydra could not write output. Check that the output directory exists and that you have write permission.
 
+### Two machines report slightly different totals
+
+The same drainage model run on two different operating systems can report
+volume totals that differ slightly, typically by a few hundredths of a
+percent. This is expected. Hydra is byte-for-byte reproducible on one
+machine and build, at any `THREADS` width, but not across platforms: the
+engine calls the system maths library for powers and arc cosines, each
+platform rounds those differently in the last bit, and the
+error-controlled routing step turns a last-bit difference into a
+slightly different step sequence. SWMM behaves the same way, by a
+smaller margin. Water distribution models are not affected, because each
+hydraulic step is solved to equilibrium rather than marched.
+
+Compare the routing continuity table in the report rather than a single
+volume total. If the totals differ by less than the run's own continuity
+error, both runs are equally valid. If they differ by more, open an
+issue. See [Reproducibility](../reference/performance.md#reproducibility)
+for the detail and the numbers.
+
 ---
 
 ## Getting Help

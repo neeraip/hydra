@@ -54,10 +54,9 @@ page carry over to it unchanged.
 Per core the engines are at parity: Hydra's serial run edges SWMM 6's
 single thread. Threaded, both engines run the whole routing iteration
 as one parallel region and land at the same mark, with Hydra using
-fewer processor seconds to get there. Both engines
-hold results bit-identical across thread counts; Hydra's serial
-default additionally means the browser build and the desktop app
-compute the same bytes.
+fewer processor seconds to get there. Both engines hold results
+bit-identical across thread counts.
+
 ### Width, for integrators
 
 The SDK's `threads` cargo feature runs the routing iteration and the
@@ -76,6 +75,77 @@ own Preissmann-slot closure on 992 of 1,020 nodes. Every remaining
 difference across the corpus is either fixed or documented in the
 specification with its cause and a source citation; the specifications'
 correspondence notes are the index of them.
+
+## Reproducibility
+
+Hydra is deterministic on a given machine and build. The same model run
+twice produces a byte-identical results file and report. That holds at
+any `THREADS` width, because the specification fixes every accumulation
+order and a test compares serial and threaded runs byte for byte.
+
+Across platforms it is weaker. A Windows run and a macOS run of the same
+drainage model can report slightly different totals. Two things combine
+to produce that.
+
+The first is the system maths library. Addition, subtraction,
+multiplication, division and square root are exact to the last bit on
+every processor, because IEEE 754 requires it. Powers, logarithms and
+inverse trigonometric functions carry no such requirement, and each
+platform ships its own implementation of them. The engine calls them
+constantly: Manning's equation takes a two-thirds power for every
+channel on every step, and circular sections take an arc cosine.
+Comparing the implementation the desktop builds call against the one the
+browser build links, the two disagree by one unit in the last place on
+about 10% of those power calls and 16% of the arc cosine calls. Desktop
+operating systems ship different implementations from each other too.
+
+The second is the error-controlled step. Hydra picks its routing step by
+comparing an estimated local error against a tolerance, and a last-bit
+difference can move an estimate across that line. The two runs then take
+different step sequences and their trajectories separate. What starts as
+a difference in the last bit becomes a small but readable difference in
+reported volumes.
+
+The scale is worth knowing, because it is easy to mistake for a defect.
+Changing one junction invert in the published Bellinge network by a
+single nanometre moves the reported outflow by 16 m³ out of 26,542,
+which is 0.06%. Routing continuity is unmoved at about 0.12% either way,
+so both runs conserve equally well. A difference between platforms is of
+that order.
+
+This is a property of time-marching drainage solvers rather than
+something particular to Hydra. Put the same nanometre through SWMM 5 and
+its reported outflow moves by 2 m³. Hydra moves further because it
+measures the local error at every step and adapts to it, which is the
+same mechanism that holds its continuity to 0.12% on that run where
+SWMM 5 reads 0.35%. The sensitivity and the accuracy have the same
+source.
+
+Distribution models do not behave this way. Each hydraulic step is an
+equilibrium solve rather than a march, so a perturbation that small does
+not survive the step, and the same test leaves Hydra and EPANET both
+reporting identical results down to the byte. Expect water distribution
+runs to agree across platforms, and check the report if they do not.
+
+When comparing two runs from different machines:
+
+- Read the routing continuity table in the report rather than a volume
+  total on its own. That table is the engine's own account of what it
+  conserved, and it should agree closely.
+- Expect volume totals to agree to a few hundredths of a percent instead
+  of exactly.
+- Treat a difference larger than the run's own continuity error as worth
+  investigating. Anything smaller sits inside the numerical method's
+  margin, where neither run is the more correct one.
+
+Also check that both machines run the same version (`hydra -V`) and that
+neither binary was built with `just release-native`, which tunes code
+generation to the host processor.
+
+If you need agreement to the last bit across different platforms, run on
+one platform, or [open an issue](https://github.com/neeraip/hydra/issues).
+Pinning these functions to a single implementation is possible and costs
+some speed.
 
 ## Water distribution, measured against EPANET
 
