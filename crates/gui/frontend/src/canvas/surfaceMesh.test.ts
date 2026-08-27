@@ -8,17 +8,14 @@ import type { GenericVariable } from "../hooks/results";
 import type { SurfaceGeometry } from "../hooks/surface";
 import { seqRgb } from "./MapCanvas/colorUtils";
 import {
-  BLEND_BUBBLE_SCALE,
-  blendedValue,
-  cellValuesAtVertices,
   groundAtVertices,
   MESH_EDGE_MIN_PIXELS,
   meshEdgesLegible,
+  meshEdgesShown,
   pixelsPerUnit,
   SURFACE_ALPHA,
   SURFACE_DRY_DEPTH_M,
   SURFACE_FOOTPRINT_ALPHA,
-  surfaceBarycentric,
   surfaceCellColors,
   surfaceCornerColors,
   surfaceEdgeData,
@@ -215,6 +212,29 @@ describe("the edge legibility decision", () => {
   });
 });
 
+/**
+ * The wireframe and the blend answer different questions — where the
+ * cells are, and what the field does between their centres — and the
+ * second is spoiled by drawing the first over it. Kept as one decision
+ * because the canvas asks it twice: once when it builds the layers, and
+ * again on every pan to see whether the answer has changed. Those two
+ * disagreeing would rebuild the whole layer list on every gesture of a
+ * blended mesh.
+ */
+describe("whether the mesh's edges are drawn", () => {
+  const legible = MESH_EDGE_MIN_PIXELS; // one unit spans exactly the minimum
+
+  it("draws them flat, once the cells are big enough to tell apart", () => {
+    expect(meshEdgesShown(1, legible, false)).toBe(true);
+    expect(meshEdgesShown(1, legible / 2, false)).toBe(false);
+  });
+
+  it("draws none while the surface is blended, at any zoom", () => {
+    expect(meshEdgesShown(1, legible, true)).toBe(false);
+    expect(meshEdgesShown(1, legible * 100, true)).toBe(false);
+  });
+});
+
 describe("surfaceGroundValues", () => {
   // The solver reads a cell's bed as the mean of its vertices (spec
   // 15.3's flat closure); the canvas must read it the same way, or the
@@ -273,84 +293,6 @@ describe("the water mask", () => {
   });
 });
 
-describe("blendedValue", () => {
-  const A = [0.4, 0.5, 0.6] as const;
-
-  /**
-   * The defect this construction exists for: averaging cell values onto
-   * the corners alone destroyed peaks, so the deepest cell of the SWMM
-   * 2D example (0.9983 m) painted its own centre at 0.5265 m.
-   */
-  /**
-   * The scale is the same constant the fragment shader mixes by, so
-   * this also holds the picture and the pointer to one weight: change
-   * it and the centroid stops reading the cell's own value here, while
-   * the shader stops showing the cell's own colour there.
-   */
-  it("weighs the centroid by the shared bubble scale", () => {
-    expect(BLEND_BUBBLE_SCALE * (1 / 3) ** 3).toBeCloseTo(1, 12);
-  });
-
-  it("lands the cell's own value at the centroid", () => {
-    const v = blendedValue(1 / 3, 1 / 3, 1 / 3, A[0], A[1], A[2], 1.0);
-    expect(v).toBeCloseTo(1.0, 9);
-  });
-
-  it("is the corner values at the corners", () => {
-    expect(blendedValue(1, 0, 0, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.4, 9);
-    expect(blendedValue(0, 1, 0, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.5, 9);
-    expect(blendedValue(0, 0, 1, A[0], A[1], A[2], 1.0)).toBeCloseTo(0.6, 9);
-  });
-
-  /** Zero on every edge is what keeps neighbouring cells agreeing along
-   * them, whatever either cell's own value is. */
-  it("owes nothing to the cell's value on an edge", () => {
-    for (const [w0, w1, w2] of [
-      [0.5, 0.5, 0],
-      [0.2, 0, 0.8],
-      [0, 0.7, 0.3],
-    ]) {
-      const lifted = blendedValue(w0, w1, w2, A[0], A[1], A[2], 99);
-      const plain = blendedValue(w0, w1, w2, A[0], A[1], A[2], null);
-      expect(lifted).toBeCloseTo(plain, 9);
-    }
-  });
-
-  /**
-   * Smooth, not merely continuous.
-   *
-   * The first version drew three sub-triangles meeting at the centroid,
-   * whose slope jumped across each seam — the creases the eye picked
-   * up. Tested by how the second difference scales rather than against
-   * a threshold: across a slope jump it falls off like the step, so
-   * halving the step halves it; on a smooth curve it falls off like the
-   * step squared, so halving the step quarters it.
-   */
-  it("changes smoothly across the middle of a cell", () => {
-    const at = (s: number) =>
-      blendedValue(s, (1 - s) / 2, (1 - s) / 2, A[0], A[1], A[2], 1.0);
-    const worstSecondDifference = (h: number) => {
-      let worst = 0;
-      for (let s = 0.15; s < 0.85; s += h) {
-        worst = Math.max(worst, Math.abs(at(s + h) - 2 * at(s) + at(s - h)));
-      }
-      return worst;
-    };
-    const coarse = worstSecondDifference(0.02);
-    const fine = worstSecondDifference(0.01);
-    // Four, within slack for where the samples land; a kink would give
-    // about two.
-    expect(coarse / fine).toBeGreaterThan(3.2);
-  });
-
-  it("is plain linear interpolation for a field held at the vertices", () => {
-    expect(blendedValue(0.25, 0.25, 0.5, 10, 20, 30, null)).toBeCloseTo(
-      22.5,
-      9,
-    );
-  });
-});
-
 describe("valueAtPoint", () => {
   const g: SurfaceGeometry = {
     nVertices: 3,
@@ -361,82 +303,46 @@ describe("valueAtPoint", () => {
   const corners = surfacePolygonData(g).attributes.getPolygon.value;
   const z = groundAtVertices(g);
 
-  describe("a field held at the vertices (the ground)", () => {
-    it("reads each corner as its own value, and interpolates between", () => {
-      expect(valueAtPoint(g, corners, z, null, 0, 0, 0)).toBeCloseTo(10, 6);
-      expect(valueAtPoint(g, corners, z, null, 0, 12, 0)).toBeCloseTo(20, 6);
-      expect(valueAtPoint(g, corners, z, null, 0, 6, 0)).toBeCloseTo(15, 6);
-      expect(valueAtPoint(g, corners, z, null, 0, 4, 4)).toBeCloseTo(20, 6);
-    });
+  /**
+   * Only a field the mesh holds at its vertices is ever read this way,
+   * and for one of those the reading is the field: a plane through three
+   * known elevations, sampled. A run's values are held per cell and are
+   * drawn and read flat — there is nothing between cell centres for the
+   * pointer to report.
+   */
+  it("reads each corner as its own value, and interpolates between", () => {
+    expect(valueAtPoint(g, corners, z, 0, 0, 0)).toBeCloseTo(10, 6);
+    expect(valueAtPoint(g, corners, z, 0, 12, 0)).toBeCloseTo(20, 6);
+    expect(valueAtPoint(g, corners, z, 0, 6, 0)).toBeCloseTo(15, 6);
+    expect(valueAtPoint(g, corners, z, 0, 4, 4)).toBeCloseTo(20, 6);
   });
 
-  describe("a field held per cell (a result)", () => {
-    // Corner averages deliberately far from the cell's own value: this
-    // is the peak case the construction exists for.
-    const atCorners = Float32Array.from([0.4, 0.5, 0.6]);
-    const cells = Float32Array.from([1.0]);
-    const read = (x: number, y: number) =>
-      valueAtPoint(g, corners, atCorners, cells, 0, x, y) as number;
-
-    /**
-     * The defect this replaced: averaging cell values onto the corners
-     * alone destroyed peaks, so the deepest cell of the SWMM 2D example
-     * (0.9983 m) painted its own centre at 0.5265 m — below the mesh
-     * average, and a number the solver never computed.
-     */
-    it("reads a cell's own value at its centre", () => {
-      expect(read(4, 4)).toBeCloseTo(1.0, 6);
-    });
-
-    it("reads the same field the picture is sampled from", () => {
-      // The centroid, through both doors.
-      expect(read(4, 4)).toBeCloseTo(
-        blendedValue(1 / 3, 1 / 3, 1 / 3, 0.4, 0.5, 0.6, 1.0),
-        9,
-      );
-    });
-
-    it("reads the corner averages at the corners", () => {
-      expect(read(0, 0)).toBeCloseTo(0.4, 6);
-      expect(read(12, 0)).toBeCloseTo(0.5, 6);
-      expect(read(0, 12)).toBeCloseTo(0.6, 6);
-    });
-
-    /** Two cells sharing an edge must agree along it, or the surface
-     * seams. On an edge only the two corner values are in play. */
-    it("reads an edge from its corners alone", () => {
-      expect(read(6, 0)).toBeCloseTo(0.45, 6);
-    });
-
-    it("stays between the cell's value and its corners", () => {
-      for (const [x, y] of [
-        [1, 1],
-        [8, 2],
-        [2, 8],
-        [5, 5],
-        [3, 6],
-      ]) {
-        const v = read(x, y);
-        expect(v).toBeGreaterThanOrEqual(0.4 - 1e-9);
-        expect(v).toBeLessThanOrEqual(1.0 + 1e-9);
+  it("never leaves the range of the corners it reads between", () => {
+    for (let i = 0; i <= 60; i++) {
+      for (let j = 0; i + j <= 60; j++) {
+        const w1 = i / 60;
+        const w2 = j / 60;
+        const v = valueAtPoint(g, corners, z, 0, w1 * 12, w2 * 12) as number;
+        expect(v).toBeGreaterThanOrEqual(10 - 1e-9);
+        expect(v).toBeLessThanOrEqual(30 + 1e-9);
       }
-    });
+    }
   });
 
   it("answers just outside the triangle rather than refusing", () => {
-    const v = valueAtPoint(g, corners, z, null, 0, 6.2, -0.2);
+    const v = valueAtPoint(g, corners, z, 0, 6.2, -0.2);
     expect(v).not.toBeNull();
     expect(v as number).toBeGreaterThanOrEqual(10);
     expect(v as number).toBeLessThanOrEqual(30);
   });
 
   it("refuses a cell that is not there", () => {
-    expect(valueAtPoint(g, corners, z, null, 1, 0, 0)).toBeNull();
-    expect(valueAtPoint(g, corners, z, null, -1, 0, 0)).toBeNull();
+    expect(valueAtPoint(g, corners, z, 1, 0, 0)).toBeNull();
+    expect(valueAtPoint(g, corners, z, -1, 0, 0)).toBeNull();
   });
 });
 
-describe("blended shading", () => {
+describe("shading", () => {
   // The unit square split on its diagonal.
   const g: SurfaceGeometry = {
     nVertices: 4,
@@ -456,23 +362,13 @@ describe("blended shading", () => {
     expect(Array.from(groundAtVertices(g))).toEqual([10, 11, 14, 13]);
   });
 
-  it("carries a per-cell field to the corners by the mean", () => {
-    const atVertices = cellValuesAtVertices(g, Float32Array.from([2, 8]));
-    // Vertex 1 belongs to cell 0 only; vertex 3 to cell 1 only; 0 and 2
-    // are shared.
-    expect(Array.from(atVertices)).toEqual([5, 2, 5, 8]);
-  });
-
-  /** The weight the shader mixes by is one at a cell's centroid and
-   * zero at its corners; the basis is what carries that into the
-   * fragment. */
-  it("gives each cell's three vertices the barycentric basis", () => {
-    const b = surfaceBarycentric(2);
-    expect(b.length).toBe(9 * 2);
-    expect(Array.from(b.slice(0, 9))).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-    expect(Array.from(b.slice(9, 18))).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-  });
-
+  /**
+   * A result is the solver's own number for a whole cell, so all three
+   * of the cell's drawn vertices carry it and the triangle reads flat.
+   * The version this replaced averaged neighbouring cells onto the
+   * corners and mixed the cell's colour back in, which painted values
+   * between cell centres that nothing had computed.
+   */
   it("paints a cell's own colour on all three of its vertices", () => {
     const colors = surfaceCellColors(Float32Array.from([2, 8]), null, v);
     expect(colors.length).toBe(12 * g.nCells);
@@ -483,31 +379,38 @@ describe("blended shading", () => {
     expect(rgb(3)).toEqual(seqRgb(8 / 10, "surface"));
   });
 
-  it("paints a corner the same in every cell that meets there", () => {
-    const cells = Float32Array.from([2, 8]);
-    const colors = surfaceCornerColors(
-      g,
-      cellValuesAtVertices(g, cells),
-      null,
-      v,
-    );
+  /**
+   * The smooth drawing, and the reason it is honest: each drawn vertex
+   * takes the colour of the value the mesh holds *at that vertex*, so a
+   * corner is painted the same in every cell that meets there and the
+   * rasteriser's interpolation between them is the plane the mesh
+   * describes. A corner painted differently in two cells would seam
+   * along their shared edge.
+   */
+  // Ranged over the mesh's own bed, as `mesh_info_of` ranges it: with a
+  // variable whose range excludes the elevations every corner clamps to
+  // the same colour and the test proves nothing.
+  const ground: GenericVariable = { ...v, id: "ground", min: 10, max: 14 };
+
+  it("paints a corner from its own value, alike in every cell", () => {
+    const colors = surfaceCornerColors(g, groundAtVertices(g), ground);
     const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
     // Vertex 0 is the first vertex of both cells; vertex 2 is the third
-    // of cell 0 and the second of cell 1. A corner painted differently
-    // in two cells would seam along their shared edge.
+    // of cell 0 and the second of cell 1.
     expect(rgb(0)).toEqual(rgb(3));
     expect(rgb(2)).toEqual(rgb(4));
+    // And each is its own elevation, not a mean of anything.
+    expect(rgb(0)).toEqual(seqRgb(0, "surface"));
+    expect(rgb(1)).toEqual(seqRgb(0.25, "surface"));
   });
 
-  /** The plain fill is the same layer handed the same colour twice, so
-   * its mix has nothing to do. */
-  it("is flat when a cell and its corners share a colour", () => {
-    const cells = Float32Array.from([2, 8]);
-    const flat = surfaceCellColors(cells, null, v);
-    expect(Array.from(flat.slice(0, 4))).toEqual(Array.from(flat.slice(4, 8)));
+  it("gives a cell's three vertices different colours once smooth", () => {
+    const colors = surfaceCornerColors(g, groundAtVertices(g), ground);
+    const rgb = (i: number) => Array.from(colors.slice(4 * i, 4 * i + 3));
+    expect(rgb(0)).not.toEqual(rgb(1));
   });
 
-  it("hides dry cells, and dry corners, but never the ground", () => {
+  it("hides dry cells but never the ground", () => {
     const cells = Float32Array.from([1, 1]);
     const dry = Float32Array.from([1, 0]);
     const masked = surfaceCellColors(cells, dry, v);
@@ -515,31 +418,5 @@ describe("blended shading", () => {
     expect(masked[15]).toBe(0);
     // The ground passes no depth at all and is painted everywhere.
     expect(surfaceCellColors(cells, null, v)[15]).toBe(SURFACE_ALPHA);
-  });
-});
-
-describe("a dry corner", () => {
-  const g: SurfaceGeometry = {
-    nVertices: 4,
-    nCells: 2,
-    positions: new Float64Array([0, 0, 10, 1, 0, 11, 1, 1, 14, 0, 1, 13]),
-    triangles: new Uint32Array([0, 1, 2, 0, 2, 3]),
-  };
-  const v: GenericVariable = {
-    id: "depth",
-    label: "Depth",
-    ramp: { type: "sequential" },
-    min: 0,
-    max: 10,
-  };
-
-  it("keeps its hue too, for the same reason", () => {
-    const values = Float32Array.from([5, 5, 5, 5]);
-    const depth = Float32Array.from([1, 1, 0, 1]); // vertex 2 is dry
-    const colors = surfaceCornerColors(g, values, depth, v);
-    // Vertex 2 is the third vertex of cell 0.
-    const dry = Array.from(colors.slice(8, 12));
-    expect(dry[3]).toBe(0);
-    expect(dry.slice(0, 3)).toEqual(seqRgb(0.5, "surface"));
   });
 });

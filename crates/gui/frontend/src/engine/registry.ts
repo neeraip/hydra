@@ -43,6 +43,11 @@ export interface SettingsViewProps {
 
 /** Props of the Overview page's "Network" KPI grid. */
 export interface OverviewCompositionProps {
+  /** The target being described. Passed rather than read from context
+   * because what the composition asks the backend is a question about
+   * one project, and an answer about another is worse than none. */
+  projectId: string;
+  scenarioId: string | null;
   networkLoaded: boolean;
   fallbackNodeCount: number;
   fallbackLinkCount: number;

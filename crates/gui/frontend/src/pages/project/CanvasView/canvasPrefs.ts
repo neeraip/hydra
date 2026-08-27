@@ -107,11 +107,12 @@ export interface CanvasPrefs {
    * falls back to the first variable when an id is not in it.
    */
   genericSelection: GenericSelection;
-  /** Draw the 2D surface as a continuous field rather than one flat
-   * colour per cell. A reading choice, so it is remembered with the
-   * others: the ground is stored at the mesh's vertices and smoothing
-   * shows it as stored, while a result smoothed is an interpolation of
-   * values the solver holds per cell. */
+  /** Which reading of the ground is on screen: the elevations the mesh
+   * holds at its vertices, interpolated between them, or each cell's
+   * mean of its three. A reading choice, so it is remembered with the
+   * others. It applies only to a field the mesh holds at its vertices;
+   * a run's values are held per cell and are always drawn flat, there
+   * being nothing between cell centres the solver computed. */
   surfaceSmooth: boolean;
 }
 

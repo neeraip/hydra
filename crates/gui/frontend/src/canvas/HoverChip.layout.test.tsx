@@ -54,7 +54,6 @@ const surface = {
     medianLength: 0,
   },
   colors: new Uint8Array(12),
-  cellColors: new Uint8Array(12),
   variable: {
     id: "depth",
     label: "Depth",
@@ -63,9 +62,12 @@ const surface = {
     max: 2,
   },
   vertexValues: null,
-  centreValues: null,
   corners: null,
-  bary: new Float32Array(9),
+  // Unread here: the chip does not draw the surface. Present because
+  // the canvas's copy is what deck diffs to decide re-tesselation.
+  layerData: { length: 0, startIndices: new Uint32Array(), attributes: {} },
+  blended: false,
+  smoothable: true,
   values: Float32Array.from([0.017]),
 };
 

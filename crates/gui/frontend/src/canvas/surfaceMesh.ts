@@ -29,10 +29,14 @@ export const SURFACE_DRY_DEPTH_M = 0.001;
 export const SURFACE_ALPHA = 200;
 
 /**
- * Fill alpha for a mesh with no run behind it: present, and plainly
- * carrying no data. Faint enough that the network reads through it,
- * strong enough to answer "does this model have a 2D surface" without
- * simulating anything first.
+ * Fill alpha for a mesh with nothing to colour it by: present, and
+ * plainly carrying no data. Faint enough that the network reads through
+ * it, strong enough to answer "does this model have a 2D surface".
+ *
+ * Not the picture before a run — that is the ground, which the mesh
+ * carries itself. This is the fallback for a mesh whose variables have
+ * not arrived (or an engine that publishes none), where a tint that
+ * says nothing beats a ramp that would say something untrue.
  */
 export const SURFACE_FOOTPRINT_ALPHA = 46;
 
@@ -103,9 +107,9 @@ export function surfacePolygonData(
 }
 
 /**
- * Per-triangle-vertex RGBA for a mesh with no values: every cell the
- * same faint tint, so the surface's extent is visible and its silence
- * about depth is obvious.
+ * Per-triangle-vertex RGBA for a mesh with nothing to colour it by:
+ * every cell the same faint tint, so the surface's extent is visible
+ * and its silence about what is on it is obvious.
  */
 export function surfaceFootprintColors(nCells: number): Uint8Array {
   const out = new Uint8Array(12 * nCells);
@@ -250,6 +254,25 @@ export function meshEdgesLegible(
 }
 
 /**
+ * Whether to draw the mesh's own edges over the surface: legible at this
+ * camera, and not blended.
+ *
+ * The blend exists to read the field as one continuous surface, and a
+ * wireframe over it puts back the cell boundaries the blend is
+ * dissolving — the picture would say both things at once. Flat mode
+ * still draws them and is one click away, so each reading shows one
+ * thing plainly: where the cells are, or what the field does between
+ * their centres.
+ */
+export function meshEdgesShown(
+  medianLength: number,
+  pixelsPerProjectedUnit: number,
+  blended: boolean,
+): boolean {
+  return !blended && meshEdgesLegible(medianLength, pixelsPerProjectedUnit);
+}
+
+/**
  * Each cell's bed elevation: the mean of its three vertices, which is
  * the same reading of a cell's ground the solver's own flat closure
  * takes (§15.3). Comes from the geometry, so it is available for any
@@ -268,26 +291,25 @@ export function surfaceGroundValues(geometry: SurfaceGeometry): Float32Array {
   return out;
 }
 
-// ── Blended shading ──────────────────────────────────────────────────────────
+// ── Shading a field held at the vertices ─────────────────────────────────────
 //
-// A cell is the solver's unit of state, so the plain fill paints one
-// colour per cell and claims nothing between centres. Blending softens
-// the cell boundaries without moving what a cell says about itself: each
-// cell keeps its own colour at its centroid, corners take the mean of
-// the cells that meet there, and the two are mixed by a weight that is
-// one at the centroid and zero on every edge.
+// A cell is the solver's unit of state, so a *result* is painted one flat
+// colour per cell and claims nothing between centres. There is no honest
+// way to soften that from the outside: the values between cell centres
+// are not ours to invent, and the engine publishes none (see
+// `docs/plans/uds-2d-terrain-and-meshing.md`, gap 1). An earlier version
+// did invent them — corners took the mean of every incident cell, dry
+// ones included, and a cubic bubble carried each cell's own colour back
+// to its centroid. That is the reconstruction the predecessor's own
+// sources warn drags water surfaces up dry banks and down into thin
+// films, and it is gone.
 //
-// The mixing happens per pixel, in `BlendedSurfaceLayer`. What is built
-// here is the two colour arrays it mixes and the barycentric basis it
-// reads them by — all per vertex of the same one-triangle-per-cell
-// geometry the plain fill uses.
-//
-// Averaging cell values onto the corners *alone* — an earlier version of
-// this — destroys peaks: a corner mixes up to six cells, so a local
-// maximum is averaged away and appears nowhere. On the SWMM 2D example
-// the deepest cell in the mesh, at 0.9983 m, painted its own centre at
-// 0.5265 m. In flood work the peak is the number that matters, which is
-// why the cell's own colour is kept at its middle.
+// The *ground* is a different question and keeps its smooth drawing. The
+// mesh holds an elevation at every vertex, so a triangle's bed is the
+// plane through three known numbers: colouring the vertices and letting
+// the rasteriser interpolate draws exactly that plane, inventing nothing.
+// Painting the cell flat is the version that misrepresents it, by
+// showing three different elevations as their mean.
 
 /**
  * The ground at each vertex, exactly as the mesh stores it — no
@@ -301,87 +323,32 @@ export function groundAtVertices(geometry: SurfaceGeometry): Float32Array {
 }
 
 /**
- * A per-cell field carried to the vertices, each vertex taking the mean
- * of the cells that meet there.
+ * Per-drawn-vertex RGBA from values the mesh holds at its vertices.
  *
- * Used for the *corners* of the blend only. A cell's own value is never
- * replaced by this: see the note above.
- */
-export function cellValuesAtVertices(
-  geometry: SurfaceGeometry,
-  cellValues: Float32Array,
-): Float32Array {
-  const { nVertices, nCells, triangles } = geometry;
-  const sum = new Float64Array(nVertices);
-  const count = new Uint32Array(nVertices);
-  for (let ci = 0; ci < nCells; ci++) {
-    const v = cellValues[ci];
-    for (let k = 0; k < 3; k++) {
-      const vi = triangles[3 * ci + k];
-      sum[vi] += v;
-      count[vi] += 1;
-    }
-  }
-  const out = new Float32Array(nVertices);
-  for (let vi = 0; vi < nVertices; vi++) {
-    out[vi] = count[vi] > 0 ? sum[vi] / count[vi] : 0;
-  }
-  return out;
-}
-
-/**
- * The barycentric basis, per vertex of the drawn geometry: the three
- * vertices of every cell get (1,0,0), (0,1,0) and (0,0,1).
- *
- * Static for a mesh — the blend weight is a function of position within
- * a cell, not of anything a run produced — so this is built once and
- * never rebuilt while stepping the timeline.
- */
-export function surfaceBarycentric(nCells: number): Float32Array {
-  const out = new Float32Array(9 * nCells);
-  for (let ci = 0; ci < nCells; ci++) {
-    for (let k = 0; k < 3; k++) out[9 * ci + 3 * k + k] = 1;
-  }
-  return out;
-}
-
-/**
- * Per-vertex RGBA from values held at the *corners* — the colours the
- * blend interpolates between, and the whole picture on an edge.
- *
- * `depthAtVertices` masks as the flat path's depth does, but per corner,
- * which puts the waterline inside the cells it crosses rather than on
- * their boundaries. `null` for a field that is not water.
+ * One ramp evaluation per vertex, scattered to the cells that meet there
+ * (a vertex is shared by about six). Handing these to the fill layer is
+ * the whole of the smooth drawing: colours are a per-vertex attribute,
+ * so the rasteriser interpolates them across each triangle, which for a
+ * field that varies linearly over the triangle is exact.
  */
 export function surfaceCornerColors(
   geometry: SurfaceGeometry,
   vertexValues: Float32Array,
-  depthAtVertices: Float32Array | null,
   variable: GenericVariable,
 ): Uint8Array {
   const { nVertices, nCells, triangles } = geometry;
-  // One ramp evaluation per vertex, then scattered to the cells that
-  // meet there: a vertex is shared by about six of them.
   const rgba = new Uint8Array(4 * nVertices);
   for (let vi = 0; vi < nVertices; vi++) {
-    const dry =
-      depthAtVertices != null && !(depthAtVertices[vi] > SURFACE_DRY_DEPTH_M);
     const [r, g, b, a] = genericRgba(
       vertexValues[vi],
       variable,
       SURFACE_ALPHA,
       "surface",
     );
-    // A dry sample keeps its colour and loses only its alpha. The blend
-    // mixes the colour channels too, so leaving a dry sample black drags
-    // the hue toward black across the waterline instead of fading it —
-    // invisible while the fill was flat, because nothing ever drew an
-    // alpha-zero pixel, and plain to see once a neighbouring pixel is a
-    // mix of the two.
     rgba[4 * vi] = r;
     rgba[4 * vi + 1] = g;
     rgba[4 * vi + 2] = b;
-    rgba[4 * vi + 3] = dry ? 0 : a;
+    rgba[4 * vi + 3] = a;
   }
   const out = new Uint8Array(12 * nCells);
   for (let ci = 0; ci < nCells; ci++) {
@@ -395,12 +362,9 @@ export function surfaceCornerColors(
 }
 
 /**
- * Per-vertex RGBA of each cell's own colour, repeated for its three
- * vertices — what the blend mixes toward at a cell's middle.
- *
- * Handed the same values as the corners, this is the plain fill: every
- * vertex of a cell carries the cell's colour and the mix has nothing to
- * do.
+ * Per-drawn-vertex RGBA of each cell's own colour, repeated for its three
+ * vertices — the flat fill, and the only honest way to draw a field the
+ * solver holds per cell.
  */
 export function surfaceCellColors(
   values: Float32Array,
@@ -421,7 +385,8 @@ export function surfaceCellColors(
       SURFACE_ALPHA,
       "surface",
     );
-    // Colour kept, alpha dropped — see `surfaceCornerColors`.
+    // A dry cell keeps its colour and loses only its alpha: the hue is
+    // still the reading, and black would be a different claim.
     for (let k = 0; k < 3; k++) {
       const at = 12 * ci + 4 * k;
       out[at] = r;
@@ -434,52 +399,9 @@ export function surfaceCellColors(
 }
 
 /**
- * The blended field at barycentric coordinates inside a cell.
- *
- * Linear between the corner values, lifted at the middle so the cell's
- * own value lands exactly at its centroid: `Σ w·A + (cell − mean A)·B`,
- * where `B = 27·w0·w1·w2` is zero on every edge and one at the centroid.
- *
- * This is the same weight the shader mixes colours by, so what the
- * pointer reads and what the picture shows agree at the centre and along
- * every edge. Between those they differ by whether the ramp is applied
- * before or after the mixing, which is a question the solver does not
- * answer either way: it holds one value per cell and says nothing about
- * the inside of one.
- */
-/**
- * The blend's weight at the centroid of a cell, and the scale of the
- * bubble `w0·w1·w2` that carries it.
- *
- * Named because the weight is computed twice: here, for what the pointer
- * reads, and in `BlendedSurfaceLayer`'s fragment shader, for what the
- * picture shows. Those two must be the same function or the chip and the
- * map describe different surfaces, and a constant written out in GLSL
- * and again in TypeScript is one nobody would think to change in both.
- */
-export const BLEND_BUBBLE_SCALE = 27;
-
-export function blendedValue(
-  w0: number,
-  w1: number,
-  w2: number,
-  a0: number,
-  a1: number,
-  a2: number,
-  cell: number | null,
-): number {
-  const linear = w0 * a0 + w1 * a1 + w2 * a2;
-  if (cell == null) return linear;
-  const bubble = BLEND_BUBBLE_SCALE * w0 * w1 * w2;
-  return linear + (cell - (a0 + a1 + a2) / 3) * bubble;
-}
-
-/**
- * The value the blended picture shows at a point inside a cell: the
- * point's barycentric coordinates in the cell, through `blendedValue`.
- *
- * `cellValues` is `null` for a field held at the vertices (the ground),
- * where plain linear interpolation is already exact.
+ * The value the smooth picture shows at a point inside a cell: linear
+ * interpolation of the cell's three corner values, which for a field the
+ * mesh holds at its vertices is the field itself.
  *
  * `x, y` are in the projected space the corners were built in. Weights
  * are clamped and renormalised so a point on an edge, or a hair outside
@@ -489,7 +411,6 @@ export function valueAtPoint(
   geometry: SurfaceGeometry,
   corners: Float64Array,
   vertexValues: Float32Array,
-  cellValues: Float32Array | null,
   cellIndex: number,
   x: number,
   y: number,
@@ -516,13 +437,9 @@ export function valueAtPoint(
     w2 = 0;
   }
   const t = geometry.triangles;
-  return blendedValue(
-    w0,
-    w1,
-    w2,
-    vertexValues[t[3 * cellIndex]],
-    vertexValues[t[3 * cellIndex + 1]],
-    vertexValues[t[3 * cellIndex + 2]],
-    cellValues ? cellValues[cellIndex] : null,
+  return (
+    w0 * vertexValues[t[3 * cellIndex]] +
+    w1 * vertexValues[t[3 * cellIndex + 1]] +
+    w2 * vertexValues[t[3 * cellIndex + 2]]
   );
 }

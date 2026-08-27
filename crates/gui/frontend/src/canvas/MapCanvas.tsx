@@ -9,6 +9,7 @@ import {
   PathLayer,
   PolygonLayer,
   ScatterplotLayer,
+  SolidPolygonLayer,
   TextLayer,
 } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
@@ -39,7 +40,6 @@ import {
   MAP_GROUND_COLOR,
   parseProviderBasemapId,
 } from "./Basemap";
-import { BlendedSurfaceLayer } from "./BlendedSurfaceLayer";
 import {
   FIT_DURATION_MS,
   flyDurationMs,
@@ -117,7 +117,7 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
-import { meshEdgesLegible, pixelsPerUnit, valueAtPoint } from "./surfaceMesh";
+import { meshEdgesShown, pixelsPerUnit, valueAtPoint } from "./surfaceMesh";
 import {
   pathIntersectsBox,
   pointInBox,
@@ -603,6 +603,10 @@ export const MapCanvas = memo(function MapCanvas({
   const surfaceBoundsRef = useRef<PlanBounds | null>(null);
   const meshEdgesShownRef = useRef(false);
   const meshMedianRef = useRef<number | null>(null);
+  // Part of the same verdict, so it is held beside the median: a blended
+  // surface draws no edges, and the pan/zoom check must ask the same
+  // question the layers were built from or it rebuilds on every gesture.
+  const meshBlendedRef = useRef(false);
   const sys = useUnitSystem();
   const selectedNodeIdRef = useRef<string | null>(selectedNodeId);
   const selectedLinkIdRef = useRef<string | null>(selectedLinkId);
@@ -1970,28 +1974,18 @@ export const MapCanvas = memo(function MapCanvas({
       // pointer only when no node, link or region claims it first.
       const surfacePickable = tool === "select";
       layers.push(
-        new BlendedSurfaceLayer({
-          // deck's own `data` typing does not mention `startIndices`,
-          // which is how a polygon layer is handed binary rings.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        new SolidPolygonLayer({
           // Keyed by projection: re-projecting replaces the layer
           // rather than updating it, so deck can never draw a cached
           // tesselation at coordinates that have moved.
           id: `surface-2d-${surface.key}`,
-          data: {
-            length: surface.data.length,
-            startIndices: surface.data.startIndices,
-            attributes: {
-              getPolygon: surface.data.attributes.getPolygon,
-              getFillColor: { value: surface.colors, size: 4 },
-              // The blend, mixed per pixel: the weight from the
-              // barycentric basis, the target from each cell's own
-              // colour. Equal colours make the mix a no-op, which is
-              // how the plain fill is drawn by the same layer.
-              getBlendBary: { value: surface.bary, size: 3 },
-              getBlendCellColor: { value: surface.cellColors, size: 4 },
-            },
-          } as never,
+          // Built with the surface, not here: deck re-tesselates the
+          // whole mesh whenever this object's identity changes, and the
+          // layer list is rebuilt for reasons the surface knows nothing
+          // about. See `CanvasSurface.layerData`. Cast because deck's
+          // own `data` typing does not mention `startIndices`, which is
+          // how a polygon layer is handed binary rings.
+          data: surface.layerData as never,
           // The triangles are already closed rings in draw order; deck
           // must not re-wind or close them.
           _normalize: false,
@@ -2009,14 +2003,15 @@ export const MapCanvas = memo(function MapCanvas({
             const ci = info.index ?? -1;
             // A smooth surface varies inside its cells, so the pointer
             // reads the value where it actually is rather than the one
-            // number the whole cell would otherwise report.
+            // number the whole cell would otherwise report. Only a field
+            // the mesh holds at its vertices is drawn that way, so this
+            // interpolates between known values and invents nothing.
             const at =
               surface.vertexValues && surface.corners && info.coordinate
                 ? (valueAtPoint(
                     surface.geometry,
                     surface.corners,
                     surface.vertexValues,
-                    surface.centreValues,
                     ci,
                     info.coordinate[0],
                     info.coordinate[1],
@@ -2049,17 +2044,22 @@ export const MapCanvas = memo(function MapCanvas({
         ? ((viewStateRef.current as SchematicViewState)?.zoom ?? 0)
         : (mapRef.current?.getZoom() ?? 0);
       const perUnit = pixelsPerUnit(isSchematic ? "orthographic" : "map", zoom);
-      const showEdges = meshEdgesLegible(surface.edges.medianLength, perUnit);
+      const showEdges = meshEdgesShown(
+        surface.edges.medianLength,
+        perUnit,
+        surface.blended,
+      );
       meshEdgesShownRef.current = showEdges;
       meshMedianRef.current = surface.edges.medianLength;
+      meshBlendedRef.current = surface.blended;
       if (showEdges && surface.edges.length > 0) {
         layers.push(
           new LineLayer({
             id: `surface-2d-edges-${surface.key}`,
-            data: {
-              length: surface.edges.length,
-              attributes: surface.edges.attributes,
-            },
+            // The same object every rebuild, for the same reason the
+            // fill's is: a new one re-uploads every edge in the mesh.
+            // deck reads `length` and `attributes` and ignores the rest.
+            data: surface.edges as never,
             coordinateSystem: coordSystem,
             // Darker than the fill rather than a colour of its own: the
             // edges are the same surface seen more closely, not a second
@@ -2923,7 +2923,11 @@ export const MapCanvas = memo(function MapCanvas({
     (view: "map" | "orthographic", zoom: number) => {
       const median = meshMedianRef.current;
       if (median == null) return false;
-      const now = meshEdgesLegible(median, pixelsPerUnit(view, zoom));
+      const now = meshEdgesShown(
+        median,
+        pixelsPerUnit(view, zoom),
+        meshBlendedRef.current,
+      );
       return now !== meshEdgesShownRef.current;
     },
   );
@@ -3543,6 +3547,17 @@ export const MapCanvas = memo(function MapCanvas({
   //    switches so the user's chosen view position is preserved.
   const prevHasNodesRef = useRef(nodes.length > 0);
   const prevFitKeyRef = useRef(fitKey);
+  /**
+   * A fit that has been asked for and not yet performed.
+   *
+   * Both reasons to fit are *edges* — the key changed, the nodes arrived —
+   * and an edge is gone the moment it is read. The waits below happen
+   * after that read, so a fit asked for while the layout was still
+   * settling used to be dropped and never come back: no later run of this
+   * effect sees an edge, because there is none left. Held as a request
+   * instead, the wait defers the fit rather than cancelling it.
+   */
+  const fitPendingRef = useRef<"request" | "load" | null>(null);
   useEffect(() => {
     if (!isActive) return;
     const hasNodes = nodes.length > 0;
@@ -3550,19 +3565,23 @@ export const MapCanvas = memo(function MapCanvas({
     const fitKeyChanged = fitKey !== prevFitKeyRef.current;
     prevHasNodesRef.current = hasNodes;
     prevFitKeyRef.current = fitKey;
+    // A request outranks a load: it is someone asking, and it travels.
+    if (fitKeyChanged) fitPendingRef.current = "request";
+    else if (nodesJustArrived && fitPendingRef.current == null) {
+      fitPendingRef.current = "load";
+    }
 
     if (!hasNodes) return;
-    if (!nodesJustArrived && !fitKeyChanged) return;
+    if (fitPendingRef.current == null) return;
     // Same wait as the framing effect: there is no layout to fit to until
     // the couplings say which parts of the network are actually connected.
+    // The request stays pending across it.
     if (topological && !couplingsResolved) return;
 
     // A fit someone asked for travels; the one on first load has nowhere
     // to travel from. See `fitTransition`.
-    const animate = shouldAnimateFit(
-      fitKeyChanged ? "request" : "load",
-      reducedMotion,
-    );
+    const animate = shouldAnimateFit(fitPendingRef.current, reducedMotion);
+    fitPendingRef.current = null;
 
     if (viewMode === "schematic") {
       const deck = ensureDeck();

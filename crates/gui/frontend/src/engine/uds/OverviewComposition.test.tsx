@@ -24,7 +24,11 @@ vi.mock("../../hooks", () => ({
 }));
 
 vi.mock("../../hooks/surface", () => ({
-  useMeshInfo: (loaded: boolean) => meshInfo(loaded),
+  useMeshInfo: (
+    project: string | null,
+    scenario: string | null,
+    loaded: boolean,
+  ) => meshInfo(project, scenario, loaded),
 }));
 
 const { UdsOverviewComposition } = await import("./OverviewComposition");
@@ -36,6 +40,8 @@ beforeEach(() => {
 function composition() {
   return render(
     <UdsOverviewComposition
+      projectId="p"
+      scenarioId={null}
       networkLoaded
       fallbackNodeCount={2}
       fallbackLinkCount={1}
@@ -65,11 +71,13 @@ describe("UdsOverviewComposition", () => {
     meshInfo.mockReturnValue(null);
     render(
       <UdsOverviewComposition
+        projectId="p"
+        scenarioId={null}
         networkLoaded={false}
         fallbackNodeCount={2}
         fallbackLinkCount={1}
       />,
     );
-    expect(meshInfo).toHaveBeenCalledWith(false);
+    expect(meshInfo).toHaveBeenCalledWith("p", null, false);
   });
 });

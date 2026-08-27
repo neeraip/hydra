@@ -77,9 +77,9 @@ export function CanvasToolbar({
   measureDistanceM,
   onClearAnnotations,
 }: {
-  /** This target's run produced a 2D surface — offers its toggle.
-   * Result state, not network state: the model says whether a mesh
-   * exists, but only a finished run has a surface to show. */
+  /** This model carries a 2D mesh — offers the surface's toggle. Known
+   * from import: an unrun mesh still draws, carrying the ground it sits
+   * on, so the toggle is offered before there is any run. */
   hasSurface?: boolean;
   /** Whether model-editing tools (edit, add node, add link) appear. */
   /** Positions can be changed — offers the edit tool. */
@@ -122,9 +122,6 @@ export function CanvasToolbar({
   // Region polygons exist only for models that drew any — the toggle
   // follows the data, not the engine.
   const hasRegions = useRegions().length > 0;
-  // Result state, not network state, so it arrives as a prop: the model
-  // says whether a mesh exists, but only a finished run has a surface.
-
   const basemapProviders = useBasemapProviders();
   const basemapVisibility = useBasemapVisibility();
 

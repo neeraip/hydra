@@ -100,7 +100,7 @@ describe("getMeshGeometry", () => {
     const empty = new ArrayBuffer(12);
     new DataView(empty).setUint32(0, SURFACE_GEOMETRY_VERSION, true);
     const spy = vi.spyOn(ipc, "tryInvoke").mockResolvedValue(empty);
-    await expect(getMeshGeometry()).resolves.toBeNull();
+    await expect(getMeshGeometry("p")).resolves.toBeNull();
     spy.mockRestore();
   });
 
@@ -108,7 +108,7 @@ describe("getMeshGeometry", () => {
     const { getMeshGeometry } = await import("./surface");
     const ipc = await import("./ipc");
     const spy = vi.spyOn(ipc, "tryInvoke").mockResolvedValue(geometryPayload());
-    const g = await getMeshGeometry();
+    const g = await getMeshGeometry("p");
     expect(g?.nCells).toBe(2);
     spy.mockRestore();
   });

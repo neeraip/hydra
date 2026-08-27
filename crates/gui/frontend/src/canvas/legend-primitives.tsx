@@ -168,6 +168,50 @@ export function LinkGlyph() {
   );
 }
 
+/**
+ * Motion on the canvas: marks travelling along a link.
+ *
+ * Not a play triangle, which this button used to carry. That glyph
+ * already means three other things in the app — run the simulation, run
+ * this scenario, and play the timeline — and the first two start
+ * something running while this one only changes how the picture is
+ * drawn. What it turns on is a wave, hard marks or soft parcels moving
+ * along the pipes, so the button shows a miniature of that, the way the
+ * blend toggle beside it shows a miniature of its own gradient.
+ *
+ * Takes `currentColor` so the toggle's own on/off colour carries it.
+ */
+export function MotionGlyph() {
+  return (
+    <svg
+      width={12}
+      height={12}
+      viewBox="0 0 12 12"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      {/* The link the motion runs along, held back so the marks read
+          first. */}
+      <path
+        d="M1 6h10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1}
+        strokeLinecap="round"
+        opacity={0.4}
+      />
+      <path
+        d="M3.1 3.7 5.4 6 3.1 8.3M6.9 3.7 9.2 6 6.9 8.3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** The 2D overland surface: a mesh triangle. */
 export function SurfaceGlyph() {
   return (
@@ -737,5 +781,89 @@ export function Ramp({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A toggle in the control bar: on reads as filled, off as empty.
+ *
+ * One component for every toggle in the bar because two of them wrote
+ * this themselves and drifted — the animation button filled when on
+ * while the surface's blend button only changed the icon's colour, so
+ * the same state was drawn two ways in the same bar, and "off" and
+ * "unavailable" became the same picture on the one that dimmed.
+ *
+ * Hover is stacked over whichever state fill is showing rather than
+ * replacing it: `--selection-bg-strong` is three times the weight of
+ * `--nav-hover`, so swapping one for the other would *dim* a lit button
+ * under the pointer. Inline styles beat the stylesheet, so `.tool-btn:hover`
+ * could never show through the state fill and the handlers do it here.
+ */
+export function BarToggle({
+  active,
+  disabled = false,
+  label,
+  tooltip,
+  onClick,
+  style,
+  children,
+}: {
+  /** Whether the thing this toggles is on. */
+  active: boolean;
+  /** Refused, and saying so: dimmed, uncoloured, and inert. */
+  disabled?: boolean;
+  /** Accessible name. */
+  label: string;
+  /** Hover text, which usually names the action rather than the state. */
+  tooltip?: string;
+  onClick: () => void;
+  /** Per-button geometry only (padding, corner radius) — the state
+   * colours are this component's, and passing them here would be the
+   * drift it exists to prevent. */
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  const fill =
+    active && !disabled ? "var(--selection-bg-strong)" : "transparent";
+  const hoverFill = `linear-gradient(var(--nav-hover), var(--nav-hover)), ${fill}`;
+  return (
+    <button
+      type="button"
+      className="tool-btn"
+      disabled={disabled}
+      aria-pressed={active}
+      aria-label={label}
+      data-tooltip={tooltip ?? label}
+      data-tooltip-pos="top"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = hoverFill;
+        if (!active) e.currentTarget.style.color = "var(--text-primary)";
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = fill;
+        if (!active) e.currentTarget.style.color = "var(--text-secondary)";
+      }}
+      style={{
+        ...PICKER_BTN_STYLE,
+        ...style,
+        background: fill,
+        color:
+          active && !disabled
+            ? "var(--accent)"
+            : disabled
+              ? "var(--text-tertiary)"
+              : "var(--text-secondary)",
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }

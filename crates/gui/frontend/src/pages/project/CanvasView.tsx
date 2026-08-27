@@ -97,6 +97,7 @@ import {
 import { deletionSummary } from "./CanvasView/deletionSummary";
 import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { locateTarget } from "./CanvasView/locateTarget";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { periodToFetch } from "./CanvasView/periodToFetch";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
@@ -1778,11 +1779,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // quantity simply contributes nothing and the control is absent.
 
   /** The legend speaks in element classes; the wds extremes search is
-   * indexed by node/link arrays. Regions have no wds counterpart. */
+   * indexed by node/link arrays. Which class maps to which array — and
+   * which classes have no array at all — is `locateTarget`. */
   const handleLocateExtreme = useCallback(
     (cls: GenericClassKey, which: "min" | "max") => {
-      if (cls === "region") return;
-      onLocateExtreme(cls === "point" ? "node" : "link", which);
+      const target = locateTarget(cls);
+      if (target) onLocateExtreme(target, which);
     },
     [onLocateExtreme],
   );
@@ -2492,15 +2494,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             <GenericLegend
               meta={genericMeta}
               hasRegions={canvasRegions.length > 0}
-              // The mesh's own properties first, then whatever a run
-              // produced: the ground is there to be picked whether or
-              // not anyone has simulated.
               // The very list the canvas resolves its own colours over,
               // so the legend can only ever name what is on the map.
+              // Order is `surfaceVariableList`'s: a run's variables, then
+              // the mesh's own properties.
               surfaceVars={surfaceVariables}
               surfaceSmooth={surfaceSmooth}
+              // Offered only over a field the mesh holds at its
+              // vertices: there, drawing it continuous is exact. A run's
+              // values live per cell and have no vertex reading, so a
+              // control that smoothed them would be offering to invent.
               onSurfaceSmoothChange={
-                canvasSurface ? setSurfaceSmooth : undefined
+                canvasSurface?.smoothable ? setSurfaceSmooth : undefined
               }
               selection={genericSelection}
               onSelect={handleGenericSelect}

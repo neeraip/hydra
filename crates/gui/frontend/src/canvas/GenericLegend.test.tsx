@@ -110,6 +110,83 @@ describe("GenericLegend", () => {
     expect(onSurfaceSmoothChange).toHaveBeenCalledWith(true);
   });
 
+  /**
+   * The defect: the blend toggle drew its on-state as a coloured icon
+   * while the animation toggle beside it drew a filled button, so the
+   * same state had two pictures in one bar and the blend button read as
+   * off while it was on. Asserted against each other rather than against
+   * a colour, because what matters is that the bar has one language.
+   */
+  it("draws both of the bar's toggles in the same on and off language", () => {
+    const animation: AnimationControl = {
+      playing: true,
+      appliesTo: ["depth"],
+      reducedMotion: false,
+      onToggle: vi.fn(),
+    };
+    const on = renderLegend({
+      surfaceVars: [v({ id: "ground", label: "Ground" })],
+      onSurfaceSmoothChange: vi.fn(),
+      surfaceSmooth: true,
+      animation,
+    });
+    const lit = screen.getByLabelText("Smooth the 2D surface");
+    const litPlay = screen.getByLabelText("Pause animation");
+    expect(lit.style.background).toBe(litPlay.style.background);
+    expect(lit.style.color).toBe(litPlay.style.color);
+    // …and "on" is a fill, not only a hue: dimming the icon alone made
+    // off and unavailable the same picture.
+    expect(lit.style.background).not.toBe("transparent");
+    on.unmount();
+
+    renderLegend({
+      surfaceVars: [v({ id: "ground", label: "Ground" })],
+      onSurfaceSmoothChange: vi.fn(),
+      surfaceSmooth: false,
+      animation: { ...animation, playing: false },
+    });
+    const dark = screen.getByLabelText("Smooth the 2D surface");
+    const darkPlay = screen.getByLabelText("Play animation");
+    expect(dark.style.background).toBe(darkPlay.style.background);
+    expect(dark.style.color).toBe(darkPlay.style.color);
+    expect(dark.style.background).toBe("transparent");
+  });
+
+  /**
+   * A toggle's tooltip names the state clicking moves to, not the one
+   * on screen. Inverting the ternary leaves two plausible strings and a
+   * control that reads as doing nothing, which no other test would
+   * catch: both positions render, both are labelled, and only the
+   * direction is wrong.
+   *
+   * The strings themselves matter here for a second reason. The two
+   * positions are two readings of the terrain, not two shadings of one
+   * reading — a cell has no elevation of its own, so flat paints the
+   * mean of its three vertices and smooth interpolates between them.
+   * Copy that described the drawing ("blend between cells") left
+   * nothing on screen saying which number was being shown.
+   */
+  it("offers the reading the other position would show", () => {
+    const props = {
+      surfaceVars: [v({ id: "ground", label: "Ground" })],
+      onSurfaceSmoothChange: vi.fn(),
+    };
+    const flat = renderLegend({ ...props, surfaceSmooth: false });
+    expect(
+      screen
+        .getByLabelText("Smooth the 2D surface")
+        .getAttribute("data-tooltip"),
+    ).toBe("Show the elevations held at the mesh vertices");
+    flat.unmount();
+
+    renderLegend({ ...props, surfaceSmooth: true });
+    expect(
+      screen
+        .getByLabelText("Smooth the 2D surface")
+        .getAttribute("data-tooltip"),
+    ).toBe("Show each cell's mean elevation");
+  });
+
   it("hides the smoothing toggle when no surface is drawn", () => {
     renderLegend();
     expect(screen.queryByLabelText("Smooth the 2D surface")).toBeNull();

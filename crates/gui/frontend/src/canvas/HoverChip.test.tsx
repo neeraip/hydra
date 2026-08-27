@@ -132,11 +132,13 @@ describe("HoverChip over a surface cell", () => {
       medianLength: 0,
     },
     colors: new Uint8Array(36),
-    cellColors: new Uint8Array(12),
     vertexValues: null,
-    centreValues: null,
     corners: null,
-    bary: new Float32Array(9),
+    // Unread here: the chip does not draw the surface. Present because
+    // the canvas's copy is what deck diffs to decide re-tesselation.
+    layerData: { length: 0, startIndices: new Uint32Array(), attributes: {} },
+    blended: false,
+    smoothable: true,
     variable: channel([], "depth").variable,
     values: Float32Array.from([0.1, 1.375, 0.4]),
   };

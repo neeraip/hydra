@@ -26,7 +26,11 @@ import type {
   SurfaceMeta,
   SurfacePeriod,
 } from "../../../hooks/surface";
-import { shownSurface, surfaceVariableList } from "./useSurfaceResults";
+import {
+  answerFor,
+  shownSurface,
+  surfaceVariableList,
+} from "./useSurfaceResults";
 
 const variable = (id: string): GenericVariable => ({
   id,
@@ -63,8 +67,8 @@ const geometry = (nCells: number): SurfaceGeometry => {
   };
 };
 
-const meta = (nCells: number): SurfaceMeta => ({
-  nVertices: 3 * nCells,
+const meta = (nCells: number, nVertices = 3 * nCells): SurfaceMeta => ({
+  nVertices,
   nCells,
   periods: 4,
   reportStepS: 300,
@@ -238,10 +242,16 @@ describe("the legend and the canvas agree on what is shown", () => {
 
 /**
  * Smoothing says something different about a property than about a
- * result, and the difference is worth keeping straight: the mesh holds
- * the ground at its vertices, so smoothing shows it as stored, while a
- * result lives per cell and smoothing it is an interpolation the solver
- * never made.
+ * result, and only one of them is ours to draw: the mesh holds the
+ * ground at its vertices, so drawing it continuous shows it as stored,
+ * while a result lives per cell and smoothing it would paint values
+ * between cell centres that the solver never computed.
+ *
+ * An earlier version did smooth results — corners took the mean of every
+ * incident cell, dry ones included, and a cubic bubble carried each
+ * cell's own colour back to its centroid. It is gone; see
+ * `docs/plans/uds-2d-terrain-and-meshing.md` for what the engine would
+ * have to publish for it to come back honestly.
  */
 describe("the smooth surface", () => {
   it("takes the ground from the vertices, not from cell means", () => {
@@ -250,58 +260,69 @@ describe("the smooth surface", () => {
     expect(shown.vertexValues?.length).toBe(g.nVertices);
     // Vertex 0's own z, untouched by any averaging.
     expect(shown.vertexValues?.[0]).toBeCloseTo(g.positions[2], 6);
-    // Held at the vertices, so a reading needs no centre term.
-    expect(shown.centreValues).toBeNull();
+    expect(shown.blended).toBe(true);
   });
 
-  /**
-   * The peak case, end to end: a run's values reach the picture with
-   * the cell's own number kept at its centre. Corner averaging alone
-   * put the SWMM 2D example's deepest cell below the mesh average.
-   */
-  it("keeps a cell's own value at its centre", () => {
+  it("reads the ground at a point as the plane through its corners", () => {
     const g = geometry(4);
-    const shown = shownSurface(g, GROUND, meta(4), period(4), "depth", true);
-    expect(shown.centreValues).toBe(shown.values);
-    const deepest = shown.values?.[0];
-    expect(deepest).toBeCloseTo(0.5, 6);
-    // Read at the centroid of that cell, through the same function the
-    // pointer uses.
+    const shown = shownSurface(g, GROUND, null, null, "ground", true);
     const corners = surfacePolygonData(g).attributes.getPolygon.value;
+    // The centroid of cell 0: the mean of its three vertex elevations,
+    // which is what a plane through them has there.
     const cx = (corners[0] + corners[2] + corners[4]) / 3;
     const cy = (corners[1] + corners[3] + corners[5]) / 3;
     const at = valueAtPoint(
       g,
       corners,
       shown.vertexValues as Float32Array,
-      shown.centreValues,
       0,
       cx,
       cy,
     );
-    expect(at).toBeCloseTo(deepest as number, 6);
+    const mean = (g.positions[2] + g.positions[5] + g.positions[8]) / 3;
+    expect(at).toBeCloseTo(mean, 6);
   });
 
-  it("carries a run's values to the corners as a stated mean", () => {
-    const shown = shownSurface(
-      geometry(4),
-      GROUND,
-      meta(4),
-      period(4),
-      "speed",
-      true,
-    );
-    expect(shown.variable?.id).toBe("speed");
-    expect(shown.vertexValues?.length).toBe(geometry(4).nVertices);
-    // Every cell reads 0.25, so every vertex does too.
-    expect(Array.from(shown.vertexValues ?? []).every((v) => v === 0.25)).toBe(
-      true,
+  /**
+   * The rule the removal turns on: a run's values are drawn flat however
+   * the toggle is set, and the surface says so, so the legend can stop
+   * offering a control that would be offering to invent.
+   */
+  it("draws a run's values flat whatever the toggle says", () => {
+    const g = geometry(4);
+    for (const smooth of [false, true]) {
+      const shown = shownSurface(
+        g,
+        GROUND,
+        meta(4),
+        period(4),
+        "depth",
+        smooth,
+      );
+      expect(shown.variable?.id).toBe("depth");
+      expect(shown.vertexValues).toBeNull();
+      expect(shown.blended).toBe(false);
+      expect(shown.smoothable).toBe(false);
+    }
+  });
+
+  it("offers smoothing over a field the mesh holds at its vertices", () => {
+    const g = geometry(4);
+    for (const smooth of [false, true]) {
+      expect(
+        shownSurface(g, GROUND, null, null, "ground", smooth).smoothable,
+      ).toBe(true);
+    }
+    // …and over nothing at all when there is nothing to show.
+    expect(shownSurface(geometry(2), [], null, null, "", true).smoothable).toBe(
+      false,
     );
   });
 
   it("holds no vertex values while the surface is drawn flat", () => {
     const flat = shownSurface(geometry(4), GROUND, null, null, "ground", false);
     expect(flat.vertexValues).toBeNull();
+    expect(flat.blended).toBe(false);
     // The per-cell field is there either way: it is what the flat
     // picture paints and what a flat hover reads.
     expect(flat.values?.length).toBe(4);
@@ -318,40 +339,59 @@ describe("the smooth surface", () => {
 });
 
 /**
- * The plain fill and the blend are the same layer, and which one is
- * drawn is decided entirely by the two colour arrays: the shader mixes
- * a cell's colour into its corners', so handing it one colour twice
- * leaves nothing to mix.
- *
- * Nothing else enforces that. If the flat path ever returned corner
- * colours of its own, every cell would quietly start blending, and the
- * flat fill would stop being flat without a single test failing.
+ * What makes a cell read flat: its three drawn vertices carry one
+ * colour, so deck's interpolation across the triangle has nothing to
+ * interpolate. Nothing else enforces it — if the flat path ever handed
+ * the corners values of their own, every cell would quietly start
+ * shading between numbers the solver never produced.
  */
 describe("what makes the fill flat", () => {
-  it("gives a cell and its corners the same colours", () => {
+  const cellRgb = (colors: Uint8Array, cell: number, k: number) =>
+    Array.from(colors.slice(12 * cell + 4 * k, 12 * cell + 4 * k + 3));
+
+  it("gives a cell's three vertices one colour for a run's values", () => {
     const shown = shownSurface(
       geometry(4),
       GROUND,
       meta(4),
       period(4),
       "depth",
-      false,
+      true,
     );
-    expect(Array.from(shown.cellColors)).toEqual(Array.from(shown.colors));
+    expect(cellRgb(shown.colors, 0, 0)).toEqual(cellRgb(shown.colors, 0, 1));
+    expect(cellRgb(shown.colors, 0, 1)).toEqual(cellRgb(shown.colors, 0, 2));
   });
 
-  it("gives them different colours once blended", () => {
-    const g = geometry(4);
-    // Neighbouring cells must differ for the corner means to differ
-    // from the cells: this fixture's cells share no vertices, so the
-    // ground is the field that shows it.
-    const shown = shownSurface(g, GROUND, null, null, "ground", true);
-    expect(shown.colors.length).toBe(shown.cellColors.length);
-    expect(Array.from(shown.colors)).not.toEqual(Array.from(shown.cellColors));
-  });
-
-  it("draws a footprint with nothing to mix either", () => {
+  it("draws a footprint flat too", () => {
     const shown = shownSurface(geometry(2), [], null, null, "", true);
-    expect(Array.from(shown.cellColors)).toEqual(Array.from(shown.colors));
+    expect(cellRgb(shown.colors, 0, 0)).toEqual(cellRgb(shown.colors, 0, 1));
+  });
+});
+
+describe("an answer is only an answer about its own target", () => {
+  const held = { target: "p1:base", value: 42 };
+
+  it("is read while its target is the one on screen", () => {
+    expect(answerFor(held, "p1:base")).toBe(42);
+  });
+
+  it("is not read for another project, or another scenario", () => {
+    expect(answerFor(held, "p2:base")).toBeNull();
+    expect(answerFor(held, "p1:s1")).toBeNull();
+  });
+
+  it("is not read when there is no target at all", () => {
+    expect(answerFor(held, null)).toBeNull();
+  });
+
+  it("answers nothing before anything has been fetched", () => {
+    expect(answerFor(null, "p1:base")).toBeNull();
+  });
+
+  // A fetch that came back empty is still an answer: it says "this
+  // project has no mesh", which must not read as "not asked yet" or the
+  // canvas would keep the last project's surface on screen.
+  it("carries an empty answer as the answer it is", () => {
+    expect(answerFor({ target: "p1:base", value: null }, "p1:base")).toBeNull();
   });
 });

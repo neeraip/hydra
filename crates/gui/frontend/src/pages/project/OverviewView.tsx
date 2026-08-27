@@ -65,6 +65,8 @@ export function OverviewView() {
       <Section title="Network">
         {EngineComposition ? (
           <EngineComposition
+            projectId={project.id}
+            scenarioId={null}
             networkLoaded={networkLoaded}
             fallbackNodeCount={project.nodeCount}
             fallbackLinkCount={project.linkCount}

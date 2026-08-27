@@ -141,27 +141,42 @@ export function surfaceColumn(
 }
 
 /**
- * Whether the loaded model carries a 2D surface, from the model itself —
+ * Whether a target's model carries a 2D surface, from the model itself —
  * so it is answerable from import, before and without any run. `null`
  * for a model with no mesh, and outside Tauri.
+ *
+ * Addressed by target, not by "whatever is loaded". The canvas asks the
+ * moment the active project changes, which is before that project's
+ * network has loaded, so an ambient answer described the project being
+ * left rather than the one being opened.
  */
-export async function getMeshInfo(): Promise<MeshInfo | null> {
-  return await tryInvoke<MeshInfo | null>("load_mesh_info", {});
+export async function getMeshInfo(
+  projectId: string,
+  scenarioId?: string | null,
+): Promise<MeshInfo | null> {
+  return await tryInvoke<MeshInfo | null>("load_mesh_info", {
+    projectId,
+    scenarioId: scenarioId ?? null,
+  });
 }
 
 /**
- * The loaded model's mesh, for surfaces that only need to know whether
- * there is one and how big it is. Re-asked when a network loads.
+ * A target's mesh, for surfaces that only need to know whether there is
+ * one and how big it is. Re-asked when a network loads.
  */
-export function useMeshInfo(networkLoaded: boolean): MeshInfo | null {
+export function useMeshInfo(
+  projectId: string | null,
+  scenarioId: string | null,
+  networkLoaded: boolean,
+): MeshInfo | null {
   const [info, setInfo] = useState<MeshInfo | null>(null);
   useEffect(() => {
-    if (!networkLoaded) {
+    if (!networkLoaded || !projectId) {
       setInfo(null);
       return;
     }
     let cancelled = false;
-    getMeshInfo()
+    getMeshInfo(projectId, scenarioId)
       .then((m) => {
         if (!cancelled) setInfo(m);
       })
@@ -171,17 +186,23 @@ export function useMeshInfo(networkLoaded: boolean): MeshInfo | null {
     return () => {
       cancelled = true;
     };
-  }, [networkLoaded]);
+  }, [networkLoaded, projectId, scenarioId]);
   return info;
 }
 
 /**
- * The loaded model's mesh geometry. This is the mesh the canvas draws:
+ * A target's mesh geometry. This is the mesh the canvas draws:
  * it is the one the user has open, present before any run, and a run's
  * sidecar carries a copy of it rather than a mesh of its own.
  */
-export async function getMeshGeometry(): Promise<SurfaceGeometry | null> {
-  const buf = await tryInvoke<ArrayBuffer>("load_mesh_geometry", {});
+export async function getMeshGeometry(
+  projectId: string,
+  scenarioId?: string | null,
+): Promise<SurfaceGeometry | null> {
+  const buf = await tryInvoke<ArrayBuffer>("load_mesh_geometry", {
+    projectId,
+    scenarioId: scenarioId ?? null,
+  });
   if (buf === null) return null;
   const geometry = decodeSurfaceGeometry(
     requireArrayBuffer(buf, "load_mesh_geometry"),

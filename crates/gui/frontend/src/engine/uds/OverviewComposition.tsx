@@ -48,10 +48,14 @@ export function UdsOverviewComposition({
   networkLoaded,
   fallbackNodeCount,
   fallbackLinkCount,
+  projectId,
+  scenarioId,
 }: {
   networkLoaded: boolean;
   fallbackNodeCount: number;
   fallbackLinkCount: number;
+  projectId: string;
+  scenarioId: string | null;
 }) {
   const nodes = useNodes();
   const links = useLinks();
@@ -60,7 +64,7 @@ export function UdsOverviewComposition({
   // import: the canvas shows one only where the model is placeable, and
   // before this the app said nothing at all about a mesh until a run
   // had produced results to colour it with.
-  const mesh = useMeshInfo(networkLoaded);
+  const mesh = useMeshInfo(projectId, scenarioId, networkLoaded);
 
   if (!networkLoaded) {
     return (

@@ -43,7 +43,9 @@ use serde::Serialize;
 use hydra::swmm::out_reader::OverlandResults;
 
 use super::generic_results::GenericVariableDto;
-use super::projects::{app_data_dir, results_path_for, validate_target_ids};
+use super::projects::{
+    app_data_dir, model_path_for, project_engine_key, results_path_for, validate_target_ids,
+};
 use super::simulation::surface_results_path;
 use super::uds_results::quantity_descriptor;
 
@@ -297,34 +299,86 @@ pub fn load_surface_period(
     }
 }
 
-/// Whether the loaded model carries a 2D surface, and how big it is.
+/// The drainage model a mesh question is about.
+///
+/// Named, and target-addressed, because the two commands below used to
+/// answer from whichever network the backend happened to hold, with no
+/// way to say which model that was. The canvas asks the moment the active
+/// project changes — before that project's network has finished
+/// loading — so through the whole of a project switch both commands
+/// described the *previous* project's mesh. The canvas drew it, and worse,
+/// framed its camera around its extent, so switching projects left the new
+/// network fitted to a mesh belonging to a model no longer on screen.
+///
+/// `None` is the ordinary answer for a water project, a project with no
+/// model imported yet, and a drainage model without 2D sections.
+fn mesh_network_for(
+    app: &tauri::AppHandle,
+    state: &super::network_dto::NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<Option<std::sync::Arc<hydra::uds::model::Network>>, String> {
+    mesh_network_at(&app_data_dir(app)?, state, project_id, scenario_id)
+}
+
+/// The decision itself, with the app handle resolved away so it can be
+/// asked in a test.
+fn mesh_network_at(
+    app_data: &Path,
+    state: &super::network_dto::NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<Option<std::sync::Arc<hydra::uds::model::Network>>, String> {
+    validate_target_ids(project_id, scenario_id)?;
+    // Only a drainage model can carry a mesh, and reading a water model
+    // with the drainage parser to discover that would be nonsense.
+    if project_engine_key(app_data, project_id) != "uds" {
+        return Ok(None);
+    }
+    // A project created but never imported into has no model to have a
+    // mesh — an ordinary state, not a failure.
+    if !model_path_for(app_data, project_id, scenario_id).is_file() {
+        return Ok(None);
+    }
+    // Serves the loaded network when it owns this target and reads the
+    // model from disk when it does not, which is exactly the window a
+    // project switch opens.
+    super::results::uds_network_for_target(app_data, state, project_id, scenario_id).map(Some)
+}
+
+/// Whether this target's model carries a 2D surface, and how big it is.
 ///
 /// Answered from the model, so it is true from import — before any run,
 /// and for a model that will never be run. `None` for a model with no
 /// mesh, which is every water model and most drainage ones.
 #[tauri::command(async)]
 pub fn load_mesh_info(
+    app: tauri::AppHandle,
     state: tauri::State<'_, super::network_dto::NetworkState>,
-) -> Option<MeshInfoDto> {
-    match &*state.0.lock() {
-        super::network_dto::NetworkStateInner::LoadedUds { network, .. } => mesh_info_of(network),
-        _ => None,
-    }
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Option<MeshInfoDto>, String> {
+    Ok(
+        mesh_network_for(&app, &state, &project_id, scenario_id.as_deref())?
+            .as_deref()
+            .and_then(mesh_info_of),
+    )
 }
 
-/// The loaded model's mesh geometry (binary, see `load_surface_geometry`).
+/// This target's mesh geometry (binary, see `load_surface_geometry`).
 /// Empty counts when the model carries no mesh.
 #[tauri::command(async)]
 pub fn load_mesh_geometry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, super::network_dto::NetworkState>,
-) -> tauri::ipc::Response {
-    let bytes = match &*state.0.lock() {
-        super::network_dto::NetworkStateInner::LoadedUds { network, .. } => {
-            mesh_geometry_of(network)
-        }
-        _ => encode_geometry(0, 0, std::iter::empty(), std::iter::empty()),
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = match mesh_network_for(&app, &state, &project_id, scenario_id.as_deref())? {
+        Some(net) => mesh_geometry_of(&net),
+        None => encode_geometry(0, 0, std::iter::empty(), std::iter::empty()),
     };
-    tauri::ipc::Response::new(bytes)
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -435,6 +489,118 @@ mod tests {
          [JUNCTIONS]\nJ1 9 4 0 0 0\n[OUTFALLS]\nO1 8 FREE\n\
          [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
          [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
+
+    /// A project bundle on disk: meta naming the engine, and a model.
+    fn project_on_disk(app_data: &Path, project_id: &str, engine: &str, model: &str) {
+        let dir = crate::meta::bundle::project_dir(app_data, project_id);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::meta::write_project_meta(
+            &dir,
+            &crate::meta::ProjectMeta {
+                version: 1,
+                name: project_id.to_string(),
+                engine: engine.to_string(),
+                source_crs: "LOCAL".into(),
+                node_count: 0,
+                link_count: 0,
+                unit_system: None,
+            },
+        )
+        .unwrap();
+        crate::meta::bundle::atomic_write(
+            &super::model_path_for(app_data, project_id, None),
+            model.as_bytes(),
+        )
+        .unwrap();
+    }
+
+    /// Project ids are validated as UUIDs before anything else happens,
+    /// so a test's projects need real ones.
+    const FLAT_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const MESH_ID: &str = "22222222-2222-4222-8222-222222222222";
+    const WDS_ID: &str = "33333333-3333-4333-8333-333333333333";
+    const EMPTY_ID: &str = "44444444-4444-4444-8444-444444444444";
+
+    /// A drainage network held in the state, owned by `owner`.
+    fn loaded_uds(owner: &str, model: &str) -> super::super::network_dto::NetworkState {
+        let (net, _) = hydra::swmm::objects::parse_network(model);
+        super::super::network_dto::NetworkState(parking_lot::Mutex::new(
+            super::super::network_dto::NetworkStateInner::LoadedUds {
+                raw_text: model.to_string(),
+                dirty: false,
+                network: std::sync::Arc::new(net),
+                aux_files: Vec::new(),
+                owner_project_id: Some(owner.to_string()),
+                owner_scenario_id: None,
+            },
+        ))
+    }
+
+    /// The defect this addresses: both mesh commands used to answer from
+    /// whatever network the backend held, so through a project switch —
+    /// the canvas asks the moment the active project changes, before that
+    /// project's network has loaded — they described the project being
+    /// left. The canvas drew that mesh and fitted its camera to the
+    /// union of it and the new network, which is what "switching projects
+    /// does not fit the network" was.
+    #[test]
+    fn a_mesh_question_is_answered_about_the_project_it_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path();
+        // Two drainage projects: the one asked about has no mesh, the one
+        // loaded in the state has one.
+        project_on_disk(app_data, FLAT_ID, "uds", FLAT_MODEL);
+        let state = loaded_uds(MESH_ID, MESH_MODEL);
+
+        let net = mesh_network_at(app_data, &state, FLAT_ID, None)
+            .expect("a readable model is not an error")
+            .expect("the project has a model");
+        assert!(
+            mesh_info_of(&net).is_none(),
+            "the answer must describe flat-project, not whatever is loaded"
+        );
+
+        // And the loaded network is still what serves its own target.
+        project_on_disk(app_data, MESH_ID, "uds", MESH_MODEL);
+        let net = mesh_network_at(app_data, &state, MESH_ID, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(mesh_info_of(&net).map(|m| m.n_cells), Some(2));
+    }
+
+    #[test]
+    fn a_water_project_is_not_read_with_the_drainage_parser() {
+        let dir = tempfile::tempdir().unwrap();
+        project_on_disk(
+            dir.path(),
+            WDS_ID,
+            "wds",
+            "[JUNCTIONS]
+ J1 100
+",
+        );
+        let state = loaded_uds(MESH_ID, MESH_MODEL);
+        assert!(
+            mesh_network_at(dir.path(), &state, WDS_ID, None)
+                .unwrap()
+                .is_none(),
+            "no water model can carry a mesh"
+        );
+    }
+
+    #[test]
+    fn a_project_with_no_model_yet_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        project_on_disk(dir.path(), EMPTY_ID, "uds", MESH_MODEL);
+        std::fs::remove_file(super::model_path_for(dir.path(), EMPTY_ID, None)).unwrap();
+        let state = loaded_uds(MESH_ID, MESH_MODEL);
+        assert!(
+            mesh_network_at(dir.path(), &state, EMPTY_ID, None)
+                .unwrap()
+                .is_none(),
+            "a project created but never imported into has nothing to describe"
+        );
+    }
 
     /// A mesh is known from the model, before any run — the fact the app
     /// needs to say "this model is 2D" on a project nobody has simulated.

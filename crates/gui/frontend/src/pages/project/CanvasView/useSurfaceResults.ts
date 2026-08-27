@@ -15,14 +15,12 @@
  * there is a surface.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { planProjector } from "../../../canvas/coords";
 import {
-  cellValuesAtVertices,
   groundAtVertices,
   type SurfaceEdgeData,
   type SurfacePolygonData,
-  surfaceBarycentric,
   surfaceCellColors,
   surfaceCornerColors,
   surfaceEdgeData,
@@ -42,6 +40,43 @@ import {
   type SurfacePeriod,
   surfaceColumn,
 } from "../../../hooks/surface";
+
+/**
+ * State that is only an answer about the target it was fetched for.
+ *
+ * Every fetch here is asynchronous and the target changes the instant the
+ * user picks another project, so the answers always land late. Held as a
+ * plain value, the previous project's mesh stays readable through the
+ * whole of a switch: the canvas drew it over the new network, and the
+ * camera fit framed the union of the two, which is what "switching
+ * projects does not fit the network" turned out to be. Held with its
+ * target, an answer for somewhere else simply reads as no answer, in the
+ * same render the target changes, with nothing to catch up.
+ */
+function useTargeted<T>(
+  target: string | null,
+): [T | null, (of: string, value: T | null) => void] {
+  const [held, setHeld] = useState<Held<T>>(null);
+  const set = useCallback((of: string, value: T | null) => {
+    setHeld({ target: of, value });
+  }, []);
+  return [answerFor(held, target), set];
+}
+
+/** A held answer: a value, and the target it is an answer about. */
+export type Held<T> = { target: string; value: T | null } | null;
+
+/**
+ * The held answer, if it is an answer about `target`.
+ *
+ * The whole of the rule, in one line, so it can be stated in a test:
+ * an answer about another target is not a lesser answer, it is no
+ * answer. Nothing about a project you are no longer looking at may be
+ * drawn on the canvas or framed by the camera.
+ */
+export function answerFor<T>(held: Held<T>, target: string | null): T | null {
+  return held && target != null && held.target === target ? held.value : null;
+}
 
 /** What MapCanvas draws, and what the hover chip reads. */
 export interface CanvasSurface {
@@ -64,29 +99,50 @@ export interface CanvasSurface {
   /** The mesh's own structure, drawn where its cells are big enough on
    * screen to be told apart (the canvas decides, per camera). */
   edges: SurfaceEdgeData;
+  /** Per drawn vertex, RGBA. One colour repeated across a cell's three
+   * vertices paints it flat; three different ones let the rasteriser
+   * interpolate, which is the smooth drawing. */
   colors: Uint8Array;
   /** The variable the colours carry, or `null` when the surface is drawn
-   * as a footprint — a mesh with no run behind it yet. */
+   * as a footprint — which is not the state before a run (that is the
+   * ground), but the one where no variable can be shown at all. */
   variable: GenericVariable | null;
   /** That variable's per-cell SI values, `null` alongside `variable`. */
   values: Float32Array | null;
-  /** Each cell's own colour, repeated per vertex — what the blend mixes
-   * toward at a cell's middle. Equal to `colors` for a plain fill, where
-   * the mix then has nothing to do. */
-  cellColors: Uint8Array;
-  /** The barycentric basis the blend weight is computed from. Static for
-   * a mesh, so it survives every timeline step untouched. */
-  bary: Float32Array;
   /** The field at the mesh's corners, present only while the surface is
-   * blended. It is what the picture interpolates near the boundaries,
-   * so it is also part of what the pointer reads. */
+   * drawn smooth. What the picture interpolates, and what the pointer
+   * reads inside a cell. */
   vertexValues: Float32Array | null;
-  /** The cells' own values, which the blend keeps at their centres.
-   * `null` for a field held at the vertices (the ground), where plain
-   * linear interpolation is already exact. */
-  centreValues: Float32Array | null;
   /** The cells' projected corners, for reading a point. */
   corners: Float64Array | null;
+  /** Whether the field is drawn continuous rather than one flat colour
+   * per cell. Stated, not inferred from the colour array: what the
+   * canvas needs to know is the reading mode, and a footprint or a
+   * one-cell-per-colour fill is not one however its colours look. */
+  blended: boolean;
+  /** Whether the shown variable could be drawn continuous at all — a
+   * field the mesh holds at its vertices. The legend offers its toggle
+   * on this, so the control is absent over a run's values rather than
+   * present and lying. */
+  smoothable: boolean;
+  /**
+   * The fill layer's binary `data`, ready to hand to deck.
+   *
+   * Built here, and only here, because deck decides whether to
+   * re-tesselate by comparing the *identity* of this object with the one
+   * it last saw: a fresh literal, however identical its contents, is "a
+   * new data container" and rebuilds the whole mesh's index buffers. The
+   * canvas rebuilds its layer list for many reasons that have nothing to
+   * do with the surface — a hovered node, a changed tool, a selection —
+   * so building it there meant re-tesselating 100k triangles because the
+   * pointer crossed a junction. Tied to the surface instead, it changes
+   * when the surface does and not once more.
+   */
+  layerData: {
+    length: number;
+    startIndices: Uint32Array;
+    attributes: Record<string, { value: ArrayBufferView; size: number }>;
+  };
 }
 
 export function useSurfaceResults({
@@ -129,31 +185,33 @@ export function useSurfaceResults({
    * canvas's, so the two cannot name different things. */
   surfaceVariables: GenericVariable[];
 } {
-  const [meshInfo, setMeshInfo] = useState<MeshInfo | null>(null);
-  const [geometry, setGeometry] = useState<SurfaceGeometry | null>(null);
-  const [meta, setMeta] = useState<SurfaceMeta | null>(null);
-  const [periodData, setPeriodData] = useState<SurfacePeriod | null>(null);
+  // Everything below is held under the target it was fetched for, and
+  // read only while that is still the target on screen. See `useTargeted`:
+  // an answer about the project you just left is worse than no answer,
+  // because the canvas draws it and the camera frames it.
+  const target = projectId ? `${projectId}:${scenarioId ?? "base"}` : null;
+  const [meshInfo, setMeshInfo] = useTargeted<MeshInfo>(target);
+  const [geometry, setGeometry] = useTargeted<SurfaceGeometry>(target);
+  const [meta, setMeta] = useTargeted<SurfaceMeta>(target);
+  const [periodData, setPeriodData] = useTargeted<SurfacePeriod>(target);
 
   // Does this model carry a mesh? Cheap, and asked of the model, so the
   // answer holds before any run.
   // biome-ignore lint/correctness/useExhaustiveDependencies: networkToken is the re-ask signal, see above
   useEffect(() => {
-    if (!projectId) {
-      setMeshInfo(null);
-      return;
-    }
+    if (!projectId || !target) return;
     let cancelled = false;
-    getMeshInfo()
+    getMeshInfo(projectId, scenarioId)
       .then((m) => {
-        if (!cancelled) setMeshInfo(m);
+        if (!cancelled) setMeshInfo(target, m);
       })
       .catch(() => {
-        if (!cancelled) setMeshInfo(null);
+        if (!cancelled) setMeshInfo(target, null);
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, networkToken]);
+  }, [projectId, scenarioId, target, setMeshInfo, networkToken]);
 
   // The mesh itself, once per model. Keyed on its counts rather than on
   // the network's identity: the geometry can run to megabytes, and every
@@ -162,55 +220,67 @@ export function useSurfaceResults({
     ? `${projectId}:${scenarioId ?? "base"}:${meshInfo.nVertices}:${meshInfo.nCells}`
     : null;
   useEffect(() => {
-    if (meshKey == null) {
-      setGeometry(null);
-      return;
-    }
+    if (meshKey == null || !projectId || !target) return;
     let cancelled = false;
-    getMeshGeometry()
+    getMeshGeometry(projectId, scenarioId)
       .then((g) => {
-        if (!cancelled) setGeometry(g);
+        if (!cancelled) setGeometry(target, g);
       })
       .catch(() => {
-        if (!cancelled) setGeometry(null);
+        if (!cancelled) setGeometry(target, null);
       });
     return () => {
       cancelled = true;
     };
-  }, [meshKey]);
+  }, [meshKey, projectId, scenarioId, target, setGeometry]);
 
   // The run's surface values, if this target has been run. Asked only of
   // a mesh model: nothing else writes a sidecar.
   useEffect(() => {
-    if (!projectId || meshInfo == null || resultMetaKey == null) {
-      setMeta(null);
-      setPeriodData(null);
+    if (!projectId || !target || meshInfo == null || resultMetaKey == null) {
+      // Cleared, not merely left unfetched: this is the path a deleted
+      // result set takes, and a held meta would go on offering the
+      // variables of a run that no longer exists.
+      if (target) {
+        setMeta(target, null);
+        setPeriodData(target, null);
+      }
       return;
     }
     let cancelled = false;
     getSurfaceMeta(projectId, scenarioId)
       .then((m) => {
         if (cancelled) return;
-        setMeta(m);
-        if (!m) setPeriodData(null);
+        setMeta(target, m);
+        if (!m) setPeriodData(target, null);
       })
       .catch(() => {
         if (!cancelled) {
-          setMeta(null);
-          setPeriodData(null);
+          setMeta(target, null);
+          setPeriodData(target, null);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, meshInfo, resultMetaKey]);
+  }, [
+    projectId,
+    scenarioId,
+    target,
+    setMeta,
+    setPeriodData,
+    meshInfo,
+    resultMetaKey,
+  ]);
 
   // One instant's values, on the shared timeline index. The sidecar is
   // written at the same reporting instants as results.out, so the same
   // period index addresses both.
   useEffect(() => {
-    if (!projectId || meta == null || period == null) {
-      setPeriodData(null);
+    if (!projectId || !target || meta == null || period == null) {
+      // Same reason as above: an empty timeline must not leave the last
+      // instant painted on the mesh.
+      if (target) setPeriodData(target, null);
       return;
     }
     let cancelled = false;
@@ -219,20 +289,20 @@ export function useSurfaceResults({
     // out-of-range refusal as a toast.
     const p = Math.min(period, meta.periods - 1);
     if (p < 0) {
-      setPeriodData(null);
+      setPeriodData(target, null);
       return;
     }
     getSurfacePeriod(projectId, p, scenarioId)
       .then((r) => {
-        if (!cancelled) setPeriodData(r);
+        if (!cancelled) setPeriodData(target, r);
       })
       .catch(() => {
-        if (!cancelled) setPeriodData(null);
+        if (!cancelled) setPeriodData(target, null);
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, scenarioId, meta, period]);
+  }, [projectId, scenarioId, target, setPeriodData, meta, period]);
 
   // Geometry → screen space: the cells to fill and the edges to draw
   // over them. Re-runs on a CRS change or a def registration, never on a
@@ -257,7 +327,6 @@ export function useSurfaceResults({
       key: `${sourceCrs}:${data.bounds?.join(",") ?? "empty"}`,
       data,
       corners: data.attributes.getPolygon.value,
-      bary: surfaceBarycentric(geometry.nCells),
       edges: surfaceEdgeData(geometry, project),
     };
   }, [geometry, sourceCrs, enabled, reprojToken]);
@@ -280,7 +349,23 @@ export function useSurfaceResults({
   const surface = useMemo(
     () =>
       projected && shown && geometry
-        ? { geometry, ...projected, ...shown }
+        ? {
+            geometry,
+            ...projected,
+            ...shown,
+            layerData: {
+              length: projected.data.length,
+              startIndices: projected.data.startIndices,
+              attributes: {
+                getPolygon: projected.data.attributes.getPolygon,
+                // Per drawn vertex. deck interpolates a vertex colour
+                // attribute across the triangle, so the same colour
+                // three times paints a cell flat and three different
+                // ones draw the plane through them.
+                getFillColor: { value: shown.colors, size: 4 },
+              },
+            },
+          }
         : null,
     [geometry, projected, shown],
   );
@@ -296,17 +381,6 @@ export function useSurfaceResults({
   return { surface, surfaceMeta: meta, meshInfo, surfaceVariables };
 }
 
-/**
- * What the mesh is painted with: a run's values, or the footprint that
- * says "there is a surface here" before any run.
- *
- * Values are used only where they belong to the mesh on screen. A run
- * whose cell count differs is a run of a *different* mesh, and painting
- * cell `i` of this one with cell `i` of that one is a confident wrong
- * answer — the shape of defect this codebase keeps finding, one index
- * answering two questions. Exported and pure so that rule is a thing a
- * test can hold, rather than a branch buried in an effect.
- */
 /**
  * The surface's variables in the order they are offered, which is also
  * the order that decides the default.
@@ -326,6 +400,17 @@ export function surfaceVariableList(
   return [...(usable ? meta.variables : []), ...properties];
 }
 
+/**
+ * What the mesh is painted with: a run's values, or the footprint that
+ * says "there is a surface here" before any run.
+ *
+ * Values are used only where they belong to the mesh on screen. A run
+ * whose cell count differs is a run of a *different* mesh, and painting
+ * cell `i` of this one with cell `i` of that one is a confident wrong
+ * answer — the shape of defect this codebase keeps finding, one index
+ * answering two questions. Exported and pure so that rule is a thing a
+ * test can hold, rather than a branch buried in an effect.
+ */
 export function shownSurface(
   geometry: SurfaceGeometry,
   /** The mesh's own properties (the ground), always available. */
@@ -333,47 +418,48 @@ export function shownSurface(
   meta: SurfaceMeta | null,
   periodData: SurfacePeriod | null,
   variableId?: string,
-  /** Blend a cell's colour into its corners' rather than painting it
-   * flat. The weight is applied per pixel by `BlendedSurfaceLayer`;
-   * what changes here is only which colours it is given. */
-  blend = false,
+  /** Draw a field the mesh holds at its vertices as the continuous
+   * surface it is, by colouring the vertices. Ignored for a run's
+   * values, which are held per cell and have no vertex reading to
+   * draw — see `smooth`. */
+  smooth = false,
 ): {
   variable: GenericVariable | null;
   values: Float32Array | null;
+  /** The field at the mesh's corners, present only while the surface is
+   * drawn smooth. What the picture interpolates, and what the pointer
+   * reads. */
   vertexValues: Float32Array | null;
-  centreValues: Float32Array | null;
   colors: Uint8Array;
-  cellColors: Uint8Array;
+  /** Whether the picture is continuous across cell boundaries. */
+  blended: boolean;
+  /** Whether the shown variable *could* be drawn continuous: a field the
+   * mesh holds at its vertices. A run's values are not, so the toggle is
+   * not offered over them. */
+  smoothable: boolean;
 } {
   const flat = (
     variable: GenericVariable,
     values: Float32Array,
     depth: Float32Array | null,
-  ) => {
-    // The plain fill hands a cell's colour to its corners too, so the
-    // blend has nothing to mix and the cell reads flat.
-    const colors = surfaceCellColors(values, depth, variable);
-    return {
-      variable,
-      values,
-      vertexValues: null,
-      centreValues: null,
-      // One array for both: the shader mixes a cell's colour into its
-      // corners', and the same colour on both sides is what makes the
-      // fill flat.
-      colors,
-      cellColors: colors,
-    };
-  };
+    smoothable: boolean,
+  ) => ({
+    variable,
+    values,
+    vertexValues: null,
+    blended: false,
+    smoothable,
+    colors: surfaceCellColors(values, depth, variable),
+  });
 
   const footprintColors = surfaceFootprintColors(geometry.nCells);
   const footprint = {
     variable: null,
     values: null,
     vertexValues: null,
-    centreValues: null,
+    blended: false,
+    smoothable: false,
     colors: footprintColors,
-    cellColors: footprintColors,
   };
 
   // Resolved over the same list, by the same rule, as the legend that
@@ -388,19 +474,10 @@ export function shownSurface(
   // is a property of the mesh, and the ground is the one there is.
   const column = periodData ? surfaceColumn(periodData, variable.id) : null;
   if (column && periodData) {
-    if (!blend) return flat(variable, column, periodData.depth);
-    // Blended: the corners take the neighbour mean and the cell keeps
-    // its own colour at its middle, so a peak stays a peak.
-    const vertexValues = cellValuesAtVertices(geometry, column);
-    const wetCorners = cellValuesAtVertices(geometry, periodData.depth);
-    return {
-      variable,
-      values: column,
-      vertexValues,
-      centreValues: column,
-      colors: surfaceCornerColors(geometry, vertexValues, wetCorners, variable),
-      cellColors: surfaceCellColors(column, periodData.depth, variable),
-    };
+    // Always flat. A cell is the solver's unit of state and the engine
+    // publishes no vertex reading, so there is nothing between cell
+    // centres that is ours to draw.
+    return flat(variable, column, periodData.depth, false);
   }
 
   // A result variable with no instant behind it yet (the first frame
@@ -413,17 +490,18 @@ export function shownSurface(
 
   // No water mask: the ground under a dry cell is still ground.
   const values = surfaceGroundValues(geometry);
-  if (!blend) return flat(shown, values, null);
-  // The ground needs no averaging: the mesh holds it at the vertices.
+  if (!smooth) return flat(shown, values, null, true);
+  // The mesh holds the ground at its vertices, so colouring them and
+  // letting the rasteriser interpolate draws the plane through three
+  // known elevations. The flat drawing is the one that invents: it
+  // shows all three as their mean.
   const vertexValues = groundAtVertices(geometry);
   return {
     variable: shown,
     values,
     vertexValues,
-    // Held at the vertices, so plain linear interpolation is exact and
-    // a reading needs no centre term.
-    centreValues: null,
-    colors: surfaceCornerColors(geometry, vertexValues, null, shown),
-    cellColors: surfaceCellColors(values, null, shown),
+    blended: true,
+    smoothable: true,
+    colors: surfaceCornerColors(geometry, vertexValues, shown),
   };
 }

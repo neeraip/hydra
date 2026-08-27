@@ -15,11 +15,7 @@
 // on inside: an engine that has no such notion simply passes nothing and
 // the affordance is absent rather than faked.
 
-import {
-  InformationCircleIcon,
-  PlayIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+import { InformationCircleIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import {
   formatGenericValue,
@@ -31,6 +27,7 @@ import {
 import { useUnitSystem } from "../units";
 import { type CanvasLayers, useCanvasLayers } from "./layers-context";
 import {
+  BarToggle,
   CategorySwatches,
   CriteriaCheckbox,
   LEGEND_BAR_STYLE,
@@ -38,8 +35,8 @@ import {
   LEGEND_ROOT_STYLE,
   LEGEND_SWATCH_BTN_STYLE,
   LinkGlyph,
+  MotionGlyph,
   NodeGlyph,
-  PICKER_BTN_STYLE,
   PickerButton,
   Ramp,
   RegionGlyph,
@@ -809,27 +806,26 @@ export function GenericLegend({
               }}
             />
           ))}
-        {/* Beside the animation toggle, because it is the same kind of
-            control: how the picture is drawn, not what it shows. */}
+        {/* Two readings of the same terrain, not two drawings of one.
+            The mesh holds an elevation at every vertex; a cell has no
+            single elevation of its own, so the flat picture paints the
+            mean of its three and the smooth one interpolates between
+            them. Each position therefore says which number is on
+            screen, rather than describing the shading: the flat mean is
+            what the §15.3 FLAT closure reads, and the vertex elevations
+            are what the model was authored with. */}
         {onSurfaceSmoothChange && (
-          <button
-            type="button"
-            className="tool-btn"
-            onClick={() => onSurfaceSmoothChange(!surfaceSmooth)}
-            aria-label="Smooth the 2D surface"
-            aria-pressed={surfaceSmooth}
-            data-tooltip={
+          <BarToggle
+            active={surfaceSmooth}
+            label="Smooth the 2D surface"
+            // Names the state clicking moves to, like every toggle here.
+            tooltip={
               surfaceSmooth
-                ? "Draw the surface cell by cell"
-                : "Blend the surface between cells"
+                ? "Show each cell's mean elevation"
+                : "Show the elevations held at the mesh vertices"
             }
-            data-tooltip-pos="top"
-            style={{
-              ...PICKER_BTN_STYLE,
-              padding: "4px 7px",
-              borderRadius: 6,
-              color: surfaceSmooth ? "var(--accent)" : "var(--text-secondary)",
-            }}
+            onClick={() => onSurfaceSmoothChange(!surfaceSmooth)}
+            style={{ padding: "4px 7px", borderRadius: 6 }}
           >
             <span
               aria-hidden
@@ -841,7 +837,7 @@ export function GenericLegend({
                 background: "linear-gradient(90deg, currentColor, transparent)",
               }}
             />
-          </button>
+          </BarToggle>
         )}
         {animation &&
           (() => {
@@ -861,65 +857,21 @@ export function GenericLegend({
             // The fill shows the standing wish, not this moment's outcome:
             // it stays lit over a variable that does not move, because the
             // setting has not changed.
-            const active = animation.playing && !disabled;
-            // The button's own fill, which hover composites on top of
-            // rather than replacing: `--selection-bg-strong` is three times
-            // the weight of `--nav-hover`, so swapping one for the other
-            // would *dim* a lit button under the pointer. Stacking the
-            // hover tint as a gradient layer lifts both states, and uses
-            // only tokens, so it follows the theme.
-            const fill = active ? "var(--selection-bg-strong)" : "transparent";
-            const hoverFill = `linear-gradient(var(--nav-hover), var(--nav-hover)), ${fill}`;
             return (
-              <button
-                type="button"
-                className="tool-btn"
+              <BarToggle
+                active={animation.playing}
                 disabled={disabled}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  animation.onToggle(!animation.playing);
-                }}
-                aria-label={tooltip}
-                data-tooltip={tooltip}
-                data-tooltip-pos="top"
-                // Inline styles beat the stylesheet, so `.tool-btn:hover`
-                // could never show through the state fill set below.
-                onMouseEnter={(e) => {
-                  if (disabled) return;
-                  e.currentTarget.style.background = hoverFill;
-                  if (!active) {
-                    e.currentTarget.style.color = "var(--text-primary)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (disabled) return;
-                  e.currentTarget.style.background = fill;
-                  if (!active) {
-                    e.currentTarget.style.color = "var(--text-secondary)";
-                  }
-                }}
+                label={tooltip}
+                onClick={() => animation.onToggle(!animation.playing)}
                 style={{
-                  ...PICKER_BTN_STYLE,
                   padding: "4px 6px 4px 6px",
                   // Right corners nest inside the bar's 20px rounding so the
                   // hover fill is never clipped at the bar's rounded end.
                   borderRadius: "6px 16px 16px 6px",
-                  // On reads as filled, off as empty — the same language
-                  // every other toggle in this bar uses. Dimming the icon
-                  // instead made "off" and "unavailable" the same picture,
-                  // and left the on-state legible only by hue.
-                  background: fill,
-                  color: active
-                    ? "var(--accent)"
-                    : disabled
-                      ? "var(--text-tertiary)"
-                      : "var(--text-secondary)",
-                  opacity: disabled ? 0.5 : 1,
-                  cursor: disabled ? "default" : "pointer",
                 }}
               >
-                <PlayIcon style={{ width: 12, height: 12 }} />
-              </button>
+                <MotionGlyph />
+              </BarToggle>
             );
           })()}
       </div>
