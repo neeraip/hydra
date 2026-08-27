@@ -9,8 +9,11 @@
 #   scripts/wds_byte_gate.sh check   baseline.txt     # after
 set -euo pipefail
 HYDRA=${HYDRA:-target/release/hydra}
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# A FIXED work directory, not mktemp: the .out prolog stores the report
+# filename in a 260-byte field, so a path that varies per run varies the
+# sums and the gate compares nothing.
+WORK=${WDS_GATE_WORK:-${TMPDIR:-/tmp}/hydra-wds-gate}
+rm -rf "$WORK"; mkdir -p "$WORK"
 MODELS=(dtown nytunnels ky8 ky9 ky10 ltown micropolis richmond bwsn2 exnet balerma)
 
 sums() {
