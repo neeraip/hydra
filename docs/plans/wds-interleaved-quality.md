@@ -1,7 +1,13 @@
 # Interleaving quality with hydraulics, and deleting the run history
 
-**Status:** specified, not implemented. `simulation/spec.md` §8.2 and §8.3
-already carry the rule below; the engine does not yet obey it.
+**Status:** done, 2026-08-27. `simulation/spec.md` §8.2 and §8.3 carry the
+rule and the engine obeys it. Kept as the record of what was measured, what
+the five steps found, and the gate they were judged by.
+
+**Measured after:** L-Town's peak footprint fell from 228 MB to 6 MB and
+dtown's from 52 MB to 5 MB, with every model in the byte gate unchanged. The
+9 GB projected for a 46k-node week-long run is now bounded by the size of the
+network rather than the length of the run.
 
 **Written:** 2026-08-27.
 
