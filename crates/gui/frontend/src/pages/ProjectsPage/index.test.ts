@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPageNumbers, msSortValue } from ".";
+import { buildPageNumbers, msSortValue, selectAllIsIndeterminate } from ".";
 
 describe("msSortValue", () => {
   it("passes finite epoch-ms numbers through", () => {
@@ -91,5 +91,23 @@ describe("buildPageNumbers", () => {
         expect(numeric[i]).toBeGreaterThan(numeric[i - 1]);
       }
     }
+  });
+});
+
+describe("selectAllIsIndeterminate", () => {
+  it("is false when nothing is selected", () => {
+    expect(selectAllIsIndeterminate(false, false)).toBe(false);
+  });
+
+  it("is true when some but not all rows are selected", () => {
+    expect(selectAllIsIndeterminate(true, false)).toBe(true);
+  });
+
+  // TanStack Table v9 changed `getIsSomeRowsSelected` to mean "at least one",
+  // so it reports true alongside `getIsAllRowsSelected`. Without the
+  // exclusion the box would show a dash instead of a tick with every row
+  // selected, which is what v8 did for us.
+  it("is false when every row is selected, though some is also true", () => {
+    expect(selectAllIsIndeterminate(true, true)).toBe(false);
   });
 });

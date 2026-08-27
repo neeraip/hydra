@@ -8,16 +8,24 @@ import {
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/20/solid";
 import {
   type ColumnFiltersState,
+  columnFilteringFeature,
   createColumnHelper,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  filterFn_equalsString,
+  filterFn_includesString,
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
+  globalFilteringFeature,
   type PaginationState,
   type RowSelectionState,
+  rowPaginationFeature,
+  rowSelectionFeature,
+  rowSortingFeature,
   type SortingState,
-  useReactTable,
+  sortFn_basic,
+  tableFeatures,
+  useTable,
 } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
@@ -65,9 +73,47 @@ const STATE_COLORS: Record<ProjectState, string> = {
   stale: "#f59e0b",
 };
 
+/**
+ * Whether the select-all checkbox shows its indeterminate dash.
+ *
+ * Its own state is the answer to "some but not all". TanStack Table v8 read
+ * that straight off `getIsSomeRowsSelected()`, which excluded the all-selected
+ * case for you. Since v9 that method means "at least one" and stays true once
+ * every row is selected, so the exclusion has to be written here or the box
+ * never leaves the dash.
+ */
+export function selectAllIsIndeterminate(
+  someSelected: boolean,
+  allSelected: boolean,
+): boolean {
+  return someSelected && !allSelected;
+}
+
+// ── Table features ───────────────────────────────────────────────────────────
+
+// v9 registers only the features a table actually uses, and the row models
+// and filter/sort functions ride along in the same call. Every name used as
+// a string below (`filterFn: "equalsString"`, `sortFn: "basic"`, the table's
+// `globalFilterFn`) has to be registered here or it does not resolve.
+const features = tableFeatures({
+  columnFilteringFeature,
+  globalFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  rowSelectionFeature,
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  filterFns: {
+    equalsString: filterFn_equalsString,
+    includesString: filterFn_includesString,
+  },
+  sortFns: { basic: sortFn_basic },
+});
+
 // ── Column helper ─────────────────────────────────────────────────────────────
 
-const col = createColumnHelper<Project>();
+const col = createColumnHelper<typeof features, Project>();
 
 const CHECKBOX_STYLE: React.CSSProperties = {
   accentColor: "var(--accent)",
@@ -193,242 +239,250 @@ export function ProjectsPage() {
 
   const engines = useEngines();
   const columns = useMemo(
-    () => [
-      col.display({
-        id: "select",
-        header: ({ table }) => (
-          <input
-            type="checkbox"
-            aria-label="Select all projects"
-            checked={table.getIsAllRowsSelected()}
-            ref={(el) => {
-              // Indeterminate is not an attribute — it only exists on the DOM
-              // node, so it has to be set imperatively.
-              if (el) el.indeterminate = table.getIsSomeRowsSelected();
-            }}
-            onChange={table.getToggleAllRowsSelectedHandler()}
-            style={CHECKBOX_STYLE}
-          />
-        ),
-        cell: (info) => (
-          <input
-            type="checkbox"
-            aria-label={`Select ${info.row.original.name}`}
-            checked={info.row.getIsSelected()}
-            onChange={info.row.getToggleSelectedHandler()}
-            // The row toggles selection too, so a bubbling checkbox click
-            // would toggle twice and land back where it started.
-            onClick={(e) => e.stopPropagation()}
-            style={CHECKBOX_STYLE}
-          />
-        ),
-      }),
-      col.display({
-        id: "engine",
-        // No header: the glyph is an identity mark, and a column of two
-        // letters needs no word above it — the tooltip names the engine.
-        header: () => null,
-        cell: (info) => {
-          const p = info.row.original;
-          const engine = engines.find((e) => e.key === p.engine) ?? null;
-          return (
-            <span
-              data-tooltip={engine?.label ?? "Unsupported engine"}
-              style={{
-                display: "inline-block",
-                width: "100%",
-                textAlign: "center",
-                fontSize: "var(--text-xs)",
-                fontWeight: 700,
-                letterSpacing: "0.04em",
-                fontFamily: "var(--font-ui)",
-                color: engine?.accent ?? "var(--text-tertiary)",
+    () =>
+      // `col.columns` rather than a bare array: it preserves each column's
+      // own value type instead of widening them all to one union.
+      col.columns([
+        col.display({
+          id: "select",
+          header: ({ table }) => (
+            <input
+              type="checkbox"
+              aria-label="Select all projects"
+              checked={table.getIsAllRowsSelected()}
+              ref={(el) => {
+                // Indeterminate is not an attribute — it only exists on the
+                // DOM node, so it has to be set imperatively.
+                if (el)
+                  el.indeterminate = selectAllIsIndeterminate(
+                    table.getIsSomeRowsSelected(),
+                    table.getIsAllRowsSelected(),
+                  );
               }}
-            >
-              {engine?.pill ?? "??"}
-            </span>
-          );
-        },
-      }),
-      col.accessor("name", {
-        header: "Name",
-        cell: (info) => {
-          const p = info.row.original;
-          return (
-            <span
-              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              <button
-                type="button"
-                onClick={(e) => {
-                  // The row toggles selection; opening is a different intent.
-                  e.stopPropagation();
-                  if (!p.folderMissing) handleOpenProject(p.id);
-                }}
+              onChange={table.getToggleAllRowsSelectedHandler()}
+              style={CHECKBOX_STYLE}
+            />
+          ),
+          cell: (info) => (
+            <input
+              type="checkbox"
+              aria-label={`Select ${info.row.original.name}`}
+              checked={info.row.getIsSelected()}
+              onChange={info.row.getToggleSelectedHandler()}
+              // The row toggles selection too, so a bubbling checkbox click
+              // would toggle twice and land back where it started.
+              onClick={(e) => e.stopPropagation()}
+              style={CHECKBOX_STYLE}
+            />
+          ),
+        }),
+        col.display({
+          id: "engine",
+          // No header: the glyph is an identity mark, and a column of two
+          // letters needs no word above it — the tooltip names the engine.
+          header: () => null,
+          cell: (info) => {
+            const p = info.row.original;
+            const engine = engines.find((e) => e.key === p.engine) ?? null;
+            return (
+              <span
+                data-tooltip={engine?.label ?? "Unsupported engine"}
                 style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  cursor: p.folderMissing ? "default" : "pointer",
-                  color: p.folderMissing
-                    ? "var(--text-disabled)"
-                    : "var(--accent)",
+                  display: "inline-block",
+                  width: "100%",
+                  textAlign: "center",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
                   fontFamily: "var(--font-ui)",
-                  fontSize: "var(--text-lg)",
-                  fontWeight: 500,
-                  textAlign: "left",
-                  opacity: p.folderMissing ? 0.5 : 1,
+                  color: engine?.accent ?? "var(--text-tertiary)",
                 }}
               >
-                {info.getValue()}
-              </button>
-              {p.folderMissing && (
-                <span
+                {engine?.pill ?? "??"}
+              </span>
+            );
+          },
+        }),
+        col.accessor("name", {
+          header: "Name",
+          cell: (info) => {
+            const p = info.row.original;
+            return (
+              <span
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    // The row toggles selection; opening is a different intent.
+                    e.stopPropagation();
+                    if (!p.folderMissing) handleOpenProject(p.id);
+                  }}
                   style={{
-                    fontSize: "var(--text-xs)",
-                    fontWeight: 700,
-                    letterSpacing: "0.05em",
-                    padding: "1px 5px",
-                    borderRadius: 3,
-                    background: "#f59e0b26",
-                    border: "1px solid #f59e0b55",
-                    color: "var(--status-warn, #f59e0b)",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    cursor: p.folderMissing ? "default" : "pointer",
+                    color: p.folderMissing
+                      ? "var(--text-disabled)"
+                      : "var(--accent)",
+                    fontFamily: "var(--font-ui)",
+                    fontSize: "var(--text-lg)",
+                    fontWeight: 500,
+                    textAlign: "left",
+                    opacity: p.folderMissing ? 0.5 : 1,
                   }}
                 >
-                  MISSING
-                </span>
-              )}
-            </span>
-          );
-        },
-        enableSorting: true,
-      }),
-      col.accessor("state", {
-        header: "State",
-        cell: (info) => {
-          const s = info.getValue();
-          return (
+                  {info.getValue()}
+                </button>
+                {p.folderMissing && (
+                  <span
+                    style={{
+                      fontSize: "var(--text-xs)",
+                      fontWeight: 700,
+                      letterSpacing: "0.05em",
+                      padding: "1px 5px",
+                      borderRadius: 3,
+                      background: "#f59e0b26",
+                      border: "1px solid #f59e0b55",
+                      color: "var(--status-warn, #f59e0b)",
+                    }}
+                  >
+                    MISSING
+                  </span>
+                )}
+              </span>
+            );
+          },
+          enableSorting: true,
+        }),
+        col.accessor("state", {
+          header: "State",
+          cell: (info) => {
+            const s = info.getValue();
+            return (
+              <span
+                style={{ fontSize: "var(--text-md)", color: STATE_COLORS[s] }}
+              >
+                {s === "simulated" || s === "running" ? "● " : "○ "}
+                {STATE_LABELS[s]}
+              </span>
+            );
+          },
+          filterFn: "equalsString",
+          enableSorting: true,
+        }),
+        col.accessor("nodeCount", {
+          header: "Nodes",
+          cell: (info) => (
             <span
-              style={{ fontSize: "var(--text-md)", color: STATE_COLORS[s] }}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-md)",
+              }}
             >
-              {s === "simulated" || s === "running" ? "● " : "○ "}
-              {STATE_LABELS[s]}
+              {info.getValue().toLocaleString()}
             </span>
-          );
-        },
-        filterFn: "equalsString",
-        enableSorting: true,
-      }),
-      col.accessor("nodeCount", {
-        header: "Nodes",
-        cell: (info) => (
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-md)",
-            }}
-          >
-            {info.getValue().toLocaleString()}
-          </span>
-        ),
-        enableSorting: true,
-      }),
-      col.accessor("linkCount", {
-        header: "Links",
-        cell: (info) => (
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-md)",
-            }}
-          >
-            {info.getValue().toLocaleString()}
-          </span>
-        ),
-        enableSorting: true,
-      }),
-      col.accessor("scenarioCount", {
-        header: "Scenarios",
-        cell: (info) => (
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-md)",
-            }}
-          >
-            {info.getValue()}
-          </span>
-        ),
-        enableSorting: true,
-      }),
-      // Modified / Last run sort on the numeric epoch-ms fields (the labels
-      // are human strings — "2 days ago" vs "Just now" sorts alphabetically).
-      // `sortUndefined: "last"` keeps never-run / missing values at the
-      // bottom in both directions; the cell still shows the friendly label.
-      col.accessor((p) => msSortValue(p.modifiedAtMs), {
-        id: "modified",
-        header: "Modified",
-        cell: (info) => (
-          <span
-            style={{
-              fontSize: "var(--text-md)",
-              color: "var(--text-secondary)",
-            }}
-          >
-            {info.row.original.modifiedLabel}
-          </span>
-        ),
-        sortingFn: "basic",
-        sortUndefined: "last",
-        enableSorting: true,
-      }),
-      col.accessor((p) => msSortValue(p.lastRunAtMs), {
-        id: "lastRun",
-        header: "Last run",
-        cell: (info) => (
-          <span
-            style={{
-              fontSize: "var(--text-md)",
-              color: "var(--text-tertiary)",
-            }}
-          >
-            {info.row.original.lastRunLabel ?? "—"}
-          </span>
-        ),
-        sortingFn: "basic",
-        sortUndefined: "last",
-        enableSorting: true,
-      }),
-      // Kebab actions column — hover/focus-revealed "…" button that opens
-      // the same context menu as right-click, anchored at the button.
-      col.display({
-        id: "actions",
-        header: "",
-        cell: (info) => (
-          <button
-            type="button"
-            className="row-kebab"
-            aria-label={`Actions for ${info.row.original.name}`}
-            aria-haspopup="menu"
-            onClick={(e) => {
-              e.stopPropagation();
-              const rect = e.currentTarget.getBoundingClientRect();
-              setContextMenu({
-                project: info.row.original,
-                x: rect.left,
-                y: rect.bottom + 4,
-              });
-            }}
-          >
-            <EllipsisHorizontalIcon style={{ width: 15, height: 15 }} />
-          </button>
-        ),
-      }),
-    ],
+          ),
+          enableSorting: true,
+        }),
+        col.accessor("linkCount", {
+          header: "Links",
+          cell: (info) => (
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-md)",
+              }}
+            >
+              {info.getValue().toLocaleString()}
+            </span>
+          ),
+          enableSorting: true,
+        }),
+        col.accessor("scenarioCount", {
+          header: "Scenarios",
+          cell: (info) => (
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-md)",
+              }}
+            >
+              {info.getValue()}
+            </span>
+          ),
+          enableSorting: true,
+        }),
+        // Modified / Last run sort on the numeric epoch-ms fields (the labels
+        // are human strings — "2 days ago" vs "Just now" sorts alphabetically).
+        // `sortUndefined: "last"` keeps never-run / missing values at the
+        // bottom in both directions; the cell still shows the friendly label.
+        col.accessor((p) => msSortValue(p.modifiedAtMs), {
+          id: "modified",
+          header: "Modified",
+          cell: (info) => (
+            <span
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {info.row.original.modifiedLabel}
+            </span>
+          ),
+          sortFn: "basic",
+          sortUndefined: "last",
+          enableSorting: true,
+        }),
+        col.accessor((p) => msSortValue(p.lastRunAtMs), {
+          id: "lastRun",
+          header: "Last run",
+          cell: (info) => (
+            <span
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              {info.row.original.lastRunLabel ?? "—"}
+            </span>
+          ),
+          sortFn: "basic",
+          sortUndefined: "last",
+          enableSorting: true,
+        }),
+        // Kebab actions column — hover/focus-revealed "…" button that opens
+        // the same context menu as right-click, anchored at the button.
+        col.display({
+          id: "actions",
+          header: "",
+          cell: (info) => (
+            <button
+              type="button"
+              className="row-kebab"
+              aria-label={`Actions for ${info.row.original.name}`}
+              aria-haspopup="menu"
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setContextMenu({
+                  project: info.row.original,
+                  x: rect.left,
+                  y: rect.bottom + 4,
+                });
+              }}
+            >
+              <EllipsisHorizontalIcon style={{ width: 15, height: 15 }} />
+            </button>
+          ),
+        }),
+      ]),
     [handleOpenProject, engines],
   );
 
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data: projects,
     columns,
     state: {
@@ -446,10 +500,6 @@ export function ProjectsPage() {
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
   });
 
@@ -483,7 +533,7 @@ export function ProjectsPage() {
 
   const { rows } = table.getRowModel();
   const pageCount = table.getPageCount();
-  const pageIndex = table.getState().pagination.pageIndex;
+  const pageIndex = table.state.pagination.pageIndex;
   const canPrev = table.getCanPreviousPage();
   const canNext = table.getCanNextPage();
 
@@ -808,7 +858,7 @@ export function ProjectsPage() {
                   onContextMenu={(e) => handleRowContextMenu(e, row.original)}
                   onClick={() => row.toggleSelected()}
                 >
-                  {row.getVisibleCells().map((cell) => (
+                  {row.getAllCells().map((cell) => (
                     <td
                       key={cell.id}
                       style={{
