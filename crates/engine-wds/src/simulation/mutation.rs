@@ -197,21 +197,36 @@ mod tests {
     }
 
     #[test]
-    fn initial_quality_mutation_between_phases_affects_quality_results() {
-        // set_node_property(InitialQuality) applied after hydraulics but before
-        // the quality phase must be picked up by quality initialisation: the
-        // downstream junction ends up at the mutated source concentration.
+    fn initial_quality_mutation_lands_only_before_the_run() {
+        // Quality initialises at the first step now (§8.3 mutation
+        // semantics), so the window for setting initial quality closes when
+        // the run starts. It used to stay open until the separate quality
+        // phase began, and a caller mutating between the two phases was in
+        // time. Asserting both halves keeps that narrowing honest.
         let mut sess = Simulation::from_network(eps_network(QualityMode::Chemical)).expect("load");
-        sess.run_hydraulics().expect("run_hydraulics");
         sess.set_node_property("R1", NodeProperty::InitialQuality, 5.0)
-            .expect("set_node_property between phases");
-        sess.run_quality().expect("run_quality");
+            .expect("set_node_property before the run");
+        sess.run_hydraulics().expect("run_hydraulics");
 
         let t_final = *sess.snapshot_times().last().expect("snapshots");
         let quality = sess
             .get_node_result("J1", NodeQuantity::Quality, t_final)
             .expect("quality");
         approx::assert_relative_eq!(quality, 5.0, max_relative = 1e-6);
+
+        // The same mutation once the run has begun does not reach quality.
+        let mut late = Simulation::from_network(eps_network(QualityMode::Chemical)).expect("load");
+        late.run_hydraulics().expect("run_hydraulics");
+        late.set_node_property("R1", NodeProperty::InitialQuality, 5.0)
+            .expect("accepted");
+        let t_final = *late.snapshot_times().last().expect("snapshots");
+        let after = late
+            .get_node_result("J1", NodeQuantity::Quality, t_final)
+            .expect("quality");
+        assert!(
+            (after - 5.0).abs() > 1e-6,
+            "a mutation after the run began must not change quality, got {after}"
+        );
     }
 
     #[test]

@@ -533,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn mass_balance_is_phase_gated() {
+    fn mass_balance_needs_a_run_not_a_second_pass() {
         let net = eps_network(QualityMode::Age);
         let mut sess = Simulation::from_network(net).expect("load");
         assert!(matches!(
@@ -541,12 +541,9 @@ mod tests {
             Err(SessionError::InvalidPhase { .. })
         ));
         sess.run_hydraulics().expect("run_hydraulics");
-        assert!(matches!(
-            sess.get_mass_balance(),
-            Err(SessionError::InvalidPhase { .. })
-        ));
-        sess.run_quality().expect("run_quality");
-        let mb = sess.get_mass_balance().expect("mass balance after quality");
+        // Quality rides the run, so its mass balance exists as soon as the
+        // run does. It used to require a second pass first.
+        let mb = sess.get_mass_balance().expect("mass balance after the run");
         assert!(mb.init.is_finite());
     }
 

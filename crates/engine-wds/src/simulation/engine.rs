@@ -68,10 +68,13 @@ pub struct Simulation {
     // recorded, so the history cannot answer this question.
     has_stepped: bool,
 
-    // The solved state at the first step, kept for quality initialisation.
-    // Retained explicitly rather than read back out of the history, which is
-    // going away (§8.2 Retention).
-    initial_states: Option<(Vec<NodeState>, Vec<LinkState>)>,
+    // The solved state at t, before the tank advance mutates it. Quality
+    // advances from this over the step's interval, which is the same field
+    // the replaced second pass read out of the history. One reused buffer,
+    // not one per instant. `dt` is not final until the tank advance
+    // finishes (it shortens for tank events), so the states have to be kept
+    // rather than the advance brought forward.
+    states_at_t: (Vec<NodeState>, Vec<LinkState>),
 
     // Hydraulic result history.
     hyd_snapshots: Vec<HydSnapshot>,
@@ -180,13 +183,13 @@ impl Simulation {
             return;
         }
 
-        if self.initial_states.is_none() {
-            self.initial_states = Some((self.node_states.clone(), self.link_states.clone()));
-        }
-
-        let quality_enabled = network.options.quality_mode != QualityMode::None;
+        // Only reporting instants are recorded. Every hydraulic step used to
+        // be kept when quality was enabled, so the second pass could replay
+        // the flow field; quality now advances within the step and the extra
+        // instants have no reader. The writer already emitted only reporting
+        // instants, so the results file never contained them.
         let at_or_past_report = new_t >= self.next_report_t - 1e-6;
-        if quality_enabled || at_or_past_report {
+        if at_or_past_report {
             self.hyd_snapshots.push(HydSnapshot {
                 t: new_t,
                 node_states: self.node_states.clone(),
@@ -231,13 +234,34 @@ impl Simulation {
             .filter(|&i| (self.hyd_snapshots[i].t - t).abs() < 0.5)
     }
 
-    /// Return the solved states of the first step, for quality initialisation,
-    /// or the live states if no step has been taken. Kept explicitly rather
-    /// than read back out of the result history (§8.2 Retention).
-    fn initial_step_states(&self) -> (&[NodeState], &[LinkState]) {
-        match &self.initial_states {
-            Some((ns, ls)) => (ns, ls),
-            None => (&self.node_states, &self.link_states),
+    /// Write the quality engine's current concentrations onto the live states,
+    /// so the instant recorded at this time carries them.
+    ///
+    /// Reaction rate is stamped only once quality has advanced at least once.
+    /// The replaced second pass wrote reaction rate on the write-back after an
+    /// advance but not during initialisation, so the instant at t=0 carried a
+    /// zero rate; reproducing that is what keeps the first period identical.
+    fn stamp_quality_onto_live_states(&mut self) {
+        let Some(qs) = self.quality_state.as_ref() else {
+            return;
+        };
+        let Some(network) = self.network.as_ref() else {
+            return;
+        };
+        let advanced = self.quality_t > 0.0;
+        for (i, ns) in self.node_states.iter_mut().enumerate() {
+            ns.quality = qs.node_conc[i];
+        }
+        for (k, ls) in self.link_states.iter_mut().enumerate() {
+            ls.quality = quality::avg_link_quality(
+                qs,
+                k,
+                network.links[k].base.from_idx(),
+                network.links[k].base.to_idx(),
+            );
+            if advanced {
+                ls.reaction_rate = qs.pipe_rate_coeff[k];
+            }
         }
     }
 }
@@ -719,10 +743,10 @@ mod tests {
     }
 
     #[test]
-    fn step_quality_direct_loop_terminates() {
-        // Regression test for the runaway quality loop bug: calling step_quality()
-        // directly (without run_quality()) must initialise quality state on the
-        // first call and terminate normally when quality_t reaches duration.
+    fn quality_completes_with_the_hydraulic_run() {
+        // Was a regression test for a runaway quality loop driven through
+        // step_quality. Quality no longer has a loop of its own; it finishes
+        // when the run does.
         let mut net = simple_network();
         net.options.duration = 2.0 * 3600.0;
         net.options.hyd_step = 3600.0;
@@ -735,30 +759,23 @@ mod tests {
         sess.load(net).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
 
-        // Drive quality via step_quality, exactly as the CLI progress loop does.
-        let mut steps = 0usize;
-        let mut total_t = 0.0_f64;
-        loop {
-            let dt = sess.step_quality().expect("step_quality");
-            if dt == 0.0 {
-                break;
-            }
-            total_t += dt;
-            steps += 1;
-            assert!(
-                steps < 1000,
-                "step_quality did not terminate within 1000 steps"
-            );
-        }
-
-        assert_eq!(sess.phase, Phase::QualityDone);
-        assert!((total_t - 2.0 * 3600.0).abs() < 1.0, "total_t = {total_t}");
+        // The CLI progress loop used to drive quality after hydraulics. There
+        // is nothing left to drive: quality advanced with each step and has
+        // already reached the duration.
+        assert!(
+            (sess.quality_t - 2.0 * 3600.0).abs() < 1.0,
+            "quality_t = {}",
+            sess.quality_t
+        );
     }
 
     #[test]
-    fn step_quality_and_run_quality_produce_same_results() {
-        // Regression test: step_quality loop must produce the same quality
-        // values as run_quality, ensuring lazy-init in step_quality is correct.
+    fn stepping_and_running_produce_the_same_quality() {
+        // Was a comparison of two ways to drive the second quality pass. With
+        // quality riding the hydraulic step there is only one pass, so the
+        // claim worth holding is that driving it one step at a time gives the
+        // same answer as running it in a single call. Left as a comparison of
+        // no-ops it would pass with quality entirely broken.
         let mut net = simple_network();
         net.options.duration = 2.0 * 3600.0;
         net.options.hyd_step = 3600.0;
@@ -767,18 +784,16 @@ mod tests {
         net.options.report_start = 0.0;
         net.options.quality_mode = QualityMode::Age;
 
-        // Session A: use run_quality().
+        // Session A: one call.
         let mut sess_a = Simulation::create();
         sess_a.load(net.clone()).expect("load");
-        sess_a.run_hydraulics().expect("run_hydraulics");
-        sess_a.run_quality().expect("run_quality");
+        sess_a.run().expect("run");
 
-        // Session B: drive quality via step_quality loop (CLI-style).
+        // Session B: stepped, exactly as the CLI and GUI run loops drive it.
         let mut sess_b = Simulation::create();
         sess_b.load(net).expect("load");
-        sess_b.run_hydraulics().expect("run_hydraulics");
         loop {
-            let dt = sess_b.step_quality().expect("step_quality");
+            let dt = sess_b.step_hydraulics().expect("step_hydraulics");
             if dt == 0.0 {
                 break;
             }
@@ -797,7 +812,7 @@ mod tests {
                 .unwrap();
             assert!(
                 (q_a - q_b).abs() < 1e-9,
-                "quality mismatch at t={t}: run_quality={q_a}, step_quality={q_b}"
+                "quality mismatch at t={t}: run={q_a}, stepped={q_b}"
             );
         }
     }
@@ -1037,20 +1052,35 @@ mod tests {
         assert_eq!(ts, vec![0.0, 7200.0]);
     }
 
+    /// Enabling quality used to multiply what a run retained: every hydraulic
+    /// step was kept so the second pass could replay the flow field, while the
+    /// results file still carried only the reporting instants. Quality now
+    /// advances inside the step, so it costs no retention at all and the two
+    /// modes keep exactly the same instants.
     #[test]
-    fn snapshots_remain_per_step_when_quality_enabled() {
-        let mut net = simple_network();
-        net.options.duration = 3.0 * 3600.0;
-        net.options.hyd_step = 3600.0;
-        net.options.report_step = 2.0 * 3600.0;
-        net.options.report_start = 0.0;
-        net.options.quality_mode = QualityMode::Age;
+    fn quality_no_longer_changes_what_a_run_retains() {
+        let build = |mode| {
+            let mut net = simple_network();
+            net.options.duration = 3.0 * 3600.0;
+            net.options.hyd_step = 3600.0;
+            net.options.report_step = 2.0 * 3600.0;
+            net.options.report_start = 0.0;
+            net.options.quality_mode = mode;
+            let mut sess = Simulation::create();
+            sess.load(net).expect("load");
+            sess.run_hydraulics().expect("run_hydraulics");
+            sess.snapshot_times()
+        };
 
-        let mut sess = Simulation::create();
-        sess.load(net).expect("load");
-        sess.run_hydraulics().expect("run_hydraulics");
-        let ts = sess.snapshot_times();
+        let without = build(QualityMode::None);
+        let with = build(QualityMode::Age);
 
-        assert_eq!(ts, vec![0.0, 3600.0, 7200.0, 10800.0]);
+        // Reporting every two hours over three: t = 0 and 7200. The hourly
+        // hydraulic steps at 3600 and 10800 are computed and not kept.
+        assert_eq!(without, vec![0.0, 7200.0]);
+        assert_eq!(
+            with, without,
+            "quality must not cost instants: was {with:?}, hydraulics-only {without:?}"
+        );
     }
 }

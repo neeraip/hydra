@@ -28,17 +28,14 @@ impl WritableSimulation for Simulation {
     }
 
     fn finalized_through(&self) -> f64 {
+        // Quality now advances within the step that records an instant, so
+        // an instant carries its final quality the moment it is recorded and
+        // nothing is provisional (§8.3, streaming serialization). The
+        // frontier existed only to hold periods back until the second pass
+        // wrote through their time, and there is no second pass.
         match self.network.as_ref() {
             None => f64::NEG_INFINITY,
-            // No quality analysis: snapshots are final as soon as the
-            // hydraulic phase records them.
-            Some(n) if n.options.quality_mode == crate::QualityMode::None => f64::INFINITY,
-            // Quality enabled: snapshots hold provisional quality values
-            // until the quality phase writes back through their time.
-            // Before quality initialisation even the t=0 snapshot is
-            // provisional (initial quality lands in it during init).
-            Some(_) if self.quality_state.is_some() => self.quality_t,
-            Some(_) => f64::NEG_INFINITY,
+            Some(_) => f64::INFINITY,
         }
     }
 
@@ -208,25 +205,23 @@ mod tests {
     }
 
     #[test]
-    fn finalized_frontier_tracks_the_quality_phase() {
-        // Quality disabled: every snapshot is final as hydraulics records it.
-        let mut sess = Simulation::from_network(pump_network(QualityMode::None)).expect("load");
-        assert_eq!(sess.finalized_through(), f64::INFINITY);
-        sess.run().expect("run");
-        assert_eq!(sess.finalized_through(), f64::INFINITY);
-
-        // Quality enabled: nothing is final until the quality phase starts,
-        // then the frontier follows it to the end of the run.
-        let mut sess = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
-        assert_eq!(sess.finalized_through(), f64::NEG_INFINITY);
-        sess.run_hydraulics().expect("hydraulics");
-        assert_eq!(
-            sess.finalized_through(),
-            f64::NEG_INFINITY,
-            "snapshots hold provisional quality until the quality phase runs"
-        );
-        sess.run_quality().expect("quality");
-        assert!(sess.finalized_through() >= 2.0 * 3600.0);
+    fn every_instant_is_final_when_it_is_recorded() {
+        // The frontier existed to hold periods back until a second pass wrote
+        // quality through their time. Quality now advances inside the step
+        // that records the instant, so nothing is ever provisional and the
+        // answer is the same with quality on as with it off (§8.3).
+        for mode in [QualityMode::None, QualityMode::Age] {
+            let mut sess = Simulation::from_network(pump_network(mode)).expect("load");
+            assert_eq!(sess.finalized_through(), f64::INFINITY, "{mode:?} at load");
+            sess.step_hydraulics().expect("one step");
+            assert_eq!(
+                sess.finalized_through(),
+                f64::INFINITY,
+                "{mode:?} mid-run: the instant just recorded is already final"
+            );
+            sess.run().expect("run");
+            assert_eq!(sess.finalized_through(), f64::INFINITY, "{mode:?} at end");
+        }
     }
 
     /// The CLI/GUI stream periods out while stepping. A streamed file must be
@@ -290,10 +285,11 @@ mod tests {
         );
     }
 
-    /// A stream finished before quality ran must not persist provisional
-    /// quality: it closes with zero periods rather than wrong values.
+    /// A stream closed as soon as the run ends carries every period. This
+    /// used to close with zero: with quality replayed afterwards, no period
+    /// was final while hydraulics was still the only thing that had run.
     #[test]
-    fn stream_finished_before_quality_holds_back_all_periods() {
+    fn a_stream_closed_at_the_end_of_the_run_holds_every_period() {
         use crate::dialect::out_writer::OutStreamWriter;
         use crate::FlowUnits;
         use std::io::Cursor;
@@ -308,6 +304,7 @@ mod tests {
 
         let n_periods =
             i32::from_le_bytes(bytes[bytes.len() - 12..bytes.len() - 8].try_into().unwrap());
-        assert_eq!(n_periods, 0);
+        // Two hours reported hourly from zero: t = 0, 3600, 7200.
+        assert_eq!(n_periods, 3, "every period is final and written");
     }
 }

@@ -20,8 +20,8 @@ impl Simulation {
             current_t: 0.0,
             next_report_t: 0.0,
             report_count: 0,
+            states_at_t: (vec![], vec![]),
             has_stepped: false,
-            initial_states: None,
             hyd_snapshots: vec![],
             quality_state: None,
             quality_t: 0.0,
@@ -93,8 +93,8 @@ impl Simulation {
         self.link_states = link_states;
         self.current_t = 0.0;
         self.next_report_t = next_report;
+        self.states_at_t = (vec![], vec![]);
         self.has_stepped = false;
-        self.initial_states = None;
         self.hyd_snapshots = vec![];
         self.quality_state = None;
         self.quality_t = 0.0;
@@ -140,7 +140,10 @@ impl Simulation {
         Ok(())
     }
 
-    /// Run the full simulation to completion (hydraulics then quality).
+    /// Run the full simulation to completion (§8.3 `run()`).
+    ///
+    /// Quality advances alongside the hydraulics rather than in a pass of its
+    /// own, so this is one loop and the run is over when it returns.
     ///
     /// This is the easiest entry point for most users:
     /// 1. [`Simulation::load`]
@@ -149,7 +152,9 @@ impl Simulation {
     ///    [`Simulation::get_node_result`], and [`Simulation::get_link_result`].
     pub fn run(&mut self) -> Result<(), SessionError> {
         self.run_hydraulics()?;
-        self.run_quality()
+        self.analysis_ended = Some(crate::wall_clock::now());
+        self.phase = Phase::QualityDone;
+        Ok(())
     }
 
     /// Advance the hydraulic simulation by one adaptive time step (§8.3 `step_hydraulics()`).
@@ -291,6 +296,32 @@ impl Simulation {
                     }
                 }
             }
+        }
+
+        // Quality rides this step rather than replaying it later (§8.2).
+        // Initialise on the first step so the instant at t=0 carries initial
+        // quality, exactly as the replaced second pass wrote it into the
+        // first snapshot.
+        let quality_on = self
+            .network
+            .as_ref()
+            .is_some_and(|n| n.options.quality_mode != QualityMode::None);
+        if quality_on && self.quality_state.is_none() {
+            let network = self
+                .network
+                .as_ref()
+                .expect("invariant: network set in load()");
+            let qs = quality::init_quality(network, &self.node_states, &self.link_states)
+                .map_err(SessionError::QualityEngine)?;
+            self.quality_state = Some(qs);
+            self.quality_t = 0.0;
+        }
+        if quality_on {
+            self.stamp_quality_onto_live_states();
+            // The flow field quality advances over is the one solved at t,
+            // before the tank advance moves it.
+            self.states_at_t.0.clone_from(&self.node_states);
+            self.states_at_t.1.clone_from(&self.link_states);
         }
 
         // Record snapshot at t AFTER solve, BEFORE tank advance.
@@ -640,64 +671,52 @@ impl Simulation {
             step_overflow,
         );
 
+        // Advance quality across the step just taken, now that the tank
+        // advance has settled dt. The interval is clamped at the duration so
+        // the final period matches what the replaced second pass produced,
+        // where the last interval ran to the duration rather than past it.
+        if quality_on {
+            let duration = self
+                .network
+                .as_ref()
+                .expect("invariant: network set in load()")
+                .options
+                .duration;
+            let dt_q = (t + dt).min(duration) - t;
+            if dt_q > 0.0 {
+                let network = self
+                    .network
+                    .as_ref()
+                    .expect("invariant: network set in load()");
+                let (ns, ls) = (&self.states_at_t.0, &self.states_at_t.1);
+                if let Some(qs) = self.quality_state.as_mut() {
+                    quality::advance_quality(qs, network, ns, ls, dt_q, t);
+                    self.quality_t = t + dt_q;
+                }
+            }
+        }
+
         let new_t = t + dt;
         self.current_t = new_t;
 
         Ok(dt)
     }
 
-    /// Run the complete quality simulation (§8.3 `run_quality()`).
+    /// Complete the run. Quality advanced alongside hydraulics (§8.2), so
+    /// there is nothing left to do but settle the phase.
     ///
-    /// Requires hydraulics to be done.
+    /// Retained for one release so callers driving the old two-phase
+    /// lifecycle keep working; the spec's lifecycle is `run` / `step`.
     pub fn run_quality(&mut self) -> Result<(), SessionError> {
         self.require_phase(Phase::HydraulicsDone)?;
-        // Initialise quality state.
-        let network = self
-            .network
-            .as_ref()
-            .expect("invariant: network set in load()");
-        if network.options.quality_mode == QualityMode::None {
-            self.analysis_ended = Some(crate::wall_clock::now());
-            self.phase = Phase::QualityDone;
-            return Ok(());
-        }
-        // Use first snapshot states for initialisation.
-        let (init_ns, init_ls) = self.initial_step_states();
-        let qs = quality::init_quality(network, init_ns, init_ls)
-            .map_err(SessionError::QualityEngine)?;
-
-        // Write initial quality (node_conc and avgqual) into the first snapshot (t=0).
-        // For Trace mode this ensures the trace node reports 100 % at t=0.
-        if let Some(snap0) = self.hyd_snapshots.first_mut() {
-            for (i, ns) in snap0.node_states.iter_mut().enumerate() {
-                ns.quality = qs.node_conc[i];
-            }
-            for (k, ls) in snap0.link_states.iter_mut().enumerate() {
-                ls.quality = quality::avg_link_quality(
-                    &qs,
-                    k,
-                    network.links[k].base.from_idx(),
-                    network.links[k].base.to_idx(),
-                );
-            }
-        }
-
-        self.quality_state = Some(qs);
-        self.quality_t = 0.0;
-        loop {
-            let dt = self.step_quality()?;
-            if dt == 0.0 {
-                break;
-            }
-        }
         self.analysis_ended = Some(crate::wall_clock::now());
+        self.phase = Phase::QualityDone;
         Ok(())
     }
 
-    /// Advance the quality simulation by one hydraulic time step's worth of
-    /// sub-steps (§8.3 `step_quality()`).
-    ///
-    /// Returns the hydraulic duration advanced (s). Returns 0.0 at end.
+    /// Formerly one quality sub-cycle. Quality now advances inside
+    /// `step_hydraulics`, so this only settles the phase and reports that
+    /// there is nothing to advance.
     pub fn step_quality(&mut self) -> Result<f64, SessionError> {
         if self.phase != Phase::HydraulicsDone && self.phase != Phase::QualityDone {
             return Err(SessionError::InvalidPhase {
@@ -705,112 +724,9 @@ impl Simulation {
                 actual: self.phase.name().to_string(),
             });
         }
-
-        // Lazy-initialise quality state on the first call so that step_quality()
-        // can be used directly (e.g. in a CLI progress loop) without requiring a
-        // prior run_quality() call.  run_quality() already initialises explicitly
-        // before its own loop, so quality_state will be Some when reached there
-        // and this block is skipped.
-        if self.quality_state.is_none() {
-            let network = self
-                .network
-                .as_ref()
-                .expect("invariant: network set in load()");
-            if network.options.quality_mode == QualityMode::None {
-                self.analysis_ended = Some(crate::wall_clock::now());
-                self.phase = Phase::QualityDone;
-                return Ok(0.0);
-            }
-            let (init_ns, init_ls) = self.initial_step_states();
-            let qs = quality::init_quality(network, init_ns, init_ls)
-                .map_err(SessionError::QualityEngine)?;
-            if let Some(snap0) = self.hyd_snapshots.first_mut() {
-                for (i, ns) in snap0.node_states.iter_mut().enumerate() {
-                    ns.quality = qs.node_conc[i];
-                }
-                for (k, ls) in snap0.link_states.iter_mut().enumerate() {
-                    ls.quality = quality::avg_link_quality(
-                        &qs,
-                        k,
-                        network.links[k].base.from_idx(),
-                        network.links[k].base.to_idx(),
-                    );
-                }
-            }
-            self.quality_state = Some(qs);
-            self.quality_t = 0.0;
-        }
-
-        let network = self
-            .network
-            .as_ref()
-            .expect("invariant: network set in load()");
-        let duration = network.options.duration;
-        let qt = self.quality_t;
-        if qt >= duration {
-            self.analysis_ended = Some(crate::wall_clock::now());
-            self.phase = Phase::QualityDone;
-            return Ok(0.0);
-        }
-
-        // Find the snapshot at qt — this gives the flow field for this period.
-        let snap_idx = self.find_snapshot_index_at(qt);
-        let snap_idx = match snap_idx {
-            Some(idx) => idx,
-            None => {
-                self.phase = Phase::QualityDone;
-                return Ok(0.0);
-            }
-        };
-
-        // dt_h = time from this snapshot to the next one (or end of simulation).
-        // Quality results are written to the NEXT snapshot because EPANET
-        // reports initial quality at t=0 and the quality after transport at
-        // subsequent report times.
-        let next_snap_idx = snap_idx + 1;
-        let next_t = if next_snap_idx < self.hyd_snapshots.len() {
-            self.hyd_snapshots[next_snap_idx].t
-        } else {
-            duration
-        };
-        let dt_h = next_t - qt;
-        if dt_h <= 0.0 {
-            self.phase = Phase::QualityDone;
-            return Ok(0.0);
-        }
-
-        // Borrow node/link states from the snapshot without cloning.
-        // NLL ensures these shared borrows end after advance_quality returns,
-        // allowing the mutable write-back to next_snap_idx below.
-        let node_states = &self.hyd_snapshots[snap_idx].node_states;
-        let link_states = &self.hyd_snapshots[snap_idx].link_states;
-
-        if let Some(qs) = self.quality_state.as_mut() {
-            quality::advance_quality(qs, network, node_states, link_states, dt_h, qt);
-            // Write-back quality to the NEXT snapshot (the one at t=next_t).
-            // Quality at snap[0] (t=0) keeps its initial values.
-            if next_snap_idx < self.hyd_snapshots.len() {
-                let snap = &mut self.hyd_snapshots[next_snap_idx];
-                for (i, ns) in snap.node_states.iter_mut().enumerate() {
-                    ns.quality = qs.node_conc[i];
-                }
-                for (k, ls) in snap.link_states.iter_mut().enumerate() {
-                    ls.quality = quality::avg_link_quality(
-                        qs,
-                        k,
-                        network.links[k].base.from_idx(),
-                        network.links[k].base.to_idx(),
-                    );
-                    ls.reaction_rate = qs.pipe_rate_coeff[k];
-                }
-            }
-            self.quality_t = qt + dt_h;
-        }
-
-        if self.quality_t >= duration {
-            self.phase = Phase::QualityDone;
-        }
-        Ok(dt_h)
+        self.analysis_ended = Some(crate::wall_clock::now());
+        self.phase = Phase::QualityDone;
+        Ok(0.0)
     }
 }
 
@@ -988,25 +904,24 @@ Headloss  H-W
     }
 
     #[test]
-    fn step_quality_sentinel_reaches_duration_then_reports_done() {
+    fn quality_reaches_the_duration_without_being_driven() {
+        // Quality rides the hydraulic step (§8.2), so by the time the run
+        // returns it has already advanced to the duration. Nothing remains
+        // for a caller to drive.
         let net = eps_network(QualityMode::Age);
         let duration = net.options.duration;
         let mut sess = Simulation::from_network(net).expect("load");
         sess.run_hydraulics().expect("run_hydraulics");
 
-        let mut total = 0.0;
-        loop {
-            let dt = sess.step_quality().expect("step_quality");
-            if dt == 0.0 {
-                break;
-            }
-            total += dt;
-        }
-        assert!((total - duration).abs() < 1e-6, "total = {total}");
-        assert_eq!(sess.phase, Phase::QualityDone);
-
-        // After QualityDone, further step_quality calls return the sentinel.
-        assert_eq!(sess.step_quality().expect("step_quality"), 0.0);
+        assert!(
+            (sess.quality_t - duration).abs() < 1e-6,
+            "quality_t = {}, duration = {duration}",
+            sess.quality_t
+        );
+        assert!(
+            sess.quality_state.is_some(),
+            "quality initialised during the run"
+        );
     }
 
     #[test]
