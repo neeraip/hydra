@@ -971,6 +971,22 @@ h2 {
   letter-spacing: -0.01em;
 }
 
+/* A feature that is real but early. Quiet on purpose: it sits inside the
+   heading rather than above the card, so it reads as a qualifier on the
+   name and not as a badge competing with it. */
+.feature-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+  vertical-align: 1.5px;
+}
+
 .feature p {
   margin: 6px 0 0;
   font-size: 13.5px;

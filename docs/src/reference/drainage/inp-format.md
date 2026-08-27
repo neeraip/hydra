@@ -52,6 +52,13 @@ The last row is the interesting one: a formula cannot be dimensionally converted
 
 ## The 2D sections
 
+> Two-dimensional overland flow is the newest part of the drainage
+> engine. The sections below are read, written and simulated, and the
+> solver's behaviour is specified in full; what is still moving is the
+> format itself, which SWMM's successor is defining in its own alpha.
+> Treat a 2D model as something to try rather than something to depend
+> on, and expect the vocabulary to grow.
+
 A model may carry a two-dimensional overland surface in the same `.inp`, through the 2D sections SWMM's successor format defines, adopted section for section: `[2D_OPTIONS]`, `[2D_VERTICES]`, `[2D_TRIANGLES]`, `[2D_INITIAL_VELOCITY]`, the two node-coupling maps, `[2D_BOUNDARY_CONDITIONS]`, `[2D_INFILTRATION]`, `[2D_EDGE_CONVEYANCE]` and `[2D_MESH_FILE]` (an external mesh file, resolved beside the model like any other auxiliary file; export inlines it).
 
 - A retired or unknown `[2D_OPTIONS]` key is a warning, never a refusal, so a file written for a newer vocabulary still opens. SWMM 6 refuses the whole file.
