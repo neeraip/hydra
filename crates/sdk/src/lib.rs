@@ -55,8 +55,6 @@ pub use hydra_engine_wds::{
     NodeResult,
     PumpEnergy,
     QualityError,
-    // Batch range computation.
-    ResultRanges,
     // Error types.
     SessionError,
     // Non-fatal diagnostics.

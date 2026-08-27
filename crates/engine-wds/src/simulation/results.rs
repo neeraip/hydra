@@ -1,34 +1,6 @@
 use super::*;
 use crate::simulation::contract::{FlowBalance, FlowBalanceSummary, MassBalance, PumpEnergy};
 
-/// Global min/max across all timesteps for each display variable.
-///
-/// All values are in the internal SI unit system: pressure in metres of head,
-/// head in metres, demand and flow in m³/s, velocity in m/s.
-#[derive(Debug, Clone, Default)]
-pub struct ResultRanges {
-    /// Minimum gauge pressure observed at any node across all timesteps (m).
-    pub pressure_min: f64,
-    /// Maximum gauge pressure observed at any node across all timesteps (m).
-    pub pressure_max: f64,
-    /// Minimum hydraulic head observed at any node across all timesteps (m).
-    pub head_min: f64,
-    /// Maximum hydraulic head observed at any node across all timesteps (m).
-    pub head_max: f64,
-    /// Minimum demand observed at any node across all timesteps (m³/s).
-    pub demand_min: f64,
-    /// Maximum demand observed at any node across all timesteps (m³/s).
-    pub demand_max: f64,
-    /// Minimum flow observed at any link across all timesteps (m³/s).
-    pub flow_min: f64,
-    /// Maximum flow observed at any link across all timesteps (m³/s).
-    pub flow_max: f64,
-    /// Minimum velocity observed at any link across all timesteps (m/s).
-    pub velocity_min: f64,
-    /// Maximum velocity observed at any link across all timesteps (m/s).
-    pub velocity_max: f64,
-}
-
 /// Per-node result at a single timestep.
 ///
 /// All values are in the internal SI unit system.
@@ -233,125 +205,6 @@ impl Simulation {
     /// successive `step_hydraulics()` calls.
     pub fn snapshot_times(&self) -> Vec<f64> {
         self.hyd_snapshots.iter().map(|s| s.t).collect()
-    }
-
-    /// Compute global min/max for each display quantity across all snapshots.
-    ///
-    /// Iterates directly over snapshot arrays by index — O(snapshots × elements)
-    /// with zero string lookups.
-    pub fn result_ranges(&self) -> Result<ResultRanges, SessionError> {
-        let network = self.require_loaded_network()?;
-        if self.hyd_snapshots.is_empty() {
-            return Err(SessionError::InvalidPhase {
-                expected: "HydraulicsDone".into(),
-                actual: self.phase.name().to_string(),
-            });
-        }
-
-        let mut r = ResultRanges {
-            pressure_min: f64::INFINITY,
-            pressure_max: f64::NEG_INFINITY,
-            head_min: f64::INFINITY,
-            head_max: f64::NEG_INFINITY,
-            demand_min: f64::INFINITY,
-            demand_max: f64::NEG_INFINITY,
-            flow_min: f64::INFINITY,
-            flow_max: f64::NEG_INFINITY,
-            velocity_min: f64::INFINITY,
-            velocity_max: f64::NEG_INFINITY,
-        };
-
-        // Pre-compute pipe areas for velocity calculation.
-        let pipe_areas: Vec<f64> = network
-            .links
-            .iter()
-            .map(|link| {
-                if let LinkKind::Pipe(pipe) = &link.kind {
-                    std::f64::consts::PI * (pipe.diameter / 2.0).powi(2)
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-
-        for snap in &self.hyd_snapshots {
-            // Nodes
-            for (i, ns) in snap.node_states.iter().enumerate() {
-                let node = &network.nodes[i];
-                let elevation = node.base.elevation;
-
-                // Head
-                let h = ns.head;
-                if h < r.head_min {
-                    r.head_min = h;
-                }
-                if h > r.head_max {
-                    r.head_max = h;
-                }
-
-                // Gauge pressure
-                let physical_elevation = match &node.kind {
-                    NodeKind::Tank(tank) => elevation - tank.min_level,
-                    _ => elevation,
-                };
-                let p = h - physical_elevation;
-                if p < r.pressure_min {
-                    r.pressure_min = p;
-                }
-                if p > r.pressure_max {
-                    r.pressure_max = p;
-                }
-
-                // Demand
-                let d = match &node.kind {
-                    NodeKind::Junction(_) => ns.demand_flow + ns.emitter_flow + ns.leakage_flow,
-                    NodeKind::Reservoir(_) | NodeKind::Tank(_) => ns.net_flow,
-                };
-                if d < r.demand_min {
-                    r.demand_min = d;
-                }
-                if d > r.demand_max {
-                    r.demand_max = d;
-                }
-            }
-
-            // Links
-            for (i, ls) in snap.link_states.iter().enumerate() {
-                let is_closed = matches!(
-                    ls.status,
-                    LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
-                );
-
-                // Flow
-                let f = if is_closed { 0.0 } else { ls.flow };
-                if f < r.flow_min {
-                    r.flow_min = f;
-                }
-                if f > r.flow_max {
-                    r.flow_max = f;
-                }
-
-                // Velocity (pipes only)
-                let area = pipe_areas[i];
-                if area > 0.0 {
-                    let v = ls.flow.abs() / area;
-                    if v < r.velocity_min {
-                        r.velocity_min = v;
-                    }
-                    if v > r.velocity_max {
-                        r.velocity_max = v;
-                    }
-                }
-            }
-        }
-
-        // Sanitise: if no pipes existed, velocity range stays infinite.
-        if r.velocity_min == f64::INFINITY {
-            r.velocity_min = 0.0;
-            r.velocity_max = 0.0;
-        }
-
-        Ok(r)
     }
 
     /// Return all node results at a given simulation time, indexed by position.
@@ -629,28 +482,6 @@ mod tests {
         assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
         let err = sess.all_node_results_at(0.0);
         assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
-        let err = sess.result_ranges();
-        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
-    }
-
-    #[test]
-    fn result_ranges_bracket_sampled_values() {
-        let sess = run_session(eps_network(QualityMode::None));
-        let ranges = sess.result_ranges().expect("result_ranges");
-        assert!(ranges.head_min <= ranges.head_max);
-        assert!(ranges.pressure_min <= ranges.pressure_max);
-        assert!(ranges.flow_min <= ranges.flow_max);
-        assert!(ranges.velocity_min <= ranges.velocity_max);
-
-        let t0 = sess.snapshot_times()[0];
-        let head = sess
-            .get_node_result("J1", NodeQuantity::Head, t0)
-            .expect("head");
-        assert!(head >= ranges.head_min && head <= ranges.head_max);
-        let flow = sess
-            .get_link_result("P1", LinkQuantity::Flow, t0)
-            .expect("flow");
-        assert!(flow >= ranges.flow_min && flow <= ranges.flow_max);
     }
 
     #[test]

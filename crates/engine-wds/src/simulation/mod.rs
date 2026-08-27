@@ -20,8 +20,8 @@ pub use contract::{
     FlowBalance, FlowBalanceSummary, HydSnapshot, MassBalance, PumpEnergy, WritableSimulation,
 };
 pub use engine::{
-    LinkProperty, LinkQuantity, LinkResult, NodeProperty, NodeQuantity, NodeResult, ResultRanges,
-    SessionError, SimWarning, Simulation, WarningKind,
+    LinkProperty, LinkQuantity, LinkResult, NodeProperty, NodeQuantity, NodeResult, SessionError,
+    SimWarning, Simulation, WarningKind,
 };
 pub use estimator::{
     classify_simulation_runtime_millis, estimate_simulation_runtime,

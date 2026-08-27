@@ -112,7 +112,7 @@ pub use simulation::{
     estimate_simulation_runtime_from_summary, estimate_simulation_runtime_millis_from_summary,
     FlowBalance, FlowBalanceSummary, HydSnapshot, HydraulicError, LinkProperty, LinkQuantity,
     LinkResult, MassBalance, NodeProperty, NodeQuantity, NodeResult, PumpEnergy, QualityError,
-    ResultRanges, SessionError, SimWarning, Simulation, WarningKind, WritableSimulation,
+    SessionError, SimWarning, Simulation, WarningKind, WritableSimulation,
     HYDRA_HYDRAULICS_VERSION, HYDRA_QUALITY_VERSION, HYDRA_SIMULATION_VERSION,
 };
 

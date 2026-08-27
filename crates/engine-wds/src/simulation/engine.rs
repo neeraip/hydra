@@ -25,7 +25,7 @@ mod lifecycle;
 mod mutation;
 #[path = "results.rs"]
 mod results;
-pub use results::{LinkResult, NodeResult, ResultRanges};
+pub use results::{LinkResult, NodeResult};
 #[path = "types.rs"]
 mod types;
 #[path = "writable.rs"]
