@@ -65,8 +65,9 @@ pub struct OpenRequest<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
-    /// The phase being advanced ("Hydraulics", "Water quality",
-    /// "Simulation").
+    /// The phase being advanced. Both engines report "Simulation": a
+    /// water-distribution run advances quality alongside its hydraulics
+    /// rather than in a pass of its own.
     pub phase: &'static str,
     /// The phase this call *ended*, when it ended one.
     ///

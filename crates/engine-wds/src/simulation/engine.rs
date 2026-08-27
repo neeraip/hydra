@@ -803,18 +803,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn step_quality_returns_zero_immediately_when_quality_none() {
-        // When quality mode is None, step_quality must return 0.0 immediately
-        // and transition to QualityDone — it must not loop indefinitely.
-        let mut sess = Simulation::create();
-        sess.load(simple_network()).expect("load");
-        sess.run_hydraulics().expect("run_hydraulics");
-        let dt = sess.step_quality().expect("step_quality");
-        assert_eq!(dt, 0.0);
-        assert_eq!(sess.phase, Phase::QualityDone);
-    }
-
     // ── Additional results-coverage tests ────────────────────────────────────
 
     #[test]

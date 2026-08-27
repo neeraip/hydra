@@ -104,16 +104,9 @@ impl std::fmt::Display for AdvanceError {
 
 impl std::error::Error for AdvanceError {}
 
-enum WdsPhase {
-    Hydraulics,
-    Quality,
-    Done,
-}
-
 struct WdsRun {
     sim: hydra_engine_wds::Simulation,
-    phase: WdsPhase,
-    quality_enabled: bool,
+    done: bool,
     duration: f64,
     output_units: hydra_engine_wds::FlowUnits,
     t: f64,
@@ -150,13 +143,10 @@ impl EngineSession {
         sim: hydra_engine_wds::Simulation,
         output_units: hydra_engine_wds::FlowUnits,
     ) -> Self {
-        let options = &sim.net().options;
-        let quality_enabled = options.quality_mode != hydra_engine_wds::QualityMode::None;
-        let duration = options.duration;
+        let duration = sim.net().options.duration;
         Self::Wds(Box::new(WdsRunOpaque(WdsRun {
             sim,
-            phase: WdsPhase::Hydraulics,
-            quality_enabled,
+            done: false,
             duration,
             output_units,
             t: 0.0,
@@ -181,11 +171,10 @@ impl EngineSession {
     /// work in — for progress display before the first step.
     pub fn phase(&self) -> &'static str {
         match self {
-            Self::Wds(r) => match r.0.phase {
-                WdsPhase::Hydraulics => "Hydraulics",
-                WdsPhase::Quality | WdsPhase::Done => "Water quality",
-            },
-            Self::Uds(_) => "Simulation",
+            // Quality advances alongside the hydraulics rather than in a
+            // pass of its own, so a water-distribution run has one phase, and
+            // it is named as the drainage engine names its own.
+            Self::Wds(_) | Self::Uds(_) => "Simulation",
         }
     }
 
@@ -421,56 +410,29 @@ impl std::error::Error for CheckpointError {}
 impl WdsRun {
     fn advance(&mut self) -> Result<Progress, AdvanceError> {
         let duration = self.duration;
-        match self.phase {
-            WdsPhase::Hydraulics => {
-                let dt = self.sim.step_hydraulics().map_err(AdvanceError::Wds)?;
-                self.append()?;
-                if dt == 0.0 {
-                    self.phase = WdsPhase::Quality;
-                    self.t = 0.0;
-                } else {
-                    self.t += dt;
-                }
-                Ok(Progress {
-                    phase: "Hydraulics",
-                    t: self.t,
-                    duration,
-                    done: false,
-                })
-            }
-            WdsPhase::Quality => {
-                if !self.quality_enabled {
-                    self.sim.run_quality().map_err(AdvanceError::Wds)?;
-                    self.append()?;
-                    self.phase = WdsPhase::Done;
-                    return Ok(Progress {
-                        phase: "Water quality",
-                        t: duration,
-                        duration,
-                        done: true,
-                    });
-                }
-                let dt = self.sim.step_quality().map_err(AdvanceError::Wds)?;
-                self.append()?;
-                if dt == 0.0 {
-                    self.phase = WdsPhase::Done;
-                } else {
-                    self.t += dt;
-                }
-                Ok(Progress {
-                    phase: "Water quality",
-                    t: self.t,
-                    duration,
-                    done: matches!(self.phase, WdsPhase::Done),
-                })
-            }
-            WdsPhase::Done => Ok(Progress {
-                phase: "Water quality",
+        if self.done {
+            return Ok(Progress {
+                phase: "Simulation",
                 t: duration,
                 duration,
                 done: true,
-            }),
+            });
         }
+        // One loop: the step carries its own quality sub-steps, and the
+        // instant it records must be taken before the next step overwrites it.
+        let dt = self.sim.step_hydraulics().map_err(AdvanceError::Wds)?;
+        self.append()?;
+        if dt == 0.0 {
+            self.done = true;
+        } else {
+            self.t += dt;
+        }
+        Ok(Progress {
+            phase: "Simulation",
+            t: self.t,
+            duration,
+            done: self.done,
+        })
     }
 
     fn append(&mut self) -> Result<(), AdvanceError> {

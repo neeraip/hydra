@@ -175,57 +175,18 @@ fn advancing_past_the_end_is_harmless() {
     );
 }
 
-/// At a phase boundary the run has already moved on, so the phase that
-/// *ended* has to be reported separately — labelling a finished phase with
-/// its successor's name is the whole reason `completed_phase` exists.
-#[test]
-fn a_phase_boundary_names_the_phase_that_ended_not_the_next_one() {
-    let Some(bytes) = fixture("wds", "four_node_loop.inp") else {
-        return;
-    };
-    let aux = AuxFiles::new();
-    let mut run = Run::open(request(&bytes, &aux)).expect("open");
-
-    // Only mid-run boundaries: the final one ends the phase the run is
-    // still in, where naming both the same is correct.
-    let mut boundaries = Vec::new();
-    loop {
-        let p = run.advance(1).expect("advance");
-        match p.completed_phase {
-            Some(ended) if !p.done => boundaries.push((ended, p.phase)),
-            _ => {}
-        }
-        if p.done {
-            break;
-        }
-    }
-
-    assert!(
-        !boundaries.is_empty(),
-        "a wds run has at least one phase boundary"
-    );
-    for (ended, next) in &boundaries {
-        assert_ne!(
-            ended, next,
-            "a boundary reported the same phase as ended and current"
-        );
-    }
-    assert_eq!(
-        boundaries.first().map(|(ended, _)| *ended),
-        Some("Hydraulics"),
-        "the first phase to end in a wds run is hydraulics"
-    );
-}
-
-/// Every phase a wds run goes through has to be reported as ending, even
-/// when the last step both ends one and finishes the run.
+/// A run reports its phase as ending exactly once, on the step that
+/// finishes it.
 ///
-/// A steady-state model is where this bites: hydraulics finishes in one
-/// step and quality in the next, so the step carrying `done` is also the
-/// step that crosses the boundary. Handling completion first collapsed the
-/// two, and the quality phase never appeared at all — the CLI shows it.
+/// Both engines now report a single phase: water distribution advances
+/// quality alongside its hydraulics rather than in a pass of its own. There
+/// is no mid-run boundary left to mis-label, but the past defect this
+/// guards is still reachable — handling completion first used to swallow a
+/// boundary, and the last phase would never be reported as ending at all.
+/// A steady-state model is where that bites, since the step carrying `done`
+/// is also the step that ends the phase.
 #[test]
-fn a_steady_state_run_still_reports_both_phases() {
+fn a_steady_state_run_reports_its_one_phase_as_ending() {
     let Some(bytes) = fixture("wds", "four_node_loop.inp") else {
         return;
     };
@@ -242,7 +203,11 @@ fn a_steady_state_run_still_reports_both_phases() {
             break;
         }
     }
-    assert_eq!(ended, vec!["Hydraulics", "Water quality"]);
+    assert_eq!(
+        ended,
+        vec!["Simulation"],
+        "the run's single phase must be reported as ending, once"
+    );
 }
 
 /// Every call that does not end a phase must say so, or a caller would

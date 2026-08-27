@@ -140,12 +140,16 @@ mod tests {
         );
     }
 
-    /// Both phase names the wds engine reports, and the uds one, have to fit
-    /// the column — "Water quality" is the long one, and a name that
-    /// overflowed would push the bar out of alignment for that phase only.
+    /// Every phase name has to fit the column: one that overflowed would
+    /// push the bar out of alignment for that phase only.
+    ///
+    /// Both engines report "Simulation" today, so the live vocabulary is one
+    /// name. The renderer is given the names it once had as well, because the
+    /// padding it applies is what the test is about and a column that only
+    /// ever sees one name proves nothing about it.
     #[test]
     fn every_phase_name_fits_its_column() {
-        let lines: Vec<String> = ["Hydraulics", "Water quality", "Simulation"]
+        let lines: Vec<String> = ["Simulation", "Hydraulics", "Water quality"]
             .iter()
             .map(|p| render_progress_line(p, 0.0, 3600.0, 0.0))
             .collect();

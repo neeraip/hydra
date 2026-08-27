@@ -703,33 +703,6 @@ impl Simulation {
 
         Ok(dt)
     }
-
-    /// Complete the run. Quality advanced alongside hydraulics (§8.2), so
-    /// there is nothing left to do but settle the phase.
-    ///
-    /// Retained for one release so callers driving the old two-phase
-    /// lifecycle keep working; the spec's lifecycle is `run` / `step`.
-    pub fn run_quality(&mut self) -> Result<(), SessionError> {
-        self.require_phase(Phase::HydraulicsDone)?;
-        self.analysis_ended = Some(crate::wall_clock::now());
-        self.phase = Phase::QualityDone;
-        Ok(())
-    }
-
-    /// Formerly one quality sub-cycle. Quality now advances inside
-    /// `step_hydraulics`, so this only settles the phase and reports that
-    /// there is nothing to advance.
-    pub fn step_quality(&mut self) -> Result<f64, SessionError> {
-        if self.phase != Phase::HydraulicsDone && self.phase != Phase::QualityDone {
-            return Err(SessionError::InvalidPhase {
-                expected: "HydraulicsDone".into(),
-                actual: self.phase.name().to_string(),
-            });
-        }
-        self.analysis_ended = Some(crate::wall_clock::now());
-        self.phase = Phase::QualityDone;
-        Ok(0.0)
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -952,15 +925,6 @@ Headloss  H-W
         let mut sess = Simulation::create();
         let err = sess.step_hydraulics();
         assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
-    }
-
-    #[test]
-    fn run_quality_before_hydraulics_is_phase_error() {
-        let mut sess = Simulation::from_network(eps_network(QualityMode::Age)).expect("load");
-        let err = sess.run_quality();
-        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
-        // The failed call must not have corrupted the phase.
-        assert_eq!(sess.phase, Phase::Loaded);
     }
 
     #[test]
