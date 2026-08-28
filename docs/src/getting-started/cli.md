@@ -181,6 +181,7 @@ hydra report --model network.inp --results output.out -o report.html
 | `--template <PATH>` | Report template JSON: which blocks, in what order. Omit to cover every available block |
 | `--format <FORMAT>` | `txt`, `csv`, `html`, or `pdf`. Inferred from the `--out` extension when omitted; defaults to `txt` |
 | `-o`, `--out <PATH>` | Output path; omit to write to stdout |
+| `--warnings <PATH>` | Warnings recorded by the run, for the warnings block. Defaults to the file written beside `--results` |
 | `--no-timestamp` | Omit the generation timestamp so output is byte-reproducible |
 
 The content comes from the engine's **report blocks**: named, self-contained
@@ -191,6 +192,12 @@ get everything that applies to the run. See
 
 `--no-timestamp` exists for diffing and for reproducible builds: with it, the
 same inputs produce byte-identical output.
+
+A run writes its warnings beside its results, as
+`<results>.warnings.json`, and the warnings block reads them from there. Copy
+that file along with the `.out` if you generate reports somewhere else,
+otherwise the block reports that the run's warnings were never recorded
+rather than that the run raised none.
 
 ## Exit Codes
 

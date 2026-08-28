@@ -12,7 +12,7 @@ The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-
 
 ## Report blocks
 
-The water distribution engine publishes fifteen blocks. Each is self-contained:
+The water distribution engine publishes sixteen blocks. Each is self-contained:
 it carries its own heading and renders identically in every output format.
 
 | Block id | Heading | Contents |
@@ -32,6 +32,7 @@ it carries its own heading and renders identically in every output format.
 | `wds.mass-balance` | Mass Balance | Cumulative inflow and outflow with closure percentage |
 | `wds.pipe-criticality` | Pipe Criticality | Pipes ranked by peak velocity |
 | `wds.unit-headloss` | Unit Headloss | Pipes ranked by peak headloss per unit length: the undersized-main finder |
+| `wds.warnings` | Warnings | Every non-fatal warning the run raised, counted by kind and listed with the time and element each named |
 
 A block that does not apply to a run is **not** dropped: it renders as a
 placeholder section under its normal heading, carrying the reason. Asking for
@@ -39,6 +40,27 @@ placeholder section under its normal heading, carrying the reason. Asking for
 reading `[not available: the network has no pumps]`. This is deliberate: a
 requested section that silently vanished would be indistinguishable from one
 that was never requested.
+
+### The warnings block
+
+`wds.warnings` is the one block that does not come from the results file.
+A run's warnings are produced while it works and the results file does not
+carry them, so they are written to a small JSON file beside the results when
+the run finishes: `results.out.warnings.json` for a run whose results are
+`results.out`. `hydra report` looks for that file next to whatever
+`--results` names, and `--warnings <path>` points it somewhere else.
+
+The file being empty and the file being missing mean different things, and
+the block says which:
+
+- **empty**: the run was watched and raised nothing, and the block reports
+  that the run completed cleanly;
+- **missing**: nobody recorded this run's warnings, so the block is not
+  available and says so. A report built from a results file alone cannot
+  know what the run complained about, and it does not guess.
+
+A run from before this file existed, or one whose results were copied
+without it, falls into the second case. Re-run the model to get the first.
 
 Some blocks accept options. The `*-thresholds` pair takes its band `edges`,
 and several take a `worstCount` for their worst-performing tables.
