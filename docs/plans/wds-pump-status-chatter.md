@@ -99,6 +99,24 @@ It is also the one most likely to change results on other networks, so it
 needs the byte gate across the corpus and a decision about which behaviour
 is correct rather than merely faster.
 
+## How widely it was checked
+
+Every benchmark network at four convergence tolerances, 0.1 down to 0.0001,
+counting pins and non-converged steps:
+
+- Pins fire on two networks only, twice each: bwsn2 (which previously
+  reported an unbalanced step at any tolerance) and richmond at 0.1. Every
+  other network, at every tolerance, pins nothing.
+- Non-convergence is gone from the set with one exception, richmond at
+  0.0001, where **no link is pinned at all**. The rule correctly stays out of
+  it: the numeric criteria never all pass there, so a status change is not
+  what is denying convergence and pinning could not help.
+- EPANET also fails to converge richmond at 0.0001. That tolerance is hard
+  for the network, not for this engine.
+
+So the rule engages rarely, engages where the cycle is, and does not paper
+over a numerical failure that is not one.
+
 ## Reproducing
 
 Set `Accuracy` to 0.05 on a network with pumps near their shutoff head. The
