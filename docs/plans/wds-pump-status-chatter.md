@@ -1,7 +1,8 @@
 # A pump that will not settle: status chatter blocking convergence
 
-**Status:** characterised, not fixed. A fix needs a specification decision
-that §3.9 does not currently cover.
+**Status:** fixed, 2026-08-28. §3.9 gained a repeated-reversal rule and the
+engine implements it. Kept as the record of how the cycle was diagnosed and
+what the first version of the rule got wrong.
 
 **Found:** 2026-08-28, while measuring the engine against EPANET on a large
 network.
@@ -55,10 +56,32 @@ that nothing damps chatter *during* the ordinary iterations, and the only
 thing that does is unreachable for a model that asked to stop on
 non-convergence.
 
-## What a fix would have to decide
+## What was decided
 
-None of this is specified, which is why it is written down rather than
-built:
+Option 1 below was taken: pin a link that keeps reversing. The others are
+kept because they were live options and the reasons for not taking them
+still apply.
+
+The rule, now in §3.9: a **reversal** is a status change, *on an iteration
+where criteria 1, 2, 3 and 5 of §3.8 already pass*, that sets a link to a
+status it has already held during the current solve. At the fourth reversal
+the link is pinned for the rest of that solve and reported.
+
+**The qualification is the whole rule, and the first version did not have
+it.** Counting reversals from the first iteration pinned links on healthy
+solves: micropolis alone pinned sixty, mostly pumps starting and stopping
+under controls across a 240 hour run, and five of the eleven byte-gate
+networks changed results. While the numerics are still moving a status
+change is how the solve finds its configuration. Only once every numeric
+criterion is met is a status change the sole thing denying convergence.
+
+With the qualification, exactly one corpus model moves: bwsn2, which is the
+one that already failed to converge. Its worst step went from exhausting 200
+iterations to converging in 31, at the cost of 17% more runtime, because the
+run no longer coasts on an unconverged state and the adaptive tank stepping
+resolves properly.
+
+The original list of decisions, for the record:
 
 1. Whether a link that has toggled the same way more than N times in one
    solve should be pinned for the rest of that solve, and what N is.

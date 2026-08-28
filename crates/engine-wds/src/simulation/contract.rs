@@ -23,6 +23,13 @@ pub enum WarningKind {
         /// Zero-based index of the junction in `Network::nodes`.
         node_index: usize,
     },
+    /// A link reversed status four times within one hydraulic solve and was
+    /// pinned so convergence stayed reachable (§3.9). Which of the cycling
+    /// statuses the pin captured is arbitrary, which is why it is reported.
+    LinkStatusPinned {
+        /// Zero-based index of the pinned link in `Network::links`.
+        link_index: usize,
+    },
     /// Pump operation in reverse-flow (XHEAD) condition.
     PumpXHead {
         /// Zero-based index of the pump in `Network::links`.

@@ -946,6 +946,10 @@ fn epanet_warn_flag(session: &impl WritableSimulation) -> i32 {
             WarningKind::UnbalancedHydraulics => {
                 has_unbalanced = true;
             }
+            // Hydra-specific (§3.9): EPANET has no pinning rule and so no
+            // warning category for it, so this does not set the .out flag,
+            // which reports EPANET's own categories.
+            WarningKind::LinkStatusPinned { .. } => {}
             // Hydra-specific: no EPANET warning category, so these do not
             // contribute to the .out warn flag — that flag reports EPANET's
             // classes to EPANET-format readers. Hydra's own surfaces (RPT,

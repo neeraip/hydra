@@ -100,6 +100,18 @@ pub(crate) fn warning_to_dto(
                 element_id: id,
             }
         }
+        WarningKind::LinkStatusPinned { link_index } => {
+            let id = link_ids.get(*link_index).map(|s| s.to_string());
+            let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));
+            RunWarningDto {
+                code: "link-status-pinned".into(),
+                message: format!(
+                    "{name} kept opening and closing at {at}, so it was held fixed \
+                     for the rest of that step"
+                ),
+                element_id: id,
+            }
+        }
         WarningKind::PumpXHead { link_index } => {
             let id = link_ids.get(*link_index).map(|s| s.to_string());
             let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));

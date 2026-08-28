@@ -226,6 +226,9 @@ pub struct SolverContext {
     /// Indices of junction nodes with at least one non-zero base demand (§3.6).
     /// Used as the candidate set for PDA demand coefficient assembly / flow update.
     pub(super) pda_node_indices: Vec<usize>,
+    /// Links pinned by §3.9 during the most recent solve, for the caller to
+    /// report. Cleared at the start of each solve.
+    pub(crate) pinned_links: Vec<usize>,
     /// Each solved junction as (node index, row in the permuted matrix),
     /// for the flow-balance residual pass (§3.4). Both halves are fixed once
     /// the elimination ordering is chosen.
@@ -601,6 +604,7 @@ pub fn build_solver_context(
         has_leakage,
         is_const_hp_pump,
         emitter_node_indices,
+        pinned_links: Vec::new(),
         junction_rows,
         prv_psv_links,
         link_tank_adjacent,
@@ -621,6 +625,40 @@ pub fn build_solver_context(
     }
 
     Ok(ctx)
+}
+
+/// §3.9: whether a status change counts as a reversal toward pinning.
+///
+/// All three conditions are required, and the first is the one that took two
+/// attempts to get right. Counting reversals from the first iteration pins
+/// links on healthy solves: a network settling moves pumps on and off and
+/// seats check valves, passing through the same status more than once on the
+/// way to the answer. Only once every numeric criterion of §3.8 is met is a
+/// status change the sole thing denying convergence.
+pub(super) fn is_reversal(converged: bool, changed: bool, already_held: bool) -> bool {
+    converged && changed && already_held
+}
+
+/// §3.9: reversals a link may record in one solve before its status is pinned.
+///
+/// Above what a settling solution does and below what a cycle does. A link may
+/// legitimately change status several times as flows develop, and reverse once
+/// or twice; one that has reversed four times is not converging on a
+/// configuration.
+const REVERSALS_BEFORE_PIN: u8 = 4;
+
+/// A bit index per status, so the statuses a link has held in this solve fit
+/// in one byte.
+fn status_bit(s: LinkStatus) -> u8 {
+    match s {
+        LinkStatus::Open => 0,
+        LinkStatus::Closed => 1,
+        LinkStatus::Active => 2,
+        LinkStatus::XPressure => 3,
+        LinkStatus::XFcv => 4,
+        LinkStatus::XHead => 5,
+        LinkStatus::TempClosed => 6,
+    }
 }
 
 /// Solves the hydraulic equations for one time step (§3).
@@ -712,6 +750,22 @@ pub fn solve_hydraulic_step(
 
     let mut result = SolveResult::Unbalanced;
     let mut status_frozen = false;
+    // §3.9 repeated reversal: how many times each link has been set to a
+    // status it already held during this solve, and which statuses it has
+    // held. A link that develops monotonically records none; one that cycles
+    // records one on every change after the first. At the threshold it is
+    // pinned, so criterion 4 of §3.8 stays reachable.
+    let n_links_total = ctx.statuses.len();
+    let mut reversals = vec![0u8; n_links_total];
+    let mut seen_status: Vec<u8> = vec![0; n_links_total];
+    let mut pinned = vec![false; n_links_total];
+    // The status each pinned link is held at, so restoring it needs no
+    // snapshot of every link.
+    let mut pinned_at: Vec<LinkStatus> = vec![LinkStatus::Open; n_links_total];
+    ctx.pinned_links.clear();
+    for (k, st) in ctx.statuses.iter().enumerate() {
+        seen_status[k] = 1 << status_bit(*st);
+    }
     // §3.8 damping: relaxation factor applied to every flow update this iteration.
     // Stays 1.0 (full Newton step) until `damp_limit > 0` and the relative flow
     // error reaches `damp_limit`, from which point it is 0.6. Set from the previous
@@ -953,6 +1007,15 @@ pub fn solve_hydraulic_step(
         let run_valve_check = options.damp_limit <= 0.0 || damping_active;
         relax_factor = if damping_active { 0.6 } else { 1.0 };
 
+        // Snapshot only when a reversal could be counted. Cloning every link's
+        // status on every iteration costs more than the rule saves: it is
+        // needed on the iterations where the numerics have already converged,
+        // which are few.
+        let status_before_check: Vec<LinkStatus> = if converged || !ctx.pinned_links.is_empty() {
+            ctx.statuses.clone()
+        } else {
+            Vec::new()
+        };
         let valve_changed = if !status_frozen && run_valve_check {
             check_valve_status(
                 network,
@@ -998,7 +1061,60 @@ pub fn solve_hydraulic_step(
             false
         };
 
-        let status_changed = valve_changed || link_changed;
+        // §3.9: a pinned link holds what it had. Restoring it here rather than
+        // teaching every status rule about pinning keeps the rules readable and
+        // the pin in one place.
+        let mut pin_undid_a_change = false;
+        for i in 0..ctx.pinned_links.len() {
+            let k = ctx.pinned_links[i];
+            if ctx.statuses[k] != pinned_at[k] {
+                ctx.statuses[k] = pinned_at[k];
+                pin_undid_a_change = true;
+            }
+        }
+
+        // §3.9: reversals count only once the numeric criteria are met, when a
+        // status change is the sole thing denying convergence. Before that a
+        // change is the solution developing and must not be penalised.
+        if converged {
+            for k in 0..n_links_total {
+                if pinned[k] {
+                    continue;
+                }
+                let bit = 1u8 << status_bit(ctx.statuses[k]);
+                let already_held = seen_status[k] & bit != 0;
+                seen_status[k] |= bit;
+                if !is_reversal(
+                    true,
+                    ctx.statuses[k] != status_before_check[k],
+                    already_held,
+                ) {
+                    continue;
+                }
+                reversals[k] += 1;
+                if reversals[k] >= REVERSALS_BEFORE_PIN {
+                    pinned[k] = true;
+                    pinned_at[k] = ctx.statuses[k];
+                    ctx.pinned_links.push(k);
+                }
+            }
+        } else {
+            // Still record what has been held, so a status first seen while the
+            // numerics were moving is not counted as new later.
+            for (k, st) in ctx.statuses.iter().enumerate() {
+                seen_status[k] |= 1u8 << status_bit(*st);
+            }
+        }
+
+        // A change that the pin has just undone did not happen, so it must not
+        // deny convergence: that would be the cycle continuing under another
+        // name.
+        // A change the pin has just undone did not happen, so it must not deny
+        // convergence: that would be the cycle continuing under another name.
+        // Any change that survives the restore still counts, which is why this
+        // compares the whole vector rather than trusting the flags.
+        let status_changed = (valve_changed || link_changed)
+            && (!pin_undid_a_change || ctx.statuses != status_before_check);
         if let Some(started) = phase_started {
             timings.status_checks += started.elapsed();
         }

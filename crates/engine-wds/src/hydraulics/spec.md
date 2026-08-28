@@ -405,7 +405,7 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 
 3. **Absolute flow change** (checked only when `flow_change_limit > 0`): $\max_k |Q_k^{(m+1)} - Q_k^{(m)}| \leq$ `flow_change_limit`. If `flow_change_limit = 0` this criterion is skipped.
 
-4. **No link status change** during the most recent iteration (after a full status check; see §3.9).
+4. **No link status change** during the most recent iteration (after a full status check; see §3.9). A link that reverses repeatedly is pinned by §3.9 so that this criterion remains reachable.
 
 5. **Nodal mass-balance residual**: with $S_Q$ as in criterion 1 and $\Delta_i^{(m+1)}$ the **physical** flow-balance residual at junction $i$ evaluated at the updated flows — the net inflow from *all* incident links, valves included, minus emitter, leakage, and demand outflows, the demand being the achieved $D_i^{(m+1)}$ under PDA and the fixed pattern-scaled demand under DDA. Away from active PRVs and PSVs this coincides with the quantity assembled into the RHS in §3.6; at junctions adjacent to an active valve the assembly deliberately routes the valve through its own row equations rather than the net-inflow sum, so the criterion is defined on the physical balance, not on the assembled RHS. Then
 
@@ -484,6 +484,56 @@ Status checks are triggered periodically (every `check_freq` iterations, up to `
 > concentrated in exactly the networks that are hardest to validate. The choice
 > is recorded here so it is revisited as a decision, not rediscovered as an
 > inheritance.
+
+#### Repeated Reversal: Pinning a Cycling Link
+
+The status rules below are discrete decisions layered onto a continuous
+iteration, and two of them can disagree indefinitely. A pump whose head sits
+at its shutoff closes because it is over the threshold, drops to a residual
+flow because it is closed, falls under the threshold because it carries
+nothing, reopens, and rises over the threshold again. Every numeric criterion
+of §3.8 can be satisfied throughout, and convergence is denied only by
+criterion 4. The iteration then runs to `max_iter` and, under
+`extra_iter = -1`, halts a run that had otherwise solved.
+
+A **reversal** is a status change, on an iteration where criteria 1, 2, 3 and
+5 of §3.8 are all satisfied, that sets a link to a status it has already held
+during the current hydraulic solve.
+
+The qualification carries the rule. While the numeric criteria are still
+moving, a status change is how the solve finds its configuration: pumps start
+and stop, check valves seat, tank pipes close, and a link may pass through the
+same status repeatedly on its way to the answer. None of that is a cycle, and
+penalising it would pin links on healthy solves. Once every numeric criterion
+is met, a status change is the *only* thing denying convergence, and a link
+that keeps making one is not going to stop.
+
+When a link records its **fourth** reversal within one solve, its status is
+**pinned**: it holds the status it had at that moment for the remainder of
+that solve, and no status rule may change it. The counter resets at the start
+of each hydraulic solve, so a link pinned at one time step is free again at
+the next.
+
+The threshold sits above what a settling solution does and below what a cycle
+does. A link may legitimately change status several times as flows develop,
+and may reverse once or twice; a link that has reversed four times is not
+converging on a configuration.
+
+Which of the cycling statuses a pin captures is arbitrary — it is whichever
+the link held when the count was reached. That is why pinning **must be
+reported**, naming every pinned link. The solution is not marked unbalanced:
+it satisfies every criterion of §3.8, including nodal mass balance, for the
+configuration it was solved in. What the reader needs to know is that a
+different configuration was equally reachable, which the warning says.
+
+> **DEVIATION from EPANET:** EPANET has no equivalent. Its periodic checks
+> fall silent after `max_check` iterations, but its convergence-time
+> `linkstatus` keeps running, so a cycling link can deny convergence for the
+> whole of `max_iter`. EPANET's own escape is that it accepts convergence on
+> the flow-change criterion alone (§3.8), which usually fires before the cycle
+> is reached; where it does not, EPANET exhausts its trials in the same way.
+> Hydra checks more criteria and therefore reaches the cycle more often, so it
+> needs the rule EPANET can mostly avoid needing.
 
 #### Check Valve (CV pipe)
 

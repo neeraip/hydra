@@ -30,6 +30,17 @@ pub fn describe_warning(
                 Some(node_id.clone()),
             )
         }
+        WarningKind::LinkStatusPinned { link_index } => {
+            let link_id = &network.links[*link_index].base.id;
+            (
+                "warning/link_status_pinned".to_string(),
+                format!(
+                    "link '{link_id}' changed status back and forth and was held \
+                     fixed so the solve could finish"
+                ),
+                Some(link_id.clone()),
+            )
+        }
         WarningKind::PumpXHead { link_index } => {
             let link_id = &network.links[*link_index].base.id;
             (
@@ -461,6 +472,14 @@ pub fn build_text_report(session: &impl WritableSimulation) -> Result<String, st
                 WarningKind::NegativePressure { node_index: _ } => {
                     format!(
                         "  WARNING: Negative pressures at {} hrs.",
+                        fmt_clocktime(w.t)
+                    )
+                }
+                WarningKind::LinkStatusPinned { link_index } => {
+                    let link_id = &network.links[*link_index].base.id;
+                    format!(
+                        "  WARNING: Link {} status held fixed at {} hrs.",
+                        link_id,
                         fmt_clocktime(w.t)
                     )
                 }

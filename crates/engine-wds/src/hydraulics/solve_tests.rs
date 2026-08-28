@@ -842,6 +842,30 @@ fn minor_loss_adds_to_friction() {
 /// R1 (200 ft) → P1 → J1 ← PSV (60 PSI) ← J2 → P2 → J3 (0ft, 100GPM)
 ///
 /// The PSV ensures J1 (upstream side) doesn't drop below 60 PSI.
+/// §3.9 pinning counts a reversal only after the numeric criteria are met.
+///
+/// The first version of this rule counted from the first iteration and pinned
+/// links on healthy solves: micropolis alone pinned sixty, mostly pumps
+/// starting and stopping under controls across a 240 hour run. Five of the
+/// eleven byte-gate networks changed results. The `converged` term is what
+/// separates a solution developing from a cycle that will not stop, and
+/// nothing else in the suite fails if it is dropped.
+#[test]
+fn a_reversal_counts_only_once_the_numerics_have_converged() {
+    use crate::hydraulics::solve::is_reversal;
+
+    // The case the rule exists for: converged, changed, and back to a status
+    // this link already held.
+    assert!(is_reversal(true, true, true));
+
+    // Still settling: the same change is how the solve finds its answer.
+    assert!(!is_reversal(false, true, true));
+    // Nothing changed this iteration.
+    assert!(!is_reversal(true, false, true));
+    // A status reached for the first time is progress, not a cycle.
+    assert!(!is_reversal(true, true, false));
+}
+
 /// §3.9: a link delivering into a tank already at its maximum level is
 /// closed by the status check.
 ///

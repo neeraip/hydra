@@ -285,6 +285,14 @@ impl Simulation {
             .solver_ctx
             .as_ref()
             .expect("invariant: solver_ctx set in load()");
+        // §3.9: a link that cycled and was held fixed. Reported because which
+        // of the cycling statuses the pin captured is arbitrary.
+        for &k in &ctx.pinned_links {
+            self.warnings.push(SimWarning {
+                t,
+                kind: WarningKind::LinkStatusPinned { link_index: k },
+            });
+        }
         for (k, link) in network.links.iter().enumerate() {
             if let LinkKind::Pump(_) = &link.kind {
                 let link_state = &self.link_states[k];
