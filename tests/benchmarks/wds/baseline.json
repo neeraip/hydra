@@ -1,0 +1,37 @@
+{
+  "gen_s": {
+    "hydra": 0.014,
+    "hydra_rss_mb": 12.6,
+    "epanet": 0.012,
+    "epanet_rss_mb": 5.3,
+    "model": "tests/benchmarks/wds/gen_s.inp"
+  },
+  "gen_m": {
+    "hydra": 0.064,
+    "hydra_rss_mb": 25.2,
+    "epanet": 0.038,
+    "epanet_rss_mb": 10.1,
+    "model": "tests/benchmarks/wds/gen_m.inp"
+  },
+  "gen_l": {
+    "hydra": 0.372,
+    "hydra_rss_mb": 108.4,
+    "epanet": 0.211,
+    "epanet_rss_mb": 38.0,
+    "model": "tests/benchmarks/wds/gen_l.inp"
+  },
+  "bwsn2": {
+    "hydra": 0.201,
+    "hydra_rss_mb": 35.9,
+    "epanet": 0.17,
+    "epanet_rss_mb": 13.8,
+    "model": "tests/benchmarks/wds/bwsn2.inp"
+  },
+  "micropolis": {
+    "hydra": 0.421,
+    "hydra_rss_mb": 13.4,
+    "epanet": 0.348,
+    "epanet_rss_mb": 5.3,
+    "model": "tests/benchmarks/wds/micropolis.inp"
+  }
+}

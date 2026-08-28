@@ -441,3 +441,6 @@ crates/demo/models/*.hsf
 mutants.out/
 mutants.out.old/
 
+# Generated benchmark networks: the generators are committed, not the
+# megabytes they write (scripts/make_uds_benchmark.py, make_wds_benchmark.py).
+tests/benchmarks/wds/gen_*.inp

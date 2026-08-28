@@ -1,0 +1,7 @@
+{
+  "gen_s": "tests/benchmarks/wds/gen_s.inp",
+  "gen_m": "tests/benchmarks/wds/gen_m.inp",
+  "gen_l": "tests/benchmarks/wds/gen_l.inp",
+  "bwsn2": "tests/benchmarks/wds/bwsn2.inp",
+  "micropolis": "tests/benchmarks/wds/micropolis.inp"
+}

@@ -464,15 +464,34 @@ rebase-dependabot *flags:
 # quiet machine.
 #
 # Set HYDRA_SWMM to a build of the predecessor for the ratio column.
-perf-check:
+perf-check: perf-check-uds perf-check-wds
+
+# Check the drainage engine against its baseline.
+perf-check-uds:
     python3 scripts/make_uds_benchmark.py
     python3 scripts/perf_baseline.py check tests/benchmarks/uds/baseline.json
 
-# Re-record the baseline after a deliberate change. Read the diff.
+# Check the water-distribution engine against its baseline.
+#
+# The vendored networks top out at 12,500 junctions, and the gap against
+# EPANET widens well past that: a 2.9x deficit on a 46,000-junction network
+# went unnoticed for a year behind models a quarter that size. The generated
+# ones are sized to reach it. Set HYDRA_EPANET for the ratio column.
+perf-check-wds:
+    python3 scripts/make_wds_benchmark.py
+    python3 scripts/perf_baseline.py check tests/benchmarks/wds/baseline.json \
+        --reference epanet
+
+# Re-record a baseline after a deliberate change. Read the diff.
 perf-record:
     python3 scripts/make_uds_benchmark.py
     python3 scripts/perf_baseline.py record tests/benchmarks/uds/models.json \
         > tests/benchmarks/uds/baseline.json
+
+perf-record-wds:
+    python3 scripts/make_wds_benchmark.py
+    python3 scripts/perf_baseline.py record tests/benchmarks/wds/models.json \
+        --reference epanet > tests/benchmarks/wds/baseline.json
 
 # Remove all build artifacts
 clean:

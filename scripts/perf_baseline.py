@@ -27,13 +27,20 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HYDRA = str(ROOT / "target" / "release" / "hydra")
-# The predecessor, for the ratio column. Set HYDRA_SWMM to point at a
-# build of it; without one the baseline still records and checks Hydra's
-# own times, which is what the gate is actually for.
-SWMM = os.environ.get(
-    "HYDRA_SWMM",
-    str(ROOT.parent / "Stormwater-Management-Model" / "build" / "bin" / "Release" / "runswmm"),
-)
+# The predecessor, for the ratio column. Both take the same three arguments
+# (model, report, output), so one shape serves either engine. Set the
+# matching variable to point at a build; without one the baseline still
+# records and checks Hydra's own times, which is what the gate is for.
+REFERENCES = {
+    "swmm": os.environ.get(
+        "HYDRA_SWMM",
+        str(ROOT.parent / "Stormwater-Management-Model" / "build" / "bin" / "Release" / "runswmm"),
+    ),
+    "epanet": os.environ.get(
+        "HYDRA_EPANET",
+        str(ROOT.parent / "EPANET" / "build" / "bin" / "runepanet"),
+    ),
+}
 # A run may be this much slower than its baseline before it is a failure.
 TOLERANCE = 1.25
 # And this much larger. Memory regresses the same way speed does: the
@@ -56,7 +63,7 @@ def peak_rss_kb(cmd, cwd, timeout):
     return None
 
 
-def run(model, repeat, timeout):
+def run(model, repeat, timeout, ref_tag):
     """Best-of-N seconds and peak RSS for both engines on one model."""
     src = pathlib.Path(model)
     with tempfile.TemporaryDirectory() as d:
@@ -69,8 +76,9 @@ def run(model, repeat, timeout):
         engines = [
             ("hydra", [HYDRA, "run", str(m), "--results", "h.out", "--summary", "h.rpt", "-q"])
         ]
-        if pathlib.Path(SWMM).exists():
-            engines.append(("swmm", [SWMM, str(m), "s.rpt", "s.out"]))
+        ref = REFERENCES[ref_tag]
+        if pathlib.Path(ref).exists():
+            engines.append((ref_tag, [ref, str(m), "s.rpt", "s.out"]))
         for tag, cmd in engines:
             times = []
             for _ in range(repeat):
@@ -99,20 +107,23 @@ def main():
     ap.add_argument("path")
     ap.add_argument("--repeat", type=int, default=3)
     ap.add_argument("--timeout", type=float, default=1800.0)
+    ap.add_argument("--reference", choices=sorted(REFERENCES), default="swmm",
+                    help="which predecessor supplies the ratio column")
     args = ap.parse_args()
 
     if args.action == "record":
         models = json.loads(pathlib.Path(args.path).read_text())
         out = {}
         for name, model in models.items():
-            r = run(str(ROOT / model), args.repeat, args.timeout)
+            r = run(str(ROOT / model), args.repeat, args.timeout, args.reference)
             if r is None:
                 print(f"  {name}: did not run", file=sys.stderr)
                 continue
             r["model"] = model
             out[name] = r
-            ref = (f"  swmm {r['swmm']}s ({r['swmm_rss_mb']} MB)  "
-                   f"{r['hydra'] / r['swmm']:.2f}x") if "swmm" in r else ""
+            tag = args.reference
+            ref = (f"  {tag} {r[tag]}s ({r[tag + '_rss_mb']} MB)  "
+                   f"{r['hydra'] / r[tag]:.2f}x") if tag in r else ""
             print(f"  {name}: hydra {r['hydra']}s ({r['hydra_rss_mb']} MB){ref}",
                   file=sys.stderr)
         print(json.dumps(out, indent=2))
@@ -123,7 +134,7 @@ def main():
     print(f"{'model':22}{'baseline':>10}{'now':>10}{'change':>10}"
           f"{'rss base':>10}{'rss now':>10}{'ratio now':>11}")
     for name, b in base.items():
-        r = run(str(ROOT / b["model"]), args.repeat, args.timeout)
+        r = run(str(ROOT / b["model"]), args.repeat, args.timeout, args.reference)
         if r is None:
             print(f"{name:22}   did not run")
             bad.append((name, "did not run"))
@@ -133,7 +144,9 @@ def main():
                       if b.get("hydra_rss_mb") and r.get("hydra_rss_mb") else 1.0)
         flag = ("  SLOWER" if change > TOLERANCE
                 else "  LARGER" if rss_change > RSS_TOLERANCE else "")
-        ratio = f"{r['hydra'] / r['swmm']:10.2f}x" if "swmm" in r else f"{'-':>11}"
+        tag = args.reference
+        ratio = (f"{r['hydra'] / r[tag]:10.2f}x"
+                 if tag in r and r[tag] else f"{'-':>11}")
         print(f"{name:22}{b['hydra']:10.3f}{r['hydra']:10.3f}{change:9.2f}x"
               f"{b.get('hydra_rss_mb', 0):9.1f}M{r.get('hydra_rss_mb', 0):9.1f}M"
               f"{ratio}{flag}")
