@@ -226,6 +226,10 @@ pub struct SolverContext {
     /// Indices of junction nodes with at least one non-zero base demand (§3.6).
     /// Used as the candidate set for PDA demand coefficient assembly / flow update.
     pub(super) pda_node_indices: Vec<usize>,
+    /// Each solved junction as (node index, row in the permuted matrix),
+    /// for the flow-balance residual pass (§3.4). Both halves are fixed once
+    /// the elimination ordering is chosen.
+    pub(super) junction_rows: Vec<(u32, u32)>,
     /// Whether a link touches a node with a finite level limit (§3.9), i.e.
     /// a tank. The per-check tank closure can only fire for these; for every
     /// other link the limits are infinity sentinels and the comparison is
@@ -405,6 +409,17 @@ pub fn build_solver_context(
     }
 
     let sparse = SparseSolver::new(junc_count, &adj);
+
+    // §3.4: the flow-balance residual pass touches exactly the junctions in
+    // the solve, and needs each one's node index and its row in the permuted
+    // matrix. Both are fixed once the ordering is chosen, so they are paired
+    // here rather than rediscovered by walking every node on every Newton
+    // iteration to read one field of it.
+    let junction_rows: Vec<(u32, u32)> = junc_nodes
+        .iter()
+        .enumerate()
+        .map(|(ji, &node_index)| (node_index as u32, sparse.row[ji] as u32))
+        .collect();
 
     // §2.8 Compute link_aij_pos via direct CSC scan instead of a HashMap,
     // eliminating the heap allocation and hash-lookup overhead at startup.
@@ -586,6 +601,7 @@ pub fn build_solver_context(
         has_leakage,
         is_const_hp_pump,
         emitter_node_indices,
+        junction_rows,
         prv_psv_links,
         link_tank_adjacent,
         favad_node_indices,
@@ -775,9 +791,8 @@ pub fn solve_hydraulic_step(
         }
 
         assemble_node_residuals(
-            network,
             &mut ctx.sparse,
-            &ctx.node_junc_step_opt,
+            &ctx.junction_rows,
             &ctx.junction_demands,
             &mut ctx.xflow,
         );

@@ -1,4 +1,4 @@
-use crate::{Network, NodeKind};
+use crate::Network;
 
 use super::SparseSolver;
 
@@ -79,20 +79,18 @@ pub(super) fn assemble_links(
 /// value minus the demand, which is the value expected by
 /// `apply_valve_coefficients` (§3.5) for PRV/PSV active-branch reads.
 pub(super) fn assemble_node_residuals(
-    network: &Network,
     sparse: &mut SparseSolver,
-    node_junc_step_opt: &[Option<usize>],
+    junction_rows: &[(u32, u32)],
     demands: &[f64],
     xflow: &mut [f64],
 ) {
-    for (i, node) in network.nodes.iter().enumerate() {
-        if let NodeKind::Junction(_) = &node.kind {
-            if let Some(ji) = node_junc_step_opt[i] {
-                let pr = sparse.row[ji];
-                sparse.f[pr] += xflow[i] - demands[i];
-                xflow[i] -= demands[i];
-            }
-        }
+    // Walks the solved junctions, not the network's nodes. The two are almost
+    // the same set on any real model, so the filter was never the point: the
+    // cost was streaming every node's full record to read its kind.
+    for &(i, pr) in junction_rows {
+        let (i, pr) = (i as usize, pr as usize);
+        sparse.f[pr] += xflow[i] - demands[i];
+        xflow[i] -= demands[i];
     }
 }
 
@@ -100,6 +98,7 @@ pub(super) fn assemble_node_residuals(
 mod tests {
     use super::*;
     use crate::dialect::parse;
+    use crate::NodeKind;
     use std::collections::BTreeSet;
 
     fn load_fixture(name: &str) -> crate::Network {
@@ -174,19 +173,25 @@ mod tests {
             .expect("fixture should contain one junction");
         node_junc_step_opt[junction_node] = Some(0);
         let xflow_before = xflow[junction_node];
+        // The other node is the reservoir: it has no row and must be left
+        // alone. The pass now walks a list of solved junctions rather than
+        // filtering the network's nodes, so this is what still needs saying.
+        let other = 1 - junction_node;
+        let other_before = xflow[other];
 
+        let row = sparse.row[0];
         assemble_node_residuals(
-            &network,
             &mut sparse,
-            &node_junc_step_opt,
+            &[(junction_node as u32, row as u32)],
             &demands,
             &mut xflow,
         );
 
-        let row = sparse.row[0];
         // RHS gets xflow_before - demand.
         assert_eq!(sparse.f[row], xflow_before - demands[junction_node]);
         // xflow is updated in-place for junctions.
         assert_eq!(xflow[junction_node], xflow_before - demands[junction_node]);
+        // and untouched for anything that is not one.
+        assert_eq!(xflow[other], other_before);
     }
 }
