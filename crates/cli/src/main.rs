@@ -465,6 +465,7 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         emit_error("io/output", &e.to_string(), None, None);
         return EXIT_IO;
     }
+    write_warnings_sidecar(&es, args.results.as_deref());
 
     // ── Write report ──────────────────────────────────────────────────────────
     // When the report goes to stdout and progress was printed on stderr,
@@ -821,12 +822,39 @@ fn emit_warnings(es: &hydra::engines::EngineSession, from: usize) -> usize {
             "level": "warning",
             "code": w.code,
             "message": w.message,
-            "object_id": w.element,
+            "object_id": w.element_id,
             "time_step": w.time,
         });
         let _ = writeln!(buf, "{line}");
     }
     warnings.len()
+}
+
+/// Write the run's diagnostics beside its results file, so a report built
+/// later can say what the run complained about.
+///
+/// Only when results were written: the sidecar is named after them
+/// ([`hydra::engines::warnings_path`]), and diagnostics with no results to
+/// sit beside would have nothing to describe.
+///
+/// A failure here is reported and does not change the exit code — a
+/// finished run stays finished. It is reported rather than swallowed
+/// because an absent sidecar and a run that raised nothing are different
+/// facts, and a report reading the absent one will say so.
+pub(crate) fn write_warnings_sidecar(es: &hydra::engines::EngineSession, results: Option<&str>) {
+    let Some(results) = results else {
+        return;
+    };
+    let path = hydra::engines::warnings_path(std::path::Path::new(results));
+    let written = std::fs::File::create(&path).and_then(|mut f| es.write_warnings(&mut f));
+    if let Err(e) = written {
+        emit_error(
+            "io/output",
+            &format!("could not write {}: {e}", path.display()),
+            None,
+            None,
+        );
+    }
 }
 
 fn emit_session_error(e: &SessionError) {

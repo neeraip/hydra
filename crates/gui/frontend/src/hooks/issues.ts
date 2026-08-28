@@ -125,11 +125,20 @@ export function validationFindingsToIssues(
 
 // ── Simulation run warnings (get_run_warnings command) ─────────────────────
 
-/** One solver warning from the backend `get_run_warnings` command. */
+/**
+ * One solver warning from the backend `get_run_warnings` command.
+ *
+ * Mirrors the Rust run-diagnostic record (hydra-common spec 3.4.1). Both
+ * optional fields are *omitted* rather than sent as null when the warning
+ * has none, and warnings stored by an older build carry no `time` at all,
+ * so every reader here has to treat absent and null the same way.
+ */
 export interface RunWarning {
   code: string;
   message: string;
-  elementId: string | null;
+  elementId?: string | null;
+  /** Simulated time the warning was raised, in seconds. */
+  time?: number | null;
 }
 
 /**

@@ -347,7 +347,7 @@ impl Run {
         for w in &warnings[self.emitted.min(warnings.len())..] {
             self.pending.push(
                 Diagnostic::warning(&w.code, w.message.clone())
-                    .about(w.element.clone())
+                    .about(w.element_id.clone())
                     .at(w.time),
             );
         }

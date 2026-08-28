@@ -22,7 +22,8 @@ use hydra_common::{EngineDescriptor, Recognition, ENGINES};
 mod session;
 
 pub use session::{
-    AdvanceError, EngineSession, MayCheckpoint, Progress, SessionWarning, WriteSeek,
+    read_warnings, warnings_path, AdvanceError, EngineSession, MayCheckpoint, Progress,
+    SessionWarning, WriteSeek,
 };
 
 /// The crate version, taken from `Cargo.toml` at compile time.

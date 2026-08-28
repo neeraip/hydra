@@ -70,18 +70,13 @@ pub struct Progress {
 
 /// One non-fatal diagnostic from a run, in the neutral shape every engine's
 /// warnings map into.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SessionWarning {
-    /// Stable machine code, engine-authored (e.g. `warning/unbalanced`,
-    /// `runtime/notice`).
-    pub code: String,
-    /// Human-facing message.
-    pub message: String,
-    /// The affected element's id, when the warning names one.
-    pub element: Option<String>,
-    /// Simulated time of the warning (s), when it is tied to one.
-    pub time: Option<f64>,
-}
+///
+/// This is the foundation contract's run-diagnostic record (foundation
+/// contract §3.4.1) under the name the run surface uses for it. It is one
+/// type, not two that agree: a diagnostic this surface collects is the same
+/// value a report block is later produced from, so nothing translates
+/// between them and nothing can drift.
+pub type SessionWarning = hydra_common::RunDiagnostic;
 
 /// Why [`EngineSession::advance`] failed.
 #[derive(Debug)]
@@ -275,7 +270,7 @@ impl EngineSession {
                         SessionWarning {
                             code,
                             message,
-                            element,
+                            element_id: element,
                             time: Some(w.t),
                         }
                     })
@@ -288,12 +283,30 @@ impl EngineSession {
                     .map(|n| SessionWarning {
                         code: "runtime/notice".to_string(),
                         message: n.message.clone(),
-                        element: None,
+                        element_id: None,
                         time: Some(n.t),
                     })
                     .collect()
             }
         }
+    }
+
+    /// Serialise this run's diagnostics into a caller-opened sink.
+    ///
+    /// The caller owns the destination, as it does for results
+    /// ([`Self::begin_results`]): this writes bytes and never opens a file.
+    /// Call it once the run is finished, since [`Self::warnings`] reports
+    /// what the run has produced *so far*.
+    ///
+    /// The bytes are a JSON array of run-diagnostic records
+    /// ([`SessionWarning`]), which is the format both applications store
+    /// beside a results file under the name [`warnings_path`] gives. An
+    /// empty array is meaningful and must still be written: it says the run
+    /// was observed and raised nothing, which is not what an absent file
+    /// says (foundation contract §3.4.1).
+    pub fn write_warnings(&self, sink: &mut dyn Write) -> std::io::Result<()> {
+        let bytes = serde_json::to_vec(&self.warnings()).map_err(std::io::Error::other)?;
+        sink.write_all(&bytes)
     }
 
     /// Write the engine's text summary report.
@@ -442,5 +455,81 @@ impl WdsRun {
                 .map_err(AdvanceError::Io)?;
         }
         Ok(())
+    }
+}
+
+/// Where a run's diagnostics are stored, given the path its results were
+/// written to: the results path with `.warnings.json` appended.
+///
+/// The convention lives here rather than in either application because both
+/// must agree on it — the graphical app writes the file after a run and the
+/// command-line app reads it when building a report, and a report that
+/// silently found no diagnostics is indistinguishable from one whose run
+/// raised none. Appending rather than replacing the extension keeps one
+/// sidecar per results file, so two runs sharing a directory cannot
+/// overwrite each other's diagnostics.
+pub fn warnings_path(results: &std::path::Path) -> std::path::PathBuf {
+    let mut name = results.file_name().unwrap_or_default().to_os_string();
+    name.push(".warnings.json");
+    results.with_file_name(name)
+}
+
+/// Parse a diagnostics sidecar written by [`EngineSession::write_warnings`].
+///
+/// Takes bytes rather than a path because acquiring them is the
+/// application's job. A caller that finds no file must pass no list at all
+/// rather than an empty one: the two say different things (foundation
+/// contract §3.4.1).
+pub fn read_warnings(bytes: &[u8]) -> Result<Vec<SessionWarning>, serde_json::Error> {
+    serde_json::from_slice(bytes)
+}
+
+#[cfg(test)]
+mod sidecar_tests {
+    use super::*;
+
+    /// One sidecar per results file, so two runs sharing a directory cannot
+    /// overwrite each other's diagnostics. Appending rather than replacing
+    /// the extension is what guarantees it.
+    #[test]
+    fn each_results_file_gets_its_own_sidecar() {
+        let a = warnings_path(std::path::Path::new("/runs/morning.out"));
+        let b = warnings_path(std::path::Path::new("/runs/evening.out"));
+        assert_eq!(std::path::Path::new("/runs/morning.out.warnings.json"), a);
+        assert_ne!(a, b);
+        assert_eq!(a.parent(), b.parent(), "both sit beside their results");
+    }
+
+    #[test]
+    fn a_sidecar_round_trips_through_its_own_format() {
+        let written = vec![
+            SessionWarning {
+                code: "negative-pressure".into(),
+                message: "Negative pressure at junction J1 at 1:00:00".into(),
+                element_id: Some("J1".into()),
+                time: Some(3600.0),
+            },
+            SessionWarning {
+                code: "runtime/notice".into(),
+                message: "A rain record was divided evenly.".into(),
+                element_id: None,
+                time: None,
+            },
+        ];
+        let bytes = serde_json::to_vec(&written).expect("serialise");
+        assert_eq!(written, read_warnings(&bytes).expect("read back"));
+    }
+
+    /// An empty list is a real answer and must survive the round trip: it
+    /// says the run was observed and raised nothing, which an absent file
+    /// does not say (foundation contract §3.4.1).
+    #[test]
+    fn an_empty_sidecar_is_not_an_absent_one() {
+        let bytes = serde_json::to_vec(&Vec::<SessionWarning>::new()).expect("serialise");
+        assert_eq!(
+            Vec::<SessionWarning>::new(),
+            read_warnings(&bytes).expect("read back")
+        );
+        assert!(read_warnings(b"").is_err(), "no bytes is not an empty list");
     }
 }

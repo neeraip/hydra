@@ -13,10 +13,13 @@ foundation reportable-output contract.
 The engine describes and produces **report blocks**: self-contained units
 of reportable content derived from a completed simulation, under the
 foundation contract's catalog, fragment, and production rules. Each block
-is produced from exactly two inputs — a persisted results file (§14.9)
-and the model that produced it — and production is read-only and
-deterministic: producing a block computes over what the file already
-stores and never re-simulates.
+is produced from a persisted results file (§14.9) and the model that
+produced it, and production is read-only and deterministic: producing a
+block computes over what the file already stores and never re-simulates.
+One block is the exception to the provenance that follows, and says so
+where it is defined: `uds.warnings` reports what the run said rather than
+what it computed, so it is produced from the run's diagnostics
+(foundation contract §3.4.1) instead of from the file.
 
 This provenance bounds what a block may claim. The results file holds
 period records at the reporting resolution, so every figure a block
@@ -46,6 +49,7 @@ category; blocks sharing a category are adjacent in the catalog:
 |---|---|---|
 | `uds.run-summary` | Summary | Reporting horizon, reported element counts, and system-wide peak rates. |
 | `uds.system-balance` | Summary | Whole-network inflow, outflow, flooding, and storage volumes over the reporting horizon, with the inflow/outflow time series. |
+| `uds.warnings` | Summary | The run's non-fatal diagnostics: how many, a count per code, and the individual warnings with the time and element each named. |
 | `uds.subcatchment-peaks` | Hydrology | Subcatchments ranked by peak runoff, with peak rainfall and infiltration rates. |
 | `uds.runoff-summary` | Hydrology | Per-subcatchment precipitation and infiltration depths, runoff volume, and runoff coefficient. |
 | `uds.node-extremes` | Network | Nodes ranked by maximum depth, with peak inflow and flooding. |
@@ -204,11 +208,44 @@ performance as two halves of one question, "is the basin doing its job":
 Ranked by peak inflow, largest first. Unavailable when the run reports
 no storage vertices.
 
+#### 13.4.11 Warnings
+
+The run's non-fatal diagnostics in the foundation contract's neutral
+shape (§3.4.1), tabulated. This block derives nothing and converts
+nothing: it reports what the run said, which is why it is the one block
+produced from something other than the results file.
+
+When the run raised diagnostics, the fragment carries the total count and
+the number of distinct codes; a count-per-code table ordered by count
+descending, ties broken by code ascending; and the listing, one row per
+diagnostic carrying the time it was raised, its code, the element it
+named, and its message. The listing is ordered by time ascending, with
+diagnostics sharing a time keeping the order the run raised them in, and
+an untimed diagnostic sorting before every timed one.
+
+Time is hours elapsed from the start of the run, untagged and labelled
+`h`, rather than a clock value: the diagnostics never passed through the
+results file, so the block does not reach into it for a start instant.
+
+The `rows` option bounds the listing (§13.5). Counts are taken over every
+diagnostic rather than over the truncated listing, so the totals stay
+true, and truncation adds a note saying how many rows it withheld.
+
+A run that was observed and raised nothing produces a fragment with one
+note saying so and no tables. A run whose diagnostics were not recorded
+refuses production with a reason, per the foundation contract's rule that
+recorded-and-empty and not-recorded are different facts: a report made
+from a results file alone cannot know what the run complained about.
+
 ### 13.5 Options
 
 Ranked tables (`uds.subcatchment-peaks`, `uds.runoff-summary`,
 `uds.node-extremes`, `uds.link-extremes`) accept a `rows` option: a
-positive integer bounding the table length, default 10. A non-positive
+positive integer bounding the table length, default 10. `uds.warnings`
+accepts the same option with a default of 200, because its table is a
+listing rather than a ranking: the rows are not ordered by importance, so
+a bound low enough to be a useful top-N would hide the diagnostic the
+reader opened the block for. A non-positive
 or non-integer value refuses production. Blocks whose row count is the
 subject itself (`uds.flooding-summary`, `uds.outfall-summary`,
 `uds.surcharge-summary`, `uds.capacity-summary`) list every qualifying

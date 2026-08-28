@@ -7,7 +7,7 @@
 
 use hydra_common::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
-    LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
+    LineSeries, OptionDescriptor, OptionKind, RunDiagnostic, Table, Value, ValueKind,
 };
 
 use super::binning::threshold_bands;
@@ -44,6 +44,13 @@ const CATALOG: &[BlockDescriptor] = &[
         title: "Mass Balance",
         summary: "Cumulative network inflow and outflow, closure percentage, and \
                   per-period closure over the reporting horizon.",
+        category: "Summary",
+    },
+    BlockDescriptor {
+        id: "wds.warnings",
+        title: "Warnings",
+        summary: "Every non-fatal warning the run raised, counted by kind and listed \
+                  with the time and element each named.",
         category: "Summary",
     },
     BlockDescriptor {
@@ -140,6 +147,7 @@ pub fn produce_report_block(
     src: &dyn ResultsSource,
     network: &Network,
     options: Option<&serde_json::Value>,
+    diagnostics: Option<&[RunDiagnostic]>,
 ) -> Result<Fragment, BlockError> {
     match id {
         "wds.run-summary" => run_summary(src, network),
@@ -157,6 +165,7 @@ pub fn produce_report_block(
         "wds.pipe-criticality" => pipe_criticality(src, network, options),
         "wds.pressure-thresholds" => pressure_thresholds(src, network, options),
         "wds.velocity-thresholds" => velocity_thresholds(src, network, options),
+        "wds.warnings" => warnings(diagnostics, options),
         _ => Err(BlockError::UnknownBlock { id: id.into() }),
     }
 }
@@ -979,6 +988,19 @@ pub fn report_block_options(id: &str, network: &Network) -> Vec<OptionDescriptor
             },
             unit: Some(velocity_unit.into()),
         }],
+        "wds.warnings" => vec![OptionDescriptor {
+            key: "maxRows".into(),
+            label: "Longest warning list".into(),
+            help: "How many individual warnings to list. The counts above the \
+                   list always cover every warning, listed or not."
+                .into(),
+            kind: OptionKind::Integer {
+                default: Some(DEFAULT_MAX_ROWS as i64),
+                min: Some(1),
+                max: None,
+            },
+            unit: None,
+        }],
         _ => Vec::new(),
     }
 }
@@ -1005,6 +1027,162 @@ fn default_velocity_edges(si: bool) -> &'static [f64] {
 //
 // Options are opaque JSON per the foundation contract; unknown fields are
 // ignored, malformed values fail production naming the field.
+
+/// Longest the warning listing may grow before truncation (analysis spec
+/// §4.1.1). Generous, because the listing is not ranked: a bound low enough
+/// to be a useful top-N would hide the warning the reader opened the block
+/// for.
+const DEFAULT_MAX_ROWS: usize = 200;
+
+/// `wds.warnings` (analysis spec §4.1.3): the run's own diagnostics,
+/// tabulated.
+///
+/// The only block produced from something other than the results file, and
+/// the only one that derives nothing. `diagnostics` carries the foundation
+/// contract's recorded/not-recorded distinction (§3.4.1) in its `Option`:
+/// `None` means the run's warnings are unknown and the block is
+/// unavailable; `Some(&[])` means the run was observed and raised none,
+/// which is a fact worth reporting.
+fn warnings(
+    diagnostics: Option<&[RunDiagnostic]>,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let Some(diagnostics) = diagnostics else {
+        return Err(BlockError::Unavailable {
+            reason: "This run's warnings were not recorded, so this report cannot say \
+                     whether it raised any."
+                .into(),
+        });
+    };
+    let max_rows = opt_usize(options, "maxRows")?.unwrap_or(DEFAULT_MAX_ROWS);
+
+    if diagnostics.is_empty() {
+        return Ok(Fragment {
+            title: "Warnings".into(),
+            items: vec![FragmentItem::Note {
+                text: "The run completed without raising any warnings.".into(),
+            }],
+        });
+    }
+
+    // Counts are taken over every diagnostic, never over the truncated
+    // listing below, so a truncated fragment still states true totals
+    // (analysis spec §4.1.3).
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for d in diagnostics {
+        *counts.entry(d.code.as_str()).or_insert(0) += 1;
+    }
+    // Count descending, then code ascending so the ordering is total: the
+    // BTreeMap already yields codes in ascending order, and the sort is
+    // stable, so ties keep it.
+    let mut by_code: Vec<(&str, usize)> = counts.into_iter().collect();
+    by_code.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+
+    let entries = vec![
+        entry("Warnings", int(diagnostics.len())),
+        entry("Distinct kinds", int(by_code.len())),
+    ];
+
+    let kinds = Table {
+        columns: vec![
+            Column {
+                name: "Warning".into(),
+                unit: None,
+                kind: ValueKind::Text,
+                quantity: None,
+            },
+            Column {
+                name: "Count".into(),
+                unit: None,
+                kind: ValueKind::Integer,
+                quantity: None,
+            },
+        ],
+        rows: by_code
+            .iter()
+            .map(|(code, n)| vec![text(*code), int(*n)])
+            .collect(),
+    };
+
+    // Time ascending, with an untimed diagnostic first because nothing else
+    // is known about when it applied. The sort is stable, so diagnostics
+    // sharing a time keep the order the run raised them in.
+    let mut order: Vec<usize> = (0..diagnostics.len()).collect();
+    order.sort_by(|&a, &b| match (diagnostics[a].time, diagnostics[b].time) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(x), Some(y)) => x.total_cmp(&y),
+    });
+
+    let shown = order.len().min(max_rows);
+    let listing = Table {
+        columns: vec![
+            Column {
+                name: "Time".into(),
+                unit: Some("h".into()),
+                kind: ValueKind::Number,
+                quantity: None,
+            },
+            Column {
+                name: "Warning".into(),
+                unit: None,
+                kind: ValueKind::Text,
+                quantity: None,
+            },
+            Column {
+                name: "Element".into(),
+                unit: None,
+                kind: ValueKind::Text,
+                quantity: None,
+            },
+            Column {
+                name: "Message".into(),
+                unit: None,
+                kind: ValueKind::Text,
+                quantity: None,
+            },
+        ],
+        rows: order[..shown]
+            .iter()
+            .map(|&i| {
+                let d = &diagnostics[i];
+                vec![
+                    // Hours elapsed, not a clock value: the diagnostics never
+                    // passed through the results file, so this block does not
+                    // reach into it for a start instant (spec §4.1.3).
+                    d.time
+                        .map(|t| num_unit(t / 3600.0, "h"))
+                        .unwrap_or(Value::Absent),
+                    text(d.code.as_str()),
+                    d.element_id.as_deref().map(text).unwrap_or(Value::Absent),
+                    text(d.message.as_str()),
+                ]
+            })
+            .collect(),
+    };
+
+    let mut items = vec![
+        FragmentItem::KeyValues { entries },
+        FragmentItem::Table { table: kinds },
+        FragmentItem::Table { table: listing },
+    ];
+    if shown < order.len() {
+        // Only when something was withheld: a note saying nothing was hidden
+        // teaches a reader to ignore notes.
+        items.push(FragmentItem::Note {
+            text: format!(
+                "{} further warnings are not listed. Raise the row limit to see them.",
+                order.len() - shown
+            ),
+        });
+    }
+
+    Ok(Fragment {
+        title: "Warnings".into(),
+        items,
+    })
+}
 
 fn opt_f64(
     options: Option<&serde_json::Value>,
@@ -1962,9 +2140,228 @@ mod tests {
     #[test]
     fn unknown_block_id_is_rejected() {
         let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
-        let err = produce_report_block("wds.nope", &NoSource, &network, None)
+        let err = produce_report_block("wds.nope", &NoSource, &network, None, None)
             .expect_err("unknown id must fail");
         assert!(matches!(err, BlockError::UnknownBlock { .. }));
+    }
+
+    // ── wds.warnings (analysis spec §4.1.3) ─────────────────────────────────
+    //
+    // Every one of these produces through `NoSource`, whose every reader
+    // panics. That is the point: this block reports what the run said, and a
+    // version of it that reached into the results file for anything would
+    // fail these tests rather than quietly couple the two.
+
+    fn diag(code: &str, message: &str, element: Option<&str>, time: Option<f64>) -> RunDiagnostic {
+        RunDiagnostic {
+            code: code.into(),
+            message: message.into(),
+            element_id: element.map(Into::into),
+            time,
+        }
+    }
+
+    fn warnings_fragment(diagnostics: &[RunDiagnostic], options: Option<&str>) -> Fragment {
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let options = options.map(|o| serde_json::from_str(o).expect("options json"));
+        produce_report_block(
+            "wds.warnings",
+            &NoSource,
+            &network,
+            options.as_ref(),
+            Some(diagnostics),
+        )
+        .expect("produce warnings")
+    }
+
+    fn tables(fragment: &Fragment) -> Vec<&Table> {
+        fragment
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                FragmentItem::Table { table } => Some(table),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn notes(fragment: &Fragment) -> Vec<&str> {
+        fragment
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                FragmentItem::Note { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn cell_text(value: &Value) -> Option<&str> {
+        match value {
+            Value::Text { value } => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    /// The distinction the foundation contract added in §3.4.1: a run whose
+    /// warnings were never recorded is unavailable, not a run with none.
+    /// Collapsing the two would let a report state something it cannot know.
+    #[test]
+    fn warnings_that_were_not_recorded_are_unavailable_not_empty() {
+        let network = crate::dialect::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        let err = produce_report_block("wds.warnings", &NoSource, &network, None, None)
+            .expect_err("unrecorded warnings must not produce a fragment");
+        let BlockError::Unavailable { reason } = err else {
+            panic!("expected unavailable, got {err:?}");
+        };
+        assert!(
+            reason.contains("not recorded"),
+            "the reason must say why: {reason}"
+        );
+    }
+
+    /// The other half of the same distinction, and the reason it is worth
+    /// keeping: "this run raised nothing" is a statement, not an absence.
+    #[test]
+    fn a_run_that_raised_no_warnings_says_so() {
+        let fragment = warnings_fragment(&[], None);
+        assert!(
+            tables(&fragment).is_empty(),
+            "an empty run needs no tables, least of all empty ones"
+        );
+        assert_eq!(
+            vec!["The run completed without raising any warnings."],
+            notes(&fragment)
+        );
+    }
+
+    #[test]
+    fn warning_kinds_rank_by_count_then_by_code() {
+        let fragment = warnings_fragment(
+            &[
+                diag("zebra", "z", None, Some(0.0)),
+                diag("alpha", "a", None, Some(1.0)),
+                diag("beta", "b", None, Some(2.0)),
+                diag("alpha", "a", None, Some(3.0)),
+                diag("zebra", "z", None, Some(4.0)),
+                diag("alpha", "a", None, Some(5.0)),
+            ],
+            None,
+        );
+        let kinds = tables(&fragment)[0];
+        let ranked: Vec<(&str, &Value)> = kinds
+            .rows
+            .iter()
+            .map(|r| (cell_text(&r[0]).expect("code"), &r[1]))
+            .collect();
+        let codes: Vec<&str> = ranked.iter().map(|(c, _)| *c).collect();
+        // alpha 3, zebra 2, beta 1 — and had zebra and beta tied, the code
+        // would break it, which the next test pins.
+        assert_eq!(vec!["alpha", "zebra", "beta"], codes);
+    }
+
+    #[test]
+    fn kinds_tied_on_count_are_ordered_by_code() {
+        let fragment = warnings_fragment(
+            &[
+                diag("zebra", "z", None, Some(0.0)),
+                diag("alpha", "a", None, Some(1.0)),
+                diag("mid", "m", None, Some(2.0)),
+            ],
+            None,
+        );
+        let codes: Vec<&str> = tables(&fragment)[0]
+            .rows
+            .iter()
+            .map(|r| cell_text(&r[0]).expect("code"))
+            .collect();
+        assert_eq!(vec!["alpha", "mid", "zebra"], codes);
+    }
+
+    /// Time ascending, an untimed diagnostic first, and diagnostics sharing
+    /// a time in the order the run raised them.
+    #[test]
+    fn the_listing_orders_by_time_with_untimed_first_and_ties_stable() {
+        let fragment = warnings_fragment(
+            &[
+                diag("c", "third", None, Some(7200.0)),
+                diag("a", "first at 1h", None, Some(3600.0)),
+                diag("u", "untimed", None, None),
+                diag("b", "second at 1h", None, Some(3600.0)),
+            ],
+            None,
+        );
+        let listing = tables(&fragment)[1];
+        let messages: Vec<&str> = listing
+            .rows
+            .iter()
+            .map(|r| cell_text(&r[3]).expect("message"))
+            .collect();
+        assert_eq!(
+            vec!["untimed", "first at 1h", "second at 1h", "third"],
+            messages
+        );
+    }
+
+    #[test]
+    fn the_listing_reports_time_in_hours_and_leaves_an_untimed_row_absent() {
+        let fragment = warnings_fragment(
+            &[
+                diag("u", "untimed", None, None),
+                diag("t", "ninety minutes in", Some("P1"), Some(5400.0)),
+            ],
+            None,
+        );
+        let rows = &tables(&fragment)[1].rows;
+        assert_eq!(Value::Absent, rows[0][0]);
+        assert_eq!(
+            Value::Absent,
+            rows[0][2],
+            "no element named, no element cell"
+        );
+        let Value::Number {
+            value, ref unit, ..
+        } = rows[1][0]
+        else {
+            panic!("expected a number, got {:?}", rows[1][0]);
+        };
+        assert!((value - 1.5).abs() < 1e-12, "5400 s is 1.5 h, got {value}");
+        assert_eq!(Some("h"), unit.as_deref());
+        assert_eq!(Some("P1"), cell_text(&rows[1][2]));
+    }
+
+    /// Truncation bounds the listing and nothing else: the counts above it
+    /// still describe every warning the run raised.
+    #[test]
+    fn truncation_bounds_the_listing_but_never_the_counts() {
+        let many: Vec<RunDiagnostic> = (0..10)
+            .map(|i| diag("repeated", "again", None, Some(i as f64 * 60.0)))
+            .collect();
+        let fragment = warnings_fragment(&many, Some(r#"{"maxRows": 3}"#));
+
+        let entries = match &fragment.items[0] {
+            FragmentItem::KeyValues { entries } => entries,
+            other => panic!("expected key values, got {other:?}"),
+        };
+        assert_eq!(Value::Integer { value: 10 }, entries[0].value);
+
+        let kinds = tables(&fragment)[0];
+        assert_eq!(Value::Integer { value: 10 }, kinds.rows[0][1]);
+
+        assert_eq!(3, tables(&fragment)[1].rows.len());
+        assert_eq!(
+            vec!["7 further warnings are not listed. Raise the row limit to see them."],
+            notes(&fragment)
+        );
+    }
+
+    #[test]
+    fn a_listing_that_hid_nothing_carries_no_note() {
+        let fragment = warnings_fragment(&[diag("only", "one", None, Some(0.0))], None);
+        assert!(
+            notes(&fragment).is_empty(),
+            "a note saying nothing was hidden teaches readers to skip notes"
+        );
     }
 
     // ── option descriptions (hydra-common spec §3.2.1) ───────────────────────
@@ -2062,6 +2459,7 @@ mod tests {
                 &src_of(path),
                 network,
                 Some(&options),
+                None,
             )
             .expect("an undescribed option must still be honoured");
         });
@@ -2180,7 +2578,7 @@ mod tests {
     fn us_files_produce_tagged_si_values_that_round_trip() {
         with_inp_out(FIXTURE_INP_US, |path, network| {
             let fragment =
-                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                produce_report_block("wds.result-extremes", &src_of(path), network, None, None)
                     .expect("produce");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("extremes table");
@@ -2228,7 +2626,7 @@ mod tests {
     fn si_files_tag_without_changing_values() {
         with_inp_out(FIXTURE_INP, |path, network| {
             let fragment =
-                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                produce_report_block("wds.result-extremes", &src_of(path), network, None, None)
                     .expect("produce");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("extremes table");
@@ -2259,6 +2657,7 @@ mod tests {
                 &src_of(path),
                 network,
                 Some(&options),
+                None,
             )
             .expect("produce");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
@@ -2405,8 +2804,9 @@ mod tests {
     #[test]
     fn unit_headloss_ranks_pipes_by_the_stored_ratio() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.unit-headloss", &src_of(path), network, None)
-                .expect("produce unit headloss");
+            let fragment =
+                produce_report_block("wds.unit-headloss", &src_of(path), network, None, None)
+                    .expect("produce unit headloss");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected a table");
             };
@@ -2432,7 +2832,7 @@ mod tests {
     fn chemical_compliance_counts_junctions_against_the_residual() {
         with_quality_out("Chlorine mg/L", &[0.5, 0.05, 1.0], |path, network| {
             let fragment =
-                produce_report_block("wds.quality-compliance", &src_of(path), network, None)
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None, None)
                     .expect("produce quality compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values first");
@@ -2468,7 +2868,7 @@ mod tests {
     fn age_compliance_judges_the_maximum_age() {
         with_quality_out("Age", &[30.0, 5.0, 0.0], |path, network| {
             let fragment =
-                produce_report_block("wds.quality-compliance", &src_of(path), network, None)
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None, None)
                     .expect("produce quality compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values first");
@@ -2490,8 +2890,9 @@ mod tests {
     #[test]
     fn quality_compliance_requires_a_judgeable_mode() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.quality-compliance", &src_of(path), network, None)
-                .expect_err("no-quality run must be unavailable");
+            let err =
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None, None)
+                    .expect_err("no-quality run must be unavailable");
             assert_eq!(
                 err,
                 BlockError::Unavailable {
@@ -2500,8 +2901,9 @@ mod tests {
             );
         });
         with_quality_out("Trace R1", &[0.0, 0.0, 100.0], |path, network| {
-            let err = produce_report_block("wds.quality-compliance", &src_of(path), network, None)
-                .expect_err("trace run must be unavailable");
+            let err =
+                produce_report_block("wds.quality-compliance", &src_of(path), network, None, None)
+                    .expect_err("trace run must be unavailable");
             assert_eq!(
                 err,
                 BlockError::Unavailable {
@@ -2514,8 +2916,9 @@ mod tests {
     #[test]
     fn run_summary_reports_counts_units_and_window() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.run-summary", &src_of(path), network, None)
-                .expect("produce run summary");
+            let fragment =
+                produce_report_block("wds.run-summary", &src_of(path), network, None, None)
+                    .expect("produce run summary");
             assert_eq!(fragment.title, "Run Summary");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values item");
@@ -2547,7 +2950,7 @@ mod tests {
     fn result_extremes_covers_core_quantities_without_quality() {
         with_fixture_out(|path, network| {
             let fragment =
-                produce_report_block("wds.result-extremes", &src_of(path), network, None)
+                produce_report_block("wds.result-extremes", &src_of(path), network, None, None)
                     .expect("produce extremes");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected table item");
@@ -2578,7 +2981,7 @@ mod tests {
     #[test]
     fn pump_energy_requires_a_pump() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.pump-energy", &src_of(path), network, None)
+            let err = produce_report_block("wds.pump-energy", &src_of(path), network, None, None)
                 .expect_err("no pumps in fixture");
             assert_eq!(
                 err,
@@ -2595,7 +2998,7 @@ mod tests {
         // the 14 m SI default criterion.
         with_fixture_out(|path, network| {
             let fragment =
-                produce_report_block("wds.service-compliance", &src_of(path), network, None)
+                produce_report_block("wds.service-compliance", &src_of(path), network, None, None)
                     .expect("produce compliance");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values item");
@@ -2631,6 +3034,7 @@ mod tests {
                 &src_of(path),
                 network,
                 Some(&options),
+                None,
             )
             .expect("produce compliance");
             let FragmentItem::Note { text } = &fragment.items[1] else {
@@ -2657,6 +3061,7 @@ mod tests {
                 &src_of(path),
                 network,
                 Some(&options),
+                None,
             )
             .expect_err("string threshold must fail");
             assert!(matches!(
@@ -2672,7 +3077,7 @@ mod tests {
         // demands of 5 and 8 LPS — full deficit everywhere.
         with_fixture_out(|path, network| {
             let fragment =
-                produce_report_block("wds.demand-reliability", &src_of(path), network, None)
+                produce_report_block("wds.demand-reliability", &src_of(path), network, None, None)
                     .expect("produce reliability");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
                 panic!("expected key-values item");
@@ -2698,9 +3103,14 @@ mod tests {
     #[test]
     fn pressure_distribution_bins_junction_minima_as_bar_chart() {
         with_fixture_out(|path, network| {
-            let fragment =
-                produce_report_block("wds.pressure-distribution", &src_of(path), network, None)
-                    .expect("produce distribution");
+            let fragment = produce_report_block(
+                "wds.pressure-distribution",
+                &src_of(path),
+                network,
+                None,
+                None,
+            )
+            .expect("produce distribution");
             let FragmentItem::Chart { chart } = &fragment.items[0] else {
                 panic!("expected distribution chart");
             };
@@ -2774,8 +3184,9 @@ mod tests {
     #[test]
     fn mass_balance_block_reports_closure_and_a_series() {
         with_inp_out(FIXTURE_INP, |path, network| {
-            let fragment = produce_report_block("wds.mass-balance", &src_of(path), network, None)
-                .expect("block");
+            let fragment =
+                produce_report_block("wds.mass-balance", &src_of(path), network, None, None)
+                    .expect("block");
             assert_eq!(fragment.title, "Mass Balance");
             let has_chart = fragment
                 .items
@@ -2798,6 +3209,7 @@ mod tests {
                 &src_of(path),
                 network,
                 Some(&options),
+                None,
             )
             .expect("block");
             let FragmentItem::Table { table } = &fragment.items[0] else {
@@ -2810,8 +3222,9 @@ mod tests {
     #[test]
     fn tank_levels_charts_tanks_but_not_reservoirs() {
         with_inp_out(TANK_FIXTURE_INP, |path, network| {
-            let fragment = produce_report_block("wds.tank-levels", &src_of(path), network, None)
-                .expect("produce tank levels");
+            let fragment =
+                produce_report_block("wds.tank-levels", &src_of(path), network, None, None)
+                    .expect("produce tank levels");
             let FragmentItem::Chart { chart } = &fragment.items[0] else {
                 panic!("expected line chart");
             };
@@ -2830,8 +3243,9 @@ mod tests {
     #[test]
     fn quality_summary_requires_a_quality_run() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.quality-summary", &src_of(path), network, None)
-                .expect_err("fixture has no quality results");
+            let err =
+                produce_report_block("wds.quality-summary", &src_of(path), network, None, None)
+                    .expect_err("fixture has no quality results");
             assert_eq!(
                 err,
                 BlockError::Unavailable {

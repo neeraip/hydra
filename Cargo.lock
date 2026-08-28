@@ -2544,6 +2544,7 @@ dependencies = [
  "hydra-engine-wds",
  "hydra-interop-epanet",
  "hydra-interop-swmm",
+ "serde_json",
 ]
 
 [[package]]

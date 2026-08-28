@@ -186,6 +186,7 @@ neutral content fragments for one completed simulation.
 | `wds.quality-compliance` | Junction water-quality compliance: in chemical mode each junction's **minimum residual** over the horizon is judged against `minResidual`; in age mode each junction's **maximum age** is judged against `maxAge`. Compliant/total counts, the compliance ratio, and a worst-junctions table (ranked by the judged value, worst first). Trace runs have no compliance criterion and are unavailable, distinctly from no-quality runs. | the run produced chemical or age quality results |
 | `wds.pressure-thresholds` | Junction minimum pressure counted into **caller-supplied threshold bands** rather than observed-range bins (§4.1.2), as a bar chart. | the file holds ≥ 1 reporting period |
 | `wds.velocity-thresholds` | Pipe maximum velocity counted into caller-supplied threshold bands, as a bar chart. | the file holds ≥ 1 reporting period |
+| `wds.warnings` | The run's non-fatal diagnostics (foundation contract §3.4.1): how many there were, a count per diagnostic code, and a table of the individual warnings — simulated time, code, the element named, and the message — bounded by `maxRows`. A run that raised none says so instead of showing an empty table. | the run's diagnostics were recorded |
 
 ### 4.1.1 Block options
 
@@ -206,6 +207,7 @@ JSON authored per template block; this engine defines:
 | `wds.quality-compliance` | `worstCount` | Rows in the worst-junctions table | 10 |
 | `wds.pressure-thresholds` | `edges` | Ascending band boundaries in the results file's pressure display unit | `[0, 10, 20, 30, 40, 50, 60]` (SI, m) / `[0, 15, 30, 45, 60, 75, 85]` (US, psi) |
 | `wds.velocity-thresholds` | `edges` | Ascending band boundaries in the velocity display unit | `[0.1, 0.3, 0.6, 1.0]` (SI, m/s) / `[0.3, 1.0, 2.0, 3.3]` (US, ft/s) |
+| `wds.warnings` | `maxRows` | Longest the individual-warnings table may grow before it is truncated with a note | 200 |
 
 Unknown option fields are ignored; malformed values (wrong type, negative
 where a magnitude is required) fail production with the foundation
@@ -278,10 +280,57 @@ with the neutral "unavailable" error and a human-readable reason.
 Block ids are stable per the foundation contract: removing or repurposing an
 id is a compatibility break.
 
+### 4.1.3 The warnings block
+
+`wds.warnings` tabulates the run diagnostics production was given
+(foundation contract §3.4.1). It derives nothing from the results file
+and computes no engineering quantity; its whole job is to put what the
+run said in front of the person reading the numbers it said it about.
+
+**When diagnostics were recorded and the run raised some**, the fragment
+carries three things:
+
+- how many diagnostics there were, and how many distinct codes they fall
+  under;
+- a **count per code** table, ordered by count descending and, where two
+  codes tie, by code ascending so the ordering is total;
+- the **listing**: one row per diagnostic, carrying the simulated time it
+  was raised, its code, the element it named, and its message. Rows are
+  ordered by time ascending, and diagnostics sharing a time keep the
+  order the run raised them in. A diagnostic tied to no time sorts before
+  every timed one, since nothing else is known about when it applied.
+
+Time is reported as **hours elapsed from the start of the run**, untagged
+and labelled `h`. An absolute clock time is deliberately not used: it
+would have to come from the results file's start metadata, which would
+make the one block that reports what the run said depend on a file the
+run's diagnostics never passed through.
+
+**Truncation** bounds the listing at `maxRows` (§4.1.1). The count per
+code is computed over every diagnostic, never over the truncated listing,
+so a truncated fragment still states the true totals. Truncation adds a
+note saying how many rows were withheld; an untruncated one adds nothing,
+because a note that says "nothing was hidden" only teaches a reader to
+ignore notes.
+
+**When diagnostics were recorded and the run raised none**, the fragment
+carries a single note stating that the run completed without warnings,
+and no tables. This is the useful half of separating recorded from empty:
+it is a positive statement about the run rather than an absence of one.
+
+**When diagnostics were not recorded**, the block is `unavailable`
+(foundation contract §3.4) with a reason saying so. It is not an error
+and not an empty table: a report generated from a results file alone
+cannot know what the run complained about, and saying that plainly is the
+only honest option.
+
 ### 4.2 Production contract
 
 **Inputs:** the persisted `.out` results file, the corresponding loaded
-network, and the optional per-block options value (§4.1.1). Result values and
+network, the optional per-block options value (§4.1.1), and the run's
+diagnostics when they were recorded (foundation contract §3.4.1). Only
+`wds.warnings` reads the diagnostics; every other block ignores them, and
+their absence changes nothing for those blocks. Result values and
 the reporting window come from the `.out` file (result-authoritative);
 element identifiers, declared display units, and counts **by element kind**
 come from the network.
@@ -337,8 +386,9 @@ Quality carries mg/L (chemical — the file default), hours (age), or %
 
 **Errors:** unknown ids map to the foundation contract's unknown-block
 error; inapplicable blocks (`wds.pump-energy` with zero pumps,
-`wds.quality-summary` for a hydraulics-only file) map to its unavailable
-error with a reason; read failures map to its failed error. The engine
+`wds.quality-summary` for a hydraulics-only file, `wds.warnings` for a run
+whose diagnostics were not recorded) map to its unavailable error with a
+reason; read failures map to its failed error. The engine
 never renders placeholders — that is the report layer's decision.
 
 ## 5. Criteria

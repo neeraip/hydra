@@ -616,6 +616,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: Vec<u8>) -> i32 {
         emit_error("io/output", &e.to_string(), None, None);
         return EXIT_IO;
     }
+    crate::write_warnings_sidecar(&es, args.results.as_deref());
 
     // When the report goes to stdout and progress was printed on stderr,
     // add a blank separator line so the two don't visually run together.

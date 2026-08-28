@@ -19,6 +19,6 @@ pub use identity::{
 pub use quantity::{DisplayFamily, QuantityDescriptor};
 pub use report::{
     BlockDescriptor, BlockError, Chart, ChartData, ChoiceItem, Column, Fragment, FragmentItem,
-    KeyValue, LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
+    KeyValue, LineSeries, OptionDescriptor, OptionKind, RunDiagnostic, Table, Value, ValueKind,
 };
 pub use variables::{CategoryItem, CategorySeverity, RampHint, VariableDescriptor};

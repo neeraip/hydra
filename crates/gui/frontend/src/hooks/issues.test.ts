@@ -241,3 +241,34 @@ describe("runWarningsToIssues", () => {
     expect(issues[0].detail).toContain("repeated at 2 report times");
   });
 });
+
+describe("runWarningToIssue field shape", () => {
+  // The Rust side omits elementId when the warning names no element, rather
+  // than sending null. Every reader here already used `??`, so the switch is
+  // invisible - which is exactly why it needs a test on this side: the Rust
+  // test proves what is written, and this one proves it is understood.
+  it("treats an omitted elementId the same as a null one", () => {
+    const omitted: RunWarning = {
+      code: "unbalanced-hydraulics",
+      message: "Hydraulic equations were not fully balanced at 1:00:00",
+    };
+    const explicit: RunWarning = { ...omitted, elementId: null };
+
+    const a = runWarningToIssue(omitted, FIRST_SEEN);
+    const b = runWarningToIssue(explicit, FIRST_SEEN);
+    expect(a).toEqual(b);
+    expect(a.id).toBe("simwarn-unbalanced-hydraulics-network");
+    expect(a.link?.assetId).toBeUndefined();
+  });
+
+  it("carries a warning stored before warnings had a time", () => {
+    const legacy: RunWarning = {
+      code: "pump-x-head",
+      message: "Pump PU1 operating outside its head curve at 0:00:00",
+      elementId: "PU1",
+    };
+    const issue = runWarningToIssue(legacy, FIRST_SEEN);
+    expect(issue.id).toBe("simwarn-pump-x-head-PU1");
+    expect(issue.link?.assetId).toBe("PU1");
+  });
+});

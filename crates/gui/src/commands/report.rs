@@ -65,6 +65,9 @@ pub fn probe_report_blocks(
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    // Read once for every block, so an availability probe agrees with the
+    // document the same run exports (hydra-common spec §3.4.1).
+    let diagnostics = super::simulation::read_run_diagnostics(&out_path)?;
     if !out_path.exists() {
         return Ok(Vec::new());
     }
@@ -86,7 +89,11 @@ pub fn probe_report_blocks(
                 .iter()
                 .map(|block| {
                     let (status, reason) = availability(produce_uds_block_from_file(
-                        block.id, &out_path, &network, None,
+                        block.id,
+                        &out_path,
+                        &network,
+                        None,
+                        diagnostics.as_deref(),
                     ));
                     BlockAvailabilityDto {
                         id: block.id.to_string(),
@@ -103,7 +110,11 @@ pub fn probe_report_blocks(
                 .iter()
                 .map(|block| {
                     let (status, reason) = availability(produce_wds_block_from_file(
-                        block.id, &out_path, &network, None,
+                        block.id,
+                        &out_path,
+                        &network,
+                        None,
+                        diagnostics.as_deref(),
                     ));
                     BlockAvailabilityDto {
                         id: block.id.to_string(),
@@ -342,6 +353,9 @@ pub fn get_analysis_blocks(
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    // Read once for every block, so an availability probe agrees with the
+    // document the same run exports (hydra-common spec §3.4.1).
+    let diagnostics = super::simulation::read_run_diagnostics(&out_path)?;
     if !out_path.exists() {
         return Ok(Vec::new());
     }
@@ -377,7 +391,13 @@ pub fn get_analysis_blocks(
                     let options = options_by_id.get(block.id);
                     analysis_block_dto(
                         block,
-                        produce_uds_block_from_file(block.id, &out_path, &network, options),
+                        produce_uds_block_from_file(
+                            block.id,
+                            &out_path,
+                            &network,
+                            options,
+                            diagnostics.as_deref(),
+                        ),
                         &settings,
                     )
                 })
@@ -412,7 +432,13 @@ pub fn get_analysis_blocks(
                     let options = options_by_id.get(block.id);
                     analysis_block_dto(
                         block,
-                        produce_wds_block_from_file(block.id, &out_path, &network, options),
+                        produce_wds_block_from_file(
+                            block.id,
+                            &out_path,
+                            &network,
+                            options,
+                            diagnostics.as_deref(),
+                        ),
                         &settings,
                     )
                 })
@@ -653,6 +679,11 @@ fn render_for_target(
         ],
     };
 
+    // Read once for the whole document rather than per block: every block is
+    // offered them, one reports them, and an unreadable file must not turn
+    // into fifteen copies of the same complaint.
+    let diagnostics = super::simulation::read_run_diagnostics(&out_path)?;
+
     let document = match engine.as_str() {
         "uds" => {
             let network =
@@ -670,7 +701,13 @@ fn render_for_target(
                 context,
                 |id, options| {
                     let merged = report_block_options_for(criteria_options.get(id), options);
-                    produce_uds_block_from_file(id, &out_path, &network, merged.as_ref())
+                    produce_uds_block_from_file(
+                        id,
+                        &out_path,
+                        &network,
+                        merged.as_ref(),
+                        diagnostics.as_deref(),
+                    )
                 },
             );
             let family = display_family_for(unit_system, !network.options.flow_units.is_us());
@@ -690,7 +727,13 @@ fn render_for_target(
             };
             let document = assemble(template, hydra::report_catalog(), context, |id, options| {
                 let merged = report_block_options_for(criteria_options.get(id), options);
-                produce_wds_block_from_file(id, &out_path, &network, merged.as_ref())
+                produce_wds_block_from_file(
+                    id,
+                    &out_path,
+                    &network,
+                    merged.as_ref(),
+                    diagnostics.as_deref(),
+                )
             });
             let family = display_family_for(
                 unit_system,
@@ -725,13 +768,14 @@ fn produce_wds_block_from_file(
     out_path: &std::path::Path,
     network: &hydra::Network,
     options: Option<&serde_json::Value>,
+    diagnostics: Option<&[hydra::common::RunDiagnostic]>,
 ) -> Result<hydra::common::Fragment, hydra::common::BlockError> {
     let src = hydra::io::out_reader::OutFileSource::open(out_path).map_err(|e| {
         hydra::common::BlockError::Failed {
             message: e.to_string(),
         }
     })?;
-    hydra::produce_report_block(id, &src, network, options)
+    hydra::produce_report_block(id, &src, network, options, diagnostics)
 }
 
 /// Produce one uds report block from a persisted results file: the
@@ -743,10 +787,11 @@ fn produce_uds_block_from_file(
     out_path: &std::path::Path,
     network: &hydra::uds::model::Network,
     options: Option<&serde_json::Value>,
+    diagnostics: Option<&[hydra::common::RunDiagnostic]>,
 ) -> Result<hydra::common::Fragment, hydra::common::BlockError> {
     let source = hydra::swmm::session::OutFileSource::open(out_path)
         .map_err(|message| hydra::common::BlockError::Failed { message })?;
-    hydra::uds::report_blocks::produce_report_block(id, &source, network, options)
+    hydra::uds::report_blocks::produce_report_block(id, &source, network, options, diagnostics)
 }
 
 #[cfg(test)]

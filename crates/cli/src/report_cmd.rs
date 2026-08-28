@@ -37,6 +37,11 @@ pub struct ReportArgs {
     #[arg(long, short = 'o', value_name = "PATH")]
     out: Option<String>,
 
+    /// Warnings recorded by the run, for the warnings block. Defaults to
+    /// the file written beside --results when the run finished.
+    #[arg(long, value_name = "PATH")]
+    warnings: Option<String>,
+
     /// Omit the generation timestamp so output is byte-reproducible.
     #[arg(long)]
     no_timestamp: bool,
@@ -48,6 +53,37 @@ enum Format {
     Csv,
     Html,
     Pdf,
+}
+
+/// The run's diagnostics for the warnings block, or `None` when they were
+/// never recorded.
+///
+/// The distinction is the point (hydra-common spec §3.4.1). An absent
+/// sidecar means this report cannot know what the run complained about, and
+/// the block says so; an empty one means the run was watched and raised
+/// nothing, which is a different and better thing to be able to print. A
+/// sidecar that exists but cannot be read is neither, and fails rather than
+/// quietly becoming the first.
+fn load_diagnostics(
+    explicit: Option<&str>,
+    results: &str,
+) -> Result<Option<Vec<hydra::common::RunDiagnostic>>, String> {
+    let path = match explicit {
+        Some(p) => std::path::PathBuf::from(p),
+        None => hydra::engines::warnings_path(Path::new(results)),
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        // Only the default location may be missing. An explicit path that is
+        // not there is a mistake worth naming, not a run without warnings.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && explicit.is_none() => {
+            return Ok(None)
+        }
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    hydra::engines::read_warnings(&bytes)
+        .map(Some)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
 }
 
 /// Run the subcommand with the arguments following `hydra report`.
@@ -148,6 +184,14 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         ],
     };
 
+    let diagnostics = match load_diagnostics(cli.warnings.as_deref(), &cli.results) {
+        Ok(diagnostics) => diagnostics,
+        Err(message) => {
+            crate::emit_error("input/warnings", &message, None, None);
+            return EXIT_INPUT;
+        }
+    };
+
     let document = assemble(
         &template,
         hydra::report_catalog(),
@@ -158,7 +202,7 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
                     message: e.to_string(),
                 }
             })?;
-            hydra::produce_report_block(id, &src, &network, options)
+            hydra::produce_report_block(id, &src, &network, options, diagnostics.as_deref())
         },
     );
     // Quantity-tagged values arrive in SI display units (hydra-common
@@ -230,4 +274,58 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         }
     }
     EXIT_OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three answers `load_diagnostics` has to keep apart. Collapsing
+    /// the first two would let a report state that a run raised nothing when
+    /// it only failed to find the file (hydra-common spec §3.4.1).
+    #[test]
+    fn absent_recorded_and_empty_are_three_different_answers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let results = dir.path().join("run.out");
+        let results = results.to_str().expect("utf-8 path");
+
+        assert_eq!(None, load_diagnostics(None, results).expect("absent"));
+
+        std::fs::write(hydra::engines::warnings_path(Path::new(results)), b"[]").expect("write");
+        assert_eq!(
+            Some(vec![]),
+            load_diagnostics(None, results).expect("recorded and empty")
+        );
+
+        std::fs::write(
+            hydra::engines::warnings_path(Path::new(results)),
+            br#"[{"code":"warning/pump_xhead","message":"Pump P1 exceeds its maximum head.","elementId":"P1","time":3600.0}]"#,
+        )
+        .expect("write");
+        let read = load_diagnostics(None, results)
+            .expect("recorded")
+            .expect("some");
+        assert_eq!(1, read.len());
+        assert_eq!(Some(3600.0), read[0].time);
+    }
+
+    /// A default location that is empty means "never recorded"; a path the
+    /// caller typed and got wrong is a mistake worth naming, not a run
+    /// without warnings.
+    #[test]
+    fn a_named_warnings_file_that_is_missing_is_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let named = dir.path().join("nowhere.json");
+        let err = load_diagnostics(named.to_str(), "unused.out")
+            .expect_err("a named file that is not there must fail");
+        assert!(err.contains("nowhere.json"), "{err}");
+    }
+
+    #[test]
+    fn a_warnings_file_that_cannot_be_parsed_fails_rather_than_reading_as_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("broken.json");
+        std::fs::write(&path, b"{not json").expect("write");
+        assert!(load_diagnostics(path.to_str(), "unused.out").is_err());
+    }
 }

@@ -21,7 +21,7 @@
 
 use hydra_common::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
-    LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
+    LineSeries, OptionDescriptor, OptionKind, RunDiagnostic, Table, Value, ValueKind,
 };
 
 pub mod source;
@@ -42,6 +42,13 @@ const CATALOG: &[BlockDescriptor] = &[
         title: "System Balance",
         summary: "Whole-network inflow, outflow, flooding, and storage volumes over \
                   the reporting horizon, with the inflow and outflow time series.",
+        category: "Summary",
+    },
+    BlockDescriptor {
+        id: "uds.warnings",
+        title: "Warnings",
+        summary: "Every non-fatal warning the run raised, counted by kind and listed \
+                  with the time and element each named.",
         category: "Summary",
     },
     BlockDescriptor {
@@ -127,7 +134,13 @@ pub fn produce_report_block(
     src: &dyn PeriodSource,
     network: &Network,
     options: Option<&serde_json::Value>,
+    diagnostics: Option<&[RunDiagnostic]>,
 ) -> Result<Fragment, BlockError> {
+    // Answered before the source is touched: this block reports what the run
+    // said, and reads nothing the run wrote (spec §13.4.11).
+    if id == "uds.warnings" {
+        return warnings(diagnostics, options);
+    }
     let meta = src.meta();
     match id {
         "uds.run-summary" => run_summary(src, meta),
@@ -150,6 +163,19 @@ pub fn produce_report_block(
 /// spec §3.2.1). Advisory; unknown ids yield an empty list.
 pub fn report_block_options(id: &str, _network: &Network) -> Vec<OptionDescriptor> {
     match id {
+        "uds.warnings" => vec![OptionDescriptor {
+            key: "rows".into(),
+            label: "Longest warning list".into(),
+            help: "How many individual warnings to list. The counts above the \
+                   list always cover every warning, listed or not."
+                .into(),
+            kind: OptionKind::Integer {
+                default: Some(WARNING_ROWS as i64),
+                min: Some(1),
+                max: None,
+            },
+            unit: None,
+        }],
         "uds.subcatchment-peaks"
         | "uds.runoff-summary"
         | "uds.node-extremes"
@@ -215,6 +241,137 @@ fn edges_option(options: Option<&serde_json::Value>) -> Result<[f64; 2], BlockEr
 }
 
 /// The `rows` option: how many ranked elements a table lists.
+/// Longest the warning listing may grow (spec §13.5). Far above the ranked
+/// tables' ten, because this table is a listing rather than a ranking: its
+/// rows are not ordered by importance, so a top-N bound would hide the
+/// warning the reader opened the block for.
+const WARNING_ROWS: usize = 200;
+
+/// `uds.warnings` (spec §13.4.11): the run's own diagnostics, tabulated.
+///
+/// The `Option` carries the foundation contract's recorded/not-recorded
+/// distinction (§3.4.1): `None` means the run's warnings are unknown, and
+/// `Some(&[])` means it was observed and raised none.
+fn warnings(
+    diagnostics: Option<&[RunDiagnostic]>,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let Some(diagnostics) = diagnostics else {
+        return Err(BlockError::Unavailable {
+            reason: "This run's warnings were not recorded, so this report cannot say \
+                     whether it raised any."
+                .into(),
+        });
+    };
+    let max_rows = match options.and_then(|o| o.get("rows")) {
+        None => WARNING_ROWS,
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 => n as usize,
+            _ => {
+                return Err(BlockError::Failed {
+                    message: format!("options.rows must be a positive integer, got {v}"),
+                })
+            }
+        },
+    };
+
+    if diagnostics.is_empty() {
+        return Ok(Fragment {
+            title: "Warnings".into(),
+            items: vec![FragmentItem::Note {
+                text: "The run completed without raising any warnings.".into(),
+            }],
+        });
+    }
+
+    let text = |s: &str| Value::Text { value: s.into() };
+    let count = |n: usize| Value::Integer { value: n as i64 };
+
+    // Over every diagnostic, never over the truncated listing, so the totals
+    // stay true when the listing is cut.
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for d in diagnostics {
+        *counts.entry(d.code.as_str()).or_insert(0) += 1;
+    }
+    let mut by_code: Vec<(&str, usize)> = counts.into_iter().collect();
+    by_code.sort_by_key(|&(_, n)| std::cmp::Reverse(n)); // stable, so codes keep the map's order
+
+    let kinds = Table {
+        columns: vec![
+            col("Warning", None, ValueKind::Text),
+            col("Count", None, ValueKind::Integer),
+        ],
+        rows: by_code
+            .iter()
+            .map(|(code, n)| vec![text(code), count(*n)])
+            .collect(),
+    };
+
+    // Time ascending; an untimed diagnostic first, nothing else being known
+    // about when it applied. Stable, so equal times keep the run's order.
+    let mut order: Vec<usize> = (0..diagnostics.len()).collect();
+    order.sort_by(|&a, &b| match (diagnostics[a].time, diagnostics[b].time) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(x), Some(y)) => x.total_cmp(&y),
+    });
+    let shown = order.len().min(max_rows);
+
+    let listing = Table {
+        columns: vec![
+            col("Time", Some("h"), ValueKind::Number),
+            col("Warning", None, ValueKind::Text),
+            col("Element", None, ValueKind::Text),
+            col("Message", None, ValueKind::Text),
+        ],
+        rows: order[..shown]
+            .iter()
+            .map(|&i| {
+                let d = &diagnostics[i];
+                vec![
+                    d.time
+                        .map(|t| num(t / 3600.0, Some("h")))
+                        .unwrap_or(Value::Absent),
+                    text(&d.code),
+                    d.element_id.as_deref().map(&text).unwrap_or(Value::Absent),
+                    text(&d.message),
+                ]
+            })
+            .collect(),
+    };
+
+    let mut items = vec![
+        FragmentItem::KeyValues {
+            entries: vec![
+                KeyValue {
+                    label: "Warnings".into(),
+                    value: count(diagnostics.len()),
+                },
+                KeyValue {
+                    label: "Distinct kinds".into(),
+                    value: count(by_code.len()),
+                },
+            ],
+        },
+        FragmentItem::Table { table: kinds },
+        FragmentItem::Table { table: listing },
+    ];
+    if shown < order.len() {
+        items.push(FragmentItem::Note {
+            text: format!(
+                "{} further warnings are not listed. Raise the row limit to see them.",
+                order.len() - shown
+            ),
+        });
+    }
+
+    Ok(Fragment {
+        title: "Warnings".into(),
+        items,
+    })
+}
+
 fn rows(options: Option<&serde_json::Value>) -> Result<usize, BlockError> {
     let Some(v) = options.and_then(|o| o.get("rows")) else {
         return Ok(10);
@@ -1446,6 +1603,191 @@ pub fn criteria_block_options(
         );
     }
     Ok(options)
+}
+
+#[cfg(test)]
+mod warning_tests {
+    use super::*;
+
+    fn diag(code: &str, message: &str, element: Option<&str>, time: Option<f64>) -> RunDiagnostic {
+        RunDiagnostic {
+            code: code.into(),
+            message: message.into(),
+            element_id: element.map(Into::into),
+            time,
+        }
+    }
+
+    fn produced(diagnostics: &[RunDiagnostic], options: Option<&str>) -> Fragment {
+        let options = options.map(|o| serde_json::from_str(o).expect("options json"));
+        warnings(Some(diagnostics), options.as_ref()).expect("produce warnings")
+    }
+
+    fn tables(fragment: &Fragment) -> Vec<&Table> {
+        fragment
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                FragmentItem::Table { table } => Some(table),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn notes(fragment: &Fragment) -> Vec<&str> {
+        fragment
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                FragmentItem::Note { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn cell(value: &Value) -> &str {
+        match value {
+            Value::Text { value } => value.as_str(),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// The foundation contract's §3.4.1 distinction: unknown is not empty.
+    #[test]
+    fn warnings_that_were_not_recorded_are_unavailable_not_empty() {
+        let err = warnings(None, None).expect_err("unrecorded warnings must not produce");
+        let BlockError::Unavailable { reason } = err else {
+            panic!("expected unavailable, got {err:?}");
+        };
+        assert!(reason.contains("not recorded"), "{reason}");
+        assert!(reason.ends_with('.'), "reasons are sentences: {reason}");
+    }
+
+    #[test]
+    fn a_run_that_raised_no_warnings_says_so() {
+        let fragment = produced(&[], None);
+        assert!(tables(&fragment).is_empty());
+        assert_eq!(
+            vec!["The run completed without raising any warnings."],
+            notes(&fragment)
+        );
+    }
+
+    #[test]
+    fn kinds_rank_by_count_then_by_code() {
+        let fragment = produced(
+            &[
+                diag("zebra", "z", None, Some(0.0)),
+                diag("alpha", "a", None, Some(1.0)),
+                diag("alpha", "a", None, Some(2.0)),
+                diag("mid", "m", None, Some(3.0)),
+                diag("zebra", "z", None, Some(4.0)),
+                diag("alpha", "a", None, Some(5.0)),
+            ],
+            None,
+        );
+        let codes: Vec<&str> = tables(&fragment)[0]
+            .rows
+            .iter()
+            .map(|r| cell(&r[0]))
+            .collect();
+        assert_eq!(vec!["alpha", "zebra", "mid"], codes);
+    }
+
+    #[test]
+    fn the_listing_orders_by_time_with_untimed_first_and_ties_stable() {
+        let fragment = produced(
+            &[
+                diag("c", "third", None, Some(7200.0)),
+                diag("a", "first at 1h", None, Some(3600.0)),
+                diag("u", "untimed", None, None),
+                diag("b", "second at 1h", None, Some(3600.0)),
+            ],
+            None,
+        );
+        let messages: Vec<&str> = tables(&fragment)[1]
+            .rows
+            .iter()
+            .map(|r| cell(&r[3]))
+            .collect();
+        assert_eq!(
+            vec!["untimed", "first at 1h", "second at 1h", "third"],
+            messages
+        );
+    }
+
+    #[test]
+    fn time_is_hours_and_an_unnamed_element_is_absent() {
+        let fragment = produced(
+            &[
+                diag("u", "untimed", None, None),
+                diag("t", "later", Some("C1"), Some(5400.0)),
+            ],
+            None,
+        );
+        let rows = &tables(&fragment)[1].rows;
+        assert_eq!(Value::Absent, rows[0][0]);
+        assert_eq!(Value::Absent, rows[0][2]);
+        let Value::Number {
+            value, ref unit, ..
+        } = rows[1][0]
+        else {
+            panic!("expected a number, got {:?}", rows[1][0]);
+        };
+        assert!((value - 1.5).abs() < 1e-12, "5400 s is 1.5 h, got {value}");
+        assert_eq!(Some("h"), unit.as_deref());
+        assert_eq!("C1", cell(&rows[1][2]));
+    }
+
+    #[test]
+    fn truncation_bounds_the_listing_but_never_the_counts() {
+        let many: Vec<RunDiagnostic> = (0..10)
+            .map(|i| diag("repeated", "again", None, Some(i as f64 * 60.0)))
+            .collect();
+        let fragment = produced(&many, Some(r#"{"rows": 3}"#));
+
+        let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+            panic!("expected key values");
+        };
+        assert_eq!(Value::Integer { value: 10 }, entries[0].value);
+        assert_eq!(
+            Value::Integer { value: 10 },
+            tables(&fragment)[0].rows[0][1]
+        );
+        assert_eq!(3, tables(&fragment)[1].rows.len());
+        assert_eq!(
+            vec!["7 further warnings are not listed. Raise the row limit to see them."],
+            notes(&fragment)
+        );
+    }
+
+    #[test]
+    fn a_listing_that_hid_nothing_carries_no_note() {
+        let fragment = produced(&[diag("only", "one", None, Some(0.0))], None);
+        assert!(notes(&fragment).is_empty());
+    }
+
+    /// The listing bound defaults far above the ranked tables' ten, because
+    /// nothing orders these rows by importance.
+    #[test]
+    fn the_default_bound_is_not_the_ranked_tables_bound() {
+        let many: Vec<RunDiagnostic> = (0..50)
+            .map(|i| diag("repeated", "again", None, Some(i as f64)))
+            .collect();
+        let fragment = produced(&many, None);
+        assert_eq!(50, tables(&fragment)[1].rows.len());
+        assert!(notes(&fragment).is_empty());
+    }
+
+    #[test]
+    fn a_non_positive_row_bound_refuses_production() {
+        let err = warnings(
+            Some(&[diag("a", "a", None, None)]),
+            Some(&serde_json::json!({"rows": 0})),
+        )
+        .expect_err("zero rows must refuse");
+        assert!(matches!(err, BlockError::Failed { .. }));
+    }
 }
 
 #[cfg(test)]

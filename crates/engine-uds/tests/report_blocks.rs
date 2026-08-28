@@ -94,6 +94,7 @@ fn every_block_produces_or_declines_for_a_real_run() {
             &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
             &net,
             None,
+            None,
         ) {
             Ok(fragment) => {
                 assert!(!fragment.items.is_empty(), "{} produced nothing", b.id);
@@ -118,6 +119,7 @@ fn run_summary_reports_the_horizon_and_nonzero_rain_peak() {
         "uds.run-summary",
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
+        None,
         None,
     )
     .expect("produce");
@@ -152,6 +154,7 @@ fn the_rows_option_caps_a_ranked_table_and_rejects_garbage() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         Some(&one),
+        None,
     )
     .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
@@ -165,6 +168,7 @@ fn the_rows_option_caps_a_ranked_table_and_rejects_garbage() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         Some(&bad),
+        None,
     )
     .expect_err("garbage options must fail");
     assert!(matches!(err, BlockError::Failed { .. }));
@@ -184,6 +188,7 @@ fn an_unknown_block_is_a_typed_refusal() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         None,
+        None,
     )
     .expect_err("unknown id must be refused");
     assert!(matches!(err, BlockError::UnknownBlock { .. }));
@@ -201,6 +206,7 @@ fn a_us_file_produces_tagged_si_flow_values() {
         "uds.link-extremes",
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
+        None,
         None,
     )
     .expect("link extremes");
@@ -244,6 +250,7 @@ fn every_tagged_key_is_in_the_quantity_catalog() {
             block.id,
             &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
             &net,
+            None,
             None,
         ) else {
             continue; // unavailable for this fixture is fine
@@ -300,6 +307,7 @@ fn system_balance_reports_moving_water_and_its_series() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         None,
+        None,
     )
     .expect("produce");
     let FragmentItem::KeyValues { entries } = &f.items[0] else {
@@ -346,6 +354,7 @@ fn runoff_summary_yields_a_physical_runoff_coefficient() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         None,
+        None,
     )
     .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
@@ -379,6 +388,7 @@ fn outfall_summary_reports_the_discharge_through_the_outfall() {
         "uds.outfall-summary",
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
+        None,
         None,
     )
     .expect("produce");
@@ -473,6 +483,7 @@ fn velocity_thresholds_count_every_conduit_once() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         None,
+        None,
     )
     .expect("produce");
     let FragmentItem::KeyValues { entries } = &f.items[0] else {
@@ -510,6 +521,7 @@ fn a_floor_capacity_threshold_lists_the_conduits() {
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
         Some(&opts),
+        None,
     )
     .expect("produce");
     let FragmentItem::Table { table } = &f.items[0] else {
@@ -531,6 +543,7 @@ fn storage_summary_reports_utilisation_and_attenuation() {
         "uds.storage-summary",
         &hydra_interop_swmm::session::OutFileSource::open(&path).expect("open results"),
         &net,
+        None,
         None,
     )
     .expect("produce");

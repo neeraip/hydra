@@ -10,7 +10,13 @@ use crate::engine_api::{DemandModel, HeadLossFormula, LinkKind, NodeKind, Qualit
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Classify a simulation warning into a machine-readable (code, message, object_id) triple.
+/// Classify a simulation warning into a machine-readable (code, message,
+/// object_id) triple.
+///
+/// The message is a complete sentence because a consumer may show it standing
+/// alone, with no label and no surrounding row (hydra-common spec §3.4.1):
+/// these reach a report's warnings block as well as this crate's JSON report.
+/// They are not the `.rpt` file's wording, which is EPANET's and frozen.
 pub fn describe_warning(
     w: &SimWarning,
     session: &impl WritableSimulation,
@@ -19,14 +25,14 @@ pub fn describe_warning(
     match &w.kind {
         WarningKind::UnbalancedHydraulics => (
             "warning/unbalanced".to_string(),
-            "hydraulic simulation did not converge".to_string(),
+            "The hydraulic simulation did not converge.".to_string(),
             None,
         ),
         WarningKind::NegativePressure { node_index } => {
             let node_id = &network.nodes[*node_index].base.id;
             (
                 "warning/negative_pressure".to_string(),
-                format!("negative pressure at node '{node_id}'"),
+                format!("Negative pressure at node '{node_id}'."),
                 Some(node_id.clone()),
             )
         }
@@ -35,8 +41,8 @@ pub fn describe_warning(
             (
                 "warning/link_status_pinned".to_string(),
                 format!(
-                    "link '{link_id}' changed status back and forth and was held \
-                     fixed so the solve could finish"
+                    "Link '{link_id}' changed status back and forth, so it was \
+                     held fixed for the rest of that step."
                 ),
                 Some(link_id.clone()),
             )
@@ -45,7 +51,7 @@ pub fn describe_warning(
             let link_id = &network.links[*link_index].base.id;
             (
                 "warning/pump_xhead".to_string(),
-                format!("pump '{link_id}' exceeds maximum head"),
+                format!("Pump '{link_id}' exceeds its maximum head."),
                 Some(link_id.clone()),
             )
         }
@@ -53,7 +59,7 @@ pub fn describe_warning(
             let node_id = &network.nodes[*node_index].base.id;
             (
                 "warning/tank_level_accuracy".to_string(),
-                format!("tank '{node_id}' level computed with degraded accuracy"),
+                format!("Tank '{node_id}' level was computed with degraded accuracy."),
                 Some(node_id.clone()),
             )
         }
@@ -62,8 +68,8 @@ pub fn describe_warning(
             (
                 "warning/pump_speed_pattern".to_string(),
                 format!(
-                    "pump '{link_id}': speed pattern supersedes its initial \
-                     speed setting (the pattern multipliers are the speeds)"
+                    "Pump '{link_id}' has a speed pattern that supersedes its \
+                     initial speed setting. The pattern multipliers are the speeds."
                 ),
                 Some(link_id.clone()),
             )
@@ -668,7 +674,10 @@ mod tests {
         let expected_id = session.net().nodes[0].base.id.clone();
         let (code, message, object_id) = describe_warning(&warning, &session);
         assert_eq!(code, "warning/negative_pressure");
-        assert!(message.contains("negative pressure at node"));
+        assert!(
+            message.starts_with("Negative pressure at node") && message.ends_with('.'),
+            "a message shown standing alone is a sentence: {message}"
+        );
         assert_eq!(object_id.as_deref(), Some(expected_id.as_str()));
     }
 

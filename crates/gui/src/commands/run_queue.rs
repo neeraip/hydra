@@ -678,6 +678,9 @@ pub(crate) fn open_uds_with_aux(
                     code: "rain-record".to_string(),
                     message: format!("rain record {file:?}: {notice}"),
                     element_id: None,
+                    // Raised while opening the model, before any simulated
+                    // time exists to tie it to.
+                    time: None,
                 });
             }
             rain_files.push((file.clone(), records));

@@ -1038,10 +1038,12 @@ pub fn delete_simulation(
 
 /// Remove one run's artifacts, treating "already absent" as success.
 ///
-/// Takes `warnings.json` with the results it describes. The warnings writer
+/// Takes the warnings file with the results it describes, under both the
+/// current name and the one earlier builds used. The warnings writer
 /// maintains the invariant that "warnings can never exist without results";
 /// deleting only `results.out` would leave the previous run's warnings being
-/// served for a target that now reports as unsimulated.
+/// served for a target that now reports as unsimulated, and reading falls
+/// back to the old name, so leaving that one behind would resurrect them.
 pub(crate) fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
     let removed = match std::fs::remove_file(path) {
         Ok(()) => true,
@@ -1051,6 +1053,7 @@ pub(crate) fn remove_results_file(path: &std::path::Path) -> Result<bool, String
     // Best-effort, like every other write of this file: an orphaned warnings
     // file is a diagnostic annoyance, not a reason to fail the clear.
     let _ = std::fs::remove_file(super::simulation::run_warnings_path(path));
+    let _ = std::fs::remove_file(super::simulation::legacy_run_warnings_path(path));
     // A mesh run's §14.16 surface sidecar goes with the results it
     // describes, same reasoning as the warnings.
     let _ = std::fs::remove_file(super::simulation::surface_results_path(path));
@@ -1058,7 +1061,8 @@ pub(crate) fn remove_results_file(path: &std::path::Path) -> Result<bool, String
 }
 
 /// Bytes on disk for one target's run artifacts — `results.out` plus the
-/// `warnings.json` and any `results.2d.out` surface sidecar beside it.
+/// warnings file (either name) and any `results.2d.out` surface sidecar
+/// beside it.
 /// Zero when the target has never been simulated.
 ///
 /// Counts exactly what a clear would remove, so the figure shown before
@@ -1067,6 +1071,7 @@ fn results_bytes(path: &std::path::Path) -> u64 {
     let file_len = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     file_len(path)
         + file_len(&super::simulation::run_warnings_path(path))
+        + file_len(&super::simulation::legacy_run_warnings_path(path))
         + file_len(&super::simulation::surface_results_path(path))
 }
 
@@ -3354,15 +3359,24 @@ mod tests {
         // The warnings writer maintains "warnings can never exist without
         // results". Deleting only results.out would leave the last run's
         // warnings being served for a target that now reports unsimulated.
+        // Both names, because reading falls back to the older one: a clear
+        // that took only the current file would resurrect the warnings it
+        // was asked to remove.
         let dir = tempfile::tempdir().unwrap();
         let results = results_path_for(dir.path(), "p1", None);
-        let warnings = results.with_file_name("warnings.json");
+        let current = super::super::simulation::run_warnings_path(&results);
+        let legacy = super::super::simulation::legacy_run_warnings_path(&results);
         bundle::atomic_write(&results, b"out").unwrap();
-        bundle::atomic_write(&warnings, b"[]").unwrap();
+        bundle::atomic_write(&current, b"[]").unwrap();
+        bundle::atomic_write(&legacy, b"[]").unwrap();
 
         assert!(remove_results_file(&results).unwrap());
         assert!(!results.exists());
-        assert!(!warnings.exists(), "warnings outlived their results");
+        assert!(!current.exists(), "warnings outlived their results");
+        assert!(
+            !legacy.exists(),
+            "warnings under the old name outlived them"
+        );
     }
 
     #[test]
@@ -3372,10 +3386,22 @@ mod tests {
         assert_eq!(results_bytes(&results), 0, "never simulated → nothing");
 
         bundle::atomic_write(&results, &[0u8; 500]).unwrap();
-        bundle::atomic_write(&results.with_file_name("warnings.json"), &[0u8; 24]).unwrap();
+        bundle::atomic_write(
+            &super::super::simulation::run_warnings_path(&results),
+            &[0u8; 24],
+        )
+        .unwrap();
         // Both files go, so both are counted — the figure shown before
         // confirming is the space actually reclaimed.
         assert_eq!(results_bytes(&results), 524);
+
+        // Including one left under the older name, which a clear also takes.
+        bundle::atomic_write(
+            &super::super::simulation::legacy_run_warnings_path(&results),
+            &[0u8; 10],
+        )
+        .unwrap();
+        assert_eq!(results_bytes(&results), 534);
 
         remove_results_file(&results).unwrap();
         assert_eq!(results_bytes(&results), 0);

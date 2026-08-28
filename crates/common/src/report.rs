@@ -9,6 +9,41 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One non-fatal diagnostic a run produced, in the neutral shape every
+/// engine's warnings take when they reach report production (spec §3.4.1).
+///
+/// A run raises these while it works — a solver that could not balance, an
+/// element the engine had to constrain — and they are not recoverable from a
+/// results file written for a legacy dialect, so they travel beside the
+/// results rather than inside them.
+///
+/// The wire shape is `{ "code", "message", "elementId"?, "time"? }`. Both
+/// optional fields default to absent when a stored record omits them.
+///
+/// **A list of these is not the same as no list.** An empty list means the
+/// run was observed and raised nothing; no list at all means the run's
+/// diagnostics are unknown, and a block built on them is then
+/// [`BlockError::Unavailable`] rather than empty. See spec §3.4.1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDiagnostic {
+    /// Stable machine identifier for the diagnostic's class, authored by the
+    /// producing engine and opaque here. Stable once released, so a consumer
+    /// may group, count, or filter on it without knowing what it means.
+    pub code: String,
+    /// What happened, for a person to read. A complete sentence: a consumer
+    /// may show it standing alone rather than after a label.
+    pub message: String,
+    /// Identifier of the element the diagnostic names, absent when it names
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
+    /// Simulated time at which it was raised, in seconds, absent when it is
+    /// not tied to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<f64>,
+}
+
 /// Descriptor of one block in an engine's catalog (spec §3.2).
 ///
 /// `id` is namespaced by engine key (`wds.pressure-summary`) and **never
@@ -315,6 +350,35 @@ impl std::error::Error for BlockError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wire shape is read by a TypeScript frontend and by files written
+    /// by earlier builds, so both directions are pinned here. The other half
+    /// of this invariant is asserted in `hooks/issues.test.ts`; neither test
+    /// alone would catch the two sides drifting apart.
+    #[test]
+    fn run_diagnostic_omits_what_it_does_not_have() {
+        let d = RunDiagnostic {
+            code: "unbalanced-hydraulics".into(),
+            message: "Hydraulic equations were not fully balanced at 1:00:00".into(),
+            element_id: None,
+            time: Some(3600.0),
+        };
+        let json = serde_json::to_string(&d).expect("serialise");
+        assert!(!json.contains("elementId"), "absent means absent: {json}");
+        assert!(json.contains(r#""time":3600.0"#), "{json}");
+    }
+
+    /// A file written before diagnostics carried a time still reads, which is
+    /// what lets an existing project keep the warnings it already had.
+    #[test]
+    fn a_run_diagnostic_without_a_time_still_reads() {
+        let d: RunDiagnostic = serde_json::from_str(
+            r#"{"code":"negative-pressure","message":"Negative pressure at J1","elementId":"J1"}"#,
+        )
+        .expect("deserialise");
+        assert_eq!(Some("J1"), d.element_id.as_deref());
+        assert_eq!(None, d.time);
+    }
 
     #[test]
     fn value_serde_wire_shape_is_stable() {

@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::meta::bundle;
@@ -40,20 +40,20 @@ pub(crate) enum RunLoopError {
 
 // ── Run warnings ──────────────────────────────────────────────────────────────
 
-/// One non-fatal simulation warning, persisted to `warnings.json` beside
-/// `results.out` and served by [`get_run_warnings`]. Wire shape (camelCase):
-/// `{ "code": string, "message": string, "elementId": string|null }`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RunWarningDto {
-    /// Stable kebab-case code derived from the engine's `WarningKind`:
-    /// `"unbalanced-hydraulics"` | `"negative-pressure"` | `"pump-x-head"`.
-    pub code: String,
-    /// Human-readable description, including the simulation time.
-    pub message: String,
-    /// ID of the affected node/link, or `null` for network-wide warnings.
-    pub element_id: Option<String>,
-}
+/// One non-fatal simulation warning: the foundation contract's run-diagnostic
+/// record (hydra-common spec §3.4.1), which is also the wire shape this app
+/// serves to its frontend and the file shape it persists beside a run's
+/// results.
+///
+/// It is the shared type rather than a copy of it so that the warnings this
+/// app shows in its Issues panel and the warnings a report block is produced
+/// from cannot describe the same run differently.
+///
+/// Wire shape (camelCase): `{ "code": string, "message": string,
+/// "elementId"?: string, "time"?: number }`. Codes are the engine's, in
+/// kebab-case (`"negative-pressure"`, `"link-status-pinned"`); `time` is
+/// simulated seconds.
+pub type RunWarningDto = hydra::common::RunDiagnostic;
 
 /// Format a simulation time (seconds) as `H:MM:SS` for warning messages.
 fn format_sim_time(t: f64) -> String {
@@ -69,6 +69,15 @@ fn format_sim_time(t: f64) -> String {
 /// Map one engine warning to its wire DTO. `node_ids` / `link_ids` are the
 /// load-order ID arrays (`Simulation::node_ids` / `link_ids`) used to resolve
 /// the zero-based indices carried by `WarningKind`.
+///
+/// KNOWN DUPLICATION: these sentences are this app's, and the run surface
+/// authors its own for the same warnings (`describe_warning`). Both are
+/// sentences and both say the same thing, but a warnings report block shows
+/// whichever text the app that ran the model persisted, so the same model
+/// run here and from the command line reads slightly differently. Unifying
+/// them means dropping the `{at}` these embed, which the Issues panel would
+/// then have to render from the `time` field instead. Worth doing; not worth
+/// smuggling into the change that noticed it.
 pub(crate) fn warning_to_dto(
     w: &hydra::SimWarning,
     node_ids: &[&str],
@@ -79,16 +88,18 @@ pub(crate) fn warning_to_dto(
     match &w.kind {
         WarningKind::UnbalancedHydraulics => RunWarningDto {
             code: "unbalanced-hydraulics".into(),
-            message: format!("Hydraulic equations were not fully balanced at {at}"),
+            message: format!("Hydraulic equations were not fully balanced at {at}."),
             element_id: None,
+            time: Some(w.t),
         },
         WarningKind::NegativePressure { node_index } => {
             let id = node_ids.get(*node_index).map(|s| s.to_string());
             let name = id.clone().unwrap_or_else(|| format!("#{}", node_index + 1));
             RunWarningDto {
                 code: "negative-pressure".into(),
-                message: format!("Negative pressure at junction {name} at {at}"),
+                message: format!("Negative pressure at junction {name} at {at}."),
                 element_id: id,
+                time: Some(w.t),
             }
         }
         WarningKind::TankLevelAccuracy { node_index } => {
@@ -96,8 +107,9 @@ pub(crate) fn warning_to_dto(
             let name = id.clone().unwrap_or_else(|| format!("#{}", node_index + 1));
             RunWarningDto {
                 code: "tank-level-accuracy".into(),
-                message: format!("Tank {name} level computed with degraded accuracy at {at}"),
+                message: format!("Tank {name} level computed with degraded accuracy at {at}."),
                 element_id: id,
+                time: Some(w.t),
             }
         }
         WarningKind::LinkStatusPinned { link_index } => {
@@ -107,9 +119,10 @@ pub(crate) fn warning_to_dto(
                 code: "link-status-pinned".into(),
                 message: format!(
                     "{name} kept opening and closing at {at}, so it was held fixed \
-                     for the rest of that step"
+                     for the rest of that step."
                 ),
                 element_id: id,
+                time: Some(w.t),
             }
         }
         WarningKind::PumpXHead { link_index } => {
@@ -117,8 +130,9 @@ pub(crate) fn warning_to_dto(
             let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));
             RunWarningDto {
                 code: "pump-x-head".into(),
-                message: format!("Pump {name} operating outside its head curve at {at}"),
+                message: format!("Pump {name} operating outside its head curve at {at}."),
                 element_id: id,
+                time: Some(w.t),
             }
         }
         WarningKind::PumpSpeedPatternSupersedesSetting { link_index } => {
@@ -127,9 +141,10 @@ pub(crate) fn warning_to_dto(
             RunWarningDto {
                 code: "pump-speed-pattern".into(),
                 message: format!(
-                    "Pump {name}: its speed pattern supersedes the initial speed setting"
+                    "Pump {name}: its speed pattern supersedes the initial speed setting."
                 ),
                 element_id: id,
+                time: Some(w.t),
             }
         }
     }
@@ -148,14 +163,9 @@ pub(crate) fn collect_run_warnings(es: &hydra::engines::EngineSession) -> Vec<Ru
             .map(|w| warning_to_dto(w, &node_ids, &link_ids))
             .collect();
     }
+    // No mapping: a session warning *is* a run diagnostic (hydra-common
+    // §3.4.1), which is the point of sharing the type.
     es.warnings()
-        .into_iter()
-        .map(|w| RunWarningDto {
-            code: w.code,
-            message: w.message,
-            element_id: w.element,
-        })
-        .collect()
 }
 
 /// `run.json` path for the run whose results live at `results_path`.
@@ -240,8 +250,22 @@ pub(crate) fn sync_run_meta_file(results_path: &std::path::Path, meta: Option<&R
     }
 }
 
-/// `warnings.json` path for the run whose results live at `results_path`.
+/// Where this run's warnings are stored, given where its results are.
+///
+/// The name comes from the shared run surface rather than from this app, so
+/// that a report generated by the command-line tool from the same results
+/// finds the same file (hydra-common spec §2.6).
 pub(crate) fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
+    hydra::engines::warnings_path(results_path)
+}
+
+/// Where runs written before the shared name existed put their warnings: a
+/// sibling `warnings.json`, one per directory.
+///
+/// Read-only. A run finished today writes [`run_warnings_path`] and deletes
+/// this, so the two can never disagree about the same results; a project
+/// last run before the change keeps its Issues panel until it is re-run.
+pub(crate) fn legacy_run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
     results_path.with_file_name("warnings.json")
 }
 
@@ -274,17 +298,27 @@ pub(crate) fn sync_run_warnings_file(
                     "could not write run warnings file"
                 );
             }
+            // A file under the old name would otherwise sit beside the new
+            // one describing an older run, and reading falls back to it.
+            remove_if_present(&legacy_run_warnings_path(results_path));
         }
         None => {
-            if let Err(e) = std::fs::remove_file(&path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "could not remove stale run warnings file"
-                    );
-                }
-            }
+            remove_if_present(&path);
+            remove_if_present(&legacy_run_warnings_path(results_path));
+        }
+    }
+}
+
+/// Remove a file that may not be there, complaining only about real
+/// failures.
+fn remove_if_present(path: &std::path::Path) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "could not remove stale run warnings file"
+            );
         }
     }
 }
@@ -321,16 +355,43 @@ pub(crate) fn warnings_sync_after_run(
     }
 }
 
-/// Read a `warnings.json` written by [`sync_run_warnings_file`]. An absent
-/// file is an empty warning list (target never run, last run predates warning
-/// persistence, or last run failed).
-pub(crate) fn read_run_warnings_file(path: &std::path::Path) -> Result<Vec<RunWarningDto>, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(e) => return Err(format!("Cannot read run warnings: {e}")),
-    };
-    serde_json::from_slice(&bytes).map_err(|e| format!("Malformed warnings file: {e}"))
+/// Read the warnings recorded for the run whose results are at
+/// `results_path`, or `None` when none were recorded.
+///
+/// `None` and `Some(vec![])` are different answers and must stay so
+/// (hydra-common spec §3.4.1): the first means this run's warnings are
+/// unknown — never run, run before they were persisted, or a failed run
+/// whose file was cleared — and the second means the run was watched and
+/// raised nothing. A report block asked to describe the first says it
+/// cannot; asked to describe the second it says the run was clean.
+///
+/// Falls back to [`legacy_run_warnings_path`], so a project whose last run
+/// predates the shared name keeps the warnings it already had.
+pub(crate) fn read_run_diagnostics(
+    results_path: &std::path::Path,
+) -> Result<Option<Vec<RunWarningDto>>, String> {
+    for path in [
+        run_warnings_path(results_path),
+        legacy_run_warnings_path(results_path),
+    ] {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("Cannot read run warnings: {e}")),
+        };
+        return serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| format!("Malformed warnings file: {e}"));
+    }
+    Ok(None)
+}
+
+/// The same read, flattened for the Issues panel, which has one list to
+/// show and draws no distinction between a clean run and an unobserved one.
+pub(crate) fn read_run_warnings_file(
+    results_path: &std::path::Path,
+) -> Result<Vec<RunWarningDto>, String> {
+    Ok(read_run_diagnostics(results_path)?.unwrap_or_default())
 }
 
 /// Return the non-fatal warnings recorded by the last successful simulation
@@ -348,7 +409,7 @@ pub fn get_run_warnings(
     }
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
-    read_run_warnings_file(&run_warnings_path(&out_path))
+    read_run_warnings_file(&out_path)
 }
 
 /// Emit `event` to all windows, logging a warning instead of silently
@@ -1045,14 +1106,18 @@ mod tests {
             "time in message: {}",
             w.message
         );
-        // Pinned wire shape: camelCase keys, explicit null for elementId.
+        // Pinned wire shape: camelCase keys, the simulated time, and no
+        // elementId at all when the warning names no element. The frontend
+        // reads absent and null the same way, which `issues.test.ts` pins
+        // from its side.
         let json = serde_json::to_string(&w).unwrap();
         assert!(
             json.contains("\"code\":\"unbalanced-hydraulics\""),
             "{json}"
         );
         assert!(json.contains("\"message\":"), "{json}");
-        assert!(json.contains("\"elementId\":null"), "{json}");
+        assert!(!json.contains("elementId"), "{json}");
+        assert!(json.contains("\"time\":3661.0"), "{json}");
 
         let w = warning_to_dto(
             &SimWarning {
@@ -1082,11 +1147,51 @@ mod tests {
     #[test]
     fn read_run_warnings_file_absent_returns_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("warnings.json");
+        let missing = dir.path().join("results.out");
         assert_eq!(
             read_run_warnings_file(&missing).unwrap(),
             Vec::<RunWarningDto>::new()
         );
+    }
+
+    /// The Issues panel flattens the two, but a report block must not: an
+    /// unobserved run and a clean one are different facts (hydra-common
+    /// spec §3.4.1), and collapsing them let a report claim the run raised
+    /// nothing when it had simply never been asked.
+    #[test]
+    fn an_unrecorded_run_and_a_clean_one_read_differently() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = dir.path().join("results.out");
+
+        assert_eq!(None, read_run_diagnostics(&results).unwrap());
+
+        sync_run_warnings_file(&results, Some(&[]));
+        assert_eq!(Some(vec![]), read_run_diagnostics(&results).unwrap());
+    }
+
+    /// A project whose last run predates the shared sidecar name keeps the
+    /// warnings it already had, and a fresh run clears the old file so the
+    /// two can never describe the same results differently.
+    #[test]
+    fn warnings_written_under_the_old_name_are_still_read_then_retired() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = dir.path().join("results.out");
+        let legacy = legacy_run_warnings_path(&results);
+        std::fs::write(
+            &legacy,
+            br#"[{"code":"negative-pressure","message":"Negative pressure at J1","elementId":"J1"}]"#,
+        )
+        .unwrap();
+
+        let read = read_run_diagnostics(&results).unwrap().expect("recorded");
+        assert_eq!(1, read.len());
+        assert_eq!("negative-pressure", read[0].code);
+        // Written before warnings carried a time, and readable anyway.
+        assert_eq!(None, read[0].time);
+
+        sync_run_warnings_file(&results, Some(&[]));
+        assert!(!legacy.exists(), "a fresh run retires the old file");
+        assert_eq!(Some(vec![]), read_run_diagnostics(&results).unwrap());
     }
 
     #[test]
@@ -1107,7 +1212,7 @@ mod tests {
             || false,
         );
         assert!(err.is_none(), "steady-state run must succeed: {err:?}");
-        let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        let warnings = read_run_warnings_file(&dir.path().join("results.out")).unwrap();
         assert!(
             warnings.is_empty(),
             "steady-state fixture yields no warnings: {warnings:?}"
@@ -1130,6 +1235,7 @@ mod tests {
             code: "rain-record".to_string(),
             message: "rain record \"acc.dat\": an accumulated total was divided evenly".to_string(),
             element_id: None,
+            time: None,
         }];
         let (_sim, err, _wall, _steps) = run_sim_loops(
             hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
@@ -1143,7 +1249,7 @@ mod tests {
             || false,
         );
         assert!(err.is_none(), "steady-state run must succeed: {err:?}");
-        let written = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        let written = read_run_warnings_file(&dir.path().join("results.out")).unwrap();
         assert_eq!(
             vec![opening[0].code.clone()],
             written.iter().map(|w| w.code.clone()).collect::<Vec<_>>(),
@@ -1194,7 +1300,7 @@ Duration  0
             || false,
         );
         assert!(err.is_none(), "run must succeed with a warning: {err:?}");
-        let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        let warnings = read_run_warnings_file(&dir.path().join("results.out")).unwrap();
         assert!(
             warnings
                 .iter()
@@ -1286,10 +1392,11 @@ Duration  0
             code: "pump-x-head".into(),
             message: "Pump PU1 operating outside its head curve at 0:00:00".into(),
             element_id: Some("PU1".into()),
+            time: Some(0.0),
         }];
         sync_run_warnings_file(&out, Some(&warnings));
         assert_eq!(
-            read_run_warnings_file(&dir.path().join("warnings.json")).unwrap(),
+            read_run_warnings_file(&dir.path().join("results.out")).unwrap(),
             warnings
         );
         // Failed-run direction removes the file; a second removal is a no-op.

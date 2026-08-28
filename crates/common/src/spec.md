@@ -36,7 +36,11 @@ hold, §4.5.2.3, so a set that is full stops offering a row it would
 refuse; v1.16 withdrew the planned open-channel engine from the registry,
 §2.4, when 2D overland flow was re-planned as future functionality of the
 urban drainage engine — a breaking change, since the registry lost an entry
-and its key now resolves as unknown).
+and its key now resolves as unknown; v1.17 gave run diagnostics a neutral
+shape and made them a production input, §3.4.1, so a report can say what a
+run complained about — and, by separating "no diagnostics were recorded"
+from "the run raised none", stopped a report from claiming the second when
+it only knows the first).
 This document follows the same spec-first workflow as the engine specs:
 implementation changes flow from changes here, never the reverse.
 
@@ -263,7 +267,8 @@ applications from holding, and for the same reason: an application that
 encodes it duplicates it in every interface, and the copies drift.
 
 The **uniform run surface** — open a model for its engine, advance it,
-observe progress, persist its results, collect its warnings — therefore
+observe progress, persist its results, collect and persist its
+warnings (§3.4.1) — therefore
 belongs to the same both-seeing dispatch layer as routing (§2.5.2), and
 every application drives every engine through that one implementation.
 
@@ -469,6 +474,41 @@ so a template-builder UI can offer them generically. Production is
 unchanged by this: it validates the options value it is given regardless of
 what was described, and a hand-authored template that never consults a
 description behaves exactly as before.
+
+### 3.4.1 Run diagnostics
+
+A run produces non-fatal diagnostics as well as results: a solver that
+could not balance, an element the engine had to constrain, an input it
+substituted for. They belong in a report, because a reader deciding
+whether to trust a number needs to know whether the run complained while
+producing it. Unlike results they are a product of the run itself, and a
+results file written for a legacy dialect cannot be relied on to carry
+them — so an engine block that tabulates them cannot recover them the way
+every other block recovers its content.
+
+This layer therefore defines one neutral shape for a diagnostic, so that
+tabulating them is the same work for every engine:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `code` | Stable machine identifier for the diagnostic's class | Engine-authored, and opaque here (§1). Stable once released, so a consumer may group, count, or filter on it without knowing what it means. |
+| `message` | What happened, for a person to read | Engine-authored. A complete sentence, because a consumer may show it standing alone rather than after a label. |
+| `element` | Identifier of the element the diagnostic names | Absent when it names none. |
+| `time` | Simulated time at which it was raised, in seconds | Absent when it is not tied to one. |
+
+**Recorded and empty are different facts.** A run whose diagnostics were
+never captured and a run that produced none are not the same, and a
+report that reads "no warnings" for the first is stating something it does
+not know. Production therefore receives either a diagnostic list — which
+may be empty, meaning the run was observed and raised nothing — or no
+list at all, meaning they are unknown. A block built on diagnostics is
+`unavailable` (§3.4) in the second case, and produces an ordinary
+fragment saying the run raised none in the first.
+
+Capturing diagnostics during a run, and persisting them so they survive
+to report time, is the run surface's duty (§2.6). This layer defines only
+the shape they take when they arrive at production, and holds no opinion
+on where they were kept in between.
 
 ### 3.5 Consumers and dependency rules
 
