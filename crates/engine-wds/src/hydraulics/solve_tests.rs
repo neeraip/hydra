@@ -842,6 +842,51 @@ fn minor_loss_adds_to_friction() {
 /// R1 (200 ft) → P1 → J1 ← PSV (60 PSI) ← J2 → P2 → J3 (0ft, 100GPM)
 ///
 /// The PSV ensures J1 (upstream side) doesn't drop below 60 PSI.
+/// §3.9: a link delivering into a tank already at its maximum level is
+/// closed by the status check.
+///
+/// The check is skipped for links that touch no level-limited node, because
+/// for them the limits are infinity sentinels and the comparison is decided
+/// before it is made. This holds the other half of that: the skip must not
+/// reach a link that *is* tank-adjacent. Nothing else in the suite fails if
+/// it does, and the results file goes quietly wrong.
+#[test]
+fn a_pipe_into_a_full_tank_is_closed_by_the_status_check() {
+    // Reservoir far above a tank that starts at its maximum: the inflow has
+    // nowhere to go, so the pipe must be shut rather than keep delivering.
+    let (_ns, ls, result) = solve_once(
+        TestNetworkBuilder::new()
+            .reservoir("R1", 200.0)
+            .tank("T1", 0.0, 20.0, 0.0, 20.0, 50.0)
+            .hw_pipe("P1", "R1", "T1", 1000.0, 12.0, 100.0),
+    );
+    assert_eq!(result, SolveResult::Converged);
+    assert!(
+        matches!(
+            ls[0].status,
+            crate::LinkStatus::TempClosed | crate::LinkStatus::Closed
+        ),
+        "a pipe into a full tank stayed open: status = {:?}, flow = {}",
+        ls[0].status,
+        ls[0].flow
+    );
+    // A closed link keeps a tiny sentinel flow rather than exactly zero, so
+    // the claim is calibrated against the same network with room in the tank.
+    let (_ns2, ls_open, _r2) = solve_once(
+        TestNetworkBuilder::new()
+            .reservoir("R1", 200.0)
+            .tank("T1", 0.0, 10.0, 0.0, 20.0, 50.0)
+            .hw_pipe("P1", "R1", "T1", 1000.0, 12.0, 100.0),
+    );
+    assert!(
+        ls_open[0].flow.abs() > 1000.0 * ls[0].flow.abs(),
+        "closing the pipe made no difference to what it carries: \
+         full tank {}, room in tank {}",
+        ls[0].flow,
+        ls_open[0].flow
+    );
+}
+
 #[test]
 fn psv_maintains_upstream_pressure() {
     let (ns, _ls, result) = solve_once(

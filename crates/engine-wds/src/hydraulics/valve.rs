@@ -272,6 +272,7 @@ fn assemble_valve_link(
 /// Returns `true` if any status changed.
 pub(super) fn check_valve_status(
     network: &Network,
+    prv_psv_links: &[usize],
     statuses: &mut [LinkStatus],
     settings: &[f64],
     flows: &[f64],
@@ -281,15 +282,17 @@ pub(super) fn check_valve_status(
     eps_q: f64,
 ) -> bool {
     let mut changed = false;
-    for (k, link) in network.links.iter().enumerate() {
+    // §3.9: only PRV and PSV links can change status here, and which links
+    // those are is fixed at load. Walking every link to rediscover them costs
+    // the whole network on every Newton iteration, and costs it even on a
+    // model that has none.
+    for &k in prv_psv_links {
+        let link = &network.links[k];
         let LinkKind::Valve(v) = &link.kind else {
             continue;
         };
         let setting = settings[k];
         if setting.is_nan() {
-            continue;
-        }
-        if !matches!(v.valve_type, ValveType::Prv | ValveType::Psv) {
             continue;
         }
 
@@ -332,6 +335,7 @@ pub(super) fn check_link_status(
     node_states: &[NodeState],
     node_h_min: &[f64],
     node_h_max: &[f64],
+    link_tank_adjacent: &[bool],
     eps_h: f64,
     eps_q: f64,
     pump_coeffs: &[Option<PumpCoeffs>],
@@ -341,10 +345,12 @@ pub(super) fn check_link_status(
     for (k, link) in network.links.iter().enumerate() {
         let n1 = link.base.from_idx();
         let n2 = link.base.to_idx();
-        let h1 = node_states[n1].head;
-        let h2 = node_states[n2].head;
         let q = flows[k];
         let setting = settings[k];
+        // §3.9: the heads are read where they are used. Reading them up front
+        // costs two random accesses into the node states for every link, and
+        // a plain pipe (the bulk of any network) uses neither.
+        let heads = || (node_states[n1].head, node_states[n2].head);
 
         // Save original status — EPANET linkstatus() compares final vs original
         // at the end of each link to determine if a change occurred. This avoids
@@ -360,6 +366,7 @@ pub(super) fn check_link_status(
 
         match &link.kind {
             LinkKind::Pipe(pipe) if pipe.check_valve => {
+                let (h1, h2) = heads();
                 let cur = statuses[k];
                 let new_status = match cur {
                     LinkStatus::Open => {
@@ -383,6 +390,7 @@ pub(super) fn check_link_status(
             LinkKind::Pump(pump) => {
                 // XHEAD/TEMPCLOSED already reset above.
                 if matches!(statuses[k], LinkStatus::Open) {
+                    let (h1, h2) = heads();
                     if pump.curve_type == PumpCurveType::ConstHp {
                         // §3.9: ConstHp pump with flow below TINY → TEMPCLOSED.
                         const TINY: f64 = 1.0e-6;
@@ -406,6 +414,7 @@ pub(super) fn check_link_status(
                 match v.valve_type {
                     ValveType::Prv | ValveType::Psv => {}
                     ValveType::Fcv => {
+                        let (h1, h2) = heads();
                         // fcv_status modifies statuses[k] directly;
                         // its return value is not needed here since we compare
                         // original_status at the end.
@@ -422,7 +431,7 @@ pub(super) fn check_link_status(
         // EPANET tankstatus: `if (LinkStatus[k] <= CLOSED) return` — only skip
         // links that are fully CLOSED; XHead/TempClosed links are still checked
         // (e.g. a pump set to XHead adjacent to a full tank).
-        if !matches!(statuses[k], LinkStatus::Closed) {
+        if link_tank_adjacent[k] && !matches!(statuses[k], LinkStatus::Closed) {
             let q = flows[k];
             // n1 side — h_min/h_max are INFINITY sentinels for non-tanks and
             // overflow tanks, so neither condition fires for those nodes.

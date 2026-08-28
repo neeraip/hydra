@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, time::Instant};
 
 use crate::{
     DemandModel, FavadCoeffs, LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState,
-    PumpCurveType,
+    PumpCurveType, ValveType,
 };
 
 use super::assembly::{assemble_links, assemble_node_residuals};
@@ -226,6 +226,17 @@ pub struct SolverContext {
     /// Indices of junction nodes with at least one non-zero base demand (§3.6).
     /// Used as the candidate set for PDA demand coefficient assembly / flow update.
     pub(super) pda_node_indices: Vec<usize>,
+    /// Whether a link touches a node with a finite level limit (§3.9), i.e.
+    /// a tank. The per-check tank closure can only fire for these; for every
+    /// other link the limits are infinity sentinels and the comparison is
+    /// decided before it is made, at the cost of two random reads into the
+    /// node states.
+    pub(super) link_tank_adjacent: Vec<bool>,
+    /// Indices of PRV and PSV links (§3.9). These are the only links whose
+    /// status the per-iteration valve check can change, and a network may
+    /// contain none at all; walking every link to look for them is the
+    /// dominant cost of that check on a large model.
+    pub(super) prv_psv_links: Vec<usize>,
     initialised: bool,
 }
 
@@ -495,6 +506,30 @@ pub fn build_solver_context(
         })
         .collect();
 
+    // §3.9: only links touching a level-limited node can be closed by the
+    // tank check.
+    let link_tank_adjacent: Vec<bool> = network
+        .links
+        .iter()
+        .map(|link| {
+            let is_tank = |i: usize| matches!(network.nodes[i].kind, NodeKind::Tank(_));
+            is_tank(link.base.from_idx()) || is_tank(link.base.to_idx())
+        })
+        .collect();
+
+    // §3.9: the per-iteration valve check only ever acts on PRV/PSV links.
+    let prv_psv_links: Vec<usize> = network
+        .links
+        .iter()
+        .enumerate()
+        .filter_map(|(k, link)| match &link.kind {
+            LinkKind::Valve(v) if matches!(v.valve_type, ValveType::Prv | ValveType::Psv) => {
+                Some(k)
+            }
+            _ => None,
+        })
+        .collect();
+
     let favad_node_indices: Vec<usize> = (0..n_nodes)
         .filter(|&i| favad.c_fa[i] > 0.0 || favad.c_va[i] > 0.0)
         .collect();
@@ -551,6 +586,8 @@ pub fn build_solver_context(
         has_leakage,
         is_const_hp_pump,
         emitter_node_indices,
+        prv_psv_links,
+        link_tank_adjacent,
         favad_node_indices,
         pda_node_indices,
         initialised: false,
@@ -904,6 +941,7 @@ pub fn solve_hydraulic_step(
         let valve_changed = if !status_frozen && run_valve_check {
             check_valve_status(
                 network,
+                &ctx.prv_psv_links,
                 &mut ctx.statuses,
                 &ctx.settings,
                 &ctx.flows,
@@ -936,6 +974,7 @@ pub fn solve_hydraulic_step(
                 node_states,
                 &ctx.node_h_min,
                 &ctx.node_h_max,
+                &ctx.link_tank_adjacent,
                 options.head_tol,
                 options.flow_change_tol,
                 &ctx.pump_coeffs,
