@@ -19,7 +19,7 @@ categories = ["science", "simulation"]
 pdf = ["dep:typst", "dep:typst-pdf", "dep:typst-assets", "dep:typst-layout"]
 
 [dependencies]
-hydra-common = { path = "../common", version = "15.1.0" }
+hydra-common = { path = "../common", version = "16.0.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 typst = { version = "0.15", optional = true }

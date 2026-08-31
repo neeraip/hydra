@@ -17,7 +17,7 @@ categories = ["science", "simulation"]
 test-support = []
 
 [dependencies]
-hydra-common = { path = "../common", version = "15.1.0" }
+hydra-common = { path = "../common", version = "16.0.0" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

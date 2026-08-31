@@ -15,9 +15,9 @@ keywords = ["water", "hydraulics", "simulation", "engine"]
 categories = ["science", "simulation"]
 
 [dependencies]
-hydra-common = { path = "../common", version = "15.1.0" }
-hydra-engine-uds = { path = "../engine-uds", version = "15.1.0" }
-hydra-interop-swmm = { path = "../interop-swmm", version = "15.1.0" }
-hydra-interop-epanet = { path = "../interop-epanet", version = "15.1.0" }
-hydra-engine-wds = { path = "../engine-wds", version = "15.1.0" }
+hydra-common = { path = "../common", version = "16.0.0" }
+hydra-engine-uds = { path = "../engine-uds", version = "16.0.0" }
+hydra-interop-swmm = { path = "../interop-swmm", version = "16.0.0" }
+hydra-interop-epanet = { path = "../interop-epanet", version = "16.0.0" }
+hydra-engine-wds = { path = "../engine-wds", version = "16.0.0" }
 serde_json = "1"
