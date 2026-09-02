@@ -1062,6 +1062,21 @@ fn is_chatter(d1: f64, d2: f64, net: f64, head_tol: f64) -> bool {
 /// has err ≤ tol, so γ ≥ 0.9: the factor may ease the step downward but
 /// never collapses it, and with the test disabled (or no estimate yet)
 /// the plain doubling stands.
+/// §6.5 quiescent growth: whether the Courant seed still constrains the
+/// attempted step.
+///
+/// Released after `QUIET_STEPS` consecutive accepted steps whose error
+/// estimates stayed below a quarter of `routing_err_tol`, and reinstated by
+/// the first that does not. Named because the streak length had nothing
+/// holding it: raising it from three to thirty disables quiescent growth in
+/// practice, and the whole suite stayed green.
+fn courant_applies(courant_factor: f64, quiet_streak: u32) -> bool {
+    courant_factor > 0.0 && quiet_streak < QUIET_STEPS
+}
+
+/// §6.5: consecutive quiet accepted steps that release the Courant seed.
+const QUIET_STEPS: u32 = 3;
+
 fn growth_cap(err_tol: f64, err_prev: f64) -> f64 {
     if err_tol > 0.0 && err_prev > 0.0 {
         (0.9 * (err_tol / err_prev).sqrt()).min(2.0)
@@ -2198,7 +2213,7 @@ impl Router {
         // minimum is the same value in every evaluation order, so the
         // gather runs across the §6.4 team when one exists — no
         // accumulation-order rule needed, unlike the channel phase's sums.
-        if self.courant_factor > 0.0 && self.quiet_streak < 3 {
+        if courant_applies(self.courant_factor, self.quiet_streak) {
             dt = dt.min(self.courant_min());
         }
         dt.max(self.dt_floor)
@@ -7569,5 +7584,50 @@ mod slot_geometry_tests {
         let y_full = g.sec.y_full();
         assert!((g.area(0.5 * y_full) - g.sec.area(0.5 * y_full)).abs() < 1e-15);
         assert!((g.area(y_full) - g.sec.a_full()).abs() < 1e-15);
+    }
+}
+
+#[cfg(test)]
+mod step_rule_tests {
+    use super::{courant_applies, growth_cap, QUIET_STEPS};
+
+    /// §6.5: three consecutive quiet steps release the Courant seed, and
+    /// the count is exactly three.
+    #[test]
+    fn the_courant_seed_is_released_after_three_quiet_steps_and_not_before() {
+        assert_eq!(3, QUIET_STEPS, "§6.5 fixes the streak at three");
+        for streak in 0..3 {
+            assert!(
+                courant_applies(0.75, streak),
+                "streak {streak} is short of the release"
+            );
+        }
+        assert!(
+            !courant_applies(0.75, 3),
+            "the third quiet step must release the seed"
+        );
+        assert!(!courant_applies(0.75, 9));
+    }
+
+    /// A zero Courant factor disables the term outright, whatever the
+    /// streak.
+    #[test]
+    fn a_zero_courant_factor_disables_the_term() {
+        assert!(!courant_applies(0.0, 0));
+    }
+
+    /// §6.5's error-informed growth: 0.9·√(tol/err), capped at 2, and 2
+    /// whenever there is no usable estimate.
+    #[test]
+    fn the_growth_factor_is_the_proportional_rule_capped_at_two() {
+        // err far below tol: the rule wants a big step, the cap holds it.
+        assert_eq!(2.0, growth_cap(1.0e-3, 1.0e-9));
+        // An accepted step has err <= tol, so the factor never collapses.
+        assert!(growth_cap(1.0e-3, 1.0e-3) >= 0.9);
+        // err four times tol would halve the step: 0.9 * sqrt(1/4) = 0.45.
+        assert!((growth_cap(1.0e-3, 4.0e-3) - 0.45).abs() < 1e-12);
+        // No estimate, or the test disabled, gives the cap.
+        assert_eq!(2.0, growth_cap(1.0e-3, 0.0));
+        assert_eq!(2.0, growth_cap(0.0, 1.0e-3));
     }
 }
