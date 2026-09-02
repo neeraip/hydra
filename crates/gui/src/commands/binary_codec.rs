@@ -469,6 +469,57 @@ mod tests {
         }
     }
 
+    /// The wire layout, pinned as bytes that the TypeScript decoder reads
+    /// back in `hooks/network.test.ts`.
+    ///
+    /// Both sides already pin the layout, and neither could drift silently
+    /// on its own: this file asserts exact offsets, and the frontend builds
+    /// its own bytes column by column. What neither caught was the two
+    /// *diverging*. Adding a column here and updating this file's offsets
+    /// leaves the frontend's builder describing the old layout, both suites
+    /// green, and every node on the canvas read from the wrong bytes.
+    ///
+    /// One fixture, encoded here and decoded there, is what makes that
+    /// impossible: a layout change fails this test until the fixture is
+    /// regenerated, and the regenerated fixture fails the frontend's until
+    /// its decoder is taught the new column.
+    ///
+    /// Regenerate with `UPDATE_SNAPSHOT_FIXTURE=1 cargo test -p hydra-gui
+    /// snapshot_fixture`, and expect the frontend test to fail until it is
+    /// updated to match.
+    #[test]
+    fn snapshot_fixture_is_the_bytes_the_frontend_decodes() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/network-snapshot-v3.bin");
+        let encoded = encode_network_snapshot(&snapshot_test_dto());
+
+        if std::env::var_os("UPDATE_SNAPSHOT_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create dir");
+            std::fs::write(&path, &encoded).expect("write fixture");
+            return;
+        }
+
+        let stored = std::fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. Regenerate with UPDATE_SNAPSHOT_FIXTURE=1.",
+                path.display()
+            )
+        });
+        assert_eq!(
+            stored.len(),
+            encoded.len(),
+            "snapshot layout changed size ({} stored, {} encoded); regenerate the \
+             fixture and update the frontend decoder to match",
+            stored.len(),
+            encoded.len()
+        );
+        assert!(
+            stored == encoded,
+            "snapshot bytes changed; regenerate the fixture and update the \
+             frontend decoder to match"
+        );
+    }
+
     #[test]
     fn encode_network_snapshot_layout_roundtrips() {
         let dto = snapshot_test_dto();

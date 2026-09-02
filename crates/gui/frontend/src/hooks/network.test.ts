@@ -23,6 +23,7 @@
  * All values little-endian. NaN = absent for optional f32 columns; empty
  * string = absent for optional string columns.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Tauri IPC seam so `loadProjectNetwork` / `fetchNetworkSnapshot`
@@ -692,5 +693,87 @@ describe("deleteElement", () => {
       links: ["C1"],
       attachments: ["1 inflow"],
     });
+  });
+});
+
+// ── The wire contract with the Rust encoder ─────────────────────────────────
+
+describe("the snapshot fixture the backend encodes", () => {
+  // Every other test in this file builds its own bytes, which describes what
+  // this decoder believes the layout is, not what the encoder produces. Both
+  // sides pinned their own layout and neither could drift silently, but
+  // nothing failed when the two diverged: a column added in
+  // `commands/binary_codec.rs` left this file's builder describing the old
+  // shape, both suites green, and every node on the canvas read from the
+  // wrong bytes.
+  //
+  // This decodes the bytes the encoder actually wrote. Regenerate with
+  // `UPDATE_SNAPSHOT_FIXTURE=1 cargo test -p hydra-gui snapshot_fixture`.
+  const fixture = () => {
+    const url = new URL(
+      "../../../tests/fixtures/network-snapshot-v3.bin",
+      import.meta.url,
+    );
+    const bytes = readFileSync(url);
+    return bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+  };
+
+  it("decodes to the network the encoder was given", () => {
+    const decoded = decodeNetworkSnapshot(fixture());
+    if (!decoded) throw new Error("the fixture must decode");
+    const { nodes, links } = decoded;
+
+    expect(nodes.map((n) => n.id)).toEqual(["J1", "T1", "R1"]);
+    expect(nodes.map((n) => n.type)).toEqual(["junction", "tank", "reservoir"]);
+    expect(links.map((l) => l.id)).toEqual(["P1", "PU1", "V1"]);
+    expect(links.map((l) => l.type)).toEqual(["pipe", "pump", "valve"]);
+  });
+
+  it("reads each column back at the value the encoder put in it", () => {
+    const decoded = decodeNetworkSnapshot(fixture());
+    if (!decoded) throw new Error("the fixture must decode");
+    const { nodes, links } = decoded;
+    const [j1, t1, r1] = nodes;
+    const [p1, pu1, v1] = links;
+
+    // Coordinates are f64, so they survive exactly.
+    expect([j1.x, j1.y]).toEqual([1.5, 2.5]);
+    expect([r1.x, r1.y]).toEqual([-1, 0]);
+    expect(j1.elevation).toBeCloseTo(10.5, 6);
+    expect(j1.baseDemand).toBeCloseTo(5.25, 6);
+
+    // An explicit zero must survive as 0, distinct from the NaN that means
+    // absent: this is the pair the encoder's own test calls out.
+    expect(j1.demand).toBe(0);
+    expect(t1.demand ?? null).toBeNull();
+
+    expect(t1.tankMinLevel).toBeCloseTo(1.5, 6);
+    expect(t1.tankMaxLevel).toBeCloseTo(6.5, 6);
+    expect(t1.tankInitialLevel).toBeCloseTo(2.25, 6);
+    expect(t1.tankDiameter).toBeCloseTo(20, 6);
+
+    expect(p1.diameter).toBeCloseTo(300, 6);
+    expect(p1.length).toBeCloseTo(1200, 6);
+    expect(p1.roughness).toBeCloseTo(100, 6);
+    expect(pu1.pumpPowerKw).toBeCloseTo(15.5, 6);
+    expect(v1.valveSetting).toBeCloseTo(35.5, 6);
+
+    // v2's polylines and v3's initial status, the two columns the layout
+    // version has been bumped for.
+    expect(p1.vertices).toEqual([
+      [10, 11],
+      [12, 13],
+    ]);
+    expect(pu1.vertices ?? []).toEqual([]);
+    expect(v1.vertices).toEqual([[20.5, 21.5]]);
+    expect(p1.initialStatus).toBe("closed");
+  });
+
+  it("carries the layout version this decoder expects", () => {
+    const view = new DataView(fixture());
+    expect(view.getUint32(0, true)).toBe(SNAPSHOT_VERSION);
   });
 });
