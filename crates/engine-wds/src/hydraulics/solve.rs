@@ -661,6 +661,101 @@ fn status_bit(s: LinkStatus) -> u8 {
     }
 }
 
+/// §3.9 pinning bookkeeping: which statuses each link has held during this
+/// solve, how many reversals it has recorded, and what a pinned link is held
+/// at.
+///
+/// A struct rather than four vectors and two inline loops because this is a
+/// decision, and a decision buried in the Newton loop is one nothing can
+/// call. Reproducing a cycling link through a network fixture means
+/// reproducing a marginal numerical case: the one this rule was written for
+/// closes at a few thousandths of flow and reopens at about 1e-6, which a
+/// test would pin to the fixture rather than to the rule. Driving the ledger
+/// with a status sequence asserts the rule itself.
+pub(super) struct PinLedger {
+    /// Statuses each link has held this solve, one bit per status.
+    seen: Vec<u8>,
+    reversals: Vec<u8>,
+    /// What each pinned link is held at. `Some` *is* the pinned flag, so
+    /// there is no second field that could disagree with it.
+    pinned_at: Vec<Option<LinkStatus>>,
+    pinned: Vec<usize>,
+}
+
+impl PinLedger {
+    pub(super) fn new(statuses: &[LinkStatus]) -> Self {
+        Self {
+            seen: statuses.iter().map(|s| 1u8 << status_bit(*s)).collect(),
+            reversals: vec![0u8; statuses.len()],
+            pinned_at: vec![None; statuses.len()],
+            pinned: Vec::new(),
+        }
+    }
+
+    pub(super) fn has_pins(&self) -> bool {
+        !self.pinned.is_empty()
+    }
+
+    pub(super) fn into_pinned(self) -> Vec<usize> {
+        self.pinned
+    }
+
+    /// Force every pinned link back to the status it was pinned at, reporting
+    /// whether any had moved.
+    ///
+    /// Restoring here rather than teaching every status rule about pinning
+    /// keeps the rules readable and the pin in one place.
+    pub(super) fn restore(&self, statuses: &mut [LinkStatus]) -> bool {
+        let mut undid = false;
+        for &k in &self.pinned {
+            if let Some(at) = self.pinned_at[k] {
+                if statuses[k] != at {
+                    statuses[k] = at;
+                    undid = true;
+                }
+            }
+        }
+        undid
+    }
+
+    /// Record what this iteration's status check produced.
+    ///
+    /// `before` is the status vector as it stood before the check, and is read
+    /// only when `converged`, which is the only case the caller populates it
+    /// for.
+    pub(super) fn observe(
+        &mut self,
+        statuses: &[LinkStatus],
+        before: &[LinkStatus],
+        converged: bool,
+    ) {
+        if !converged {
+            // Still record what has been held, so a status first seen while
+            // the numerics were moving is not counted as new later.
+            for (k, st) in statuses.iter().enumerate() {
+                self.seen[k] |= 1u8 << status_bit(*st);
+            }
+            return;
+        }
+        for (k, &st) in statuses.iter().enumerate() {
+            if self.pinned_at[k].is_some() {
+                continue;
+            }
+            let bit = 1u8 << status_bit(st);
+            let already_held = self.seen[k] & bit != 0;
+            self.seen[k] |= bit;
+            if !is_reversal(true, st != before[k], already_held) {
+                continue;
+            }
+            self.reversals[k] += 1;
+            if self.reversals[k] >= REVERSALS_BEFORE_PIN {
+                self.pinned_at[k] = Some(st);
+                self.pinned.push(k);
+            }
+        }
+    }
+}
+
 /// Solves the hydraulic equations for one time step (§3).
 ///
 /// Updates `node_states` and `link_states` in-place. Simple controls must be
@@ -755,17 +850,8 @@ pub fn solve_hydraulic_step(
     // held. A link that develops monotonically records none; one that cycles
     // records one on every change after the first. At the threshold it is
     // pinned, so criterion 4 of §3.8 stays reachable.
-    let n_links_total = ctx.statuses.len();
-    let mut reversals = vec![0u8; n_links_total];
-    let mut seen_status: Vec<u8> = vec![0; n_links_total];
-    let mut pinned = vec![false; n_links_total];
-    // The status each pinned link is held at, so restoring it needs no
-    // snapshot of every link.
-    let mut pinned_at: Vec<LinkStatus> = vec![LinkStatus::Open; n_links_total];
+    let mut ledger = PinLedger::new(&ctx.statuses);
     ctx.pinned_links.clear();
-    for (k, st) in ctx.statuses.iter().enumerate() {
-        seen_status[k] = 1 << status_bit(*st);
-    }
     // §3.8 damping: relaxation factor applied to every flow update this iteration.
     // Stays 1.0 (full Newton step) until `damp_limit > 0` and the relative flow
     // error reaches `damp_limit`, from which point it is 0.6. Set from the previous
@@ -1011,7 +1097,7 @@ pub fn solve_hydraulic_step(
         // status on every iteration costs more than the rule saves: it is
         // needed on the iterations where the numerics have already converged,
         // which are few.
-        let status_before_check: Vec<LinkStatus> = if converged || !ctx.pinned_links.is_empty() {
+        let status_before_check: Vec<LinkStatus> = if converged || ledger.has_pins() {
             ctx.statuses.clone()
         } else {
             Vec::new()
@@ -1061,54 +1147,14 @@ pub fn solve_hydraulic_step(
             false
         };
 
-        // §3.9: a pinned link holds what it had. Restoring it here rather than
-        // teaching every status rule about pinning keeps the rules readable and
-        // the pin in one place.
-        let mut pin_undid_a_change = false;
-        for i in 0..ctx.pinned_links.len() {
-            let k = ctx.pinned_links[i];
-            if ctx.statuses[k] != pinned_at[k] {
-                ctx.statuses[k] = pinned_at[k];
-                pin_undid_a_change = true;
-            }
-        }
+        // §3.9: a pinned link holds what it had.
+        let pin_undid_a_change = ledger.restore(&mut ctx.statuses);
 
         // §3.9: reversals count only once the numeric criteria are met, when a
         // status change is the sole thing denying convergence. Before that a
         // change is the solution developing and must not be penalised.
-        if converged {
-            for k in 0..n_links_total {
-                if pinned[k] {
-                    continue;
-                }
-                let bit = 1u8 << status_bit(ctx.statuses[k]);
-                let already_held = seen_status[k] & bit != 0;
-                seen_status[k] |= bit;
-                if !is_reversal(
-                    true,
-                    ctx.statuses[k] != status_before_check[k],
-                    already_held,
-                ) {
-                    continue;
-                }
-                reversals[k] += 1;
-                if reversals[k] >= REVERSALS_BEFORE_PIN {
-                    pinned[k] = true;
-                    pinned_at[k] = ctx.statuses[k];
-                    ctx.pinned_links.push(k);
-                }
-            }
-        } else {
-            // Still record what has been held, so a status first seen while the
-            // numerics were moving is not counted as new later.
-            for (k, st) in ctx.statuses.iter().enumerate() {
-                seen_status[k] |= 1u8 << status_bit(*st);
-            }
-        }
+        ledger.observe(&ctx.statuses, &status_before_check, converged);
 
-        // A change that the pin has just undone did not happen, so it must not
-        // deny convergence: that would be the cycle continuing under another
-        // name.
         // A change the pin has just undone did not happen, so it must not deny
         // convergence: that would be the cycle continuing under another name.
         // Any change that survives the restore still counts, which is why this
@@ -1181,6 +1227,11 @@ pub fn solve_hydraulic_step(
             status_frozen = true;
         }
     }
+
+    // §3.9: hand the pins to the caller, which reports one warning per pinned
+    // link. The ledger owns them during the solve so the loop reads one thing
+    // rather than a field it also writes.
+    ctx.pinned_links = ledger.into_pinned();
 
     let phase_started = timing_enabled.then(Instant::now);
     for (k, ls) in link_states.iter_mut().enumerate() {

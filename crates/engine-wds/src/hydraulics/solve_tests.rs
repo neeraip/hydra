@@ -866,6 +866,130 @@ fn a_reversal_counts_only_once_the_numerics_have_converged() {
     assert!(!is_reversal(true, true, false));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// §3.9 — Pinning a link that will not stop changing status
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Driven through `PinLedger` with status sequences rather than through a
+// network that cycles. The cycle this rule was written for is a marginal
+// numerical case (a pump closing at a few thousandths of flow and reopening at
+// about 1e-6 on a 46,000-junction model); a fixture reproducing it would pin
+// the test to the fixture's arithmetic rather than to the rule, and the
+// networks small enough for a unit test change no statuses at all.
+
+use crate::hydraulics::solve::PinLedger;
+use crate::LinkStatus;
+
+/// Drive one link through `sequence`, one converged iteration per entry,
+/// and return the ledger.
+fn ledger_over(initial: LinkStatus, sequence: &[LinkStatus]) -> (PinLedger, Vec<LinkStatus>) {
+    let mut statuses = vec![initial];
+    let mut ledger = PinLedger::new(&statuses);
+    for &next in sequence {
+        let before = statuses.clone();
+        statuses[0] = next;
+        // The pin, once set, is what holds the status; observe sees the
+        // restored vector exactly as the solver's loop does.
+        ledger.restore(&mut statuses);
+        ledger.observe(&statuses, &before, true);
+    }
+    (ledger, statuses)
+}
+
+/// The threshold itself: three reversals are a link still finding its
+/// configuration, the fourth is a cycle.
+///
+/// Open→Closed is the first change and reaches a status not held before, so it
+/// is not a reversal. Every change after it returns to one already held, so
+/// reversals accumulate one per change: the pin lands on the fifth change.
+#[test]
+fn the_fourth_reversal_pins_and_the_first_three_do_not() {
+    use LinkStatus::{Closed, Open};
+    for (n_changes, should_pin) in [(1, false), (2, false), (3, false), (4, false), (5, true)] {
+        let sequence: Vec<LinkStatus> = (0..n_changes)
+            .map(|i| if i % 2 == 0 { Closed } else { Open })
+            .collect();
+        let (ledger, _) = ledger_over(Open, &sequence);
+        assert_eq!(
+            should_pin,
+            ledger.has_pins(),
+            "{n_changes} status changes: expected pinned={should_pin}"
+        );
+    }
+}
+
+/// A link marching through new statuses is developing, not cycling, however
+/// many times it moves.
+#[test]
+fn a_link_that_never_repeats_a_status_is_never_pinned() {
+    use LinkStatus::{Active, Closed, Open, TempClosed, XFcv, XHead, XPressure};
+    let (ledger, _) = ledger_over(Open, &[Closed, Active, XPressure, XFcv, XHead, TempClosed]);
+    assert!(
+        !ledger.has_pins(),
+        "six changes, none repeating a status, must not pin"
+    );
+}
+
+/// While the numerics are still moving a status change is how the solve finds
+/// its answer, so it must not count however often it repeats.
+///
+/// This is the qualification the first version of the rule lacked, which pinned
+/// sixty links on one corpus model and moved five of eleven gate networks.
+#[test]
+fn reversals_while_the_numerics_are_still_moving_never_pin() {
+    use LinkStatus::{Closed, Open};
+    let mut statuses = vec![Open];
+    let mut ledger = PinLedger::new(&statuses);
+    for i in 0..20 {
+        let before = statuses.clone();
+        statuses[0] = if i % 2 == 0 { Closed } else { Open };
+        ledger.observe(&statuses, &before, false);
+    }
+    assert!(
+        !ledger.has_pins(),
+        "twenty unconverged reversals must not pin"
+    );
+}
+
+/// What the pin does once set: the link is held at whatever status it was
+/// pinned at, and a later status check cannot move it.
+#[test]
+fn a_pinned_link_is_forced_back_to_the_status_it_was_pinned_at() {
+    use LinkStatus::{Closed, Open};
+    let (ledger, statuses) = ledger_over(Open, &[Closed, Open, Closed, Open, Closed]);
+    assert!(ledger.has_pins(), "premise: the sequence pins");
+    let pinned_at = statuses[0];
+
+    // A status check now tries to move it, as the cycle would.
+    let mut moved = vec![if pinned_at == Open { Closed } else { Open }];
+    assert!(
+        ledger.restore(&mut moved),
+        "restore must report that it undid a change"
+    );
+    assert_eq!(pinned_at, moved[0], "the pinned link did not hold");
+
+    // And a link already where it belongs is not reported as undone, which is
+    // what keeps a pin from denying convergence forever.
+    let mut settled = vec![pinned_at];
+    assert!(!ledger.restore(&mut settled));
+}
+
+/// The pin names the link it fired for, which is what the warning reports.
+#[test]
+fn the_ledger_names_the_link_it_pinned() {
+    use LinkStatus::{Closed, Open};
+    let mut statuses = vec![Open, Open, Open];
+    let mut ledger = PinLedger::new(&statuses);
+    for i in 0..5 {
+        let before = statuses.clone();
+        // Only link 1 cycles.
+        statuses[1] = if i % 2 == 0 { Closed } else { Open };
+        ledger.restore(&mut statuses);
+        ledger.observe(&statuses, &before, true);
+    }
+    assert_eq!(vec![1], ledger.into_pinned());
+}
+
 /// §3.9: a link delivering into a tank already at its maximum level is
 /// closed by the status check.
 ///
