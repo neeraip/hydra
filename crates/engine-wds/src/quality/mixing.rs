@@ -155,7 +155,9 @@ pub(super) fn update_tank_mix(
                     break;
                 }
                 let is_last = segments.len() == 1;
-                let seg = segments.front_mut().unwrap();
+                let Some(seg) = segments.front_mut() else {
+                    break;
+                };
                 // EPANET: if seg == LastSeg, vseg = vout (last seg absorbs all)
                 let vseg = if is_last {
                     vol_out
@@ -174,10 +176,10 @@ pub(super) fn update_tank_mix(
             // EPANET: tank->C = wsum/vsum (withdrawn avg), or first seg, or 0
             if vsum > 0.0 {
                 wsum / vsum
-            } else if segments.is_empty() {
-                0.0
             } else {
-                segments.front().unwrap().concentration
+                // Nothing was withdrawn: report the outlet segment, or zero
+                // when the tank has none left.
+                segments.front().map_or(0.0, |s| s.concentration)
             }
         }
 

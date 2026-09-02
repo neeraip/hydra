@@ -80,12 +80,14 @@ fn pump_design_flow(
         PumpCurveType::Custom => {
             if let Some(idx) = link_curve_idx[k] {
                 let curve = &curves[idx];
-                if curve.points.len() >= 2 {
-                    let x0 = curve.points.first().unwrap().x;
-                    let xl = curve.points.last().unwrap().x;
-                    (x0 + xl) / 2.0
-                } else {
-                    0.028317 // fallback: 1 ft³/s in m³/s
+                match (curve.points.first(), curve.points.last()) {
+                    // Two points or more: the midpoint of the curve's flow
+                    // range. One point cannot bracket a range, so it takes the
+                    // same fallback as no curve at all.
+                    (Some(first), Some(last)) if curve.points.len() >= 2 => {
+                        (first.x + last.x) / 2.0
+                    }
+                    _ => 0.028317, // fallback: 1 ft³/s in m³/s
                 }
             } else {
                 0.028317 // fallback: 1 ft³/s in m³/s
