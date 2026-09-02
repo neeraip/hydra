@@ -104,7 +104,12 @@ pub(super) fn apply_valve_coefficients(
                             sparse.f[pr2] += xflow[from_node_index];
                         }
                     }
-                    // PSV Active: preserve weak connectivity (EPANET adds 1/CBIG terms)
+                    // §3.5 connectivity residual. Only the downstream end
+                    // gets it: the upstream end is pinned and its diagonal
+                    // already carries C_INF. The PRV branch above enters no
+                    // residual at all, because its exposed end is the
+                    // *upstream* one and a dead end there cannot supply an
+                    // active PRV. The asymmetry is the rule, not an omission.
                     if let Some(pos) = link_aij_pos[k] {
                         sparse.aij[pos] -= 1.0 / C_INF;
                     }

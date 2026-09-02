@@ -180,7 +180,7 @@ $P_k$ is the **hydraulic conductance** of the linearised link. $Y_k$ is the corr
 Let $g_{\min}$ be a small positive threshold (units: [head]/[flow] = s/m² in SI) below which the linearised gradient is considered degenerate. The value is $10^{-6}$ s/m² (Hydra's `G_MIN`, matching EPANET's `CSMALL` in magnitude), used unchanged regardless of the runtime unit system — a purely numerical guard against division by zero, not a physically meaningful threshold. This $g_{\min}$ applies to pipe, valve, constant-power-pump, and custom-curve-pump linearisation. **Emitter and power-function-pump linearisation instead use the tighter `rq_tol` clamp** (default $10^{-7}$ s/m²; `../model/spec.md` §2.1), matching EPANET's `RQtol` used in `emittercoeff`/`pipecoeff`.
 
 - If $g_k < g_{\min}$: set $g_k = g_{\min}/n_f$ and $h_k = g_k \cdot Q_k$ (linear regime), where $n_f$ is the flow exponent of the active head-loss formula (1.852 for Hazen-Williams, 2 for Darcy-Weisbach and Chezy-Manning).
-- Closed link: $P_k = 1/C_{\infty}$, $Y_k = Q_k$ (frozen at current flow with near-zero conductance).
+- Closed link: $P_k = 1/C_{\infty}$, $Y_k = Q_k$ (frozen at current flow with near-zero conductance). $C_{\infty}$ is the stiffness constant of §3.5, $10^8$ in the same units as a conductance.
 - Active PRV/PSV/FCV: $P_k = 0$ (excluded from standard assembly; handled separately in §3.5).
 
 **PBV special case**: A Pressure Breaker Valve with setting $h_s > 0$ forces a fixed head loss. If the minor-loss head drop at the current flow already exceeds the setting ($K_m Q_k^2 > h_s$), the PBV falls back to ordinary pipe/minor-loss treatment. Otherwise:
@@ -200,6 +200,8 @@ $$h_e = K_e \cdot |Q_e|^{\hat{n}}$$
 where $Q_e$ is the current emitter flow. The linearised gradient:
 
 $$g_e = \hat{n} \cdot K_e \cdot |Q_e|^{\hat{n} - 1}$$
+
+**Coefficient floor**: $K_e$ is first floored at $g_{\min}$ (§3.3). A junction reaching this linearisation has a positive emitter coefficient by construction, so the floor changes no realisable model; it exists because $K_e$ multiplies straight into $g_e$, and a coefficient small enough to underflow the gradient to zero would make $P_e$ infinite.
 
 **Guard**: if $g_e < g_{\text{rq}}$ (the emitter/pump linearisation clamp `rq_tol`, default $10^{-7}$ s/m² — a *tighter* threshold than the link guard $g_{\min}$ of §3.3, and matching EPANET's `RQtol` in `emittercoeff`): set $g_e = g_{\text{rq}} / \hat{n}$, $h_e = g_e \cdot Q_e$ (linear regime). Otherwise: $h_e = g_e \cdot Q_e / \hat{n}$ (consistent with the power-law).
 
@@ -322,10 +324,7 @@ Any **positive** flow excess at $i$ is redistributed to $F_j$ — the mirror of 
 PRV rule above, which redistributes a *negative* excess at $j$ to $F_i$. The
 opposite sign in each case follows from which end the valve pins.
 
-A small residual $1/C_{\infty}$ preserves matrix connectivity across the pinned
-valve, entered with the sign convention of §3.4 ($A_{ij} = -P_k$): it is
-**subtracted** from $A_{ij}$ and **added** to $A_{jj}$, exactly as a conductance
-of that magnitude would be.
+
 
 **FCV active** (imposes fixed flow $Q_s = s_k$):
 
@@ -333,7 +332,44 @@ $$F_i \mathrel{-}= Q_s, \qquad F_j \mathrel{+}= Q_s, \qquad P_k = 1/C_{\infty}$$
 
 The two sides of the valve are nearly decoupled; the valve's flow appears as a prescribed external demand/supply pair.
 
-$C_{\infty}$ is a large constant (implementation choice; must satisfy $C_{\infty} \gg \max P_k$ so that the pinned head dominates).
+**Connectivity residual.** An active valve contributes $P_k = 0$ to the
+standard assembly, so it stamps neither an off-diagonal nor a diagonal: the
+two junctions it joins are decoupled *through it*. A junction whose only
+incident link is that valve would then have an empty row. A residual
+conductance of $1/C_{\infty}$ prevents this, entered with the sign convention
+of §3.4 ($A_{ij} = -P_k$): **subtracted** from $A_{ij}$, and **added** to the
+diagonal of each end that needs it.
+
+Which ends need it differs by valve type, and the three cases are not an
+inconsistency:
+
+| Valve | Pinned end | Exposed end | Residual added to |
+|---|---|---|---|
+| PRV | downstream | upstream | neither |
+| PSV | upstream | downstream | the downstream diagonal |
+| FCV | neither | both | both diagonals |
+
+A pinned end needs nothing: its diagonal already carries $C_{\infty}$, which
+dominates everything in the row. So only the *unpinned* end is ever at risk,
+and only when it is a dead end whose sole link is the valve.
+
+- For a **PSV** the exposed end is downstream, and a dead-end draw-off fed
+  through a pressure-sustaining valve is an ordinary topology, admitted by
+  §2.9 because reachability traverses the valve link. The residual is
+  required.
+- For a **PRV** the exposed end is upstream. A dead-end junction upstream of
+  a PRV has no supply of its own, and an active PRV is by definition reducing
+  a pressure arriving from upstream, so the valve cannot be active in that
+  topology. The exposed row cannot arise and no residual is entered.
+- For an **FCV** neither end is pinned, so both are exposed and both receive
+  it. This is the only case that stamps like an ordinary conductance.
+
+Should the PRV argument ever fail on a topology not anticipated here, the
+consequence is a singular row, which §3.6's factorisation reports and the
+solver answers by demoting the offending valve rather than by failing the
+step.
+
+$C_{\infty}$ is a large constant, $10^8$: it must satisfy $C_{\infty} \gg \max P_k$ so the pinned head dominates, and $1/C_{\infty}$ must stay far below any real conductance so the residual connectivity term above perturbs nothing. Its magnitude is an implementation choice within those two bounds; the value is stated so a reader of §3.3 and §3.5 is reading the same constant.
 
 ### 3.6 Sparse Linear Algebra
 
