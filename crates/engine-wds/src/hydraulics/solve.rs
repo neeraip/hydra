@@ -162,6 +162,14 @@ pub(super) struct DemandTerm {
 pub struct SolverContext {
     pub(crate) node_junc_step_opt: Vec<Option<usize>>,
     pub(crate) junc_nodes: Vec<usize>,
+    /// Tank and reservoir node indices: the only nodes whose net flow is
+    /// reported, and there are usually a handful of them.
+    source_nodes: Vec<usize>,
+    /// Links with at least one fixed-grade end, the only ones that can
+    /// contribute to a reported net flow.
+    source_links: Vec<usize>,
+    /// Whether a node is fixed-grade, for the two-ended case.
+    node_is_source: Vec<bool>,
     pub(super) junction_demand_terms: Vec<Vec<DemandTerm>>,
     pub(crate) pipe_r: Vec<f64>,
     pub(crate) pump_coeffs: Vec<Option<PumpCoeffs>>,
@@ -317,12 +325,25 @@ pub fn build_solver_context(
 
     let mut node_junc_idx = vec![NO_JUNCTION; n_nodes];
     let mut junc_nodes: Vec<usize> = Vec::new();
+    let mut source_nodes: Vec<usize> = Vec::new();
+    let mut node_is_source = vec![false; n_nodes];
     for (i, node) in network.nodes.iter().enumerate() {
         if matches!(node.kind, NodeKind::Junction(_)) {
             node_junc_idx[i] = junc_nodes.len();
             junc_nodes.push(i);
+        } else {
+            source_nodes.push(i);
+            node_is_source[i] = true;
         }
     }
+    // Net flow is reported for fixed-grade nodes only, so only links that
+    // touch one can contribute to it.
+    let source_links: Vec<usize> = (0..n_links)
+        .filter(|&k| {
+            let l = &network.links[k];
+            node_is_source[l.base.from_idx()] || node_is_source[l.base.to_idx()]
+        })
+        .collect();
     let node_junc_step_opt: Vec<Option<usize>> = (0..n_nodes)
         .map(|i| {
             if node_junc_idx[i] == NO_JUNCTION {
@@ -599,6 +620,9 @@ pub fn build_solver_context(
         demand_reduction: 0.0,
         prev_pda_demand_flows: vec![0.0; n_nodes],
         net_flow_accum: vec![0.0; n_nodes],
+        source_nodes,
+        source_links,
+        node_is_source,
         node_h_min: vec![f64::NEG_INFINITY; n_nodes],
         node_h_max: vec![f64::INFINITY; n_nodes],
         has_leakage,
@@ -1240,11 +1264,14 @@ pub fn solve_hydraulic_step(
         ls.setting = ctx.settings[k];
     }
 
-    // Single O(n_links) pass: accumulate signed net flow at every node.
-    // Only tank/reservoir entries are read below, but we accumulate all nodes
-    // to avoid a separate branch per link.
-    ctx.net_flow_accum.fill(0.0);
-    for (k, link) in network.links.iter().enumerate() {
+    // Net flow is reported for fixed-grade nodes only, so both the clear and
+    // the accumulation walk what feeds them rather than the whole network.
+    // The previous pass zeroed one entry per node and visited every link to
+    // fill fifteen of them on the 46k benchmark.
+    for &i in &ctx.source_nodes {
+        ctx.net_flow_accum[i] = 0.0;
+    }
+    for &k in &ctx.source_links {
         if matches!(
             ctx.statuses[k],
             LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
@@ -1252,26 +1279,30 @@ pub fn solve_hydraulic_step(
             continue;
         }
         let flow = ctx.flows[k];
-        ctx.net_flow_accum[link.base.from_idx()] -= flow;
-        ctx.net_flow_accum[link.base.to_idx()] += flow;
+        // A link may have a fixed-grade node at both ends, so both are
+        // tested rather than one being inferred from the other.
+        let (from, to) = (ctx.link_from[k], ctx.link_to[k]);
+        if ctx.node_is_source[from] {
+            ctx.net_flow_accum[from] -= flow;
+        }
+        if ctx.node_is_source[to] {
+            ctx.net_flow_accum[to] += flow;
+        }
     }
 
-    // Fused node-state write: one pass over all nodes.
-    for (i, node) in network.nodes.iter().enumerate() {
-        match &node.kind {
-            NodeKind::Junction(_) => {
-                node_states[i].demand_flow = if is_pda && ctx.junction_demands[i] > 0.0 {
-                    ctx.pda_demand_flows[i]
-                } else {
-                    ctx.junction_demands[i]
-                };
-                node_states[i].emitter_flow = ctx.emitter_flows[i];
-                node_states[i].leakage_flow = ctx.leakage_fa_flows[i] + ctx.leakage_va_flows[i];
-            }
-            NodeKind::Reservoir(_) | NodeKind::Tank(_) => {
-                node_states[i].net_flow = ctx.net_flow_accum[i];
-            }
-        }
+    // Node-state writes, by kind rather than by a match on every node: a
+    // `Node` carries an id string this pass never reads.
+    for &i in &ctx.junc_nodes {
+        node_states[i].demand_flow = if is_pda && ctx.junction_demands[i] > 0.0 {
+            ctx.pda_demand_flows[i]
+        } else {
+            ctx.junction_demands[i]
+        };
+        node_states[i].emitter_flow = ctx.emitter_flows[i];
+        node_states[i].leakage_flow = ctx.leakage_fa_flows[i] + ctx.leakage_va_flows[i];
+    }
+    for &i in &ctx.source_nodes {
+        node_states[i].net_flow = ctx.net_flow_accum[i];
     }
     if let Some(started) = phase_started {
         timings.post += started.elapsed();
