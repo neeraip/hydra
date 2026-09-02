@@ -1558,3 +1558,18 @@ impl Surface {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tolerance_tests {
+    use super::{INTEGRATOR_FLOOR, INTEGRATOR_TOL};
+
+    /// §3.5 fixes the tolerance at 10⁻⁵ m; the floor is the integrator's
+    /// own. Nothing else held either: the tolerance could be loosened a
+    /// thousandfold, degrading every parcel's ponded depth and every
+    /// aquifer, with all 494 tests green.
+    #[test]
+    fn the_integrator_holds_the_tolerance_and_floor_the_spec_states() {
+        assert_eq!(1.0e-5, INTEGRATOR_TOL);
+        assert_eq!(1.0e-3, INTEGRATOR_FLOOR);
+    }
+}

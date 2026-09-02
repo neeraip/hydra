@@ -248,4 +248,12 @@ mod tests {
             .sum();
         assert!((area - 1.0).abs() < 1e-6, "area {area}");
     }
+
+    /// §4.3's convolution floor. Loosening it a thousandfold changed no
+    /// test, and it decides which unit-hydrograph ordinates contribute at
+    /// all.
+    #[test]
+    fn the_convolution_tolerance_is_the_value_the_engine_fixes() {
+        assert_eq!(2.832e-6, super::RDII_TOL);
+    }
 }

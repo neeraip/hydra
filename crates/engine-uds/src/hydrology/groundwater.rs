@@ -624,3 +624,15 @@ impl GwState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tolerance_tests {
+    /// §4.1's aquifer solve tolerances. Loosening the convergence
+    /// tolerance a thousandfold changed no test in the suite.
+    #[test]
+    fn the_aquifer_solve_holds_its_tolerances() {
+        assert_eq!(1.0e-5, super::TOL);
+        // A thousandth of a foot, in metres.
+        assert_eq!(0.001 * 0.3048, super::XTOL);
+    }
+}

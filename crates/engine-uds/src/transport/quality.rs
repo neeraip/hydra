@@ -855,3 +855,17 @@ impl NetworkQuality {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod threshold_tests {
+    /// §8.4's dry thresholds: one litre of volume, one millimetre of
+    /// depth. They decide whether a vertex takes the flow-weighted
+    /// mixture or updates as a reactor. The depth threshold was already
+    /// held by a test; the volume one was not, and could be raised to a
+    /// cubic metre with the whole suite green.
+    #[test]
+    fn the_dry_thresholds_are_a_litre_and_a_millimetre() {
+        assert_eq!(1.0e-3, super::ZERO_VOL);
+        assert_eq!(1.0e-3, super::DRY_DEPTH);
+    }
+}
