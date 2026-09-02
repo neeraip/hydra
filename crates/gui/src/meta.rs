@@ -430,3 +430,100 @@ pub mod bundle {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    /// The oldest project file this app can still be asked to open: a name
+    /// and nothing else.
+    ///
+    /// Every `serde(default)` in `ProjectMeta` exists for this file. They
+    /// were unheld: the engine default could be changed from `wds` to `uds`,
+    /// the version from 1 to 2, and the CRS from EPSG:4326 to EPSG:3857, and
+    /// nothing in the crate failed. The first of those silently opens every
+    /// pre-`engine` project under the wrong engine, with a different element
+    /// catalog and a different editor.
+    #[test]
+    fn a_project_written_before_these_fields_existed_reads_as_it_used_to() {
+        let meta: ProjectMeta =
+            serde_json::from_str(r#"{"name":"Old Project"}"#).expect("legacy meta must parse");
+
+        assert_eq!("Old Project", meta.name);
+        // v1 by definition: the file predates the field.
+        assert_eq!(1, meta.version);
+        // wds was the only engine when the field did not exist.
+        assert_eq!("wds", meta.engine);
+        // The CRS every project was assumed to be in.
+        assert_eq!("EPSG:4326", meta.source_crs);
+        // Counts are derived, so zero until something recounts them.
+        assert_eq!(0, meta.node_count);
+        assert_eq!(0, meta.link_count);
+        // Absent means "follow the app default", which is deliberately not
+        // the same as pinning the value the default currently holds.
+        assert_eq!(None, meta.unit_system);
+    }
+
+    /// A missing field is what defaults; a present one is never overridden.
+    #[test]
+    fn a_stated_field_beats_its_default() {
+        let meta: ProjectMeta = serde_json::from_str(
+            r#"{"name":"N","version":3,"engine":"uds","sourceCrs":"EPSG:27700","unitSystem":"si"}"#,
+        )
+        .expect("parse");
+        assert_eq!(3, meta.version);
+        assert_eq!("uds", meta.engine);
+        assert_eq!("EPSG:27700", meta.source_crs);
+        assert_eq!(Some("si".to_string()), meta.unit_system);
+    }
+
+    /// The wire shape is camelCase, and it is what is already on disk.
+    #[test]
+    fn the_stored_shape_round_trips_through_its_own_field_names() {
+        let meta = ProjectMeta {
+            version: 2,
+            name: "Round Trip".into(),
+            engine: "uds".into(),
+            source_crs: "EPSG:3857".into(),
+            node_count: 7,
+            link_count: 9,
+            unit_system: Some("us".into()),
+        };
+        let json = serde_json::to_string(&meta).expect("serialise");
+        assert!(json.contains(r#""sourceCrs""#), "{json}");
+        assert!(json.contains(r#""nodeCount""#), "{json}");
+        let back: ProjectMeta = serde_json::from_str(&json).expect("parse");
+        assert_eq!(meta.version, back.version);
+        assert_eq!(meta.engine, back.engine);
+        assert_eq!(meta.source_crs, back.source_crs);
+        assert_eq!(meta.unit_system, back.unit_system);
+    }
+
+    /// A scenario written before it could have a parent is a root scenario,
+    /// not a parse failure.
+    #[test]
+    fn a_scenario_without_a_parent_reads_as_a_root_scenario() {
+        let meta: ScenarioMeta =
+            serde_json::from_str(r#"{"name":"Base"}"#).expect("legacy scenario must parse");
+        assert_eq!("Base", meta.name);
+        assert_eq!(None, meta.parent_scenario_id);
+    }
+
+    /// An absent `unitSystem` is omitted rather than written as null, so a
+    /// project that follows the app default keeps following it when read by
+    /// an older build.
+    #[test]
+    fn an_absent_unit_system_is_not_written_at_all() {
+        let meta = ProjectMeta {
+            version: 1,
+            name: "N".into(),
+            engine: "wds".into(),
+            source_crs: "EPSG:4326".into(),
+            node_count: 0,
+            link_count: 0,
+            unit_system: None,
+        };
+        let json = serde_json::to_string(&meta).expect("serialise");
+        assert!(!json.contains("unitSystem"), "{json}");
+    }
+}
