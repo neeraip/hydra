@@ -23,7 +23,7 @@ use crate::engine_api::model::units::make_ucf;
 use crate::engine_api::{
     ActionValue, CurveKind, HeadLossFormula, LinkKind, LinkStatus, LogicOp, MixModel, Network,
     NodeKind, PremiseAttribute, PremiseObject, PremiseOperator, QualityMode, ReportSelection,
-    ReportStatus, SourceType, StatisticType, TriggerType, ValveType, WallOrder,
+    ReportStatus, SimulationOptions, SourceType, StatisticType, TriggerType, ValveType, WallOrder,
 };
 
 /// Write `network` to EPANET 2.3 INP bytes.
@@ -796,13 +796,21 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         // by the elevation/flow factor at load; RQTOL is stored raw). Shortest
         // round-trip decimal form — these can be far below any fixed decimal
         // precision (spec §4.3).
-        if opts.head_tol != 1.524e-4 {
+        //
+        // "Non-default" is asked of the engine rather than of three literals
+        // repeated here. Held as literals, the same numbers lived in two
+        // crates with nothing checking they agreed, and a default changed in
+        // one place would have silently altered every file written by the
+        // other: emitting HTOL for a model that had never set it, or omitting
+        // it for one that had.
+        let defaults = SimulationOptions::default();
+        if opts.head_tol != defaults.head_tol {
             let _ = writeln!(out, " HTOL            {}", opts.head_tol * ucf.elev);
         }
-        if opts.flow_change_tol != 2.832e-6 {
+        if opts.flow_change_tol != defaults.flow_change_tol {
             let _ = writeln!(out, " QTOL            {}", opts.flow_change_tol * ucf.flow);
         }
-        if opts.rq_tol != 1.0e-7 {
+        if opts.rq_tol != defaults.rq_tol {
             let _ = writeln!(out, " RQTOL           {}", opts.rq_tol);
         }
         if opts.head_error_limit > 0.0 {
@@ -1429,6 +1437,57 @@ mod tests {
         // crates/engine-wds  →  workspace root
         let root = manifest.parent().unwrap().parent().unwrap();
         root.join("tests/fixtures/wds").join(name)
+    }
+
+    const TINY_INP: &str = "[JUNCTIONS]\nJ1  0  10\n\n        [RESERVOIRS]\nR1  100\n\n        [PIPES]\nP1  R1  J1  1000  300  100  0  Open\n\n        [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
+
+    /// The three status-transition tolerances are written only when they
+    /// differ from the engine's own defaults, and the writer must ask the
+    /// engine what those are.
+    ///
+    /// This is the test that was missing when the writer held its own literal
+    /// copies of `1.524e-4`, `2.832e-6` and `1.0e-7`. Changing a default in
+    /// either crate then silently changed what every exported file contained,
+    /// in both directions: a model that had never set HTOL would start
+    /// carrying one, or a model that had would stop. Nothing failed. Now a
+    /// disagreement between the two makes this fail, whichever side moved.
+    #[test]
+    fn default_tolerances_are_not_written_and_the_defaults_come_from_the_engine() {
+        let net = parse(TINY_INP.as_bytes()).expect("parse");
+        // Guard the premise: this model sets none of the three, so they hold
+        // whatever the engine defaults to.
+        let defaults = SimulationOptions::default();
+        assert_eq!(defaults.head_tol, net.options.head_tol);
+        assert_eq!(defaults.flow_change_tol, net.options.flow_change_tol);
+        assert_eq!(defaults.rq_tol, net.options.rq_tol);
+
+        let written = String::from_utf8(write_inp(&net)).expect("utf-8");
+        for key in ["HTOL", "QTOL", "RQTOL"] {
+            assert!(
+                !written.contains(key),
+                "{key} written for a model that never set it:\n{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tolerance_that_differs_from_the_default_is_written() {
+        for (key, set) in [
+            (
+                "HTOL",
+                (|o: &mut SimulationOptions| o.head_tol *= 2.0) as fn(&mut SimulationOptions),
+            ),
+            ("QTOL", |o: &mut SimulationOptions| o.flow_change_tol *= 2.0),
+            ("RQTOL", |o: &mut SimulationOptions| o.rq_tol *= 2.0),
+        ] {
+            let mut net = parse(TINY_INP.as_bytes()).expect("parse");
+            set(&mut net.options);
+            let written = String::from_utf8(write_inp(&net)).expect("utf-8");
+            assert!(
+                written.contains(key),
+                "{key} not written for a model that set it:\n{written}"
+            );
+        }
     }
 
     /// Parse a fixture, write it back to INP bytes, parse again, and assert

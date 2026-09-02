@@ -1311,6 +1311,39 @@ impl Network {
 mod tests {
     use super::*;
 
+    // ── Solver option defaults (model spec §2.1) ──────────────────────────────
+
+    /// Every solver default the spec's §2.1 table fixes, asserted against the
+    /// value written there.
+    ///
+    /// Most of these are already caught indirectly, because a solve behaves
+    /// differently when one moves. `rq_tol` was not caught by anything: it
+    /// clamps the emitter and power-pump linearisation gradient, and the
+    /// networks in this suite do not lean on it hard enough to notice three
+    /// orders of magnitude. These are also the numbers the INP writer decides
+    /// "non-default" against, so a silent drift here changes what every
+    /// exported file contains.
+    ///
+    /// Values only. What each one does is the spec's business, and a test
+    /// that restated it would just be a second place to keep it correct.
+    #[test]
+    fn solver_defaults_are_the_values_the_spec_fixes() {
+        let d = SimulationOptions::default();
+        assert_eq!(200, d.max_iter);
+        assert_eq!(-1, d.extra_iter);
+        assert_eq!(1.524e-4, d.head_tol);
+        assert_eq!(2.832e-6, d.flow_change_tol);
+        assert_eq!(0.001, d.flow_tol);
+        assert_eq!(0.0, d.head_error_limit);
+        assert_eq!(0.0, d.flow_change_limit);
+        assert_eq!(1.0e-7, d.rq_tol);
+        assert_eq!(1.0e-3, d.level_err_tol);
+        assert_eq!(0.0, d.damp_limit);
+        assert_eq!(2, d.check_freq);
+        assert_eq!(10, d.max_check);
+        assert_eq!(0.01, d.quality_tolerance);
+    }
+
     // ── CurveKind ─────────────────────────────────────────────────────────────
 
     /// `CurveKind::ALL` is what every consumer iterates now that the enum
