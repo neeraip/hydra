@@ -417,28 +417,19 @@ impl SurfaceQuality {
                     continue;
                 }
                 // The load over the step (U), per form (§8.3).
-                let mut load = match w.form {
-                    WashoffForm::None => 0.0,
-                    WashoffForm::Exponential => {
-                        // Coefficient is per hour on the file rain-rate.
-                        w.coeff / 3600.0
-                            * (q.runoff_rate / self.cv_rain).powf(w.exponent)
-                            * buildup
-                            * q.dt
-                            * (q.v_outflow / (q.runoff_rate * parcel.area * q.dt).max(1e-30))
-                    }
-                    WashoffForm::RatingCurve => {
-                        // On the land-use share of the actual runoff
-                        // flow, in file units; the load lands in
-                        // concentration-mass per second (§8.3).
-                        let q_share = f * (q.v_outflow / q.dt) / self.cv_flow;
-                        w.coeff * q_share.powf(w.exponent) * q.dt / 1000.0
-                    }
-                    WashoffForm::Emc => {
-                        // Concentration on the land-use share of outflow.
-                        w.coeff * f * q.v_outflow
-                    }
-                };
+                let mut load = washoff_load(
+                    w,
+                    &WashoffInputs {
+                        buildup,
+                        share: f,
+                        runoff_rate: q.runoff_rate,
+                        v_outflow: q.v_outflow,
+                        dt: q.dt,
+                        parcel_area: parcel.area,
+                        cv_rain: self.cv_rain,
+                        cv_flow: self.cv_flow,
+                    },
+                );
                 if load <= 0.0 {
                     continue;
                 }
@@ -524,6 +515,60 @@ impl SurfaceQuality {
             self.parcels[pi].ponded[ci] = mass;
             out[ci] += w_out;
         }
+    }
+}
+
+/// What one mobilisation relation sees of a step (§8.3).
+///
+/// A struct rather than eight positional arguments: every field is a
+/// length or a rate and half of them are unit-conversion factors, which
+/// is exactly the shape a caller gets wrong silently.
+pub(crate) struct WashoffInputs {
+    /// Mass currently accumulated for this (constituent, land use).
+    pub buildup: f64,
+    /// The land use's share of the parcel.
+    pub share: f64,
+    /// Runoff rate over the parcel (m/s).
+    pub runoff_rate: f64,
+    /// Runoff volume leaving over the step (m³).
+    pub v_outflow: f64,
+    /// Step length (s).
+    pub dt: f64,
+    /// Parcel area (m²).
+    pub parcel_area: f64,
+    /// Rain-rate conversion into the file's units.
+    pub cv_rain: f64,
+    /// Flow conversion into the file's units.
+    pub cv_flow: f64,
+}
+
+/// §8.3: the load one relation mobilises over a step, before
+/// source-limiting, BMP removal and co-pollutant potency.
+///
+/// Extracted from `washoff_loads` because the three forms are the physics
+/// and everything around them is bookkeeping. Inlined, the exponent could
+/// be dropped from either power form and the whole suite still passed:
+/// what covers this module is a checkpoint round-trip, which asserts a run
+/// resumes identically and is invariant to every formula in it being wrong.
+pub(crate) fn washoff_load(w: &crate::model::Washoff, i: &WashoffInputs) -> f64 {
+    match w.form {
+        WashoffForm::None => 0.0,
+        WashoffForm::Exponential => {
+            // Coefficient is per hour on the file rain-rate.
+            w.coeff / 3600.0
+                * (i.runoff_rate / i.cv_rain).powf(w.exponent)
+                * i.buildup
+                * i.dt
+                * (i.v_outflow / (i.runoff_rate * i.parcel_area * i.dt).max(1e-30))
+        }
+        WashoffForm::RatingCurve => {
+            // On the land-use share of the actual runoff flow, in file
+            // units; the load lands in concentration-mass per second.
+            let q_share = i.share * (i.v_outflow / i.dt) / i.cv_flow;
+            w.coeff * q_share.powf(w.exponent) * i.dt / 1000.0
+        }
+        // Concentration on the land-use share of outflow.
+        WashoffForm::Emc => w.coeff * i.share * i.v_outflow,
     }
 }
 
@@ -721,5 +766,157 @@ impl SurfaceQuality {
             *slot = r.fs()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Washoff, WashoffForm};
+
+    // §8.2 accumulation and §8.3 mobilisation, in closed form.
+    //
+    // This module had no test of its own. The one fixture that reaches it,
+    // `buildup_washoff_treatment.inp`, is used only by checkpoint
+    // round-trip tests, which assert a run resumes identically and stay
+    // green with any formula here replaced by any other. Both washoff
+    // exponents could be deleted, and the saturation form could read the
+    // wrong coefficient column, with all 494 tests passing.
+
+    fn buildup_of(form: BuildupForm, c0: f64, c1: f64, c2: f64) -> Buildup {
+        Buildup {
+            form,
+            coeffs: [c0, c1, c2],
+            normalizer: BuildupNormalizer::PerArea,
+            series: None,
+        }
+    }
+
+    /// §8.2's three accumulation forms at a known dry time.
+    #[test]
+    fn each_buildup_form_follows_its_own_curve() {
+        // Power: min(B_max, K_B t^N_B) = min(50, 2 * 9^0.5) = 6.
+        let power = buildup_of(BuildupForm::Power, 50.0, 2.0, 0.5);
+        assert!((buildup_mass(&power, 9.0) - 6.0).abs() < 1e-12);
+        // and it pins at B_max once the curve passes it.
+        assert!((buildup_mass(&power, 1.0e9) - 50.0).abs() < 1e-9);
+
+        // Exponential: B_max(1 - e^{-K_B t}).
+        let expo = buildup_of(BuildupForm::Exponential, 50.0, 0.25, 0.0);
+        let want = 50.0 * (1.0 - (-0.25f64 * 4.0).exp());
+        assert!((buildup_mass(&expo, 4.0) - want).abs() < 1e-12);
+
+        // Saturation: B_max t / (K_B + t), with the half-saturation time
+        // in the THIRD column. §8.2 adopts that column convention from the
+        // file format deliberately; reading the second gives 50*4/(0.25+4)
+        // = 47.06 instead of 25, and nothing used to notice.
+        let sat = buildup_of(BuildupForm::Saturation, 50.0, 0.25, 4.0);
+        assert!(
+            (buildup_mass(&sat, 4.0) - 25.0).abs() < 1e-12,
+            "saturation must read K_B from the third column, got {}",
+            buildup_mass(&sat, 4.0)
+        );
+    }
+
+    /// The inversion §8.2 relies on: buildup's state is mass, so each dry
+    /// step recovers the equivalent time before advancing.
+    #[test]
+    fn buildup_time_inverts_buildup_mass() {
+        for b in [
+            buildup_of(BuildupForm::Power, 50.0, 2.0, 0.5),
+            buildup_of(BuildupForm::Saturation, 50.0, 0.25, 4.0),
+        ] {
+            let days = 3.75;
+            let mass = buildup_mass(&b, days);
+            assert!(
+                (buildup_days(&b, mass) - days).abs() < 1e-9,
+                "{:?}: {} d -> {} kg -> {} d",
+                b.form,
+                days,
+                mass,
+                buildup_days(&b, mass)
+            );
+        }
+    }
+
+    fn inputs() -> WashoffInputs {
+        WashoffInputs {
+            buildup: 10.0,
+            share: 0.5,
+            runoff_rate: 2.0e-6,
+            v_outflow: 3.0,
+            dt: 300.0,
+            parcel_area: 4000.0,
+            cv_rain: 1.0e-6,
+            cv_flow: 1.0e-3,
+        }
+    }
+
+    fn washoff_of(form: WashoffForm, coeff: f64, exponent: f64) -> Washoff {
+        Washoff {
+            form,
+            coeff,
+            exponent,
+            sweep_efficiency: 0.0,
+            bmp_efficiency: 0.0,
+        }
+    }
+
+    /// §8.3 exponential: the load is a power law in the file-unit runoff
+    /// rate, scaled by the mass on hand and the outflow share of runoff.
+    #[test]
+    fn exponential_washoff_is_a_power_law_in_the_runoff_rate() {
+        let i = inputs();
+        let w = washoff_of(WashoffForm::Exponential, 0.6, 1.5);
+        let rate = i.runoff_rate / i.cv_rain; // 2.0 in file units
+        let share = i.v_outflow / (i.runoff_rate * i.parcel_area * i.dt);
+        let want = 0.6 / 3600.0 * rate.powf(1.5) * i.buildup * i.dt * share;
+        assert!((washoff_load(&w, &i) - want).abs() < 1e-12);
+
+        // The exponent has to bite: at rate 2.0 an exponent of 1 gives a
+        // different answer, which is what deleting it used to do silently.
+        let linear = washoff_of(WashoffForm::Exponential, 0.6, 1.0);
+        assert!(
+            (washoff_load(&w, &i) - washoff_load(&linear, &i)).abs() > 1e-9,
+            "exponent 1.5 and exponent 1 must not agree here"
+        );
+    }
+
+    /// §8.3 rating curve: a power law in the land-use share of the actual
+    /// runoff flow, not in the rain.
+    #[test]
+    fn rating_curve_washoff_is_a_power_law_in_the_flow_share() {
+        let i = inputs();
+        let w = washoff_of(WashoffForm::RatingCurve, 0.8, 1.25);
+        let q_share = i.share * (i.v_outflow / i.dt) / i.cv_flow;
+        let want = 0.8 * q_share.powf(1.25) * i.dt / 1000.0;
+        assert!((washoff_load(&w, &i) - want).abs() < 1e-12);
+
+        let linear = washoff_of(WashoffForm::RatingCurve, 0.8, 1.0);
+        assert!(
+            (washoff_load(&w, &i) - washoff_load(&linear, &i)).abs() > 1e-9,
+            "exponent 1.25 and exponent 1 must not agree here"
+        );
+    }
+
+    /// §8.3 EMC: a concentration on the land-use share of outflow, with no
+    /// dependence on buildup or on the exponent.
+    #[test]
+    fn event_mean_concentration_washoff_ignores_buildup_and_exponent() {
+        let i = inputs();
+        let w = washoff_of(WashoffForm::Emc, 12.0, 9.9);
+        assert!((washoff_load(&w, &i) - 12.0 * 0.5 * 3.0).abs() < 1e-12);
+
+        let mut dry = inputs();
+        dry.buildup = 0.0;
+        assert!((washoff_load(&w, &dry) - washoff_load(&w, &i)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_relation_with_no_form_mobilises_nothing() {
+        assert_eq!(
+            0.0,
+            washoff_load(&washoff_of(WashoffForm::None, 5.0, 2.0), &inputs())
+        );
     }
 }
