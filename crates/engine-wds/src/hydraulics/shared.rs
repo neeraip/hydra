@@ -196,4 +196,67 @@ mod tests {
         let (dh, _) = upper_barrier(-1.0);
         assert!(dh.abs() < 1.0e-3, "Δh={dh}");
     }
+
+    /// The half these tests were missing: the upper barrier's violating side.
+    #[test]
+    fn upper_barrier_violation_strongly_positive() {
+        let (dh, _) = upper_barrier(1.0);
+        assert!(dh > 1.0e3, "Δh={dh}");
+    }
+
+    // ── Barrier gradients (§3.3.4) ────────────────────────────────────────────
+    //
+    // Δg is the half of a barrier that does the work: Δh states that the bound
+    // was crossed, Δg is what pushes the Newton step back across it. Nothing
+    // asserted it. The suite caught a sign flip and caught Δg being zeroed
+    // outright, both through solver tests, but the magnitude was free: the
+    // coefficient could be changed from 5.0e8 to 5.0e2, six orders of
+    // magnitude, and all 704 tests passed. The spec fixes it at 10⁹/2, so
+    // these pin it directly.
+
+    /// On the violating side both barriers drive the gradient to the spec's
+    /// 10⁹, which is the stiffness that makes them barriers rather than
+    /// suggestions.
+    #[test]
+    fn a_violated_barrier_reaches_the_full_stiffness() {
+        let (_, dg_lower) = lower_barrier(-1.0);
+        let (_, dg_upper) = upper_barrier(1.0);
+        // δq = ±1 is far outside the smoothing width, so a/b is ±1 to well
+        // within this tolerance and Δg is the whole 10⁹.
+        assert!(
+            (dg_lower - 1.0e9).abs() < 1.0,
+            "lower Δg should be ~1e9, got {dg_lower}"
+        );
+        assert!(
+            (dg_upper - 1.0e9).abs() < 1.0,
+            "upper Δg should be ~1e9, got {dg_upper}"
+        );
+    }
+
+    /// On the feasible side the gradient vanishes, so an element inside its
+    /// bound behaves as though unconstrained.
+    #[test]
+    fn a_satisfied_barrier_contributes_no_gradient() {
+        let (_, dg_lower) = lower_barrier(1.0);
+        let (_, dg_upper) = upper_barrier(-1.0);
+        assert!(dg_lower.abs() < 1.0e-3, "lower Δg={dg_lower}");
+        assert!(dg_upper.abs() < 1.0e-3, "upper Δg={dg_upper}");
+    }
+
+    /// Exactly at the bound the barrier is half-on, which is what makes it
+    /// smooth rather than a switch, and is the one point where the smoothing
+    /// term alone decides the answer.
+    #[test]
+    fn a_barrier_is_half_on_at_the_bound() {
+        let (dh, dg) = lower_barrier(0.0);
+        // a = 0, so b = √(1e-6) and Δh = −b/2, Δg = 10⁹/2.
+        assert!(
+            (dg - 5.0e8).abs() < 1.0,
+            "Δg at the bound should be half the stiffness, got {dg}"
+        );
+        assert!(
+            (dh + 5.0e-4).abs() < 1.0e-9,
+            "Δh at the bound is set by the smoothing term alone, got {dh}"
+        );
+    }
 }
