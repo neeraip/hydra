@@ -413,7 +413,7 @@ impl Controls {
                     .find(|(a, _)| self.actions[*a].link == link)
                 {
                     Some(slot) => {
-                        if priority > slot.1 {
+                        if wins_the_slot(priority, slot.1) {
                             *slot = (ai, priority);
                         }
                     }
@@ -1065,5 +1065,39 @@ impl Controls {
             self.guard_events.push(r.text()?);
         }
         Ok(())
+    }
+}
+
+/// §9.1 conflict resolution: whether a rule takes a link's pending slot
+/// from the rule already holding it.
+///
+/// Strictly higher wins; a tie keeps the earlier rule. Named because the
+/// tie half had nothing holding it: relaxing this to `>=` reverses which
+/// of two equal-priority rules controls the link, and the whole suite
+/// stayed green.
+fn wins_the_slot(candidate: f64, held: f64) -> bool {
+    candidate > held
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::wins_the_slot;
+
+    /// The rule as §9.1 states it, both halves.
+    #[test]
+    fn a_strictly_higher_priority_takes_the_slot_and_a_tie_does_not() {
+        assert!(wins_the_slot(5.0, 3.0), "higher priority must win");
+        assert!(!wins_the_slot(3.0, 5.0), "lower priority must lose");
+        assert!(
+            !wins_the_slot(4.0, 4.0),
+            "a tie keeps the earlier rule, so the later one must not take the slot"
+        );
+    }
+
+    /// The default priority is zero, so two unprioritised rules on one link
+    /// are a tie, and the first one written controls it.
+    #[test]
+    fn two_unprioritised_rules_leave_the_first_in_control() {
+        assert!(!wins_the_slot(0.0, 0.0));
     }
 }
