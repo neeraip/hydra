@@ -139,6 +139,19 @@ mutants FILE PKG="hydra-engine-uds":
     mkdir -p "${TMPDIR:-/tmp}/hydra-mutants.noindex"
     TMPDIR="${TMPDIR:-/tmp}/hydra-mutants.noindex" cargo mutants -p {{PKG}} --file {{FILE}}
 
+# Change each constant in a crate, run its tests, and report the ones
+# nothing noticed. `cargo mutants` replaces function bodies, so a value
+# written once and depended on everywhere is invisible to it — which is how
+# three reviews each found spec-fixed numbers that no test held.
+#
+# One rebuild and one test run per constant, so it is slow and is not in
+# `just ci`. Scope it with --filter, or run it on what you changed.
+#
+# Usage: just mutants-const crates/engine-wds hydra-engine-wds
+#        just mutants-const crates/engine-uds hydra-engine-uds --filter TOL
+mutants-const CRATE PKG *ARGS:
+    python3 scripts/const_mutants.py {{CRATE}} --package {{PKG}} {{ARGS}}
+
 # Run Python script unit tests
 test-scripts:
     python3 -m unittest discover -s scripts/tests -p "test_*.py" -v
