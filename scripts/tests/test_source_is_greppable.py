@@ -27,6 +27,10 @@ BINARY_SUFFIXES = {
     # this engine's readers are checked against the formats rather than
     # against their own writers (uds §14.8.2, §14.8.3).
     ".rff", ".rain",
+    # Wire-format fixtures: bytes one side encodes and the other decodes,
+    # committed so a layout change fails on both sides rather than only the
+    # side that made it (`commands/binary_codec.rs`).
+    ".bin",
 }
 
 # Tab, newline and carriage return are the control bytes text is made of.
