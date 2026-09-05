@@ -271,15 +271,25 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{len(targets)} constants in {package} ({skipped} skipped as non-numeric)\n")
     survived: list[Result] = []
+    broken: list[Result] = []
     for i, (path, const, new) in enumerate(targets, 1):
         print(f"[{i}/{len(targets)}] {const.name:32} ", end="", flush=True)
         outcome = probe(path, const, new, package)
         print(outcome)
         if outcome == "survived":
             survived.append(Result(const, path, outcome))
+        elif outcome == "build-error":
+            broken.append(Result(const, path, outcome))
 
     print()
+    if broken:
+        print(f"{len(broken)} mutations did not compile (so nothing was learned about them):\n")
+        for r in broken:
+            print(f"  {rel(r.path)}:{r.const.line}  {r.const.name}: {r.const.ty} = {r.const.value}")
+        print()
     if not survived:
+        if broken:
+            return 2
         print("every constant is held by a test")
         return 0
     print(f"{len(survived)} constants no test noticed changing:\n")
