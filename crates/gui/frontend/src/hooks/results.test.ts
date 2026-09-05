@@ -12,6 +12,7 @@
  *
  * All values little-endian.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Tauri IPC seam so `getPeriodResults` can be exercised with
@@ -340,5 +341,40 @@ describe("compareTopologyDigests", () => {
     expect(compareTopologyDigests(A, undefined)).toBe("unknown");
     // Both missing.
     expect(compareTopologyDigests(null, null)).toBe("unknown");
+  });
+});
+
+// ── The wire contract with the Rust encoder ─────────────────────────────────
+
+describe("the period-results fixture the backend encodes", () => {
+  // The tests above build their own bytes, which is this decoder's belief
+  // about the layout rather than the encoder's output. Both sides pin a
+  // layout; only a file both read fails when they diverge. Encoded by
+  // `commands/binary_codec.rs` from the same result its own offset test
+  // uses; regenerate with
+  // `UPDATE_SNAPSHOT_FIXTURE=1 cargo test -p hydra-gui fixture`.
+  const fixture = () => {
+    const bytes = readFileSync(
+      new URL("../../../tests/fixtures/period-results.bin", import.meta.url),
+    );
+    return bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+  };
+
+  it("reads every column back at the value the encoder put in it", () => {
+    const res = decodePeriodResults(fixture());
+    if (!res) throw new Error("the fixture must decode");
+    expect(Array.from(res.nodeDemand)).toEqual([1, 2]);
+    expect(Array.from(res.nodeHead)).toEqual([3, 4]);
+    expect(Array.from(res.nodePressure)).toEqual([5, 6]);
+    expect(Array.from(res.linkFlow)).toEqual([9, 10, 11]);
+    expect(Array.from(res.linkVelocity)).toEqual([12, 13, 14]);
+    expect(Array.from(res.linkHeadloss)).toEqual([15, 16, 17]);
+    expect(Array.from(res.linkStatus)).toEqual([1, 0, 1]);
+    // Encoded with the quality flag set, so both quality columns follow.
+    expect(Array.from(res.nodeQuality ?? [])).toEqual([7, 8]);
+    expect(Array.from(res.linkQuality ?? [])).toEqual([18, 19, 20]);
   });
 });

@@ -332,9 +332,40 @@ mod tests {
             .collect()
     }
 
+    /// The period-results fixture the frontend decodes, on the same footing
+    /// as the snapshot one above: this test pins offsets, the frontend
+    /// hand-builds bytes from its own belief, and only a file both sides
+    /// read fails when the two diverge. Same regeneration command.
     #[test]
-    fn encode_period_results_layout_roundtrips() {
-        let pr = hydra::io::out_reader::PeriodResult {
+    fn period_results_fixture_is_the_bytes_the_frontend_decodes() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/period-results.bin");
+        let encoded = encode_period_results(&period_test_result(), true);
+
+        if std::env::var_os("UPDATE_SNAPSHOT_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create dir");
+            std::fs::write(&path, &encoded).expect("write fixture");
+            return;
+        }
+        let stored = std::fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. Regenerate with UPDATE_SNAPSHOT_FIXTURE=1.",
+                path.display()
+            )
+        });
+        assert!(
+            stored == encoded,
+            "period-results bytes changed ({} stored, {} encoded); regenerate the \
+             fixture and update the frontend decoder to match",
+            stored.len(),
+            encoded.len()
+        );
+    }
+
+    /// The result the two period-results tests share, so the fixture and
+    /// the offset assertions describe one encoding.
+    fn period_test_result() -> hydra::io::out_reader::PeriodResult {
+        hydra::io::out_reader::PeriodResult {
             node_demand: vec![1.0, 2.0],
             node_head: vec![3.0, 4.0],
             node_pressure: vec![5.0, 6.0],
@@ -347,7 +378,12 @@ mod tests {
             link_setting: vec![0.0, 0.0, 0.0],
             link_reaction_rate: vec![0.0, 0.0, 0.0],
             link_friction_factor: vec![0.0, 0.0, 0.0],
-        };
+        }
+    }
+
+    #[test]
+    fn encode_period_results_layout_roundtrips() {
+        let pr = period_test_result();
 
         // Without quality arrays.
         let buf = encode_period_results(&pr, false);
