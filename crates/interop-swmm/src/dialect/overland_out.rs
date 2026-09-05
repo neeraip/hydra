@@ -127,3 +127,16 @@ impl crate::engine_api::simulation::sinks::OverlandSink for OverlandStream<Box<d
         OverlandStream::finish(*self).map(|_| ())
     }
 }
+
+#[cfg(test)]
+mod format_identifier_tests {
+    /// §14.16: leading and closing magic 1214727218, format version 1. Both
+    /// could change with the suite green; the sidecar tests round-trip
+    /// through this writer and reader together, so a moved magic moves on
+    /// both sides at once and nothing notices.
+    #[test]
+    fn the_surface_sidecar_identifiers_are_the_ones_the_spec_states() {
+        assert_eq!(1_214_727_218, super::MAGIC);
+        assert_eq!(1, super::VERSION);
+    }
+}

@@ -13,11 +13,9 @@ use crate::engine_api::model::{
 };
 use crate::engine_api::simulation::engine::Snapshot;
 
-const MAGIC: i32 = 516_114_522;
-const VERSION: i32 = 52_004;
-/// Days between the predecessor's epoch (1899-12-30) and the civil epoch
-/// (1970-01-01).
-const EPOCH_OFFSET_DAYS: f64 = 25_569.0;
+// The format identifiers are the reader's (§14.9), so the file this writes
+// is by construction one the reader accepts.
+use super::out_reader::{EPOCH_OFFSET_DAYS, MAGIC, VERSION};
 
 struct Cv {
     us: bool,

@@ -16,11 +16,17 @@ use std::path::Path;
 
 use crate::dialect::options::FlowUnits;
 
-const MAGIC: i32 = 516_114_522;
-const VERSION: i32 = 52_004;
+/// §14.9: the predecessor's leading and trailing magic number.
+///
+/// Defined once, here, and imported by the writer. Each held its own copy,
+/// and a change to either would have had this engine writing files its own
+/// reader refuses, with nothing checking the two agreed.
+pub(crate) const MAGIC: i32 = 516_114_522;
+/// §14.9: the pinned predecessor's 5.2.4, encoded major·10⁴ + minor·10³ + patch.
+pub(crate) const VERSION: i32 = 52_004;
 /// Days between the predecessor's epoch (1899-12-30) and the civil epoch
 /// (1970-01-01).
-const EPOCH_OFFSET_DAYS: f64 = 25_569.0;
+pub(crate) const EPOCH_OFFSET_DAYS: f64 = 25_569.0;
 /// Identifier-length sanity bound: no real model carries kilobyte ids, and
 /// the cap turns a corrupt length prefix into a refusal instead of an
 /// attempted gigabyte allocation.
@@ -632,5 +638,37 @@ impl OverlandResults {
             out.push((t, c));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod format_identifier_tests {
+    use super::*;
+
+    /// §14.9 states the magic and the version; the version is the pinned
+    /// predecessor's 5.2.4 under its own encoding, so it is asserted as that
+    /// arithmetic rather than as a number copied from itself.
+    #[test]
+    fn the_results_file_identifiers_are_the_ones_the_spec_states() {
+        assert_eq!(516_114_522, MAGIC);
+        assert_eq!(5 * 10_000 + 2 * 1_000 + 4, VERSION);
+    }
+
+    /// The epoch offset is a fact about two dates, and is checked as one:
+    /// days from 1899-12-30 to 1970-01-01, counted through the civil
+    /// calendar rather than written down.
+    #[test]
+    fn the_epoch_offset_is_the_distance_between_the_two_epochs() {
+        fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+            let y = if m <= 2 { y - 1 } else { y };
+            let era = y.div_euclid(400);
+            let yoe = y - era * 400;
+            let mp = (m + 9) % 12;
+            let doy = (153 * mp + 2) / 5 + d - 1;
+            let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            era * 146_097 + doe - 719_468
+        }
+        let offset = days_from_civil(1970, 1, 1) - days_from_civil(1899, 12, 30);
+        assert_eq!(offset as f64, EPOCH_OFFSET_DAYS);
     }
 }
