@@ -25,6 +25,7 @@ pub use headloss::G_DW;
 use headloss::{pipe_resistance, pipe_total_hg, HW_EXP};
 use valve::{bad_valve, check_link_status, check_valve_status};
 
+pub(crate) use shared::Q_CLOSED;
 pub use shared::{HydraulicError, SolveResult};
 pub use solve::{build_solver_context, solve_hydraulic_step, SolverContext};
 pub(crate) use sparse::SparseSolver;

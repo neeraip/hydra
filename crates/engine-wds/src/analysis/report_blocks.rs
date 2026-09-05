@@ -1900,8 +1900,6 @@ fn distribution_fragment(
     values: &[f64],
     n_periods: usize,
 ) -> Fragment {
-    const BIN_COUNT: usize = 6;
-
     let mut items = Vec::new();
     if values.is_empty() {
         items.push(FragmentItem::Note {
@@ -1968,6 +1966,9 @@ fn distribution_fragment(
 /// Tank hydraulic head over the reporting horizon as a line chart
 /// (analysis spec §4.1.2): one series per tank in node order, capped at
 /// the first [`MAX_TANK_SERIES`] with a disclosure note when more exist.
+/// §4.1.2: equal-width bins a distribution block spans the observed range with.
+const BIN_COUNT: usize = 6;
+
 const MAX_TANK_SERIES: usize = 8;
 
 fn tank_levels(src: &dyn ResultsSource, network: &Network) -> Result<Fragment, BlockError> {
@@ -2362,6 +2363,23 @@ mod tests {
             notes(&fragment).is_empty(),
             "a note saying nothing was hidden teaches readers to skip notes"
         );
+    }
+
+    // ── defaults the analysis spec tabulates ─────────────────────────────────
+
+    /// Every block default §4.1.1, §4.1.2 and §4.2 state, asserted against
+    /// the value written there. Each could change with the suite green: the
+    /// tests exercise the options by passing them, and a default only shows
+    /// when nothing is passed and the row count is counted.
+    #[test]
+    fn block_defaults_are_the_values_the_spec_tabulates() {
+        assert_eq!(10, DEFAULT_WORST_COUNT, "§4.1.1 worstCount");
+        assert_eq!(5, DEFAULT_TOP_COUNT, "§4.1.1 pipe-criticality topCount");
+        assert_eq!(10, DEFAULT_HEADLOSS_COUNT, "§4.1.1 unit-headloss topCount");
+        assert_eq!(200, DEFAULT_MAX_ROWS, "§4.1.1 warnings maxRows");
+        assert_eq!(6, BIN_COUNT, "§4.1.2 equal-width bins");
+        assert_eq!(8, MAX_TANK_SERIES, "§4.1 tank-levels series");
+        assert_eq!(2048, MAX_RANGE_SAMPLES, "§4.2 range-scan sample budget");
     }
 
     // ── option descriptions (hydra-common spec §3.2.1) ───────────────────────

@@ -5,7 +5,7 @@ pub(super) const C_INF: f64 = 1.0e8;
 pub(super) const G_MIN: f64 = 1.0e-6;
 
 /// Placeholder flow for closed links at initialisation (§3.10).
-pub(super) const Q_CLOSED: f64 = 1.0e-6;
+pub(crate) const Q_CLOSED: f64 = 1.0e-6;
 
 /// Whether a link is assembled as closed, i.e. gets `P = 1/C∞` and `Y = Q`
 /// rather than a real head-loss gradient (§3.3, §3.5).
@@ -177,6 +177,16 @@ mod tests {
         assert!(PumpCoeffs::from_three_points(90.0, 1.0, 90.0, 2.0, 60.0).is_none());
         assert!(PumpCoeffs::from_three_points(100.0, 0.0, 90.0, 2.0, 60.0).is_none());
         assert!(PumpCoeffs::from_three_points(100.0, 1.0, 99.99999, 2.0, 0.001).is_none());
+    }
+
+    /// §3.10: the flow a closed link is initialised with. It also stands in
+    /// for zero wherever a closed link's flow is read back, so the results
+    /// path that used to keep its own copy now reads this one. Survived a
+    /// thousandfold change: no test reads a closed link's flow to a
+    /// tolerance that tight.
+    #[test]
+    fn the_closed_link_placeholder_flow_is_the_value_the_spec_fixes() {
+        assert_eq!(1.0e-6, super::Q_CLOSED);
     }
 
     #[test]

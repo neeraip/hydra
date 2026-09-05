@@ -511,3 +511,15 @@ mod tests {
         assert!(g_blocked > g_free);
     }
 }
+
+#[cfg(test)]
+mod tolerance_tests {
+    /// §3.8 fixes the leakage and PDA secondary tolerance at $2.83\times10^{-6}$
+    /// m³/s ($10^{-4}$ ft³/s). It could be loosened a thousandfold with the
+    /// suite green: no test network leaks or is pressure-driven near enough
+    /// to the tolerance to notice.
+    #[test]
+    fn the_secondary_convergence_tolerance_is_the_value_the_spec_fixes() {
+        assert_eq!(2.83e-6, super::Q_LEAK_TOL);
+    }
+}

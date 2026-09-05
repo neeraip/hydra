@@ -185,3 +185,51 @@ mod tests {
         assert!(g1 > g0);
     }
 }
+
+#[cfg(test)]
+mod derived_constants {
+    //! §3.2.2 writes its Darcy-Weisbach anchors as formulas and the code
+    //! holds them as sixteen-digit literals. A literal can only be checked
+    //! against the formula it came from, so that is what these do; each was
+    //! free to drift by three orders of magnitude with the suite green,
+    //! because the transitional branch they anchor is entered by no test
+    //! network at a flow where the difference shows.
+    use super::*;
+    use std::f64::consts::PI;
+
+    fn close(a: f64, b: f64) {
+        assert!((a - b).abs() <= 1e-12 * b.abs().max(1.0), "{a} vs {b}");
+    }
+
+    /// $A_9 = -2/\ln 10$: the change of base in $-2\log_{10}$.
+    #[test]
+    fn a9_is_the_log_base_change() {
+        close(DW_A9, -2.0 / 10f64.ln());
+    }
+
+    /// $A_B = 5.74 / 4000^{0.9}$: the Swamee-Jain term at the turbulent edge.
+    #[test]
+    fn ab_is_swamee_jain_at_re_4000() {
+        close(DW_AB, 5.74 / 4000f64.powf(0.9));
+    }
+
+    /// $A_C = 1.8\,A_9\,A_B$, so the cubic's gradient matches at $Re=4000$.
+    #[test]
+    fn ac_ties_the_cubic_gradient_to_the_anchor() {
+        close(DW_AC, 1.8 * DW_A9 * DW_AB);
+    }
+
+    /// The regime edges in the code's $w = Q/s$ variable: $w = Re\,\pi/4$,
+    /// so $Re = 2000$ is $500\pi$ and $Re = 4000$ is $1000\pi$.
+    #[test]
+    fn the_regime_edges_are_re_2000_and_4000() {
+        close(DW_A2, 500.0 * PI);
+        close(DW_A1, 1000.0 * PI);
+    }
+
+    /// $A_8/w^{0.9}$ must equal $5.74/Re^{0.9}$, so $A_8 = 5.74\,(\pi/4)^{0.9}$.
+    #[test]
+    fn a8_recovers_the_swamee_jain_coefficient_in_w() {
+        close(DW_A8, 5.74 * (PI / 4.0).powf(0.9));
+    }
+}

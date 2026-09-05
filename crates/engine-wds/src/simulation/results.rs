@@ -172,7 +172,10 @@ impl Simulation {
                     // f = dh * D * 2g / (L * v²) where v = Q/A.
                     // Guard: flows below Q_CLOSED (1e-6 m³/s) are
                     // within solver convergence noise — treat as zero.
-                    const Q_CLOSED: f64 = 1.0e-6;
+                    // The solver's own constant (§3.10), not a copy: the
+                    // two held the same number in two places, and nothing
+                    // checked they agreed.
+                    use crate::hydraulics::Q_CLOSED;
                     let area = std::f64::consts::PI * (pipe.diameter / 2.0).powi(2);
                     let velocity = if area > 0.0 && link_state.flow.abs() >= Q_CLOSED {
                         link_state.flow.abs() / area
