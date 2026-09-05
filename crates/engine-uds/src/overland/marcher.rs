@@ -23,6 +23,15 @@ const ETA_DEADBAND: f64 = 1e-12;
 
 /// §15.4.2: the exporting cell's per-face volume share β.
 const BETA: f64 = 0.8;
+// The face-flux limiter terminates because a face can pass at most a β
+// share of its cell per cycle. Above 1 that bound is gone and the marcher
+// spins: the first constant sweep scaled β to 800 and the suite ran for
+// eight hours without finishing. A bound out of range is a build error,
+// not a hang.
+const _: () = assert!(
+    BETA > 0.0 && BETA <= 1.0,
+    "BETA is a share of a cell's volume"
+);
 
 /// §15.4.5: elements per worker below which a phase runs serial — a
 /// dispatch costs more than a small map saves, and byte-identity makes
@@ -2974,5 +2983,22 @@ mod tests {
             ((m.storage() - expected) / m.storage()).abs() < 1e-10,
             "ledger closes"
         );
+    }
+}
+
+#[cfg(test)]
+mod spec_constant_tests {
+    use super::{BETA, ETA_DEADBAND};
+
+    /// §15.4.2: the per-cycle share of a cell's volume a face may pass.
+    #[test]
+    fn the_limiter_share_is_the_value_the_spec_fixes() {
+        assert_eq!(0.8, BETA);
+    }
+
+    /// §15.4.2: the head-difference deadband below which a face is still.
+    #[test]
+    fn the_face_deadband_is_the_value_the_spec_fixes() {
+        assert_eq!(1e-12, ETA_DEADBAND);
     }
 }

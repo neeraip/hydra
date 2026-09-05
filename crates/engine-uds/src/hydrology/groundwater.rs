@@ -634,5 +634,7 @@ mod tolerance_tests {
         assert_eq!(1.0e-5, super::TOL);
         // A thousandth of a foot, in metres.
         assert_eq!(0.001 * 0.3048, super::XTOL);
+        // §3.5's step floor, the same as the runoff integrator's.
+        assert_eq!(1.0e-3, super::FLOOR);
     }
 }

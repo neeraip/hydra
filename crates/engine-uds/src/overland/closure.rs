@@ -282,3 +282,12 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod spec_constant_tests {
+    /// §15.3: the relief below which a cell takes the flat closure.
+    #[test]
+    fn the_flat_relief_threshold_is_the_value_the_spec_fixes() {
+        assert_eq!(1e-9, super::FLAT_RELIEF);
+    }
+}

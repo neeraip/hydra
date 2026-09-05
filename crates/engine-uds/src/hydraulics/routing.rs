@@ -7631,3 +7631,40 @@ mod step_rule_tests {
         assert_eq!(2.0, growth_cap(0.0, 1.0e-3));
     }
 }
+
+#[cfg(test)]
+mod spec_constant_tests {
+    //! Values §6 fixes, each free to move a thousandfold with the suite
+    //! green: no network in the suite reverses a flow, drains a vertex dry,
+    //! or drives a velocity near the cap at a scale where the exact number
+    //! shows.
+    use super::{Q_DRY, Q_REVERSAL, VISCOSITY, V_MAX};
+
+    /// §6.4: the flow substituted when a relaxed flow's sign reverses.
+    #[test]
+    fn the_reversal_flow_is_the_value_the_spec_fixes() {
+        assert_eq!(2.832e-5, Q_REVERSAL);
+    }
+
+    /// §6.6: the clamp on flow out of a dry vertex, the predecessor's
+    /// 10⁻⁴ ft³/s converted.
+    #[test]
+    fn the_dry_vertex_flow_clamp_is_the_value_the_spec_fixes() {
+        assert_eq!(2.832e-6, Q_DRY);
+    }
+
+    /// §6.3: the momentum-term velocity cap, the predecessor's 50 ft/s.
+    #[test]
+    fn the_velocity_cap_is_fifty_feet_per_second() {
+        assert!((V_MAX - 50.0 * 0.3048).abs() < 1e-12, "{V_MAX}");
+    }
+
+    /// Kinematic viscosity of water, the predecessor's 1.1e-5 ft²/s.
+    #[test]
+    fn the_viscosity_is_the_predecessors_constant_converted() {
+        assert!(
+            (VISCOSITY - 1.1e-5 * 0.3048 * 0.3048).abs() < 1e-20,
+            "{VISCOSITY}"
+        );
+    }
+}

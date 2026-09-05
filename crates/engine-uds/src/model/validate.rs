@@ -2156,3 +2156,14 @@ HR2          9 9 9 9 9 9 9 9 9 9 9 9";
         )));
     }
 }
+
+#[cfg(test)]
+mod spec_constant_tests {
+    /// The predecessor's minimum channel elevation change, 0.001 ft,
+    /// adopted as file semantics and checked as the conversion rather
+    /// than the decimal it produces.
+    #[test]
+    fn the_minimum_channel_drop_is_a_thousandth_of_a_foot() {
+        assert_eq!(0.001 * 0.3048, super::MIN_DELTA_Z);
+    }
+}

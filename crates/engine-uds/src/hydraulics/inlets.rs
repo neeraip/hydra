@@ -749,3 +749,23 @@ impl Inlets {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod unit_constant_tests {
+    use super::{FT, G_FT, MIN_Q};
+
+    /// The foot, and gravity in feet from §2.11's exact value. A wrong
+    /// conversion here rescales every inlet capacity silently.
+    #[test]
+    fn the_foot_and_gravity_in_feet_are_exact() {
+        assert_eq!(0.3048, FT);
+        assert_eq!(9.806_65 / 0.3048, G_FT);
+    }
+
+    /// The predecessor's minimum runoff flow, 0.001 cfs, below which an
+    /// inlet sees nothing.
+    #[test]
+    fn the_minimum_runoff_flow_is_the_predecessors() {
+        assert_eq!(0.001, MIN_Q);
+    }
+}
