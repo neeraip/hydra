@@ -24,6 +24,7 @@ tripling a tolerance changes nothing, no test is looking at it at all.
 """
 
 import argparse
+import json
 import pathlib
 import re
 import signal
@@ -32,6 +33,36 @@ import sys
 from dataclasses import dataclass
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+
+# Where an in-flight edit is recorded before it is made. Under `target/`
+# because that is gitignored and survives the session: a run killed between
+# the edit and the restore leaves a mutation in the working tree that reads
+# as an ordinary change in `git status`, and SIGKILL cannot be caught, so
+# the only defence is a record that outlives the process.
+SENTINEL = REPO / "target" / "const-mutants-inflight.json"
+
+
+def record_inflight(path: pathlib.Path, original: str, sentinel: pathlib.Path = SENTINEL) -> None:
+    """Write down the file about to be edited and its bytes as they were."""
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(json.dumps({"path": str(path), "original": original}))
+
+
+def recover(sentinel: pathlib.Path = SENTINEL) -> pathlib.Path | None:
+    """Put back the file a previous run was killed while editing.
+
+    Returns the restored path, or `None` when there was nothing to do.
+    Restoring is idempotent: a file already back to its original bytes is
+    left alone, so recovering twice cannot go wrong.
+    """
+    if not sentinel.exists():
+        return None
+    entry = json.loads(sentinel.read_text())
+    path = pathlib.Path(entry["path"])
+    if path.exists() and path.read_text() != entry["original"]:
+        path.write_text(entry["original"])
+    sentinel.unlink()
+    return path
 
 # `const NAME: TYPE = VALUE;` at any indent, value on one line. Deliberately
 # not a Rust parser: a constant whose value spans lines is skipped rather
@@ -161,6 +192,7 @@ def probe(path: pathlib.Path, const: Constant, new: str, package: str) -> str:
         path.write_text(original)
 
     previous = signal.signal(signal.SIGINT, lambda *a: (restore(), sys.exit(130)))
+    record_inflight(path, original)
     try:
         path.write_text(mutated)
         compiled, passed = run_tests(package)
@@ -175,16 +207,38 @@ def probe(path: pathlib.Path, const: Constant, new: str, package: str) -> str:
         # thing that put it there.
         if path.read_text() != original:
             raise SystemExit(f"FATAL: could not restore {path}")
+        # Only once the file is verified back: the sentinel is the record
+        # that something is out of place, and it must outlive any failure
+        # above.
+        SENTINEL.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("crate", help="crate directory, e.g. crates/engine-wds")
+    ap.add_argument("crate", nargs="?", help="crate directory, e.g. crates/engine-wds")
     ap.add_argument("--package", help="cargo package name (default: crate dir name)")
     ap.add_argument("--filter", default="", help="only constants whose name contains this")
     ap.add_argument("--list", action="store_true", help="list targets and stop")
+    ap.add_argument(
+        "--recover",
+        action="store_true",
+        help="restore a file a killed run left mutated, then stop",
+    )
     args = ap.parse_args(argv)
 
+    # Every run recovers first. A killed run's sentinel is the only record
+    # that a source file is not what git thinks it is, and the next thing
+    # anyone does must be to put it back, not to build on top of it.
+    restored = recover()
+    if restored is not None:
+        print(f"restored {restored.relative_to(REPO)} left mutated by a killed run")
+    if args.recover:
+        if restored is None:
+            print("nothing to recover")
+        return 0
+
+    if not args.crate:
+        ap.error("crate is required unless --recover")
     crate = (REPO / args.crate).resolve()
     package = args.package or crate.name
     if not (crate / "src").is_dir():

@@ -12,7 +12,15 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from const_mutants import find_constants, mutate_value, strip_test_modules
+import tempfile
+
+from const_mutants import (
+    find_constants,
+    mutate_value,
+    record_inflight,
+    recover,
+    strip_test_modules,
+)
 
 
 class TestStripTestModules(unittest.TestCase):
@@ -92,6 +100,47 @@ class TestMutateValue(unittest.TestCase):
     def test_types_with_no_single_obvious_change_are_skipped(self):
         for ty in ("&str", "[f64; 3]", "(usize, usize)", "char", "Duration"):
             self.assertIsNone(mutate_value(ty, "whatever"), ty)
+
+
+class TestRecovery(unittest.TestCase):
+    """A run killed between its edit and its restore.
+
+    SIGINT is caught and restores in-process; SIGKILL cannot be, and that is
+    how a background sweep stopped from the outside left a solver constant
+    at a thousand times its value, looking like an ordinary edit. The
+    sentinel is written before the edit and read by whatever runs next.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.dir.name)
+        self.src = root / "lib.rs"
+        self.sentinel = root / "inflight.json"
+        self.src.write_text("const K: f64 = 0.8;\n")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_a_killed_runs_edit_is_put_back_by_the_next_run(self):
+        original = self.src.read_text()
+        record_inflight(self.src, original, self.sentinel)
+        self.src.write_text("const K: f64 = (0.8) * 1000.0;\n")  # then killed here
+
+        self.assertEqual(self.src, recover(self.sentinel))
+        self.assertEqual(original, self.src.read_text())
+        self.assertFalse(self.sentinel.exists(), "a used sentinel is retired")
+
+    def test_nothing_to_recover_is_not_an_error(self):
+        self.assertIsNone(recover(self.sentinel))
+
+    def test_recovering_twice_cannot_go_wrong(self):
+        original = self.src.read_text()
+        record_inflight(self.src, original, self.sentinel)
+        # The run restored the file itself but died before retiring the
+        # sentinel: the file is already right and must be left alone.
+        recover(self.sentinel)
+        self.assertEqual(original, self.src.read_text())
+        self.assertIsNone(recover(self.sentinel))
 
 
 if __name__ == "__main__":
