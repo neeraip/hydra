@@ -5270,3 +5270,16 @@ Headloss    H-W
         }
     }
 }
+
+#[cfg(test)]
+mod expansion_tests {
+    /// Hydraulics §3.2.5: a one-point pump curve $(q_1, h_1)$ expands to
+    /// $(0, 1.33334\,h_1)$, $(q_1, h_1)$, $(2q_1, 0)$ before fitting. The
+    /// factor is file semantics adopted from the predecessor and could be
+    /// changed with the suite green: the fixtures with pumps all carry
+    /// three-point curves.
+    #[test]
+    fn the_single_point_shutoff_factor_is_the_one_the_spec_states() {
+        assert_eq!(1.33334, super::PUMP_SHUTOFF_HEAD_FACTOR);
+    }
+}
