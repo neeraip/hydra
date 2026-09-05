@@ -1767,6 +1767,13 @@ mod warning_tests {
         assert!(notes(&fragment).is_empty());
     }
 
+    /// §13.5 fixes the listing bound at 200. It survived the sweep: the
+    /// test below proves it exceeds fifty, not that it is two hundred.
+    #[test]
+    fn the_listing_bound_is_the_value_the_spec_fixes() {
+        assert_eq!(200, WARNING_ROWS);
+    }
+
     /// The listing bound defaults far above the ranked tables' ten, because
     /// nothing orders these rows by importance.
     #[test]

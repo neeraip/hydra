@@ -869,3 +869,28 @@ mod threshold_tests {
         assert_eq!(1.0e-3, super::DRY_DEPTH);
     }
 }
+
+#[cfg(test)]
+mod mass_source_tests {
+    use super::MassSource;
+
+    /// `COUNT` is the arity of the enum, and the per-source arrays and the
+    /// §11.1 partition are sized and ordered by it. Raising it to six
+    /// changed nothing, because a spare slot is harmless at runtime; what
+    /// must not happen silently is a source added without it, or it
+    /// raised without one. The array below is sized by `COUNT` and the
+    /// match names every variant, so either mistake is a build error.
+    #[test]
+    fn count_is_the_number_of_sources_and_index_is_their_order() {
+        use MassSource::*;
+        let all: [MassSource; MassSource::COUNT] =
+            [DryWeather, WetWeather, Subsurface, Sewer, External];
+        for (i, s) in all.iter().enumerate() {
+            assert_eq!(i, s.index(), "{s:?} out of order");
+            // Exhaustive: a sixth variant fails to compile here.
+            match s {
+                DryWeather | WetWeather | Subsurface | Sewer | External => {}
+            }
+        }
+    }
+}

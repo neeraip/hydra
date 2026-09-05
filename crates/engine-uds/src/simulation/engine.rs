@@ -5099,3 +5099,31 @@ impl ClimateDayState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod adopted_constant_tests {
+    use super::{DEFAULT_AIR_TEMPERATURE_C, FLOW_TOL};
+
+    /// The predecessor's lateral-inflow truncation threshold, 10⁻⁵ ft³/s,
+    /// carried as the exact conversion rounded to four significant
+    /// figures. Both halves are held, so neither the number nor its
+    /// meaning can drift.
+    #[test]
+    fn the_flow_tolerance_is_ten_micro_cfs() {
+        assert_eq!(2.832e-7, FLOW_TOL);
+        // The exact conversion is 2.8317e-7; the literal is that rounded to
+        // four significant figures, so it must sit within half a unit of
+        // the fourth figure. A wider bound let the earlier version pass a
+        // value that was not this conversion at all.
+        let exact = 1.0e-5 * 0.3048f64.powi(3);
+        assert!((FLOW_TOL - exact).abs() < 0.5e-10, "{FLOW_TOL} vs {exact}");
+    }
+
+    /// §3.1: the climate a model without a temperature record still has,
+    /// the predecessor's 70 °F. Checked by converting back.
+    #[test]
+    fn the_default_air_temperature_is_seventy_fahrenheit() {
+        let back_to_f = DEFAULT_AIR_TEMPERATURE_C * 9.0 / 5.0 + 32.0;
+        assert!((back_to_f - 70.0).abs() < 1e-12, "{back_to_f} °F");
+    }
+}

@@ -230,3 +230,15 @@ mod tests {
         assert_ne!(a.finish(), b.finish(), "order must change the hash");
     }
 }
+
+#[cfg(test)]
+mod format_version_tests {
+    /// The checkpoint format version. A checkpoint of any other version is
+    /// refused rather than guessed at, so a drift here silently orphans
+    /// every checkpoint already saved. It could be changed with the suite
+    /// green: the round-trip tests write and read with the same binary.
+    #[test]
+    fn the_checkpoint_version_is_the_one_every_saved_file_carries() {
+        assert_eq!(4, super::VERSION);
+    }
+}
