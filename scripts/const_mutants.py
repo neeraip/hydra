@@ -25,6 +25,7 @@ tripling a tolerance changes nothing, no test is looking at it at all.
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import signal
@@ -169,21 +170,48 @@ class Result:
     outcome: str  # "caught" | "survived" | "build-error"
 
 
-def run_tests(package: str) -> tuple[bool, bool]:
-    """`(compiled, tests_passed)` for one package."""
-    proc = subprocess.run(
+def classify(compiled: bool, passed: bool, timed_out: bool) -> str:
+    """What one mutation taught us.
+
+    A timeout is not a catch. The first one seen was a limiter constant
+    scaled past its bound, which left the overland marcher spinning for
+    eight hours at full CPU; the suite never failed, it never finished.
+    Reporting that as caught would have credited the tests with something
+    they did not do.
+    """
+    if timed_out:
+        return "timed-out"
+    if not compiled:
+        return "build-error"
+    return "caught" if not passed else "survived"
+
+
+def run_tests(package: str, timeout: float) -> tuple[bool, bool, bool]:
+    """`(compiled, tests_passed, timed_out)` for one package.
+
+    Cargo runs in its own process group so a timeout kills the test
+    binary it spawned, not just cargo: a mutation that makes the engine
+    loop forever leaves a runaway process behind otherwise.
+    """
+    proc = subprocess.Popen(
         ["cargo", "test", "-p", package],
         cwd=REPO,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=True,
     )
-    out = proc.stdout + proc.stderr
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        return True, False, True
     compiled = "error: could not compile" not in out and "error[E" not in out
-    passed = proc.returncode == 0
-    return compiled, passed
+    return compiled, proc.returncode == 0, False
 
 
-def probe(path: pathlib.Path, const: Constant, new: str, package: str) -> str:
+def probe(path: pathlib.Path, const: Constant, new: str, package: str, timeout: float) -> str:
     """Apply one mutation, test, and always put the file back."""
     original = path.read_text()
     mutated = original[: const.start] + new + original[const.end :]
@@ -195,10 +223,7 @@ def probe(path: pathlib.Path, const: Constant, new: str, package: str) -> str:
     record_inflight(path, original)
     try:
         path.write_text(mutated)
-        compiled, passed = run_tests(package)
-        if not compiled:
-            return "build-error"
-        return "caught" if not passed else "survived"
+        return classify(*run_tests(package, timeout))
     finally:
         restore()
         signal.signal(signal.SIGINT, previous)
@@ -219,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--package", help="cargo package name (default: crate dir name)")
     ap.add_argument("--filter", default="", help="only constants whose name contains this")
     ap.add_argument("--list", action="store_true", help="list targets and stop")
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=1200.0,
+        help="seconds one mutation's build and test run may take (default 1200)",
+    )
     ap.add_argument(
         "--recover",
         action="store_true",
@@ -274,18 +305,21 @@ def main(argv: list[str] | None = None) -> int:
     broken: list[Result] = []
     for i, (path, const, new) in enumerate(targets, 1):
         print(f"[{i}/{len(targets)}] {const.name:32} ", end="", flush=True)
-        outcome = probe(path, const, new, package)
+        outcome = probe(path, const, new, package, args.timeout)
         print(outcome)
         if outcome == "survived":
             survived.append(Result(const, path, outcome))
-        elif outcome == "build-error":
+        elif outcome in ("build-error", "timed-out"):
             broken.append(Result(const, path, outcome))
 
     print()
     if broken:
-        print(f"{len(broken)} mutations did not compile (so nothing was learned about them):\n")
+        print(f"{len(broken)} mutations taught nothing (build error or timeout):\n")
         for r in broken:
-            print(f"  {rel(r.path)}:{r.const.line}  {r.const.name}: {r.const.ty} = {r.const.value}")
+            print(
+                f"  {rel(r.path)}:{r.const.line}  {r.const.name}: {r.const.ty} = "
+                f"{r.const.value}  [{r.outcome}]"
+            )
         print()
     if not survived:
         if broken:

@@ -15,6 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import tempfile
 
 from const_mutants import (
+    classify,
     find_constants,
     mutate_value,
     record_inflight,
@@ -100,6 +101,25 @@ class TestMutateValue(unittest.TestCase):
     def test_types_with_no_single_obvious_change_are_skipped(self):
         for ty in ("&str", "[f64; 3]", "(usize, usize)", "char", "Duration"):
             self.assertIsNone(mutate_value(ty, "whatever"), ty)
+
+
+class TestClassify(unittest.TestCase):
+    """A timeout is its own answer, never a catch."""
+
+    def test_a_failing_suite_is_a_catch(self):
+        self.assertEqual("caught", classify(True, False, False))
+
+    def test_a_passing_suite_is_a_survivor(self):
+        self.assertEqual("survived", classify(True, True, False))
+
+    def test_a_build_failure_teaches_nothing(self):
+        self.assertEqual("build-error", classify(False, False, False))
+
+    def test_a_timeout_is_not_a_catch_whatever_else_is_true(self):
+        # The overland limiter scaled past its bound spun for eight hours:
+        # the suite did not fail, it did not finish.
+        self.assertEqual("timed-out", classify(True, False, True))
+        self.assertEqual("timed-out", classify(False, False, True))
 
 
 class TestRecovery(unittest.TestCase):
