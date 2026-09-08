@@ -35,6 +35,13 @@ CATALOG = {
 
 
 class TestVersionParts(unittest.TestCase):
+    def test_the_printed_path_survives_a_change_of_directory(self):
+        # wasm-pack runs cargo from inside crates/demo; a path relative to
+        # the repository root would be looked up there and not found.
+        got = wc.absolute("target/wasm-chromedriver/1.2.3/chromedriver")
+        self.assertTrue(pathlib.PurePath(got).is_absolute(), got)
+        self.assertTrue(got.endswith("target/wasm-chromedriver/1.2.3/chromedriver"), got)
+
     def test_build_is_the_catalog_key(self):
         self.assertEqual(wc.build_of("151.0.7922.172"), "151.0.7922")
 

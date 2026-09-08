@@ -188,6 +188,18 @@ def download(url: str, into: pathlib.Path) -> pathlib.Path:
     return exe
 
 
+def absolute(path) -> str:
+    """The path as `wasm-pack` must receive it.
+
+    `wasm-pack test` runs `cargo test` from inside the crate directory, so
+    a path relative to the repository root is resolved against
+    `crates/demo` and the driver is "not found" although it is there —
+    which is what happened the first time Chrome updated and the cached
+    driver under `target/` was the one chosen.
+    """
+    return str(pathlib.Path(path).resolve())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--cache", default="target/wasm-chromedriver",
@@ -206,7 +218,7 @@ def main() -> int:
     have = cached_drivers(root)
     picked = pick_driver(have, want)
     if picked:
-        print(picked)
+        print(absolute(picked))
         return 0
 
     plat = platform_key(platform.system(), platform.machine())
@@ -231,7 +243,7 @@ def main() -> int:
         print(f"could not fetch a {want}.x chromedriver for {plat}: {e}",
               file=sys.stderr)
         return 1
-    print(exe)
+    print(absolute(exe))
     return 0
 
 
