@@ -130,7 +130,13 @@ the area-weighted sum. Run-on from upstream parcels and outfall returns
 spreads over the non-measure area only, one step delayed per hop, applied
 like additional rainfall on the receiver — **a parcel is never its own
 upstream**: one naming itself as its outlet sends its runoff out of the
-parcel system rather than back onto its own surface; a fraction of impervious runoff
+parcel system rather than back onto its own surface; a parcel may
+instead name the **overland surface** as its outlet, and its runoff
+then lands on the mesh at the point §15.7's runoff map gives it, leaving
+the parcel system exactly as a node-bound runoff does (the predecessor's
+own self-outlet does the same — its run-on step skips the self case and
+its node inflow reads node outlets only — which is why §14.15 spells a
+surface outlet that way); a fraction of impervious runoff
 may re-route onto the pervious sub-area or (exclusively) the reverse; and
 $n = 0$ bypasses routing entirely — ponded water above depression storage
 converts to runoff each step — permitting runoff-coefficient emulation.

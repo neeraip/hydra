@@ -1444,6 +1444,44 @@ implicitly indexed from zero in file order.
   `COUPLING_AREA AUTO`). The first token is an index where numeric and in
   range, else a tag. One coupling per vertex (a later row replaces);
   repeated triangle rows accumulate, several nodes to one cell.
+- `[2D_INLETS]` — `VERTEX|TRIANGLE INDEX_OR_TAG DESIGN [COUNT]
+  [%CLOGGED] [QMAX] [ALOCAL] [WLOCAL]`: an inlet at a coupling point
+  (§15.6). This section is this engine's own: the successor format has
+  no two-dimensional inlet, and a separate section leaves the map rows
+  as it spells them, so a file carrying one still opens there under
+  §14.2's unrecognised-section treatment, minus the inlet. The first
+  two tokens name a map row **as that row wrote them** — the same
+  section and the same first token, index or tag — and the inlet
+  attaches to the last such row; a row naming no map row is an
+  unresolved reference. `DESIGN` is an `[INLETS]` design, resolved when
+  the model opens; the modifiers are `[INLET_USAGE]`'s, with its
+  defaults (one replicate, nothing clogged, no cap, no local
+  depression). `QMAX` is in the model's flow units; `ALOCAL` and
+  `WLOCAL` are lengths in the model's length units, metres under the
+  SI header like every length here.
+- `[2D_RUNOFF_MAP]` — `SUBCATCH VERTEX|TRIANGLE INDEX_OR_TAG`: where a
+  surface-outlet subcatchment's runoff lands (§15.7). This section is
+  this engine's own, like `[2D_INLETS]`. The subcatchment **names
+  itself** as its outlet in `[SUBCATCHMENTS]`: that is the predecessor's
+  own spelling for runoff that leaves the subcatchment system and
+  reaches no node, so the same file opens there and runs with that
+  runoff dropped rather than sent somewhere else. A row for a
+  subcatchment whose outlet names a node or another subcatchment is
+  refused: the file would route the runoff two ways. A row naming no
+  subcatchment is an unresolved reference; a later row for the same
+  subcatchment replaces the earlier; the address resolves as coupling
+  rows do, at build.
+
+> **CORRESPONDENCE:** the predecessor's source resolves a
+> subcatchment's outlet as a node first and a subcatchment second, so a
+> self-name resolves; its run-on step skips the case where the outlet
+> subcatchment is the subcatchment itself, and its node inflow reads
+> only node outlets — the runoff is counted in the runoff continuity and
+> enters nothing. That is exactly this engine's §3 self-outlet rule. The
+> successor's run-on step has **no** such guard: a self-outlet there
+> feeds its own run-on, the geometric loop §3 describes. A file written
+> here is therefore faithful in the predecessor and undefined in the
+> successor, which is the successor's defect to fix.
 - `[2D_BOUNDARY_CONDITIONS]` — `TRI EDGE TYPE [PARAM_1 [PARAM_2
   [GROUP]]]`: attaches a §15.5 condition to a boundary edge; local edge
   `e` is the edge opposite vertex `e`. Types `WALL`, `NORMAL_FLOW`
@@ -1470,6 +1508,23 @@ implicitly indexed from zero in file order.
   excluded). Only the first `FILE` line is honoured. The `.2dm`
   extension is conventional; the content is this grammar, not the SMS
   format of that name.
+
+**Provisional vocabulary.** Two sections above are this engine's own:
+`[2D_INLETS]` and `[2D_RUNOFF_MAP]`, for capabilities the successor does
+not have at all. They are **provisional**, and this is the undertaking
+that goes with inventing them. The successor is pre-release; if its 6.x
+line later grows a two-dimensional inlet, or runoff routed onto the
+mesh, and spells either concept differently, this specification adopts
+the successor's spelling and demotes ours to a retired alias — read for
+the files already written in it, warned as non-canonical, and no longer
+written on export. That is the treatment retired keys already receive
+below, applied to a section rather than a key, and it is why the two
+were given sections of their own rather than columns on the node maps:
+a section can be retired whole, where a column cannot.
+
+Nothing else in this specification is invented. Every other 2D section
+is the successor's, adopted as it spells it, and a Hydra file carrying
+neither of these two is an ordinary file of that format.
 
 **Units.** Mesh coordinates, elevations, depths and areas are authored in
 the model's display units and convert at import — infiltration losses in
@@ -1528,7 +1583,10 @@ elevation envelope by more than a sanity margin warns of a datum mismatch.
 **Export.** A model carrying a mesh writes every 2D section it holds,
 always in SI under a `;; UNITS: SI (m)` header — the one representation
 that round-trips losslessly whatever units the model was authored in,
-and one the predecessor reads. Cells always write their initial depth
+and one the predecessor reads. The header governs lengths, areas and
+depths only: a flow (a specified boundary discharge, an inlet's cap)
+is written in the model's flow units, the unit import reads it in, so
+it re-imports unchanged too. Cells always write their initial depth
 when they carry a tag, so the fifth column stays unambiguous
 (§14.13's columns rule). An external mesh file is not re-created:
 export inlines the mesh it holds, and the `[2D_MESH_FILE]` declaration
@@ -1554,9 +1612,10 @@ the resolution every reported result in §14.9 already has. All values
 are SI (§14.15): metres, seconds, cubic metres per second. The file
 has three parts:
 
-**Header.** Leading magic `1214727218`, format version `1`, then the
-counts — vertices, cells, coupling points — as four-byte unsigned
-integers; the reporting clock (start epoch seconds, report step
+**Header.** Leading magic `1214727218`, format version `3`, then the
+counts — vertices, cells, coupling points, constituents — as four-byte
+unsigned integers (versions 1 and 2 carried the first three, and a
+reader of them takes no constituents); the reporting clock (start epoch seconds, report step
 seconds, first instant's run time seconds) as floats; then the mesh
 geometry a viewer renders without the model: each vertex's $x, y, z$,
 then each cell's three vertex indices, then each coupling point's
@@ -1570,11 +1629,22 @@ cell index.
   zero where the cell holds less than the drying depth;
 - per coupling point, in point order: the exchange rate over the
   reporting period (m³/s, positive draining into the network);
-- the §15.8 ledger, cumulative since the start of the run, as eleven
+- the §15.8 ledger, cumulative since the start of the run, as twelve
   eight-byte floats: surface storage now, rainfall in, evaporation
   out, infiltration out, junction drainage out, junction spill in,
   outfall injection in, outfall withdrawal out, boundary in, boundary
-  out, and the continuity error as a signed volume.
+  out, the continuity error as a signed volume, and parcel runoff in
+  (§15.7). Version `1` carried the first eleven; a reader serves a
+  version-1 file with the twelfth read as zero, which is what every
+  such run had, so results already on disk stay readable;
+- per constituent, in the model's constituent order: per cell, the
+  concentration (four-byte float, in the constituent's unit, zero below
+  the drying depth), then that constituent's §15.11 mesh ledger as
+  eleven eight-byte floats — initial mass, runoff in, junction spill
+  in, outfall injection in, junction drainage out, outfall withdrawal
+  out, boundary out, infiltration out, reacted, final mass, error.
+  Versions 1 and 2 carry none of this, and read as a run with no
+  constituents on the mesh.
 
 **Epilog.** The record count as a four-byte signed integer, then the
 closing magic. A file without its epilog is a run that did not finish,
@@ -1586,5 +1656,6 @@ operates on an explicitly supplied path and seeks — the header, one
 record, one cell's series across all records, or a sequential scan —
 rather than requiring the whole file in memory. Opening validates the
 leading and closing magic, the version, and that header, fixed-size
-records and epilog tile the file exactly.
+records and epilog tile the file exactly, at the ledger width the
+version declares.
 

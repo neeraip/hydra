@@ -160,6 +160,13 @@ pub enum DiagnosticKind {
         /// The value as written.
         token: String,
     },
+    /// §14.15: a `[2D_RUNOFF_MAP]` row names a subcatchment whose
+    /// `[SUBCATCHMENTS]` outlet is a node or another subcatchment, not
+    /// itself — the file would route the runoff two ways.
+    SurfaceOutletNamesAnother {
+        /// The subcatchment as written.
+        parcel: String,
+    },
     /// A line with too few items for its section's grammar.
     MissingItems,
     /// A retired §14.15 overland option: accepted for compatibility,
@@ -287,6 +294,12 @@ impl std::fmt::Display for DiagnosticKind {
             DiagnosticKind::CappedValue { what, token } => {
                 write!(f, "{what} {token:?} capped to its accepted range")
             }
+            DiagnosticKind::SurfaceOutletNamesAnother { parcel } => write!(
+                f,
+                "subcatchment {parcel:?} is mapped onto the 2D surface but its outlet \
+                 names a node or another subcatchment; a surface-routed subcatchment \
+                 names itself as its outlet"
+            ),
             DiagnosticKind::MissingItems => write!(f, "too few items for this section's grammar"),
             DiagnosticKind::RetiredOverlandOption { key } => {
                 write!(f, "retired 2D option {key} is accepted and governs nothing")

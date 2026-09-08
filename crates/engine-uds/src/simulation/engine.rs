@@ -327,6 +327,13 @@ pub struct Simulation {
     /// §15.5 driven boundary slots: (marcher boundary, series index,
     /// stage?), resolved once at attach.
     overland_driven: Vec<(usize, usize, bool)>,
+    /// §15.7: each parcel's current runoff bound for the surface (m³/s),
+    /// and the runoff point it lands on (resolved at attach).
+    surface_runoff: Vec<f64>,
+    runoff_point_of: Vec<Option<usize>>,
+    /// §15.11: each parcel's current runoff mass rates bound for the
+    /// surface (unit·m³/s per constituent).
+    surface_runoff_mass: Vec<Vec<f64>>,
     /// §14.16: the overland results destination, when one is attached.
     overland_out: Option<Box<dyn crate::simulation::sinks::OverlandSink>>,
     overland_out_error: Option<std::io::Error>,
@@ -706,6 +713,9 @@ impl Simulation {
                 overland_sync: 0.0,
                 overland_accrued: 0.0,
                 overland_driven: Vec::new(),
+                surface_runoff: Vec::new(),
+                runoff_point_of: Vec::new(),
+                surface_runoff_mass: Vec::new(),
                 overland_out: None,
                 overland_out_error: None,
                 stage_override: HashMap::new(),
@@ -799,7 +809,46 @@ impl Simulation {
                 AttachError::UnknownCurve(n) => OpenError::Overland(format!(
                     "a boundary row names the curve {n:?}, which this model does not have"
                 )),
+                AttachError::UnknownInlet(n) => OpenError::Overland(format!(
+                    "a coupling point names the inlet design {n:?}, which this model does not have"
+                )),
+                AttachError::InletUnserved { design, why } => OpenError::Overland(format!(
+                    "inlet {design:?} cannot serve at a coupling point: {why}"
+                )),
+                AttachError::InletsShareCell { cell } => OpenError::Overland(format!(
+                    "two inlets resolve to triangle {cell}, and would capture the same pond twice"
+                )),
+                AttachError::UnknownRunoffParcel(n) => OpenError::Overland(format!(
+                    "the runoff map names the subcatchment {n:?}, which this model does not have"
+                )),
+                AttachError::RunoffUnserved { parcel, why } => OpenError::Overland(format!(
+                    "subcatchment {parcel:?} cannot drain onto the surface: {why}"
+                )),
             })?;
+        } else if let Some(p) = sim
+            .0
+            .net
+            .parcels
+            .iter()
+            .find(|p| p.outlet == crate::model::ParcelOutlet::Surface)
+        {
+            return Err(OpenError::Overland(format!(
+                "subcatchment {:?} drains onto the overland surface, and this model has no mesh",
+                p.id
+            )));
+        }
+        if let Some(u) = sim
+            .0
+            .net
+            .lid_usage
+            .iter()
+            .find(|u| u.drain_to == Some(crate::model::ParcelOutlet::Surface))
+        {
+            return Err(OpenError::Overland(format!(
+                "a control-measure drain on subcatchment {:?} routes to the overland surface, \
+                 which is not served",
+                sim.0.net.parcels[u.parcel].id
+            )));
         }
         Ok(sim)
     }
@@ -1204,6 +1253,12 @@ impl Simulation {
                     continue;
                 };
                 let q = r.runoff;
+                if parcel.outlet == crate::model::ParcelOutlet::Surface {
+                    self.surface_runoff[pi] = q;
+                    for (ci, m) in self.surface_runoff_mass[pi].iter_mut().enumerate() {
+                        *m = r.washoff.get(ci).copied().unwrap_or(0.0) * q;
+                    }
+                }
                 if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
                     lats[v] += q;
                     // §8.2–§8.3: the runoff stream joins at the washoff
@@ -1360,6 +1415,12 @@ impl Simulation {
             if routing_active {
                 self.vol_wet += lats.iter().sum::<f64>() * dt;
             }
+            // §15.7: surface-outlet parcels report to the mesh instead.
+            for (pi, parcel) in self.net.parcels.iter().enumerate() {
+                if parcel.outlet == crate::model::ParcelOutlet::Surface {
+                    self.surface_runoff[pi] = surface.parcel_runoff(pi);
+                }
+            }
             let np = self.net.constituents.len();
             // One plane per hydrology origin, in HYDRO_SOURCES order:
             // wet weather, subsurface, sewer (§11.2).
@@ -1397,6 +1458,13 @@ impl Simulation {
                     if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
                         for (ci, row) in mass[0].iter_mut().enumerate() {
                             row[v] += sq.conc[pi][ci] * q_out;
+                        }
+                    }
+                    // §15.11: a surface-outlet parcel's wash-off rides
+                    // its runoff onto the mesh at the same concentration.
+                    if parcel.outlet == crate::model::ParcelOutlet::Surface {
+                        for (ci, m) in self.surface_runoff_mass[pi].iter_mut().enumerate() {
+                            *m = sq.conc[pi][ci] * q_out;
                         }
                     }
                     // Control-measure drains carry the parent parcel's
@@ -1792,6 +1860,95 @@ impl Simulation {
             };
             cs.marcher.set_rating_curve(slot, curve.points.clone());
         }
+        // §15.6: inlets at coupling points resolve here, by design
+        // name, once — the cell's bed plane is their cross slope.
+        let mut inlet_cells: Vec<u32> = Vec::new();
+        let authored: Vec<(usize, u32, u32, crate::overland::CouplingInlet)> = cs
+            .marcher
+            .coupling_points()
+            .iter()
+            .enumerate()
+            .filter_map(|(k, cp)| {
+                cp.inlet
+                    .clone()
+                    .map(|inlet| (k, cp.cell, cp.node_slot, inlet))
+            })
+            .collect();
+        for (k, cell, slot, inlet) in authored {
+            use super::coupled::AttachError;
+            if cs.marcher.is_outfall_slot(slot as usize) {
+                return Err(AttachError::InletUnserved {
+                    design: inlet.design,
+                    why: "the point names an outfall, whose coupling has no orifice path".into(),
+                });
+            }
+            if inlet_cells.contains(&cell) {
+                return Err(AttachError::InletsShareCell { cell });
+            }
+            inlet_cells.push(cell);
+            let Some(design) = self.net.inlets.iter().find(|d| d.id == inlet.design) else {
+                return Err(AttachError::UnknownInlet(inlet.design));
+            };
+            let law = crate::hydraulics::inlets::SagInlet::resolve(
+                design,
+                &self.net.curves,
+                cs.marcher.cell_bed_slope(cell as usize),
+                &inlet,
+            )
+            .map_err(|e| AttachError::InletUnserved {
+                design: inlet.design.clone(),
+                why: match e {
+                    crate::hydraulics::inlets::SagInletRefusal::DiversionCurve => {
+                        "its custom curve is a diversion curve, which wants an approach flow \
+                         a pond does not have"
+                            .into()
+                    }
+                },
+            })?;
+            cs.marcher.set_inlet_law(k, law);
+        }
+        // §15.7: runoff points resolve here, one per surface-outlet
+        // parcel, against the mesh and the model together.
+        {
+            use super::coupled::AttachError;
+            use crate::model::ParcelOutlet;
+            let n = self.net.parcels.len();
+            let np = self.net.constituents.len();
+            self.surface_runoff = vec![0.0; n];
+            self.surface_runoff_mass = vec![vec![0.0; np]; n];
+            self.runoff_point_of = vec![None; n];
+            // §15.11: the mesh carries every constituent the model
+            // declares, decaying at its own coefficient.
+            let decays: Vec<f64> = self.net.constituents.iter().map(|c| c.decay).collect();
+            cs.marcher.set_constituents(&decays);
+            for row in &mesh.runoff_map {
+                let Some(pi) = self.net.parcels.iter().position(|p| p.id == row.parcel) else {
+                    return Err(AttachError::UnknownRunoffParcel(row.parcel.clone()));
+                };
+                let refuse = |why: &str| AttachError::RunoffUnserved {
+                    parcel: row.parcel.clone(),
+                    why: why.into(),
+                };
+                if self.net.parcels[pi].outlet != ParcelOutlet::Surface {
+                    return Err(refuse("its outlet is not the overland surface"));
+                }
+                if self.runoff_point_of[pi].is_some() {
+                    return Err(refuse("the runoff map names it twice"));
+                }
+                let Some(point) = cs.marcher.add_runoff_point(&mesh, row.kind, &row.address) else {
+                    return Err(refuse("its runoff point matches no mesh index and no tag"));
+                };
+                self.runoff_point_of[pi] = Some(point);
+            }
+            for (pi, parcel) in self.net.parcels.iter().enumerate() {
+                if parcel.outlet == ParcelOutlet::Surface && self.runoff_point_of[pi].is_none() {
+                    return Err(AttachError::RunoffUnserved {
+                        parcel: parcel.id.clone(),
+                        why: "the runoff map gives it no point".into(),
+                    });
+                }
+            }
+        }
         self.coupled = Some(cs);
         // The mesh is the model's; the §14.16 stream reads its geometry.
         self.net.overland = Some(mesh);
@@ -1902,11 +2059,12 @@ impl Simulation {
             // §7.7: channels evaporate at the session's potential rate.
             let month = self.calendar(t).0;
             self.router.evap_rate = self.evaporation_rate(month);
-            let (mut base, base_mass) = self.assemble_lateral(t);
+            let (mut base, mut base_mass) = self.assemble_lateral(t);
             // §15.6: last period's surface exchange delivers as this
-            // period's lateral inflow, a constant rate over the window.
+            // period's lateral inflow, a constant rate over the window —
+            // and its mass onto the surface plane (§15.11).
             if let Some(cs) = self.coupled.as_mut() {
-                cs.deliver_laterals(&mut base, period_end - t);
+                cs.deliver_laterals(&mut base, &mut base_mass[2], period_end - t);
             }
             self.vol_dwf += self.last_dwf_total * (period_end - t);
             self.vol_ext += self.last_ext_total * (period_end - t);
@@ -2026,9 +2184,18 @@ impl Simulation {
                     .overland_sync
                     .clamp(self.routing_period, 60.0_f64.max(self.routing_period));
                 if self.overland_accrued + 1e-9 >= sync {
+                    // §15.7: each surface-outlet parcel's runoff at the
+                    // hydrology step this advance begins in, held over it.
+                    cs.marcher.clear_runoff();
+                    for (pi, point) in self.runoff_point_of.iter().enumerate() {
+                        if let Some(p) = *point {
+                            cs.marcher.set_runoff(p, self.surface_runoff[pi]);
+                            cs.marcher.set_runoff_mass(p, &self.surface_runoff_mass[pi]);
+                        }
+                    }
                     self.drive_overland_sources(&mut cs, t);
                     let span = self.overland_accrued;
-                    cs.co_advance(&mut self.router, span);
+                    cs.co_advance(&mut self.router, self.quality.as_ref(), span);
                     self.overland_accrued = 0.0;
                 }
                 self.coupled = Some(cs);
@@ -2989,6 +3156,12 @@ impl Simulation {
             overland_sync: _,
             overland_accrued,
             overland_driven: _,
+            // §15.7: the runoff bound for the surface is state — the next
+            // co-advance reads it before hydrology steps again; its
+            // points are parameters, rebuilt at attach.
+            surface_runoff,
+            surface_runoff_mass,
+            runoff_point_of: _,
             // §12.3: the sidecar is a stream, not held state — a
             // resumed run's sidecar begins at the resume instant and
             // its header says so.
@@ -3051,6 +3224,11 @@ impl Simulation {
         for (at, lats) in [hydro_prev, hydro_now] {
             cp::put_f(w, *at).map_err(io)?;
             cp::put_fs(w, lats).map_err(io)?;
+        }
+        cp::put_fs(w, surface_runoff).map_err(io)?;
+        cp::put_u(w, surface_runoff_mass.len() as u64).map_err(io)?;
+        for row in surface_runoff_mass {
+            cp::put_fs(w, row).map_err(io)?;
         }
         // Written with its own shape rather than flattened: the nesting is
         // source by constituent by vertex, and a flat run of values cannot
@@ -3323,6 +3501,9 @@ impl Simulation {
             slot.0 = r.f()?;
             slot.1 = r.fs()?;
         }
+        self.surface_runoff = r.fs()?;
+        let n = r.u()? as usize;
+        self.surface_runoff_mass = (0..n).map(|_| r.fs()).collect::<Result<_, _>>()?;
         for slot in [&mut self.hydro_mass_prev, &mut self.hydro_mass_now] {
             let n = r.u()? as usize;
             *slot = (0..n).map(|_| r.rows()).collect::<Result<_, _>>()?;
@@ -3953,10 +4134,12 @@ impl Simulation {
                         by[2],
                         by[3],
                         by[4],
+                        by[5],
                         q.outfall_mass[p],
                         q.flooded_mass[p],
                         q.seepage_mass[p],
                         q.reacted[p],
+                        q.surface_spill_mass[p],
                         q.initial_mass[p],
                         q.final_storage[p] + q.stored_mass(p),
                         l.error_percent,
@@ -4053,6 +4236,18 @@ impl Simulation {
                     delivered_in: cs.delivered_in,
                     delivered_out: cs.delivered_out,
                     march: cs.marcher.statistics(),
+                    quality: self
+                        .net
+                        .constituents
+                        .iter()
+                        .enumerate()
+                        .map(|(p, c)| {
+                            (
+                                c.id.clone(),
+                                cs.marcher.mass_ledger(p).row(cs.marcher.mass_of(p)),
+                            )
+                        })
+                        .collect(),
                 }),
             surface,
             subsurface,
@@ -4392,7 +4587,9 @@ impl Simulation {
                 *l = 0.0;
             }
         }
-        (lat, vec![dwf_mass, ext_mass])
+        // §15.11: the surface plane is empty here; the coupled surface
+        // fills it at delivery.
+        (lat, vec![dwf_mass, ext_mass, vec![vec![0.0; nv]; np]])
     }
 
     /// Update tidal and series outfall stages for the period (§2.6):

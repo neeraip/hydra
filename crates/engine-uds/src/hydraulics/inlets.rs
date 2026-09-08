@@ -10,7 +10,8 @@
 
 use crate::hydraulics::routing::Router;
 use crate::model::{
-    CurveKind, GrateKind, InletPlacement, LinkKind, Network, ThroatAngle, XsectReferent,
+    Curve, CurveKind, GrateKind, InletDesign, InletPlacement, LinkKind, Network, ThroatAngle,
+    XsectReferent,
 };
 
 const FT: f64 = 0.3048;
@@ -59,6 +60,116 @@ struct Geo {
     qfactor: f64,
     /// 1.486·√S/n, the drop-inlet conveyance factor (ft units).
     beta: f64,
+}
+
+impl Geo {
+    /// The subset the on-sag forms read.
+    fn sag(&self) -> SagGeo {
+        SagGeo {
+            sw: self.sw,
+            a: self.a,
+            w: self.w,
+        }
+    }
+}
+
+/// What HEC-22's on-sag forms need of the gutter, in feet: the cross
+/// slope at the inlet (`sw`, the street's steepened by any depression),
+/// the depression depth `a` and its width `w`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SagGeo {
+    sw: f64,
+    a: f64,
+    w: f64,
+}
+
+/// §15.6: an inlet at an overland coupling point — a design under the
+/// on-sag forms, evaluated at a ponded depth the mesh states. SI in,
+/// SI out; the standard's foot units stay inside.
+#[derive(Clone, Debug)]
+pub(crate) struct SagInlet {
+    design: InletDesign,
+    geo: SagGeo,
+    count: f64,
+    clog: f64,
+    /// Per-inlet cap (cfs).
+    q_limit: f64,
+    /// A custom design's rating curve on depth (SI), when it has one.
+    rating: Option<Vec<(f64, f64)>>,
+}
+
+/// Why a design cannot serve at a coupling point (§15.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SagInletRefusal {
+    /// A diversion curve wants an approach flow a pond does not have.
+    DiversionCurve,
+}
+
+impl SagInlet {
+    /// Resolve a design for a coupling point: the cell's bed-plane
+    /// gradient is the cross slope, steepened by the placement's local
+    /// depression as §7.8 steepens a street's; the modifiers are §7.8's.
+    pub(crate) fn resolve(
+        design: &InletDesign,
+        curves: &[Curve],
+        cross_slope: f64,
+        placement: &crate::overland::CouplingInlet,
+    ) -> Result<SagInlet, SagInletRefusal> {
+        let (count, pct_clogged, flow_limit) =
+            (placement.count, placement.pct_clogged, placement.flow_limit);
+        let (local_depression, local_width) = (placement.local_depression, placement.local_width);
+        let rating = match design.custom_curve {
+            Some(ci) => {
+                let curve = &curves[ci];
+                if curve.kind == CurveKind::Diversion {
+                    return Err(SagInletRefusal::DiversionCurve);
+                }
+                Some(curve.points.clone())
+            }
+            None => None,
+        };
+        let (a, w) = (local_depression / FT, local_width / FT);
+        let geo = SagGeo {
+            sw: if w * a > 0.0 {
+                cross_slope + a / w
+            } else {
+                cross_slope
+            },
+            a,
+            w,
+        };
+        Ok(SagInlet {
+            design: design.clone(),
+            geo,
+            count: f64::from(count.max(1)),
+            clog: 1.0 - pct_clogged / 100.0,
+            q_limit: if flow_limit > 0.0 {
+                flow_limit / CFS
+            } else {
+                f64::MAX
+            },
+            rating,
+        })
+    }
+
+    /// Free capture at a ponded depth (m), in m³/s: §7.8's on-sag
+    /// capture for the placement — a rating curve for a custom design.
+    pub(crate) fn capture(&self, depth: f64) -> f64 {
+        if depth <= 0.0 {
+            return 0.0;
+        }
+        if let Some(points) = &self.rating {
+            return self.count * self.clog * lookup_ex(points, depth);
+        }
+        let single = on_sag_single(self.geo, &self.design, depth / FT) * self.clog;
+        single.min(self.q_limit) * self.count * CFS
+    }
+
+    /// The placement's unclogged open area (m²), the submerged
+    /// orifice's area (§15.6); zero for a custom design.
+    pub(crate) fn open_area(&self) -> f64 {
+        design_open_area(&self.design) * self.count * self.clog * FT * FT
+    }
 }
 
 /// One placed inlet, precompiled to HEC-22's units.
@@ -255,7 +366,11 @@ impl Inlets {
 /// The unclogged open area of an inlet placement (ft²); zero marks a
 /// custom inlet for the backflow rule.
 fn inlet_area(net: &Network, inlet: &InletState) -> f64 {
-    let d = &net.inlets[inlet.design];
+    design_open_area(&net.inlets[inlet.design]) * f64::from(inlet.count) * inlet.clog
+}
+
+/// One design's open area (ft²), as §7.8 measures it.
+fn design_open_area(d: &InletDesign) -> f64 {
     let mut area = 0.0;
     if let Some(g) = &d.grate {
         area = (g.length / FT)
@@ -275,7 +390,7 @@ fn inlet_area(net: &Network, inlet: &InletState) -> f64 {
     if let Some(s) = &d.slotted {
         area = (s.length / FT) * (s.width / FT);
     }
-    area * f64::from(inlet.count) * inlet.clog
+    area
 }
 
 /// HEC-22 Eq (4-4) solved for the gutter flow ratio.
@@ -376,7 +491,7 @@ fn single_on_grade(
     let g = inlet.geo;
     // Drop inlets in non-street conduits operate on their own modes.
     if design.drop_curb {
-        return on_sag_single(inlet, design, d).min(q);
+        return on_sag_single(inlet.geo.sag(), design, d).min(q);
     }
     if design.drop_grate {
         return drop_grate_capture(inlet, design, q, link_state).min(q);
@@ -511,13 +626,12 @@ fn curb_capture(g: &Geo, q: f64, l: f64, t: f64) -> f64 {
 /// On-sag capture for the whole placement (cfs).
 fn on_sag_capture(inlet: &InletState, design: &crate::model::InletDesign, d: f64) -> f64 {
     let total = inlet.geo.nsides * f64::from(inlet.count);
-    let qc = on_sag_single(inlet, design, d) * inlet.clog;
+    let qc = on_sag_single(inlet.geo.sag(), design, d) * inlet.clog;
     qc.min(inlet.q_limit) * total
 }
 
 /// One on-sag inlet's weir/orifice capture (cfs), HEC-22 (4-26)–(4-33).
-fn on_sag_single(inlet: &InletState, design: &crate::model::InletDesign, d: f64) -> f64 {
-    let g = inlet.geo;
+fn on_sag_single(g: SagGeo, design: &crate::model::InletDesign, d: f64) -> f64 {
     if let Some(s) = &design.slotted {
         let (l, w) = (s.length / FT, s.width / FT);
         return if d <= 2.587 * w {
@@ -536,6 +650,8 @@ fn on_sag_single(inlet: &InletState, design: &crate::model::InletDesign, d: f64)
             di = d;
             p = 2.0 * (lg + wg);
         } else {
+            // On a level pond (§15.6) the clamp never fires: no
+            // positive depth is at most zero.
             if d <= wg * g.sw {
                 wg = d / g.sw;
             }
@@ -560,14 +676,14 @@ fn on_sag_single(inlet: &InletState, design: &crate::model::InletDesign, d: f64)
         let l_curb = curb.length / FT;
         let sweep = l_curb - l_grate;
         if sweep > 0.0 {
-            let (w, o) = curb_sag_flows(inlet, design, d, sweep);
+            let (w, o) = curb_sag_flows(g, design, d, sweep);
             qsw = w;
             qso = o;
         }
         // Behind an orifice-mode grate only the curb's orifice component
         // contributes (the predecessor's combination rule).
         if qgo > 0.0 {
-            let (_, o) = curb_sag_flows(inlet, design, d, l_grate);
+            let (_, o) = curb_sag_flows(g, design, d, l_grate);
             qco = o;
         }
     }
@@ -576,13 +692,7 @@ fn on_sag_single(inlet: &InletState, design: &crate::model::InletDesign, d: f64)
 
 /// On-sag curb weir/orifice split with the published transition depths.
 #[allow(clippy::approx_constant)] // 0.7071 is the standard's own literal
-fn curb_sag_flows(
-    inlet: &InletState,
-    design: &crate::model::InletDesign,
-    d: f64,
-    l: f64,
-) -> (f64, f64) {
-    let g = inlet.geo;
+fn curb_sag_flows(g: SagGeo, design: &crate::model::InletDesign, d: f64, l: f64) -> (f64, f64) {
     let Some(curb) = design.curb.as_ref() else {
         return (0.0, 0.0);
     };
@@ -767,5 +877,132 @@ mod unit_constant_tests {
     #[test]
     fn the_minimum_runoff_flow_is_the_predecessors() {
         assert_eq!(0.001, MIN_Q);
+    }
+}
+
+#[cfg(test)]
+mod inlet_law_tests {
+    use super::*;
+
+    fn place(count: u32, pct: f64, limit: f64, a: f64, w: f64) -> crate::overland::CouplingInlet {
+        crate::overland::CouplingInlet {
+            design: "G".into(),
+            count,
+            pct_clogged: pct,
+            flow_limit: limit,
+            local_depression: a,
+            local_width: w,
+        }
+    }
+
+    fn grate(len_m: f64, wid_m: f64) -> InletDesign {
+        InletDesign {
+            id: "G".into(),
+            grate: Some(crate::model::GrateInlet {
+                length: len_m,
+                width: wid_m,
+                grate: GrateKind::PBar50,
+                area_ratio: 0.0,
+                splash_velocity: 0.0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// §15.6 free capture is §7.8's on-sag grate law, in the standard's
+    /// own units: the weir form $3 P d^{1.5}$ below HEC-22's transition
+    /// depth $1.79\,A_o/P$ and the orifice form $0.67 A_o \sqrt{2 g d}$
+    /// above it, on a level pond where no cross-slope correction applies.
+    #[test]
+    fn a_level_pond_over_a_grate_captures_at_the_published_forms() {
+        let d = grate(2.0 * FT, 2.0 * FT); // a 2 ft × 2 ft P-50 grate
+        let inlet = SagInlet::resolve(&d, &[], 0.0, &place(1, 0.0, 0.0, 0.0, 0.0)).expect("serves");
+        let a_o = 2.0 * 2.0 * OPEN_RATIO[0];
+        let p = 2.0 + 2.0 * 2.0;
+        assert!(
+            0.5 < 1.79 * a_o / p && 2.0 > 1.79 * a_o / p,
+            "regimes straddle"
+        );
+        let weir = inlet.capture(0.5 * FT);
+        assert!(
+            (weir - 3.0 * p * 0.5_f64.powf(1.5) * CFS).abs() < 1e-12,
+            "weir regime: {weir}"
+        );
+        let orifice = inlet.capture(2.0 * FT);
+        assert!(
+            (orifice - 0.67 * a_o * (2.0 * G_FT * 2.0).sqrt() * CFS).abs() < 1e-12,
+            "orifice regime: {orifice}"
+        );
+        assert_eq!(inlet.capture(0.0), 0.0);
+        assert!((inlet.open_area() - a_o * FT * FT).abs() < 1e-12);
+    }
+
+    /// Replicates multiply, clogging scales both capture and open area,
+    /// and the per-inlet cap holds each replicate.
+    #[test]
+    fn the_placement_modifiers_enter_as_the_street_ones_do() {
+        let d = grate(2.0 * FT, 2.0 * FT);
+        let one = SagInlet::resolve(&d, &[], 0.0, &place(1, 0.0, 0.0, 0.0, 0.0)).expect("serves");
+        let three_half =
+            SagInlet::resolve(&d, &[], 0.0, &place(3, 50.0, 0.0, 0.0, 0.0)).expect("serves");
+        let q1 = one.capture(0.5 * FT);
+        assert!((three_half.capture(0.5 * FT) - 1.5 * q1).abs() < 1e-12);
+        assert!((three_half.open_area() - 1.5 * one.open_area()).abs() < 1e-12);
+        let capped =
+            SagInlet::resolve(&d, &[], 0.0, &place(2, 0.0, 0.01, 0.0, 0.0)).expect("serves");
+        assert!(
+            (capped.capture(0.5 * FT) - 0.02).abs() < 1e-12,
+            "two capped replicates"
+        );
+        // A cross slope, steepened by a local depression, lowers the
+        // grate's effective head as HEC-22 does for a depressed gutter.
+        let sloped =
+            SagInlet::resolve(&d, &[], 0.02, &place(1, 0.0, 0.0, 0.05, 0.6)).expect("serves");
+        assert!(sloped.capture(0.5 * FT) < q1);
+        let flat_depressed =
+            SagInlet::resolve(&d, &[], 0.0, &place(1, 0.0, 0.0, 0.05, 0.6)).expect("serves");
+        assert!(
+            flat_depressed.capture(0.5 * FT) < q1,
+            "the depression alone steepens"
+        );
+    }
+
+    /// A custom design serves as a rating curve on depth, in the
+    /// model's SI curve units; a diversion curve is refused.
+    #[test]
+    fn a_custom_design_is_a_rating_on_depth_or_refused() {
+        let curves = vec![
+            Curve {
+                id: "R".into(),
+                kind: CurveKind::Rating,
+                points: vec![(0.0, 0.0), (1.0, 0.5)],
+            },
+            Curve {
+                id: "D".into(),
+                kind: CurveKind::Diversion,
+                points: vec![(0.0, 0.0), (1.0, 0.5)],
+            },
+        ];
+        let rating = InletDesign {
+            id: "C".into(),
+            custom_curve: Some(0),
+            ..Default::default()
+        };
+        let inlet = SagInlet::resolve(&rating, &curves, 0.0, &place(2, 50.0, 0.0, 0.0, 0.0))
+            .expect("serves");
+        assert!((inlet.capture(0.5) - 2.0 * 0.5 * 0.25).abs() < 1e-12);
+        assert_eq!(
+            inlet.open_area(),
+            0.0,
+            "a custom design has no measured opening"
+        );
+        let diversion = InletDesign {
+            custom_curve: Some(1),
+            ..rating
+        };
+        assert_eq!(
+            SagInlet::resolve(&diversion, &curves, 0.0, &place(1, 0.0, 0.0, 0.0, 0.0)).err(),
+            Some(SagInletRefusal::DiversionCurve)
+        );
     }
 }

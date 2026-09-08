@@ -315,7 +315,7 @@ pub fn write_inp(network: &Network) -> Result<String, ExportRefusal> {
     write_tables(network, &u, &mut out);
     write_timeseries(network, &mut out);
     write_admin(network, &mut out);
-    write_overland(network, &mut out);
+    write_overland(network, &u, &mut out);
     write_display(network, &mut out);
     out.trim_start_matches('\n')
         .to_string()
@@ -1575,7 +1575,9 @@ fn write_lid(network: &Network, u: &Units, out: &mut String) {
             match lu.drain_to {
                 Some(ParcelOutlet::Vertex(v)) => id(&network.vertices[v].id),
                 Some(ParcelOutlet::Parcel(p)) => id(&network.parcels[p].id),
-                None => "*".into(),
+                // Refused before writing (§14.15); the arm keeps the
+                // match whole.
+                None | Some(ParcelOutlet::Surface) => "*".into(),
             },
             num(lu.from_pervious * 100.0),
         ]);
@@ -2149,6 +2151,10 @@ fn write_hydrology(network: &Network, u: &Units, out: &mut String) {
             match p.outlet {
                 ParcelOutlet::Vertex(v) => id(&network.vertices[v].id),
                 ParcelOutlet::Parcel(q) => id(&network.parcels[q].id),
+                // §14.15: a surface-outlet parcel names itself — the
+                // predecessor's spelling for runoff that reaches no node
+                // — and `[2D_RUNOFF_MAP]` says where on the mesh it lands.
+                ParcelOutlet::Surface => id(&p.id),
             },
             num(u.land(p.area)),
             num(p.frac_imperv * 100.0),
@@ -2534,7 +2540,7 @@ fn write_tables(network: &Network, u: &Units, out: &mut String) {
 /// the `;; UNITS: SI (m)` header — the one representation that
 /// round-trips losslessly whatever units the model was authored in. An
 /// external mesh file is inlined, never re-created.
-fn write_overland(network: &Network, out: &mut String) {
+fn write_overland(network: &Network, u: &Units, out: &mut String) {
     use crate::engine_api::overland::{
         BoundaryCondition, CellClosure, FaceReconstruction, OverlandOptions, RainfallMode,
         SeriesOrValue,
@@ -2694,6 +2700,43 @@ fn write_overland(network: &Network, out: &mut String) {
             coupling_line(out, r);
         }
     }
+    // §14.15 `[2D_INLETS]`: one row per map row carrying an inlet,
+    // spelt with that row's own address. Lengths are SI under the
+    // header; the cap is a flow, in the model's flow units.
+    let inlet_rows: Vec<(&str, &crate::engine_api::overland::CouplingRow)> = mesh
+        .vertex_couplings
+        .iter()
+        .map(|r| ("VERTEX", r))
+        .chain(mesh.cell_couplings.iter().map(|r| ("TRIANGLE", r)))
+        .filter(|(_, r)| r.inlet.is_some())
+        .collect();
+    if !mesh.runoff_map.is_empty() {
+        let _ = writeln!(out, "\n[2D_RUNOFF_MAP]");
+        for r in &mesh.runoff_map {
+            let kind = match r.kind {
+                crate::engine_api::overland::SurfaceKind::Vertex => "VERTEX",
+                crate::engine_api::overland::SurfaceKind::Cell => "TRIANGLE",
+            };
+            let _ = writeln!(out, "{} {kind} {}", id(&r.parcel), r.address);
+        }
+    }
+    if !inlet_rows.is_empty() {
+        let _ = writeln!(out, "\n[2D_INLETS]");
+        for (kind, r) in inlet_rows {
+            let Some(i) = &r.inlet else { continue };
+            let _ = writeln!(
+                out,
+                "{kind} {} {} {} {} {} {} {}",
+                r.address,
+                id(&i.design),
+                i.count,
+                i.pct_clogged,
+                num(u.flow(i.flow_limit)),
+                i.local_depression,
+                i.local_width
+            );
+        }
+    }
     if !mesh.boundaries.is_empty() {
         let _ = writeln!(out, "\n[2D_BOUNDARY_CONDITIONS]");
         for b in &mesh.boundaries {
@@ -2704,8 +2747,11 @@ fn write_overland(network: &Network, out: &mut String) {
                     ("SPECIFIED_STAGE", format!("{v}"))
                 }
                 BoundaryCondition::Stage(SeriesOrValue::Series(name)) => ("TS_STAGE", name.clone()),
+                // A flow is not a length: the header does not cover it,
+                // and import converts it by the model's flow unit, so
+                // that is the unit it must be written in (§14.15).
                 BoundaryCondition::Flow(SeriesOrValue::Value(v)) => {
-                    ("SPECIFIED_FLOW", format!("{v}"))
+                    ("SPECIFIED_FLOW", format!("{}", u.flow(*v)))
                 }
                 BoundaryCondition::Flow(SeriesOrValue::Series(name)) => ("TS_FLOW", name.clone()),
                 BoundaryCondition::RatingCurve { curve } => ("RATING_CURVE", curve.clone()),

@@ -263,9 +263,10 @@ $\mathcal{O}$ the outflow side:
   their sign. There is no reaction term: constituent decay is mass, not
   volume, and appears in the constituent ledger alone.
 - **Constituent**, per pollutant, worst error reported: initial mass and all
-  inflow loads against flooding, outflow, reaction, seepage, and final mass —
-  signed cases handled at accumulation, count-unit pollutants reported as
-  $\log_{10}$.
+  inflow loads (surface drainage from a served mesh among them, §15.11)
+  against flooding, outflow, reaction, seepage, surface spill onto a served
+  mesh, and final mass — signed cases handled at accumulation, count-unit
+  pollutants reported as $\log_{10}$.
 - **Surface loading**: initial buildup, accumulation, and deposition against
   sweeping, infiltration, BMP removal, wash-off, and final buildup.
 

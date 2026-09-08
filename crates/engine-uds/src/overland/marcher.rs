@@ -9,11 +9,12 @@
 //! a value the single-tier march produces at the same steps.
 
 use super::closure::{face_depth_mean, face_depth_vfr, flat_eta, vfr_eta, CellBed};
-use super::coupling::{exchange_conductance, exchange_q};
+use super::coupling::{exchange_conductance, exchange_q, inlet_conductance, inlet_q};
 use super::{
     BoundaryCondition, CellClosure, CouplingRow, FaceReconstruction, OverlandMesh, SeriesOrValue,
     Topology,
 };
+use crate::hydraulics::inlets::SagInlet;
 
 /// §15.1: standard gravity (m/s²).
 const G: f64 = 9.80665;
@@ -193,9 +194,9 @@ pub struct Marcher {
     /// Initial storage (m³), the §15.8 ledger's opening term.
     pub(crate) storage0: f64,
     /// Per-cell ledger scratch for the ∥ cell phase: (rain, coupling,
-    /// evaporation take, infiltration take), reduced serially in index
+    /// evaporation take, infiltration take, runoff), reduced serially in index
     /// order so the sums are byte-identical at every width (§15.4.5).
-    led: Vec<[f64; 4]>,
+    led: Vec<[f64; 5]>,
     /// §15.4.5: the worker team, when the model asked for width.
     #[cfg(feature = "threads")]
     team: Option<crate::hydraulics::team::Team>,
@@ -204,9 +205,19 @@ pub struct Marcher {
     pub rain: Vec<f64>,
     pub evap: Vec<f64>,
     pub coupling: Vec<f64>,
+    /// §15.7 parcel runoff onto each cell (m/s), set per advance.
+    pub runoff: Vec<f64>,
+    /// §15.7 runoff points, in the order the session added them.
+    runoff_points: Vec<RunoffPoint>,
+
+    // ── §15.11 constituents ────────────────────────────────────────
+    cq: Option<MeshQuality>,
 
     // ── §15.6 coupling ─────────────────────────────────────────────
     couplings: Vec<CouplingPoint>,
+    /// Per-cell bed-plane gradient magnitude (m/m): the cross slope
+    /// an inlet at the cell reads (§15.6).
+    bed_slope: Vec<f64>,
     /// Distinct coupled node names, in slot order.
     node_names: Vec<String>,
     /// Per-slot drive, set before an advance: node hydraulic grade,
@@ -248,6 +259,16 @@ pub struct Marcher {
     pub outfall_out: f64,
     /// §15.7 losses out (m³), the §15.8 infiltration term.
     pub infiltration_out: f64,
+    /// §15.7 parcel runoff in (m³).
+    pub runoff_in: f64,
+}
+
+/// §15.7: a resolved runoff point — the cells a rate spreads over, and
+/// the vertex it spreads down from (a cell point spreads over itself).
+#[derive(Debug, Clone)]
+struct RunoffPoint {
+    stencil: Vec<u32>,
+    vertex: Option<(f64, f64, f64)>,
 }
 
 /// §15.5: a boundary slot whose law the session resolves per advance
@@ -284,6 +305,12 @@ pub struct CouplingPoint {
     pub area: f64,
     /// Unauthored areas are eligible for `COUPLING_AREA AUTO` (§15.6).
     pub area_authored: bool,
+    /// §15.6: the inlet authored at the point, for the session to
+    /// resolve against the model's designs.
+    pub inlet: Option<super::CouplingInlet>,
+    /// The resolved inlet law, set by the session before the first
+    /// advance; `None` until then, and always for a point without one.
+    inlet_law: Option<SagInlet>,
 }
 
 /// The §15.4.3 cell phase's taken-out state, as raw pointers.
@@ -295,7 +322,95 @@ struct CellPtrs {
     qcy: *mut f64,
     fl: *mut f64,
     fr: *mut f64,
-    led: *mut [f64; 4],
+    led: *mut [f64; 5],
+    /// §15.11 per constituent: cell masses, the face mass accumulator
+    /// sides, and the per-cell mass ledger scratch.
+    mass: Vec<*mut f64>,
+    ml: Vec<*mut f64>,
+    mr: Vec<*mut f64>,
+    mled: Vec<*mut [f64; 4]>,
+}
+
+/// The §15.4.2 face phase's taken-out state, as raw pointers.
+struct FacePtrs {
+    q: *mut f64,
+    fl: *mut f64,
+    fr: *mut f64,
+    /// §15.11 per constituent: the face mass accumulator sides.
+    ml: Vec<*mut f64>,
+    mr: Vec<*mut f64>,
+}
+
+// SAFETY: the face phase's writes are per-face disjoint (see
+// [`Marcher::fire_face_at`]).
+#[cfg(feature = "threads")]
+unsafe impl Sync for FacePtrs {}
+
+/// §15.11: one constituent's mesh ledger, cumulative since
+/// construction, in the constituent's unit × m³.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MassLedger {
+    pub initial: f64,
+    pub runoff_in: f64,
+    pub junction_in: f64,
+    pub outfall_in: f64,
+    pub junction_out: f64,
+    pub outfall_out: f64,
+    pub boundary_out: f64,
+    pub infiltration_out: f64,
+    pub reacted: f64,
+}
+
+impl MassLedger {
+    /// The §14.16 row: the terms, the mass now, and the closure error.
+    pub fn row(&self, mass_now: f64) -> [f64; 11] {
+        let error = mass_now
+            - (self.initial + self.runoff_in + self.junction_in + self.outfall_in
+                - self.junction_out
+                - self.outfall_out
+                - self.boundary_out
+                - self.infiltration_out
+                - self.reacted);
+        [
+            self.initial,
+            self.runoff_in,
+            self.junction_in,
+            self.outfall_in,
+            self.junction_out,
+            self.outfall_out,
+            self.boundary_out,
+            self.infiltration_out,
+            self.reacted,
+            mass_now,
+            error,
+        ]
+    }
+}
+
+/// §15.11: the constituent layer, present when the model declares
+/// constituents. Every array is `[constituent][…]`.
+#[derive(Debug, Clone)]
+struct MeshQuality {
+    /// First-order decay coefficients (1/s).
+    decay: Vec<f64>,
+    /// Mass per cell (unit·m³).
+    mass: Vec<Vec<f64>>,
+    /// Face mass accumulator sides, the mass twins of `facc_l`/`facc_r`.
+    macc_l: Vec<Vec<f64>>,
+    macc_r: Vec<Vec<f64>>,
+    /// §15.7 runoff mass rate per cell (unit·m³/s), set per advance.
+    runoff_mass: Vec<Vec<f64>>,
+    /// §15.6 injection mass rate per cell (unit·m³/s), set per advance.
+    inject_mass: Vec<Vec<f64>>,
+    /// Node concentration per slot, frozen for the advance.
+    node_conc: Vec<Vec<f64>>,
+    /// Signed exchanged mass per point over the last advance (positive
+    /// = into the network).
+    exchange: Vec<Vec<f64>>,
+    ledger: Vec<MassLedger>,
+    /// Per-cell scratch for the ∥ cell phase: (runoff in, injection
+    /// signed, infiltration out, reacted).
+    led: Vec<Vec<[f64; 4]>>,
 }
 
 // SAFETY: the cell phase's writes are per-cell disjoint (see
@@ -318,6 +433,24 @@ impl Marcher {
             .map(|c| {
                 let [a, b, d] = c.v.map(|v| mesh.verts[v as usize].z);
                 CellBed::new(a, b, d)
+            })
+            .collect();
+        // §15.6: the plane through a cell's three vertices has one
+        // gradient; its magnitude is the cross slope an inlet reads.
+        let bed_slope: Vec<f64> = mesh
+            .cells
+            .iter()
+            .map(|c| {
+                let [p1, p2, p3] = c.v.map(|v| &mesh.verts[v as usize]);
+                let (e1x, e1y, e1z) = (p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+                let (e2x, e2y, e2z) = (p3.x - p1.x, p3.y - p1.y, p3.z - p1.z);
+                let det = e1x * e2y - e1y * e2x;
+                if det.abs() < 1e-300 {
+                    return 0.0;
+                }
+                let gx = (e1z * e2y - e2z * e1y) / det;
+                let gy = (e2z * e1x - e1z * e2x) / det;
+                gx.hypot(gy)
             })
             .collect();
 
@@ -518,6 +651,8 @@ impl Marcher {
                 cd: row.cd,
                 area: row.area,
                 area_authored: row.area_authored,
+                inlet: row.inlet.clone(),
+                inlet_law: None,
             });
         }
         let ns = node_names.len();
@@ -581,13 +716,17 @@ impl Marcher {
             advanced: 0.0,
             peak_active: 0,
             storage0: 0.0,
-            led: vec![[0.0; 4]; nc],
+            led: vec![[0.0; 5]; nc],
             #[cfg(feature = "threads")]
             team: None,
             rain: vec![0.0; nc],
             evap: vec![0.0; nc],
             coupling: vec![0.0; nc],
+            runoff: vec![0.0; nc],
+            runoff_points: Vec::new(),
+            cq: None,
             couplings,
+            bed_slope,
             node_names,
             node_grade: vec![0.0; ns],
             node_depth: vec![0.0; ns],
@@ -605,6 +744,7 @@ impl Marcher {
             boundary_out: 0.0,
             coupling_in: 0.0,
             coupling_out: 0.0,
+            runoff_in: 0.0,
             outfall_in: 0.0,
             outfall_out: 0.0,
             infiltration_out: 0.0,
@@ -795,6 +935,21 @@ impl Marcher {
                 self.node_depth[slot],
                 self.dry_depth,
             );
+            // §15.6: an inlet at the point is a second path of the same
+            // exchange, summed before the caps.
+            if let Some(law) = &cp.inlet_law {
+                q += inlet_q(
+                    law.capture(self.depth[ci]),
+                    self.eta[ci],
+                    self.node_grade[slot],
+                    self.bed[ci].mean(),
+                    cp.cd,
+                    law.open_area(),
+                    self.depth[ci],
+                    self.node_depth[slot],
+                    self.dry_depth,
+                );
+            }
             if q == 0.0 {
                 continue;
             }
@@ -810,6 +965,27 @@ impl Marcher {
                 q = -take / dt;
             }
             let dv = q * dt;
+            // §15.11: a drain carries the cell's concentration into the
+            // node, a spill the node's onto the cell.
+            let wet = self.depth[ci] >= self.dry_depth && self.vol[ci] > 0.0;
+            let v_old = self.vol[ci];
+            if let Some(cq) = self.cq.as_mut() {
+                for pi in 0..cq.decay.len() {
+                    let dm = if dv > 0.0 {
+                        let c = if wet { cq.mass[pi][ci] / v_old } else { 0.0 };
+                        (dv * c).min(cq.mass[pi][ci])
+                    } else {
+                        dv * cq.node_conc[pi][slot]
+                    };
+                    cq.mass[pi][ci] = (cq.mass[pi][ci] - dm).max(0.0);
+                    cq.exchange[pi][k] += dm;
+                    if dm > 0.0 {
+                        cq.ledger[pi].junction_out += dm;
+                    } else {
+                        cq.ledger[pi].junction_in += -dm;
+                    }
+                }
+            }
             self.vol[ci] = (self.vol[ci] - dv).max(0.0);
             if dv > 0.0 {
                 self.coupling_out += dv;
@@ -943,6 +1119,18 @@ impl Marcher {
         self.couplings[point].area = area;
     }
 
+    /// §15.6: give a point its resolved inlet law. The session resolves
+    /// the authored design against the model before the first advance.
+    pub(crate) fn set_inlet_law(&mut self, point: usize, law: SagInlet) {
+        self.couplings[point].inlet_law = Some(law);
+    }
+
+    /// §15.6: a cell's bed-plane gradient magnitude (m/m), the cross
+    /// slope an inlet at the cell reads.
+    pub fn cell_bed_slope(&self, cell: usize) -> f64 {
+        self.bed_slope[cell]
+    }
+
     /// Signed exchanged volume per point over the last advance (m³,
     /// positive = drained into the node).
     pub fn exchanged(&self) -> &[f64] {
@@ -955,7 +1143,7 @@ impl Marcher {
         let cp = &self.couplings[point];
         let ci = cp.cell as usize;
         let slot = cp.node_slot as usize;
-        exchange_conductance(
+        let rim = exchange_conductance(
             self.eta[ci],
             self.node_grade[slot],
             self.node_rim[slot],
@@ -964,13 +1152,31 @@ impl Marcher {
             self.depth[ci],
             self.node_depth[slot],
             self.dry_depth,
-        )
+        );
+        let inlet = cp.inlet_law.as_ref().map_or(0.0, |law| {
+            inlet_conductance(
+                self.eta[ci],
+                self.node_grade[slot],
+                self.bed[ci].mean(),
+                cp.cd,
+                law.open_area(),
+                self.depth[ci],
+                self.node_depth[slot],
+                self.dry_depth,
+            )
+        });
+        rim + inlet
     }
 
     /// Clear every held injection rate (§15.6 outfall network→surface).
     pub fn clear_injection(&mut self) {
         for r in &mut self.coupling {
             *r = 0.0;
+        }
+        if let Some(cq) = self.cq.as_mut() {
+            for row in &mut cq.inject_mass {
+                row.fill(0.0);
+            }
         }
     }
 
@@ -980,11 +1186,276 @@ impl Marcher {
     /// surface. The rates persist until cleared.
     pub fn inject(&mut self, point: usize, rate: f64) {
         let cp = self.couplings[point].clone();
-        let weights: Vec<f64> = if let Some((vx, vy, vz)) = cp.vertex {
+        // §15.11: the injection carries the node's frozen concentration.
+        let mass = self.cq.as_ref().map(|cq| {
+            (0..cq.decay.len())
+                .map(|pi| rate * cq.node_conc[pi][cp.node_slot as usize])
+                .collect()
+        });
+        self.scatter(&cp.stencil, cp.vertex, rate, false, mass);
+    }
+
+    /// §15.7: resolve a runoff point against the mesh — a vertex's
+    /// incident cells, or the cell itself — and return its index.
+    pub fn add_runoff_point(
+        &mut self,
+        mesh: &OverlandMesh,
+        kind: super::SurfaceKind,
+        address: &str,
+    ) -> Option<usize> {
+        let point = match kind {
+            super::SurfaceKind::Vertex => {
+                let v = mesh.resolve_vertex(address)?;
+                let stencil: Vec<u32> = (0..mesh.cells.len())
+                    .filter(|&ci| mesh.cells[ci].v.contains(&v))
+                    .map(|ci| ci as u32)
+                    .collect();
+                if stencil.is_empty() {
+                    return None;
+                }
+                let vr = &mesh.verts[v as usize];
+                RunoffPoint {
+                    stencil,
+                    vertex: Some((vr.x, vr.y, vr.z)),
+                }
+            }
+            super::SurfaceKind::Cell => RunoffPoint {
+                stencil: vec![mesh.resolve_cell(address)?],
+                vertex: None,
+            },
+        };
+        self.runoff_points.push(point);
+        Some(self.runoff_points.len() - 1)
+    }
+
+    /// §15.7: clear every held runoff rate before an advance's rates
+    /// are set.
+    pub fn clear_runoff(&mut self) {
+        for r in &mut self.runoff {
+            *r = 0.0;
+        }
+        if let Some(cq) = self.cq.as_mut() {
+            for row in &mut cq.runoff_mass {
+                row.fill(0.0);
+            }
+        }
+    }
+
+    /// §15.7: put a parcel's runoff (m³/s) onto its point for the
+    /// coming advance, spread with the injection weights.
+    pub fn set_runoff(&mut self, point: usize, rate: f64) {
+        let rp = self.runoff_points[point].clone();
+        self.scatter(&rp.stencil, rp.vertex, rate, true, None);
+    }
+
+    /// §15.11: put a parcel's runoff mass rates (unit·m³/s, one per
+    /// constituent) onto its point for the coming advance, with the
+    /// same shares as the water.
+    pub fn set_runoff_mass(&mut self, point: usize, rates: &[f64]) {
+        let rp = self.runoff_points[point].clone();
+        if self.cq.is_some() {
+            self.scatter(&rp.stencil, rp.vertex, 0.0, true, Some(rates.to_vec()));
+        }
+    }
+
+    /// §15.11: declare the model's constituents by their first-order
+    /// decay coefficients (1/s). Allocates the layer; a mesh starts
+    /// clean, so every initial mass is zero.
+    pub fn set_constituents(&mut self, decay: &[f64]) {
+        let (nc, nf, ns, np) = (
+            self.area.len(),
+            self.faces.len(),
+            self.node_names.len(),
+            self.couplings.len(),
+        );
+        let n = decay.len();
+        self.cq = (n > 0).then(|| MeshQuality {
+            decay: decay.to_vec(),
+            mass: vec![vec![0.0; nc]; n],
+            macc_l: vec![vec![0.0; nf]; n],
+            macc_r: vec![vec![0.0; nf]; n],
+            runoff_mass: vec![vec![0.0; nc]; n],
+            inject_mass: vec![vec![0.0; nc]; n],
+            node_conc: vec![vec![0.0; ns]; n],
+            exchange: vec![vec![0.0; np]; n],
+            ledger: vec![MassLedger::default(); n],
+            led: vec![vec![[0.0; 4]; nc]; n],
+        });
+    }
+
+    /// §15.11: the number of constituents the layer carries.
+    pub fn constituents(&self) -> usize {
+        self.cq.as_ref().map_or(0, |cq| cq.decay.len())
+    }
+
+    /// §15.11: a node slot's concentration of `p`, frozen for the
+    /// coming advance beside its grade.
+    pub fn set_node_concentration(&mut self, slot: usize, p: usize, c: f64) {
+        if let Some(cq) = self.cq.as_mut() {
+            cq.node_conc[p][slot] = c;
+        }
+    }
+
+    /// §15.11: seed mass on a cell (unit·m³) — the test and checkpoint
+    /// entry, since a mesh starts clean.
+    pub fn seed_mass(&mut self, p: usize, cell: usize, mass: f64) {
+        if let Some(cq) = self.cq.as_mut() {
+            cq.mass[p][cell] += mass;
+            cq.ledger[p].initial += mass;
+        }
+    }
+
+    /// §15.11: signed exchanged mass per point over the last advance
+    /// (positive = into the network), per constituent.
+    pub fn exchanged_mass(&self) -> &[Vec<f64>] {
+        self.cq.as_ref().map_or(&[], |cq| &cq.exchange)
+    }
+
+    /// §15.11: a constituent's mass on the whole mesh (unit·m³).
+    pub fn mass_of(&self, p: usize) -> f64 {
+        self.cq.as_ref().map_or(0.0, |cq| cq.mass[p].iter().sum())
+    }
+
+    /// §15.11: a constituent's mesh ledger.
+    pub fn mass_ledger(&self, p: usize) -> MassLedger {
+        self.cq
+            .as_ref()
+            .map_or(MassLedger::default(), |cq| cq.ledger[p])
+    }
+
+    /// §12.3: write the constituent layer — masses, accumulator sides
+    /// in flight, per-point exchange, and the ledgers.
+    pub(crate) fn checkpoint_put_quality(
+        &self,
+        w: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        use crate::simulation::checkpoint as cp;
+        let Some(cq) = &self.cq else {
+            return cp::put_u(w, 0);
+        };
+        cp::put_u(w, cq.decay.len() as u64)?;
+        for p in 0..cq.decay.len() {
+            for vs in [&cq.mass[p], &cq.macc_l[p], &cq.macc_r[p], &cq.exchange[p]] {
+                cp::put_fs(w, vs)?;
+            }
+            let l = &cq.ledger[p];
+            for v in [
+                l.initial,
+                l.runoff_in,
+                l.junction_in,
+                l.outfall_in,
+                l.junction_out,
+                l.outfall_out,
+                l.boundary_out,
+                l.infiltration_out,
+                l.reacted,
+            ] {
+                cp::put_f(w, v)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// §12.3: restore what [`Marcher::checkpoint_put_quality`] wrote
+    /// into a layer the session has already declared.
+    pub(crate) fn checkpoint_get_quality(
+        &mut self,
+        r: &mut crate::simulation::checkpoint::Reader<'_>,
+    ) -> Result<(), String> {
+        let n = r.u()? as usize;
+        if n != self.constituents() {
+            return Err(format!(
+                "checkpoint carries {n} constituents on the mesh, this model declares {}",
+                self.constituents()
+            ));
+        }
+        let Some(cq) = self.cq.as_mut() else {
+            return Ok(());
+        };
+        for p in 0..n {
+            for slot in [
+                &mut cq.mass[p],
+                &mut cq.macc_l[p],
+                &mut cq.macc_r[p],
+                &mut cq.exchange[p],
+            ] {
+                let v = r.fs()?;
+                if v.len() != slot.len() {
+                    return Err("checkpoint constituent state does not fit this mesh".into());
+                }
+                *slot = v;
+            }
+            let l = &mut cq.ledger[p];
+            for slot in [
+                &mut l.initial,
+                &mut l.runoff_in,
+                &mut l.junction_in,
+                &mut l.outfall_in,
+                &mut l.junction_out,
+                &mut l.outfall_out,
+                &mut l.boundary_out,
+                &mut l.infiltration_out,
+                &mut l.reacted,
+            ] {
+                *slot = r.f()?;
+            }
+        }
+        Ok(())
+    }
+    /// Spread a rate (m³/s) over a stencil as a per-cell rate (m/s),
+    /// into the runoff array or the injection array: weighted by the
+    /// surface slope down from the vertex toward each cell, by area
+    /// on a flat or dry surface, and over the cell alone for a cell
+    /// point.
+    fn scatter(
+        &mut self,
+        stencil: &[u32],
+        vertex: Option<(f64, f64, f64)>,
+        rate: f64,
+        runoff: bool,
+        mass_rates: Option<Vec<f64>>,
+    ) {
+        let shares = self.scatter_shares(stencil, vertex);
+        {
+            let target = if runoff {
+                &mut self.runoff
+            } else {
+                &mut self.coupling
+            };
+            for &(t, w) in &shares {
+                target[t] += rate * w / self.area[t];
+            }
+        }
+        // §15.11: the mass rides with the same shares, per cell not
+        // per area.
+        if let (Some(cq), Some(rates)) = (self.cq.as_mut(), mass_rates) {
+            for (pi, mr) in rates.iter().enumerate() {
+                let target = if runoff {
+                    &mut cq.runoff_mass[pi]
+                } else {
+                    &mut cq.inject_mass[pi]
+                };
+                for &(t, w) in &shares {
+                    target[t] += mr * w;
+                }
+            }
+        }
+    }
+
+    /// The §15.6 injection shares over a stencil, summing to one:
+    /// weighted by the surface slope down from the vertex toward each
+    /// cell, by area on a flat or dry surface, and the cell alone for
+    /// a cell point.
+    fn scatter_shares(
+        &self,
+        stencil: &[u32],
+        vertex: Option<(f64, f64, f64)>,
+    ) -> Vec<(usize, f64)> {
+        let weights: Vec<f64> = if let Some((vx, vy, vz)) = vertex {
             // η_v: wet-depth-weighted mean surface of the wet stencil
             // cells, the vertex ground elevation when all are dry.
             let (mut num, mut den) = (0.0, 0.0);
-            for &t in &cp.stencil {
+            for &t in stencil {
                 let t = t as usize;
                 if self.depth[t] >= self.dry_depth {
                     num += self.depth[t] * self.eta[t];
@@ -992,7 +1463,7 @@ impl Marcher {
                 }
             }
             let eta_v = if den > 0.0 { num / den } else { vz };
-            cp.stencil
+            stencil
                 .iter()
                 .map(|&t| {
                     let t = t as usize;
@@ -1009,16 +1480,17 @@ impl Marcher {
         };
         let wsum: f64 = weights.iter().sum();
         if wsum > 1e-30 {
-            for (&t, w) in cp.stencil.iter().zip(&weights) {
-                let t = t as usize;
-                self.coupling[t] += rate * (w / wsum) / self.area[t];
-            }
+            stencil
+                .iter()
+                .zip(&weights)
+                .map(|(&t, w)| (t as usize, w / wsum))
+                .collect()
         } else {
-            let asum: f64 = cp.stencil.iter().map(|&t| self.area[t as usize]).sum();
-            for &t in &cp.stencil {
-                let t = t as usize;
-                self.coupling[t] += rate / asum;
-            }
+            let asum: f64 = stencil.iter().map(|&t| self.area[t as usize]).sum();
+            stencil
+                .iter()
+                .map(|&t| (t as usize, self.area[t as usize] / asum))
+                .collect()
         }
     }
 
@@ -1048,6 +1520,33 @@ impl Marcher {
                 self.vol[ci] = (self.vol[ci] + pending).max(0.0);
                 self.reclose(ci);
             }
+            if let Some(cq) = self.cq.as_mut() {
+                for p in 0..cq.decay.len() {
+                    let mut m = 0.0;
+                    for &(fi, sign) in &self.cf_face[lo..hi] {
+                        let fi = fi as usize;
+                        if sign > 0.0 {
+                            m += cq.macc_l[p][fi];
+                            cq.macc_l[p][fi] = 0.0;
+                        } else {
+                            m += cq.macc_r[p][fi];
+                            cq.macc_r[p][fi] = 0.0;
+                        }
+                    }
+                    cq.mass[p][ci] = (cq.mass[p][ci] + m).max(0.0);
+                }
+            }
+        }
+    }
+
+    /// §15.11: a cell's concentration of constituent `p` against its
+    /// current volume — zero below the drying depth.
+    pub fn cell_concentration(&self, p: usize, ci: usize) -> f64 {
+        match &self.cq {
+            Some(cq) if self.depth[ci] >= self.dry_depth && self.vol[ci] > 0.0 => {
+                cq.mass[p][ci] / self.vol[ci]
+            }
+            _ => 0.0,
         }
     }
 
@@ -1073,6 +1572,12 @@ impl Marcher {
             self.tier[cp.cell as usize] = 0;
         }
         for (ci, r) in self.coupling.iter().enumerate() {
+            if *r != 0.0 {
+                self.tier[ci] = 0;
+            }
+        }
+        // §15.7: so are cells receiving parcel runoff.
+        for (ci, r) in self.runoff.iter().enumerate() {
             if *r != 0.0 {
                 self.tier[ci] = 0;
             }
@@ -1134,14 +1639,30 @@ impl Marcher {
             let a = self.area[ci];
             let rain = self.rain[ci] * a * dt;
             let coup = self.coupling[ci] * a * dt;
+            let run = self.runoff[ci] * a * dt;
             let t = (self.depth[ci] / self.dry_depth).clamp(0.0, 1.0);
             let ramp = t * t * (3.0 - 2.0 * t);
             let want_evap = self.evap[ci] * ramp * a * dt;
             let losses = self.has_losses && (self.il_left[ci] > 0.0 || self.cl[ci] > 0.0);
-            if rain == 0.0 && coup == 0.0 && want_evap == 0.0 && !(losses && self.vol[ci] > 0.0) {
+            // §15.11: a cell holding mass still decays and still takes
+            // its sources' mass while otherwise idle.
+            let has_mass = self
+                .cq
+                .as_ref()
+                .is_some_and(|cq| cq.mass.iter().any(|m| m[ci] != 0.0));
+            if rain == 0.0
+                && coup == 0.0
+                && run == 0.0
+                && want_evap == 0.0
+                && !(losses && self.vol[ci] > 0.0)
+                && !has_mass
+            {
                 continue;
             }
-            let mut avail = (self.vol[ci] + rain + coup).max(0.0);
+            let v_before = self.vol[ci];
+            let wet = self.depth[ci] >= self.dry_depth && v_before > 0.0;
+            let mut avail = (v_before + rain + coup + run).max(0.0);
+            let avail0 = avail;
             // §15.7 losses in the firing path's order: initial,
             // continuing, evaporation, each from what remains.
             let infil = if self.has_losses {
@@ -1155,6 +1676,7 @@ impl Marcher {
             };
             let take = want_evap.min(avail);
             self.rain_in += rain;
+            self.runoff_in += run;
             if coup >= 0.0 {
                 self.outfall_in += coup;
             } else {
@@ -1167,6 +1689,36 @@ impl Marcher {
             }
             self.vol[ci] = avail - take;
             self.reclose(ci);
+            // §15.11 on the lazy path, booking exactly as the firing
+            // path books.
+            if let Some(cq) = self.cq.as_mut() {
+                for p in 0..cq.decay.len() {
+                    let m0 = cq.mass[p][ci];
+                    let c_before = if wet { m0 / v_before } else { 0.0 };
+                    let ri = cq.runoff_mass[p][ci] * dt;
+                    let inj = if coup >= 0.0 {
+                        cq.inject_mass[p][ci] * dt
+                    } else {
+                        -((-coup) * c_before).min(m0 + ri)
+                    };
+                    let mut m = (m0 + ri + inj).max(0.0);
+                    let c_mix = if avail0 > 0.0 { m / avail0 } else { 0.0 };
+                    let im = (infil * c_mix).min(m);
+                    m -= im;
+                    let r = m * (1.0 - (-cq.decay[p] * dt).exp());
+                    m -= r;
+                    cq.mass[p][ci] = m.max(0.0);
+                    let l = &mut cq.ledger[p];
+                    l.runoff_in += ri;
+                    if inj >= 0.0 {
+                        l.outfall_in += inj;
+                    } else {
+                        l.outfall_out += -inj;
+                    }
+                    l.infiltration_out += im;
+                    l.reacted += r;
+                }
+            }
         }
     }
 
@@ -1177,16 +1729,8 @@ impl Marcher {
     /// Reads and writes only index `fi` of `q`, `fl` and `fr`; callers
     /// run disjoint `fi` concurrently and nothing else touches those
     /// arrays during the phase.
-    #[allow(clippy::too_many_arguments)]
-    unsafe fn fire_face_at(
-        &self,
-        fi: usize,
-        dt0: f64,
-        s: u64,
-        q: *mut f64,
-        fl: *mut f64,
-        fr: *mut f64,
-    ) {
+    unsafe fn fire_face_at(&self, fi: usize, dt0: f64, s: u64, p: &FacePtrs) {
+        let (q, fl, fr) = (p.q, p.fl, p.fr);
         if !s.is_multiple_of(1u64 << self.face_tier[fi]) {
             return;
         }
@@ -1241,6 +1785,22 @@ impl Marcher {
         let dm = f.psi * q_new * f.xi * dt;
         *fl.add(fi) -= dm;
         *fr.add(fi) += dm;
+        // §15.11: the mass rides the volume at the exporter's
+        // concentration, one antisymmetric pair per face.
+        if let Some(cq) = &self.cq {
+            let exporter = if q_new > 0.0 { cl } else { cr };
+            let wet = self.depth[exporter] >= self.dry_depth && self.vol[exporter] > 0.0;
+            for pi in 0..cq.decay.len() {
+                let c = if wet {
+                    cq.mass[pi][exporter] / self.vol[exporter]
+                } else {
+                    0.0
+                };
+                let dmp = c * dm;
+                *p.ml[pi].add(fi) -= dmp;
+                *p.mr[pi].add(fi) += dmp;
+            }
+        }
     }
 
     /// §15.4.2 ∥ face phase: fire every face whose tier is due at base
@@ -1251,8 +1811,24 @@ impl Marcher {
         let mut q = std::mem::take(&mut self.q);
         let mut fl = std::mem::take(&mut self.facc_l);
         let mut fr = std::mem::take(&mut self.facc_r);
+        // §15.11: the mass accumulators come out with the volume ones;
+        // the masses themselves stay in place, read-only, for the
+        // exporter concentrations.
+        let (mut ml, mut mr) = match self.cq.as_mut() {
+            Some(cq) => (
+                std::mem::take(&mut cq.macc_l),
+                std::mem::take(&mut cq.macc_r),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
         let lists = std::mem::take(&mut self.faces_by_tier);
-        let (qp, flp, frp) = (q.as_mut_ptr(), fl.as_mut_ptr(), fr.as_mut_ptr());
+        let ptrs = FacePtrs {
+            q: q.as_mut_ptr(),
+            fl: fl.as_mut_ptr(),
+            fr: fr.as_mut_ptr(),
+            ml: ml.iter_mut().map(|v| v.as_mut_ptr()).collect(),
+            mr: mr.iter_mut().map(|v| v.as_mut_ptr()).collect(),
+        };
         for (k, list) in lists.iter().enumerate() {
             if !s.is_multiple_of(1u64 << k) || list.is_empty() {
                 continue;
@@ -1262,21 +1838,12 @@ impl Marcher {
                 let mut teamed = false;
                 if let Some(mut team) = self.team.take() {
                     if list.len() >= PAR_GRAIN * team.width() {
-                        use crate::hydraulics::team::SendPtr;
-                        let (qs, fls, frs) =
-                            (SendPtr::new(qp), SendPtr::new(flp), SendPtr::new(frp));
+                        let shared = &ptrs;
                         let me = &*self;
                         // SAFETY: per-face disjoint reads/writes, as
                         // the body's contract states.
                         team.run(list.len(), |i| unsafe {
-                            me.fire_face_at(
-                                list[i] as usize,
-                                dt0,
-                                s,
-                                qs.get(),
-                                fls.get(),
-                                frs.get(),
-                            );
+                            me.fire_face_at(list[i] as usize, dt0, s, shared);
                         });
                         teamed = true;
                     }
@@ -1288,13 +1855,17 @@ impl Marcher {
             }
             for &fi in list {
                 // SAFETY: serial — the pointers are exclusive here.
-                unsafe { self.fire_face_at(fi as usize, dt0, s, qp, flp, frp) };
+                unsafe { self.fire_face_at(fi as usize, dt0, s, &ptrs) };
             }
         }
         self.faces_by_tier = lists;
         self.q = q;
         self.facc_l = fl;
         self.facc_r = fr;
+        if let Some(cq) = self.cq.as_mut() {
+            cq.macc_l = ml;
+            cq.macc_r = mr;
+        }
     }
 
     /// One cell's §15.4.3 firing. The cell-state arrays and the face
@@ -1330,9 +1901,13 @@ impl Marcher {
         let a = self.area[ci];
         let rain = self.rain[ci] * a * dt;
         let coup = self.coupling[ci] * a * dt;
+        let run = self.runoff[ci] * a * dt;
         let t = (*p.depth.add(ci) / self.dry_depth).clamp(0.0, 1.0);
         let ramp = t * t * (3.0 - 2.0 * t);
-        let mut avail = (*p.vol.add(ci) + flux + rain + coup).max(0.0);
+        let v_before = *p.vol.add(ci);
+        let wet = *p.depth.add(ci) >= self.dry_depth && v_before > 0.0;
+        let mut avail = (v_before + flux + rain + coup + run).max(0.0);
+        let avail0 = avail;
         // §15.7 losses, in order: the initial capacity absorbs first
         // (whatever the water's source), then the continuing rate
         // through the ramp, then evaporation — each from what remains.
@@ -1358,7 +1933,42 @@ impl Marcher {
         let (qx, qy) = self.perot_of(ci);
         *p.qcx.add(ci) = qx;
         *p.qcy.add(ci) = qy;
-        *p.led.add(ci) = [rain, coup, take, infil];
+        *p.led.add(ci) = [rain, coup, take, infil, run];
+        // §15.11: the cell's mass — its own sides of the face mass
+        // accumulators, its sources, then the sinks in the volume's
+        // order: infiltration at the mixed concentration, evaporation
+        // leaving mass behind, decay last.
+        if let Some(cq) = &self.cq {
+            for pi in 0..cq.decay.len() {
+                let mut gm = 0.0;
+                for &(fi, sign) in &self.cf_face[lo..hi] {
+                    let fi = fi as usize;
+                    if sign > 0.0 {
+                        gm += *p.ml[pi].add(fi);
+                        *p.ml[pi].add(fi) = 0.0;
+                    } else {
+                        gm += *p.mr[pi].add(fi);
+                        *p.mr[pi].add(fi) = 0.0;
+                    }
+                }
+                let m0 = *p.mass[pi].add(ci);
+                let c_before = if wet { m0 / v_before } else { 0.0 };
+                let ri = cq.runoff_mass[pi][ci] * dt;
+                let inj = if coup >= 0.0 {
+                    cq.inject_mass[pi][ci] * dt
+                } else {
+                    -((-coup) * c_before).min((m0 + gm + ri).max(0.0))
+                };
+                let mut m = (m0 + gm + ri + inj).max(0.0);
+                let c_mix = if avail0 > 0.0 { m / avail0 } else { 0.0 };
+                let im = (infil * c_mix).min(m);
+                m -= im;
+                let r = m * (1.0 - (-cq.decay[pi] * dt).exp());
+                m -= r;
+                *p.mass[pi].add(ci) = m.max(0.0);
+                *p.mled[pi].add(ci) = [ri, inj, im, r];
+            }
+        }
     }
 
     /// §15.7: draw down a cell's initial-loss capacity by the depth a
@@ -1388,6 +1998,17 @@ impl Marcher {
         let mut fl = std::mem::take(&mut self.facc_l);
         let mut fr = std::mem::take(&mut self.facc_r);
         let mut led = std::mem::take(&mut self.led);
+        // §15.11: the masses, accumulator sides and mass scratch come
+        // out too; the layer's parameters stay behind for reading.
+        let (mut mass, mut ml, mut mr, mut mled) = match self.cq.as_mut() {
+            Some(cq) => (
+                std::mem::take(&mut cq.mass),
+                std::mem::take(&mut cq.macc_l),
+                std::mem::take(&mut cq.macc_r),
+                std::mem::take(&mut cq.led),
+            ),
+            None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+        };
         let ptrs = CellPtrs {
             vol: vol.as_mut_ptr(),
             depth: depth.as_mut_ptr(),
@@ -1397,6 +2018,10 @@ impl Marcher {
             fl: fl.as_mut_ptr(),
             fr: fr.as_mut_ptr(),
             led: led.as_mut_ptr(),
+            mass: mass.iter_mut().map(|v| v.as_mut_ptr()).collect(),
+            ml: ml.iter_mut().map(|v| v.as_mut_ptr()).collect(),
+            mr: mr.iter_mut().map(|v| v.as_mut_ptr()).collect(),
+            mled: mled.iter_mut().map(|v| v.as_mut_ptr()).collect(),
         };
         let _ = nc;
         let lists = std::mem::take(&mut self.cells_by_tier);
@@ -1439,17 +2064,24 @@ impl Marcher {
         self.facc_l = fl;
         self.facc_r = fr;
         self.led = led;
+        if let Some(cq) = self.cq.as_mut() {
+            cq.mass = mass;
+            cq.macc_l = ml;
+            cq.macc_r = mr;
+            cq.led = mled;
+        }
         // §15.8: the ledger reduction — serial, tiers ascending, index
         // order within each tier, so the sums are deterministic at any
-        // width.
+        // width. §15.11's ledgers reduce in the same order.
         for k in 0..self.cells_by_tier.len() {
             if !s.is_multiple_of(1u64 << k) {
                 continue;
             }
             for i in 0..self.cells_by_tier[k].len() {
                 let ci = self.cells_by_tier[k][i] as usize;
-                let [rain, coup, take, infil] = self.led[ci];
+                let [rain, coup, take, infil, run] = self.led[ci];
                 self.rain_in += rain;
+                self.runoff_in += run;
                 // The injection path books separately from the
                 // junction orifice exchange.
                 if coup >= 0.0 {
@@ -1461,6 +2093,20 @@ impl Marcher {
                 if infil > 0.0 {
                     self.infiltration_out += infil;
                     self.draw_initial_loss(ci, infil);
+                }
+                if let Some(cq) = self.cq.as_mut() {
+                    for pi in 0..cq.decay.len() {
+                        let [ri, inj, im, r] = cq.led[pi][ci];
+                        let l = &mut cq.ledger[pi];
+                        l.runoff_in += ri;
+                        if inj >= 0.0 {
+                            l.outfall_in += inj;
+                        } else {
+                            l.outfall_out += -inj;
+                        }
+                        l.infiltration_out += im;
+                        l.reacted += r;
+                    }
                 }
             }
         }
@@ -1571,6 +2217,17 @@ impl Marcher {
                 self.boundary_in += applied;
             } else {
                 self.boundary_out -= applied;
+                // §15.11: outflow carries the cell's concentration out;
+                // inflow carries nothing.
+                let wet = self.depth[ci] >= self.dry_depth && v_old > 0.0;
+                if let Some(cq) = self.cq.as_mut() {
+                    for pi in 0..cq.decay.len() {
+                        let c = if wet { cq.mass[pi][ci] / v_old } else { 0.0 };
+                        let dm = ((-applied) * c).min(cq.mass[pi][ci]);
+                        cq.mass[pi][ci] -= dm;
+                        cq.ledger[pi].boundary_out += dm;
+                    }
+                }
             }
             self.vol[ci] = v_new;
             self.reclose(ci);
@@ -1590,6 +2247,11 @@ impl Marcher {
         }
         for e in &mut self.exchange {
             *e = 0.0;
+        }
+        if let Some(cq) = self.cq.as_mut() {
+            for row in &mut cq.exchange {
+                row.fill(0.0);
+            }
         }
         let mut remaining = span;
         let nsub = 1u64 << self.lts_tiers.saturating_sub(1).min(7);
@@ -1693,7 +2355,12 @@ impl Marcher {
     /// against everything the ledger says arrived and left.
     pub fn ledger_error(&self) -> f64 {
         self.storage()
-            - (self.storage0 + self.rain_in + self.coupling_in + self.outfall_in + self.boundary_in
+            - (self.storage0
+                + self.rain_in
+                + self.runoff_in
+                + self.coupling_in
+                + self.outfall_in
+                + self.boundary_in
                 - self.evap_out
                 - self.infiltration_out
                 - self.coupling_out
@@ -2746,6 +3413,349 @@ mod tests {
         assert!(m.ledger_error().abs() < 1e-12);
     }
 
+    /// §15.6: a cell's cross slope is the gradient of the plane through
+    /// its vertices — a tilt along one axis reads as that tilt, a level
+    /// cell reads as none, and a compound tilt as the hypotenuse.
+    #[test]
+    fn a_cells_bed_slope_is_its_plane_gradient() {
+        let mut mesh = grid(2, 2, 1.0, |x, y| 10.0 + 0.1 * x + 0.05 * y);
+        let m = build(&mesh);
+        for ci in 0..mesh.cells.len() {
+            assert!((m.cell_bed_slope(ci) - 0.1_f64.hypot(0.05)).abs() < 1e-12);
+        }
+        for v in &mut mesh.verts {
+            v.z = 10.0;
+        }
+        let flat = build(&mesh);
+        assert_eq!(flat.cell_bed_slope(0), 0.0);
+    }
+
+    /// §15.6: over one advance, a point's signed exchange is the net of
+    /// the ledger's two directions. A surcharged node spilling onto a
+    /// dry cell ponds it above the node's own grade within the advance
+    /// and drains straight back, so both directions run in one advance
+    /// and only the net is what the session delivers as next period's
+    /// lateral — the ledger keeps the directions apart.
+    #[test]
+    fn the_point_exchange_sums_to_the_ledger_increment() {
+        let coupled = |h0: f64| {
+            let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+            fill_to_stage(&mut mesh, 10.0 + h0);
+            mesh.cell_couplings.push(crate::overland::CouplingRow {
+                address: "4".into(),
+                node: "J".into(),
+                cd: 0.65,
+                area: 0.05,
+                area_authored: true,
+                inlet: None,
+            });
+            build(&mesh)
+        };
+        let mut m = coupled(0.5);
+        m.set_node_drive(0, 5.0, 0.0, 9.0, 0.0);
+        m.advance(60.0);
+        assert!(m.coupling_out > 0.0);
+        assert!(
+            (m.exchanged()[0] - m.coupling_out).abs() < 1e-12,
+            "drain: point {} vs ledger {}",
+            m.exchanged()[0],
+            m.coupling_out
+        );
+        let mut m = coupled(0.0);
+        m.set_node_drive(0, 12.0, 2.0, 9.0, 100.0);
+        m.advance(60.0);
+        assert!(
+            m.coupling_in > 0.0 && m.coupling_out > 0.0,
+            "both directions ran"
+        );
+        assert!(
+            (m.exchanged()[0] - (m.coupling_out - m.coupling_in)).abs() < 1e-12,
+            "spill: point {} vs net ledger {}",
+            m.exchanged()[0],
+            m.coupling_out - m.coupling_in
+        );
+    }
+
+    /// §15.11: mass rides the water. A slug on the wet half of a level
+    /// basin spreads with the flood into the dry half, the total is
+    /// conserved to round-off, the ledger closes, and no cell goes
+    /// negative.
+    #[test]
+    fn mass_rides_the_water_and_conserves() {
+        let mut mesh = grid(4, 4, 1.0, |_, _| 10.0);
+        for (ci, c) in mesh.cells.iter_mut().enumerate() {
+            let x = (0..3).map(|k| mesh.verts[c.v[k] as usize].x).sum::<f64>() / 3.0;
+            c.h0 = if x < 2.0 { 0.5 } else { 0.0 };
+            let _ = ci;
+        }
+        let mut m = build(&mesh);
+        m.set_constituents(&[0.0]);
+        m.seed_mass(0, 0, 5.0);
+        for _ in 0..30 {
+            m.advance(10.0);
+        }
+        assert!((m.mass_of(0) - 5.0).abs() < 1e-9, "mass {}", m.mass_of(0));
+        let row = m.mass_ledger(0).row(m.mass_of(0));
+        assert!(row[10].abs() < 1e-9, "ledger error {}", row[10]);
+        let holding = (0..mesh.cells.len())
+            .filter(|&ci| m.cell_concentration(0, ci) * m.vol[ci] > 1e-6)
+            .count();
+        assert!(holding > 4, "the slug spread to {holding} cells only");
+        assert!((0..mesh.cells.len()).all(|ci| m.cell_concentration(0, ci) >= 0.0));
+    }
+
+    /// §15.11: decay is first-order over the cell's own interval, on
+    /// the firing path and the lazy path alike, and books as reacted.
+    #[test]
+    fn decay_is_first_order_on_both_paths() {
+        let k = 1.0e-3;
+        // Firing path: an active pond at rest.
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        let mut m = build(&mesh);
+        m.set_constituents(&[k]);
+        m.seed_mass(0, 4, 10.0);
+        m.advance(100.0);
+        let expected = 10.0 * (-k * 100.0_f64).exp();
+        assert!(
+            (m.mass_of(0) - expected).abs() < 1e-9 * expected,
+            "{} vs {expected}",
+            m.mass_of(0)
+        );
+        let l = m.mass_ledger(0);
+        assert!((l.reacted - (10.0 - expected)).abs() < 1e-9);
+        assert!(l.row(m.mass_of(0))[10].abs() < 1e-9);
+        // Lazy path: a wet film below the activation depth.
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        mesh.cells[4].h0 = 0.002;
+        let mut m = build(&mesh);
+        m.set_constituents(&[k]);
+        m.seed_mass(0, 4, 10.0);
+        m.advance(100.0);
+        assert!(!m.active[4], "the film stayed inactive");
+        assert!(
+            (m.mass_of(0) - expected).abs() < 1e-9 * expected,
+            "lazy: {} vs {expected}",
+            m.mass_of(0)
+        );
+    }
+
+    /// §15.11: runoff mass lands with its water at the parcel's
+    /// concentration and books as runoff in.
+    #[test]
+    fn runoff_mass_lands_with_its_water() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        let mut m = build(&mesh);
+        m.set_constituents(&[0.0]);
+        let point = m
+            .add_runoff_point(&mesh, crate::overland::SurfaceKind::Cell, "4")
+            .expect("cell 4");
+        let (q, c) = (0.01, 0.5);
+        m.set_runoff(point, q);
+        m.set_runoff_mass(point, &[c * q]);
+        m.advance(10.0);
+        assert!((m.mass_ledger(0).runoff_in - c * q * 10.0).abs() < 1e-12);
+        assert!((m.mass_of(0) - c * q * 10.0).abs() < 1e-12);
+        let conc = m.cell_concentration(0, 4);
+        assert!(conc > 0.0 && conc < c, "diluted into the pond: {conc}");
+        m.clear_runoff();
+        m.advance(10.0);
+        assert!(
+            (m.mass_ledger(0).runoff_in - c * q * 10.0).abs() < 1e-12,
+            "cleared"
+        );
+    }
+
+    /// §15.11: infiltration takes mass at the cell's concentration, so
+    /// a resting cell's concentration is unchanged by it while its mass
+    /// and volume fall together.
+    #[test]
+    fn infiltration_takes_mass_at_the_cell_concentration() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        mesh.infiltration.push(crate::overland::InfiltrationRow {
+            address: "4".into(),
+            il: 0.0,
+            cl: 0.01 / 3600.0,
+        });
+        let mut m = build(&mesh);
+        m.set_constituents(&[0.0]);
+        // Uniform concentration, so transport moves nothing net.
+        let c0 = 2.0;
+        for ci in 0..mesh.cells.len() {
+            m.seed_mass(0, ci, c0 * m.vol[ci]);
+        }
+        m.advance(600.0);
+        assert!(m.infiltration_out > 0.0);
+        let l = m.mass_ledger(0);
+        assert!(
+            (l.infiltration_out - c0 * m.infiltration_out).abs() < 1e-9 * l.infiltration_out,
+            "{} vs {}",
+            l.infiltration_out,
+            c0 * m.infiltration_out
+        );
+        assert!((m.cell_concentration(0, 4) - c0).abs() < 1e-9);
+        assert!(l.row(m.mass_of(0))[10].abs() < 1e-9);
+    }
+
+    /// §15.11: a drain carries the cell's concentration into the node
+    /// and a spill carries the node's onto the cell — the exchanged
+    /// mass is the exchanged volume times the right concentration, and
+    /// both book to the junction pair.
+    #[test]
+    fn exchange_carries_the_right_concentration() {
+        let coupled = |h0: f64| {
+            let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+            fill_to_stage(&mut mesh, 10.0 + h0);
+            mesh.cell_couplings.push(crate::overland::CouplingRow {
+                address: "4".into(),
+                node: "J".into(),
+                cd: 0.65,
+                area: 0.05,
+                area_authored: true,
+                inlet: None,
+            });
+            let mut m = build(&mesh);
+            m.set_constituents(&[0.0]);
+            (mesh, m)
+        };
+        // Drain: uniform concentration, rim below the pond, node empty.
+        let (mesh, mut m) = coupled(0.5);
+        let c0 = 3.0;
+        for ci in 0..mesh.cells.len() {
+            m.seed_mass(0, ci, c0 * m.vol[ci]);
+        }
+        m.set_node_drive(0, 5.0, 0.0, 9.0, 0.0);
+        m.advance(60.0);
+        assert!(m.coupling_out > 0.0, "nothing drained");
+        assert!((m.exchanged_mass()[0][0] - c0 * m.exchanged()[0]).abs() < 1e-9);
+        let l = m.mass_ledger(0);
+        assert!((l.junction_out - c0 * m.coupling_out).abs() < 1e-9);
+        assert!(l.row(m.mass_of(0))[10].abs() < 1e-9);
+        // Spill: dry mesh, surcharged node at concentration 2.
+        let (_, mut m) = coupled(0.0);
+        m.set_node_concentration(0, 0, 2.0);
+        m.set_node_drive(0, 12.0, 2.0, 9.0, 100.0);
+        m.advance(60.0);
+        assert!(m.coupling_in > 0.0, "nothing spilled");
+        let l = m.mass_ledger(0);
+        assert!((l.junction_in - 2.0 * m.coupling_in).abs() < 1e-9);
+        // Only node water at concentration 2 is on the mesh, so what
+        // drains back leaves at 2 as well, and the point's net mass is
+        // the net of the two directions.
+        assert!((l.junction_out - 2.0 * m.coupling_out).abs() < 1e-9);
+        assert!((m.exchanged_mass()[0][0] - (l.junction_out - l.junction_in)).abs() < 1e-9);
+        assert!((m.mass_of(0) - (l.junction_in - l.junction_out)).abs() < 1e-9);
+        assert!(l.row(m.mass_of(0))[10].abs() < 1e-9);
+    }
+
+    /// §15.7: a runoff point is a source. A cell point puts the whole
+    /// rate on its cell; a vertex point spreads it over its incident
+    /// cells — all of them on a level mesh, where the slope weights
+    /// fall back to area; either way the surface gains exactly rate ×
+    /// time, the ledger books it as runoff, and the closure holds. The
+    /// mesh starts wet so every cell is active and the firing path is
+    /// the one under test; the lazy path is the session test's.
+    #[test]
+    fn runoff_lands_on_its_point_and_books_to_the_ledger() {
+        let mut mesh = grid(3, 3, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.5);
+        let mut m = build(&mesh);
+        assert!(
+            m.active.iter().all(|&on| on),
+            "a half-metre pond is active everywhere"
+        );
+        let cell = m
+            .add_runoff_point(&mesh, crate::overland::SurfaceKind::Cell, "4")
+            .expect("cell 4");
+        let vertex = m
+            .add_runoff_point(&mesh, crate::overland::SurfaceKind::Vertex, "5")
+            .expect("vertex 5");
+        assert!(m
+            .add_runoff_point(&mesh, crate::overland::SurfaceKind::Cell, "NOWHERE")
+            .is_none());
+        let (q_cell, q_vertex, dt) = (0.002, 0.003, 10.0);
+        m.set_runoff(cell, q_cell);
+        m.set_runoff(vertex, q_vertex);
+        let v0 = m.storage();
+        m.advance(dt);
+        let gained = (q_cell + q_vertex) * dt;
+        assert!(
+            (m.storage() - v0 - gained).abs() < 1e-9,
+            "gained {} of {gained}",
+            m.storage() - v0
+        );
+        assert!((m.runoff_in - gained).abs() < 1e-12);
+        assert!(m.ledger_error().abs() < 1e-9);
+        // The vertex point reached every cell incident to vertex 5, and
+        // the cell point only its own cell.
+        let touched: Vec<usize> = (0..mesh.cells.len())
+            .filter(|&ci| m.runoff[ci] > 0.0)
+            .collect();
+        let incident: Vec<usize> = (0..mesh.cells.len())
+            .filter(|&ci| mesh.cells[ci].v.contains(&5) || ci == 4)
+            .collect();
+        assert_eq!(touched, incident);
+        // Cleared rates put nothing more on the surface.
+        m.clear_runoff();
+        let v1 = m.storage();
+        m.advance(dt);
+        assert!((m.storage() - v1).abs() < 1e-9);
+    }
+
+    /// §15.6: a point's conductance is the rim law's plus its inlet's —
+    /// nothing while the node stands below the ground, the submerged
+    /// orifice's slope once it reaches it, with the rim gate still shut.
+    #[test]
+    fn an_inlet_adds_its_conductance_once_submerged() {
+        let mut mesh = grid(2, 2, 1.0, |_, _| 10.0);
+        fill_to_stage(&mut mesh, 10.3);
+        mesh.cell_couplings.push(crate::overland::CouplingRow {
+            address: "0".into(),
+            node: "J".into(),
+            cd: 0.65,
+            area: 0.05,
+            area_authored: true,
+            inlet: None,
+        });
+        let mut m = build(&mesh);
+        let design = crate::model::InletDesign {
+            id: "G".into(),
+            grate: Some(crate::model::GrateInlet {
+                length: 0.6,
+                width: 0.6,
+                grate: crate::model::GrateKind::PBar50,
+                area_ratio: 0.0,
+                splash_velocity: 0.0,
+            }),
+            ..Default::default()
+        };
+        let placement = crate::overland::CouplingInlet {
+            design: "G".into(),
+            count: 1,
+            pct_clogged: 0.0,
+            flow_limit: 0.0,
+            local_depression: 0.0,
+            local_width: 0.0,
+        };
+        let law = SagInlet::resolve(&design, &[], 0.0, &placement).expect("serves");
+        // The rim is far above every surface: the rim law is shut.
+        let rim = 20.0;
+        m.set_node_drive(0, 9.0, 0.0, rim, 0.0);
+        assert_eq!(m.coupling_conductance(0), 0.0, "rim shut, no inlet yet");
+        m.set_inlet_law(0, law.clone());
+        assert_eq!(
+            m.coupling_conductance(0),
+            0.0,
+            "free capture reads no grade"
+        );
+        m.set_node_drive(0, 10.2, 1.2, rim, 0.0);
+        let g = m.coupling_conductance(0);
+        let expected = inlet_conductance(10.3, 10.2, 10.0, 0.65, law.open_area(), 0.3, 1.2, 0.001);
+        assert!(g > 0.0 && (g - expected).abs() < 1e-12, "{g} vs {expected}");
+    }
+
     /// §15.7: the continuing loss is a constant rate while wet, shuts
     /// off on a dry cell, and books to the ledger exactly.
     #[test]
@@ -2797,6 +3807,7 @@ mod tests {
             cd,
             area: 1.0,
             area_authored: false,
+            inlet: None,
         };
         // Vertex 4 = (1, 1), interior: six incident cells.
         mesh.vertex_couplings.push(row("4", "J1", 0.5));
@@ -2834,6 +3845,7 @@ mod tests {
             cd: 0.65,
             area: 0.05,
             area_authored: true,
+            inlet: None,
         });
         let mut m = build(&mesh);
         let v0 = m.storage();
@@ -2873,6 +3885,7 @@ mod tests {
             cd: 0.65,
             area: 0.05,
             area_authored: true,
+            inlet: None,
         });
         let mut m = build(&mesh);
         m.set_node_drive(0, 11.0, 1.0, 10.0, 0.05);
@@ -2900,6 +3913,7 @@ mod tests {
             cd: 0.65,
             area: 1.0,
             area_authored: true,
+            inlet: None,
         });
         let mut m = build(&mesh);
         let v0 = m.storage();
@@ -2920,6 +3934,7 @@ mod tests {
             cd: 0.65,
             area: 1.0,
             area_authored: true,
+            inlet: None,
         };
         // Sloped and dry: η_v is the vertex ground elevation, cells
         // downhill of it weight positive, uphill cells get nothing.

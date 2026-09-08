@@ -28,6 +28,16 @@ pub enum AttachError {
     UnknownSeries(String),
     /// A boundary row names a curve the model does not have.
     UnknownCurve(String),
+    /// A coupling point names an inlet design the model does not have.
+    UnknownInlet(String),
+    /// A coupling point's inlet cannot serve there (§15.6), and why.
+    InletUnserved { design: String, why: String },
+    /// Two inlets resolve to one cell and would capture one pond twice.
+    InletsShareCell { cell: u32 },
+    /// A runoff row names a parcel the model does not have.
+    UnknownRunoffParcel(String),
+    /// A surface-outlet parcel cannot be served (§15.7), and why.
+    RunoffUnserved { parcel: String, why: String },
 }
 
 /// §15.6: the overland surface coupled to the routed network.
@@ -48,6 +58,9 @@ pub struct CoupledSurface {
     /// §14.16: per-point exchanged volume since the last reporting
     /// instant (m³).
     report_exchange: Vec<f64>,
+    /// §15.11: exchanged mass awaiting delivery (unit·m³ per
+    /// constituent per slot, positive = into the node).
+    pending_mass: Vec<Vec<f64>>,
 }
 
 impl CoupledSurface {
@@ -100,6 +113,7 @@ impl CoupledSurface {
             delivered_in: 0.0,
             delivered_out: 0.0,
             report_exchange: Vec::new(),
+            pending_mass: Vec::new(),
         })
     }
 
@@ -136,7 +150,23 @@ impl CoupledSurface {
     /// period's lateral vector as constant rates — positive exchange
     /// (surface drained into the node) is lateral inflow, a spill is
     /// its negative, drawing the node down by what it spilled.
-    pub fn deliver_laterals(&mut self, lat: &mut [f64], period: f64) {
+    pub fn deliver_laterals(&mut self, lat: &mut [f64], plane: &mut [Vec<f64>], period: f64) {
+        // §15.11: drained mass delivers on the surface plane; spilled
+        // mass leaves the node through its negative lateral at the
+        // node's own concentration, so nothing is delivered for it.
+        for (p, row) in self.pending_mass.iter_mut().enumerate() {
+            for (slot, m) in row.iter_mut().enumerate() {
+                if *m > 0.0 {
+                    if let Some(cell) = plane
+                        .get_mut(p)
+                        .and_then(|r| r.get_mut(self.slot_vertex[slot]))
+                    {
+                        *cell += *m / period;
+                    }
+                }
+                *m = 0.0;
+            }
+        }
         for (slot, p) in self.pending.iter_mut().enumerate() {
             if *p != 0.0 {
                 lat[self.slot_vertex[slot]] += *p / period;
@@ -156,7 +186,22 @@ impl CoupledSurface {
     /// finished — node grades frozen at the router's current state —
     /// bank the exchange for next period's laterals, and refresh each
     /// coupled vertex's damping conductance for the coming period.
-    pub fn co_advance(&mut self, router: &mut Router, period: f64) {
+    pub fn co_advance(
+        &mut self,
+        router: &mut Router,
+        quality: Option<&crate::transport::quality::NetworkQuality>,
+        period: f64,
+    ) {
+        // §15.11: node concentrations freeze for the advance beside the
+        // grades, before anything is injected at them.
+        if let Some(q) = quality {
+            for (slot, &vi) in self.slot_vertex.iter().enumerate() {
+                for p in 0..self.marcher.constituents() {
+                    self.marcher
+                        .set_node_concentration(slot, p, q.c_vertex[p][vi]);
+                }
+            }
+        }
         // §15.6: last batch's outfall discharge injects as a constant
         // rate over this batch, scattered down the surface slope.
         self.marcher.clear_injection();
@@ -200,6 +245,17 @@ impl CoupledSurface {
             let slot = self.marcher.coupling_points()[k].node_slot as usize;
             self.pending[slot] += dv;
             self.report_exchange[k] += dv;
+        }
+        // §15.11: the exchanged mass banks beside the volume.
+        let nq = self.marcher.constituents();
+        if self.pending_mass.len() != nq {
+            self.pending_mass = vec![vec![0.0; self.slot_vertex.len()]; nq];
+        }
+        for (p, row) in self.marcher.exchanged_mass().iter().enumerate() {
+            for (k, &dm) in row.iter().enumerate() {
+                let slot = self.marcher.coupling_points()[k].node_slot as usize;
+                self.pending_mass[p][slot] += dm;
+            }
         }
         self.refresh_conductances(router);
         // §15.6: bank each coupled outfall's net discharge over this
@@ -295,6 +351,7 @@ impl CoupledSurface {
             m.coupling_out,
             m.outfall_in,
             m.outfall_out,
+            m.runoff_in,
         ] {
             cp::put_f(w, v)?;
         }
@@ -305,7 +362,13 @@ impl CoupledSurface {
             cp::put_fs(w, vs)?;
         }
         cp::put_f(w, self.delivered_in)?;
-        cp::put_f(w, self.delivered_out)
+        cp::put_f(w, self.delivered_out)?;
+        // §15.11 state: the banked mass and the marcher's layer.
+        cp::put_u(w, self.pending_mass.len() as u64)?;
+        for row in &self.pending_mass {
+            cp::put_fs(w, row)?;
+        }
+        m.checkpoint_put_quality(w)
     }
 
     /// §12.3: restore what [`CoupledSurface::checkpoint_put`] wrote,
@@ -371,6 +434,7 @@ impl CoupledSurface {
             &mut m.coupling_out,
             &mut m.outfall_in,
             &mut m.outfall_out,
+            &mut m.runoff_in,
         ] {
             *slot = r.f()?;
         }
@@ -392,7 +456,9 @@ impl CoupledSurface {
         self.report_exchange = report_exchange;
         self.delivered_in = r.f()?;
         self.delivered_out = r.f()?;
-        Ok(())
+        let n = r.u()? as usize;
+        self.pending_mass = (0..n).map(|_| r.fs()).collect::<Result<_, _>>()?;
+        self.marcher.checkpoint_get_quality(r)
     }
 
     /// §14.16: the per-point exchanged volumes since the last take
@@ -480,6 +546,7 @@ C1  CIRCULAR  0.5  0  0  0
             cd: 0.65,
             area: 0.05,
             area_authored: true,
+            inlet: None,
         });
         // §15.7 losses on one cell, so the checkpoint and report gates
         // exercise the infiltration state alongside everything else.
@@ -603,11 +670,11 @@ RAINFALL_MODE  SYSTEM
         let mut t = 0.0;
         for _ in 0..240 {
             let mut lat = vec![0.0; nv];
-            cs.deliver_laterals(&mut lat, period);
+            cs.deliver_laterals(&mut lat, &mut [], period);
             delivered += lat[0] * period;
             t += period;
             router.advance(t, &move |_tt, l: &mut [f64]| l.copy_from_slice(&lat));
-            cs.co_advance(&mut router, period);
+            cs.co_advance(&mut router, None, period);
         }
 
         // The pond drained through the orifice.
@@ -667,11 +734,11 @@ RAINFALL_MODE  SYSTEM
         let mut t = 0.0;
         for _ in 0..120 {
             let mut lat = vec![0.0; 2];
-            cs.deliver_laterals(&mut lat, period);
+            cs.deliver_laterals(&mut lat, &mut [], period);
             lat[0] += 0.05;
             t += period;
             router.advance(t, &move |_tt, l: &mut [f64]| l.copy_from_slice(&lat));
-            cs.co_advance(&mut router, period);
+            cs.co_advance(&mut router, None, period);
         }
         assert!(
             cs.marcher.outfall_in > 0.0,
@@ -709,7 +776,7 @@ RAINFALL_MODE  SYSTEM
         let mut cs = CoupledSurface::new(m, &net, &mut router).expect("resolves");
         // One co-advance publishes the tailwater; the next network
         // period evaluates its boundary against it.
-        cs.co_advance(&mut router, 5.0);
+        cs.co_advance(&mut router, None, 5.0);
         let lat = vec![0.05, 0.0];
         router.advance(5.0, &move |_tt, l: &mut [f64]| l.copy_from_slice(&lat));
         // O1 (vertex 1, invert 99) reads the pond: depth ≈ 1 m.
@@ -921,11 +988,473 @@ C1  CIRCULAR  0.5  0  0  0
             "Junction Drainage",
             "Surface Drainage",
             "Surface Spill",
+            "Runoff Onto Surface",
             "Overland Time Step Summary",
             "Peak Active Cells",
         ] {
             assert!(rpt.contains(needle), "report lacks {needle}");
         }
+    }
+
+    /// One parcel under a steady storm, draining to J1 by default.
+    const PARCEL_INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+FLOW_ROUTING  DYNWAVE
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+WET_STEP      0:01:00
+
+[RAINGAGES]
+RG1  INTENSITY  0:05  1.0  TIMESERIES  TS1
+
+[TIMESERIES]
+TS1  0:00  50.0
+TS1  0:20  50.0
+
+[SUBCATCHMENTS]
+S1  RG1  J1  1  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+";
+
+    /// The pond helper as a dry, rain-free mesh with S1's runoff mapped
+    /// onto cell 5 (when `surface` is set), sunk twelve metres below
+    /// J1's rim so a hectare's runoff on sixteen square metres still
+    /// stands below the rim gate and nothing exchanges with the network.
+    fn runoff_model(surface: bool) -> Network {
+        runoff_model_from(PARCEL_INP, surface)
+    }
+
+    fn runoff_model_from(inp: &str, surface: bool) -> Network {
+        let (mut net, diags) = parse_network(inp);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        let mut mesh = sub_rim_mesh(0.0);
+        for v in &mut mesh.verts {
+            v.z = 90.0;
+        }
+        mesh.infiltration.clear();
+        mesh.options.rainfall_mode = crate::overland::RainfallMode::None;
+        if surface {
+            net.parcels[0].outlet = crate::model::ParcelOutlet::Surface;
+            mesh.runoff_map.push(crate::overland::RunoffRow {
+                parcel: "S1".into(),
+                kind: crate::overland::SurfaceKind::Cell,
+                address: "5".into(),
+            });
+        }
+        net.overland = Some(mesh);
+        net
+    }
+
+    fn run_network(net: Network) -> crate::simulation::engine::Simulation {
+        let (mut sim, findings) =
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .expect("open");
+        assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
+        sim.run();
+        sim
+    }
+
+    /// §15.7: a surface-outlet parcel's runoff lands on the mesh and
+    /// books as runoff in; the same parcel draining to its node puts
+    /// nothing on the mesh. The surface holds what it was given.
+    #[test]
+    fn a_surface_outlet_parcel_puts_its_runoff_on_the_mesh() {
+        let control = run_network(runoff_model(false));
+        let m = &control.overland().expect("mesh").marcher;
+        assert_eq!(m.runoff_in, 0.0, "a node-bound parcel reaches no cell");
+        assert_eq!(m.storage(), 0.0);
+
+        let sim = run_network(runoff_model(true));
+        let m = &sim.overland().expect("mesh").marcher;
+        assert!(m.runoff_in > 0.0, "the parcel never reached the mesh");
+        assert_eq!(m.coupling_out, 0.0, "the rim gate stayed shut");
+        assert!(
+            (m.storage() - m.runoff_in).abs() < 1e-9,
+            "held {} of {} delivered",
+            m.storage(),
+            m.runoff_in
+        );
+        assert!(m.ledger_error().abs() < 1e-9);
+        // The parcel's own continuity still calls it runoff: over 20
+        // minutes of 50 mm/h on a hectare that is a few cubic metres
+        // once the initial abstraction is filled.
+        assert!(m.runoff_in > 1.0, "only {} m³ arrived", m.runoff_in);
+    }
+
+    /// §12.3 with a surface outlet: the runoff bound for the mesh is
+    /// state, read by every co-advance until hydrology steps again, so
+    /// a run checkpointed between two hydrology steps resumes
+    /// bit-identically only if the checkpoint carries it.
+    #[test]
+    fn a_surface_outlet_run_resumes_bit_identically_from_a_checkpoint() {
+        let open = |net: Network| {
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .expect("open")
+                .0
+        };
+        let mut whole = open(runoff_model(true));
+        whole.run();
+
+        let mut first = open(runoff_model(true));
+        // 100 routing steps of 5 s: not on the one-minute hydrology
+        // clock, so the resumed run's next eight co-advances read the
+        // carried runoff before hydrology steps again.
+        for _ in 0..100 {
+            first.step();
+        }
+        let mut held = Vec::new();
+        first.save_checkpoint(&mut held).expect("save");
+        let mut resumed = open(runoff_model(true));
+        resumed.load_checkpoint(&held).expect("load");
+        resumed.run();
+
+        let a = &whole.overland().expect("mesh").marcher;
+        let b = &resumed.overland().expect("mesh").marcher;
+        assert!(a.runoff_in > 0.0);
+        assert_eq!(
+            a.runoff_in.to_bits(),
+            b.runoff_in.to_bits(),
+            "runoff ledger"
+        );
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&a.vol), bits(&b.vol), "volumes");
+    }
+
+    /// The parcel model with a pollutant carried in the rain, so the
+    /// runoff has a wash-off concentration to put on the mesh.
+    fn polluted_inp() -> String {
+        format!("{PARCEL_INP}\n[POLLUTANTS]\nTSS  MG/L  10  0  0  0  NO\n")
+    }
+
+    /// §15.11 through the session: a polluted surface-outlet parcel
+    /// puts its wash-off on the mesh, the pond drains into the node,
+    /// and the mass arrives in the network as its own origin. Every
+    /// ledger closes, the report names the new blocks, and the sidecar
+    /// carries the concentrations.
+    #[test]
+    fn wash_off_rides_the_runoff_onto_the_mesh_and_into_the_network() {
+        // The mesh at J1's rim, so the pond drains through the coupling.
+        let mut net = runoff_model_from(&polluted_inp(), true);
+        for v in &mut net.overland.as_mut().expect("mesh").verts {
+            v.z = 102.0;
+        }
+        let (mut sim, findings) =
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .expect("open");
+        assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "hydra-uds-overland-q-{}-{}.h2o",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        let sink = Box::new(std::fs::File::create(&path).expect("create"));
+        sim.attach_overland_results(Box::new(
+            crate::dialect::overland_out::OverlandStream::begin(
+                sink as Box<dyn std::io::Write + Send>,
+                sim.network().overland.as_ref().expect("mesh"),
+                &sim.overland().expect("mesh").marcher,
+                0.0,
+                300.0,
+                0.0,
+            )
+            .expect("begin"),
+        ))
+        .expect("attach sink");
+        sim.run();
+        sim.finish_results().expect("finish");
+
+        let m = &sim.overland().expect("mesh").marcher;
+        let l = m.mass_ledger(0);
+        assert!(l.runoff_in > 0.0, "no wash-off reached the mesh");
+        assert!(l.junction_out > 0.0, "no mass drained into the node");
+        let row = l.row(m.mass_of(0));
+        assert!(
+            row[10].abs() < 1e-9 * l.runoff_in.max(1e-12),
+            "mesh mass ledger error {}",
+            row[10]
+        );
+        let by = sim.quality_inflow_by_source("TSS").expect("split");
+        assert!(by[5] > 0.0, "the network saw no surface origin");
+        // What the network received is what the mesh drained, less the
+        // last period's banked mass still in flight and any mass the
+        // node spilled back (banked net, per slot), and never more.
+        let cs = sim.overland().expect("mesh");
+        let in_flight: f64 = cs.pending_mass[0].iter().map(|m| m.abs()).sum();
+        assert!(by[5] <= l.junction_out + 1e-9);
+        assert!(
+            l.junction_out - by[5] <= l.junction_in + in_flight + 1e-9,
+            "network received {} of the {} the mesh drained ({} spilled back, {} in flight)",
+            by[5],
+            l.junction_out,
+            l.junction_in,
+            in_flight
+        );
+
+        let mut rpt = Vec::new();
+        crate::dialect::session::write_report(&sim, &mut rpt).expect("report");
+        let rpt = String::from_utf8(rpt).expect("utf8");
+        for needle in [
+            "Surface Drainage Inflow",
+            "Surface Spill Loss",
+            "Overland Quality Continuity",
+            "Runoff Onto Surface",
+        ] {
+            assert!(rpt.contains(needle), "report lacks {needle}");
+        }
+
+        let r = crate::dialect::out_reader::OverlandResults::open(&path).expect("open results");
+        assert_eq!(r.constituents, 1);
+        let last = r.record(r.periods - 1).expect("last");
+        assert_eq!(last.constituents.len(), 1);
+        assert_eq!(last.constituents[0].0.len(), r.cells.len());
+        assert!(
+            last.constituents[0].1[1] > 0.0,
+            "the sidecar's runoff-in term"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// §12.3 with constituents on the mesh: masses, accumulators in
+    /// flight and ledgers resume bit-identically.
+    #[test]
+    fn a_polluted_surface_run_resumes_bit_identically_from_a_checkpoint() {
+        let open = || {
+            let mut net = runoff_model_from(&polluted_inp(), true);
+            for v in &mut net.overland.as_mut().expect("mesh").verts {
+                v.z = 102.0;
+            }
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .expect("open")
+                .0
+        };
+        let mut whole = open();
+        whole.run();
+        let mut first = open();
+        for _ in 0..100 {
+            first.step();
+        }
+        let mut held = Vec::new();
+        first.save_checkpoint(&mut held).expect("save");
+        let mut resumed = open();
+        resumed.load_checkpoint(&held).expect("load");
+        resumed.run();
+        let a = &whole.overland().expect("mesh").marcher;
+        let b = &resumed.overland().expect("mesh").marcher;
+        assert!(a.mass_of(0) > 0.0 || a.mass_ledger(0).junction_out > 0.0);
+        assert_eq!(a.mass_of(0).to_bits(), b.mass_of(0).to_bits(), "mesh mass");
+        assert_eq!(
+            a.mass_ledger(0).junction_out.to_bits(),
+            b.mass_ledger(0).junction_out.to_bits(),
+            "drained mass"
+        );
+        let (qa, qb) = (
+            whole.quality_inflow_by_source("TSS").expect("split"),
+            resumed.quality_inflow_by_source("TSS").expect("split"),
+        );
+        assert_eq!(qa[5].to_bits(), qb[5].to_bits(), "network surface origin");
+    }
+
+    /// §15.7's refusals, by name: a surface outlet with no mesh, a row
+    /// for a node-bound parcel, a surface parcel with no row, a row
+    /// naming no parcel, and a runoff point no address matches. A model
+    /// that carries a pollutant is served (§15.11).
+    #[test]
+    fn a_surface_outlet_that_cannot_serve_is_refused_by_name() {
+        let open = |net: Network| {
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .err()
+                .map(|e| e.to_string())
+                .expect("refused")
+        };
+        let mut net = runoff_model(true);
+        net.overland = None;
+        assert!(open(net).contains("has no mesh"));
+
+        let mut net = runoff_model(true);
+        net.parcels[0].outlet = crate::model::ParcelOutlet::Vertex(0);
+        assert!(open(net).contains("not the overland surface"));
+
+        let mut net = runoff_model(true);
+        net.overland.as_mut().expect("mesh").runoff_map.clear();
+        assert!(open(net).contains("gives it no point"));
+
+        let mut net = runoff_model(true);
+        net.overland.as_mut().expect("mesh").runoff_map[0].parcel = "S9".into();
+        assert!(open(net).contains("\"S9\""));
+
+        let mut net = runoff_model(true);
+        net.overland.as_mut().expect("mesh").runoff_map[0].address = "NOWHERE".into();
+        assert!(open(net).contains("no mesh index and no tag"));
+
+        let net = runoff_model_from(&polluted_inp(), true);
+        assert!(!net.constituents.is_empty(), "the pollutant parsed");
+        assert!(
+            crate::simulation::engine::Simulation::from_network(net, Vec::new(), Vec::new(), None)
+                .is_ok(),
+            "a polluted model routes onto the mesh (§15.11)"
+        );
+    }
+
+    const INLET_INP: &str = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      00:20
+ROUTING_STEP  5
+REPORT_STEP   0:05:00
+
+[JUNCTIONS]
+J1  100.0  2.0
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[CURVES]
+DIV  DIVERSION  0  0
+DIV  1  0.5
+
+[INLETS]
+G1  GRATE  0.3  0.3  P_BAR-50
+CD  CUSTOM DIV
+";
+
+    fn inlet(design: &str) -> crate::overland::CouplingInlet {
+        crate::overland::CouplingInlet {
+            design: design.into(),
+            count: 1,
+            pct_clogged: 0.0,
+            flow_limit: 0.0,
+            local_depression: 0.0,
+            local_width: 0.0,
+        }
+    }
+
+    /// The pond helper lowered a metre below J1's rim, so its surface
+    /// never reaches the rim gate.
+    fn sub_rim_mesh(h0: f64) -> OverlandMesh {
+        let mut mesh = pond_mesh(h0, "J1");
+        for v in &mut mesh.verts {
+            v.z = 101.0;
+        }
+        mesh
+    }
+
+    /// §15.6: a pond standing below a node's rim drains only through an
+    /// inlet at the point — without one, the rim gate stays shut and the
+    /// pond stays put. This is the street-drainage gap §15.10 recorded.
+    #[test]
+    fn a_pond_below_the_rim_drains_only_through_an_inlet() {
+        let run = |mesh: OverlandMesh| {
+            let (mut sim, _, findings) = crate::dialect::session::open(INLET_INP).expect("open");
+            assert!(findings.iter().all(|f| !f.kind.is_error()), "{findings:?}");
+            sim.attach_overland(mesh).expect("attach");
+            let v0 = sim.overland().expect("attached").marcher.storage();
+            sim.run();
+            let m = &sim.overland().expect("attached").marcher;
+            (
+                v0,
+                m.storage(),
+                m.coupling_out,
+                m.coupling_in,
+                m.infiltration_out,
+            )
+        };
+        // Control: no inlet, no exchange at all below the rim.
+        let (v0, held, out, back, lost) = run(sub_rim_mesh(0.3));
+        assert_eq!(out, 0.0, "the rim gate opened below the rim");
+        assert_eq!(back, 0.0);
+        assert!(
+            (v0 - held - lost).abs() < 1e-9,
+            "surface ledger without an inlet"
+        );
+
+        let mut mesh = sub_rim_mesh(0.3);
+        mesh.cell_couplings[0].inlet = Some(inlet("G1"));
+        let (v0, held, out, back, lost) = run(mesh);
+        assert!(out > 0.0, "the inlet never captured");
+        assert!(held < 0.2 * v0, "pond still holds {held} of {v0}");
+        assert!(
+            (v0 - held - (out - back) - lost).abs() < 1e-9,
+            "surface ledger with an inlet"
+        );
+    }
+
+    /// §15.6's refusals, each by name: a design the model lacks, a
+    /// diversion-curve design, two inlets on one cell, an inlet at an
+    /// outfall.
+    #[test]
+    fn an_inlet_that_cannot_serve_is_refused_by_name() {
+        let attach = |mesh: OverlandMesh| {
+            let (mut sim, _, _) = crate::dialect::session::open(INLET_INP).expect("open");
+            sim.attach_overland(mesh).expect_err("refused")
+        };
+        let mut mesh = sub_rim_mesh(0.3);
+        mesh.cell_couplings[0].inlet = Some(inlet("NOPE"));
+        assert!(matches!(attach(mesh), AttachError::UnknownInlet(n) if n == "NOPE"));
+
+        let mut mesh = sub_rim_mesh(0.3);
+        mesh.cell_couplings[0].inlet = Some(inlet("CD"));
+        assert!(matches!(
+            attach(mesh),
+            AttachError::InletUnserved { design, why } if design == "CD" && why.contains("diversion")
+        ));
+
+        // Vertex 0's stencil collapses to cell 0, where a cell row
+        // already carries an inlet.
+        let mut mesh = sub_rim_mesh(0.3);
+        mesh.cell_couplings[0].inlet = Some(inlet("G1"));
+        mesh.vertex_couplings.push(CouplingRow {
+            address: "0".into(),
+            node: "J1".into(),
+            cd: 0.65,
+            area: 0.05,
+            area_authored: true,
+            inlet: Some(inlet("G1")),
+        });
+        assert!(matches!(
+            attach(mesh),
+            AttachError::InletsShareCell { cell: 0 }
+        ));
+
+        let mut mesh = sub_rim_mesh(0.3);
+        mesh.cell_couplings[0].node = "O1".into();
+        mesh.cell_couplings[0].inlet = Some(inlet("G1"));
+        assert!(matches!(
+            attach(mesh),
+            AttachError::InletUnserved { why, .. } if why.contains("outfall")
+        ));
     }
 
     /// §12.3 for the surface: a mesh run checkpoints mid-run and a
@@ -1027,7 +1556,7 @@ C1  CIRCULAR  0.5  0  0  0
         let mut delivered_neg = 0.0;
         for _ in 0..120 {
             let mut lat = vec![0.0; nv];
-            cs.deliver_laterals(&mut lat, period);
+            cs.deliver_laterals(&mut lat, &mut [], period);
             if lat[0] < 0.0 {
                 delivered_neg += -lat[0] * period;
             }
@@ -1036,7 +1565,7 @@ C1  CIRCULAR  0.5  0  0  0
             lat[0] += 1.0;
             t += period;
             router.advance(t, &move |_tt, l: &mut [f64]| l.copy_from_slice(&lat));
-            cs.co_advance(&mut router, period);
+            cs.co_advance(&mut router, None, period);
         }
         assert!(
             cs.marcher.coupling_in > 0.0,

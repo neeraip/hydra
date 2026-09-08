@@ -401,6 +401,7 @@ fn apply_shifts(net: &mut Network, vs: &Shift, ls: &Shift, ps: &Shift, removed: 
         parcel.outlet = match parcel.outlet {
             ParcelOutlet::Vertex(v) => ParcelOutlet::Vertex(vs.get(v).unwrap_or(v)),
             ParcelOutlet::Parcel(p) => ParcelOutlet::Parcel(ps.get(p).unwrap_or(p)),
+            ParcelOutlet::Surface => ParcelOutlet::Surface,
         };
         // A groundwater connection to a removed vertex is a refusal, not
         // a shift, so the target here is always still present.

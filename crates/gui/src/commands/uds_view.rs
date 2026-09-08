@@ -315,6 +315,7 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
             loop {
                 match current.outlet {
                     ParcelOutlet::Vertex(vi) => break Some(vi),
+                    ParcelOutlet::Surface => break None,
                     ParcelOutlet::Parcel(pi) => {
                         hops += 1;
                         if hops > net.parcels.len() {

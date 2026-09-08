@@ -880,7 +880,9 @@ impl Surface {
                         }
                         // Default drains join the outlet stream and are
                         // already counted in the sub-area runoff below.
-                        None => lid_return += drain_vol * dt,
+                        // A drain to the surface is refused at open
+                        // (§15.7), so the arm only keeps the match whole.
+                        None | Some(ParcelOutlet::Surface) => lid_return += drain_vol * dt,
                     }
                     // §3.4: a return-to-pervious unit sends overflow and
                     // unrouted drain flow back onto the pervious

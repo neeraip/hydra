@@ -23,6 +23,11 @@ pub struct OverlandRpt {
     /// (base substeps, macro cycles, rebuilds, min base step s,
     /// average base step s, peak active cells).
     pub march: (u64, u64, u64, f64, f64, usize),
+    /// §15.11 per constituent: the mesh mass ledger row (initial,
+    /// runoff in, junction spill in, outfall injection in, junction
+    /// drainage out, outfall withdrawal out, boundary out,
+    /// infiltration out, reacted, final, error).
+    pub quality: Vec<(String, [f64; 11])>,
 }
 
 pub struct ReportInputs<'a> {
@@ -43,7 +48,7 @@ pub struct ReportInputs<'a> {
     /// Per-constituent quality parts: (id, the five §11.2 admitted
     /// loads by origin, discharged, flooded, exfiltrated, reacted,
     /// initial stored, final stored, error %).
-    pub quality: Vec<(String, [f64; 12])>,
+    pub quality: Vec<(String, [f64; 14])>,
     /// Per-constituent §11.1 surface-loading parts: (id, initial
     /// buildup, buildup, deposition, swept, infiltrated, BMP removed,
     /// washed off, remaining, error %).

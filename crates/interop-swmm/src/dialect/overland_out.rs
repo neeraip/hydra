@@ -14,17 +14,40 @@ use crate::engine_api::overland::OverlandMesh;
 /// §14.16 leading and closing magic.
 pub const MAGIC: u32 = 1_214_727_218;
 /// §14.16 format version.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 3;
 
-/// The size of one record (bytes) for `nc` cells and `np` points.
-pub(crate) fn record_len(nc: usize, np: usize) -> u64 {
-    8 + 4 * 4 * nc as u64 + 4 * np as u64 + 8 * 11
+/// The size of one record (bytes) for `nc` cells, `np` points, a
+/// ledger of `terms` floats — eleven in version 1, twelve since 2 —
+/// and `nq` constituents, each a concentration per cell and an
+/// eleven-term mass ledger (version 3).
+pub(crate) fn record_len(nc: usize, np: usize, terms: usize, nq: usize) -> u64 {
+    8 + 4 * 4 * nc as u64 + 4 * np as u64 + 8 * terms as u64 + nq as u64 * (4 * nc as u64 + 8 * 11)
+}
+
+/// The ledger width a format version carries, `None` for one this
+/// reader does not know.
+pub(crate) fn ledger_terms(version: u32) -> Option<usize> {
+    match version {
+        1 => Some(11),
+        2 | 3 => Some(LedgerRow::TERMS),
+        _ => None,
+    }
+}
+
+/// Whether a format version's header carries a constituent count.
+pub(crate) fn header_has_constituents(version: u32) -> bool {
+    version >= 3
 }
 
 /// The header's size (bytes) for `nv` vertices, `nc` cells, `np`
-/// points.
-pub(crate) fn header_len(nv: usize, nc: usize, np: usize) -> u64 {
-    4 * 5 + 8 * 3 + 24 * nv as u64 + 12 * nc as u64 + 4 * np as u64
+/// points, with or without the version-3 constituent count.
+pub(crate) fn header_len(nv: usize, nc: usize, np: usize, with_constituents: bool) -> u64 {
+    4 * 5
+        + 8 * 3
+        + 24 * nv as u64
+        + 12 * nc as u64
+        + 4 * np as u64
+        + if with_constituents { 4 } else { 0 }
 }
 
 /// §14.16: the stream, generic over its sink exactly as the §14.9
@@ -51,7 +74,12 @@ impl<W: Write> OverlandStream<W> {
         let np = marcher.coupling_points().len();
         sink.write_all(&MAGIC.to_le_bytes())?;
         sink.write_all(&VERSION.to_le_bytes())?;
-        for n in [nv as u32, nc as u32, np as u32] {
+        for n in [
+            nv as u32,
+            nc as u32,
+            np as u32,
+            marcher.constituents() as u32,
+        ] {
             sink.write_all(&n.to_le_bytes())?;
         }
         for f in [start_epoch, report_step, first_report_t] {
@@ -103,6 +131,17 @@ impl<W: Write> OverlandStream<W> {
         for f in LedgerRow::of(marcher).to_array() {
             self.w.write_all(&f.to_le_bytes())?;
         }
+        // §15.11: per constituent, every cell's concentration, then
+        // its mesh mass ledger.
+        for p in 0..marcher.constituents() {
+            for ci in 0..self.nc {
+                self.w
+                    .write_all(&(marcher.cell_concentration(p, ci) as f32).to_le_bytes())?;
+            }
+            for f in marcher.mass_ledger(p).row(marcher.mass_of(p)) {
+                self.w.write_all(&f.to_le_bytes())?;
+            }
+        }
         self.periods += 1;
         Ok(())
     }
@@ -137,6 +176,6 @@ mod format_identifier_tests {
     #[test]
     fn the_surface_sidecar_identifiers_are_the_ones_the_spec_states() {
         assert_eq!(1_214_727_218, super::MAGIC);
-        assert_eq!(1, super::VERSION);
+        assert_eq!(3, super::VERSION);
     }
 }

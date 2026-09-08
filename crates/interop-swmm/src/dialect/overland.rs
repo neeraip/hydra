@@ -9,9 +9,9 @@ use crate::dialect::keywords::{match_keyword, Section};
 use crate::dialect::lex::FiniteParse;
 use crate::dialect::survey::{Diagnostic, DiagnosticKind, TokenLine};
 use crate::engine_api::overland::{
-    BoundaryCondition, BoundaryRow, CellClosure, ConveyanceRow, CouplingRow, FaceReconstruction,
-    InfiltrationRow, InitVelocityRow, MeshCell, MeshVertex, OverlandMesh, OverlandOptions,
-    RainfallMode, SeriesOrValue,
+    BoundaryCondition, BoundaryRow, CellClosure, ConveyanceRow, CouplingInlet, CouplingRow,
+    FaceReconstruction, InfiltrationRow, InitVelocityRow, MeshCell, MeshVertex, OverlandMesh,
+    OverlandOptions, RainfallMode, RunoffRow, SeriesOrValue, SurfaceKind,
 };
 
 fn err(line: usize, kind: DiagnosticKind) -> Diagnostic {
@@ -195,6 +195,8 @@ pub(crate) fn parse_overland(
                 | Section::TwoDInitialVelocity
                 | Section::TwoDVertexNodeMap
                 | Section::TwoDTriangleNodeMap
+                | Section::TwoDInlets
+                | Section::TwoDRunoffMap
                 | Section::TwoDBoundaryConditions
                 | Section::TwoDEdgeConveyance
                 | Section::TwoDMeshFile
@@ -255,7 +257,123 @@ pub(crate) fn parse_overland(
             _ => {}
         }
     }
+    // §14.15: inlets attach to map rows, so every map section goes
+    // first, whatever order the file wrote them in.
+    for (sec, lines) in sections {
+        match sec {
+            Section::TwoDInlets => parse_inlets(lines, vlen, flow, &mut mesh, diags),
+            Section::TwoDRunoffMap => parse_runoff_map(lines, &mut mesh.runoff_map, diags),
+            _ => {}
+        }
+    }
     Some(mesh)
+}
+
+/// `[2D_RUNOFF_MAP]`: `SUBCATCH VERTEX|TRIANGLE INDEX_OR_TAG` — where a
+/// surface-outlet parcel's runoff lands (§14.15). Addressing is the
+/// mesh's and is checked here; the subcatchment side is the model's
+/// and is checked where the model is assembled. A later row for the
+/// same subcatchment replaces the earlier.
+fn parse_runoff_map(
+    lines: &[TokenLine<'_>],
+    out: &mut Vec<RunoffRow>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    const KINDS: &[&str] = &["VERTEX", "TRIANGLE"];
+    for line in lines {
+        let t = &line.tokens;
+        if t.len() < 3 {
+            diags.push(err(line.line, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let Some(kind) = match_keyword(KINDS, t[1]) else {
+            diags.push(bad(line.line, t[1]));
+            continue;
+        };
+        out.retain(|r| !r.parcel.eq_ignore_ascii_case(t[0]));
+        out.push(RunoffRow {
+            parcel: t[0].to_string(),
+            kind: if kind == 0 {
+                SurfaceKind::Vertex
+            } else {
+                SurfaceKind::Cell
+            },
+            address: t[2].to_string(),
+        });
+    }
+}
+
+/// `[2D_INLETS]`: `VERTEX|TRIANGLE INDEX_OR_TAG DESIGN [COUNT]
+/// [%CLOGGED] [QMAX] [ALOCAL] [WLOCAL]`, attached to the last map row
+/// spelt the same way (§14.15).
+fn parse_inlets(
+    lines: &[TokenLine<'_>],
+    vlen: f64,
+    flow: f64,
+    mesh: &mut OverlandMesh,
+    diags: &mut Vec<Diagnostic>,
+) {
+    const KINDS: &[&str] = &["VERTEX", "TRIANGLE"];
+    for line in lines {
+        let t = &line.tokens;
+        if t.len() < 3 {
+            diags.push(err(line.line, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let Some(kind) = match_keyword(KINDS, t[0]) else {
+            diags.push(bad(line.line, t[0]));
+            continue;
+        };
+        let count = match t.get(3) {
+            None => 1,
+            Some(tok) => match tok.parse::<u32>() {
+                Ok(v) => v,
+                Err(_) => {
+                    diags.push(bad(line.line, tok));
+                    continue;
+                }
+            },
+        };
+        let mut rest = [0.0; 4];
+        let mut ok = true;
+        for (i, slot) in rest.iter_mut().enumerate() {
+            if let Some(tok) = t.get(4 + i) {
+                match tok.finite_f64() {
+                    Ok(v) => *slot = v,
+                    Err(()) => {
+                        diags.push(bad(line.line, tok));
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        let rows = if kind == 0 {
+            &mut mesh.vertex_couplings
+        } else {
+            &mut mesh.cell_couplings
+        };
+        let Some(row) = rows.iter_mut().rev().find(|r| r.address == t[1]) else {
+            diags.push(err(
+                line.line,
+                DiagnosticKind::UnresolvedReference {
+                    id: format!("{} {}", KINDS[kind], t[1]),
+                },
+            ));
+            continue;
+        };
+        row.inlet = Some(CouplingInlet {
+            design: t[2].to_string(),
+            count,
+            pct_clogged: rest[0],
+            flow_limit: rest[1] * flow,
+            local_depression: rest[2] * vlen,
+            local_width: rest[3] * vlen,
+        });
+    }
 }
 
 fn parse_vertices(
@@ -394,6 +512,7 @@ fn parse_couplings(
             cd,
             area,
             area_authored,
+            inlet: None,
         });
     }
     rows
@@ -932,6 +1051,8 @@ COUPLING_CD 0.8
 0 J1
              [2D_TRIANGLE_NODE_MAP]
 TB O1 0.7 2.5
+             [2D_INLETS]
+TRIANGLE TB G1 2 10 0.5 0.05 0.6
              [2D_BOUNDARY_CONDITIONS]
 0 0 WALL
 1 1 TS_STAGE TIDE * G1
@@ -954,6 +1075,157 @@ TB O1 0.7 2.5
         assert_eq!(a.boundaries, b.boundaries);
         assert_eq!(a.conveyance, b.conveyance);
         assert_eq!(a.options, b.options);
+    }
+
+    /// §14.15 `[2D_INLETS]`: a row attaches to the map row spelt the
+    /// same way, in the same section; defaults are `[INLET_USAGE]`'s;
+    /// the cap converts as a flow and the depression as lengths; a row
+    /// naming no map row is an unresolved reference; a later row for
+    /// the same point replaces.
+    #[test]
+    fn inlet_rows_attach_to_map_rows_as_written() {
+        let extra = format!(
+            "{MESH}[2D_INLETS]\nTRIANGLE TB G1\nVERTEX VA G2 2 10 1 0.5 2\n\
+             TRIANGLE 0 G3\nTRIANGLE TB G4 3\nSQUARE TB G1\n\
+             [2D_VERTEX_NODE_MAP]\nVA J1\n1 J1\n\
+             [2D_TRIANGLE_NODE_MAP]\nTB J1 0.7\nTB O1\n"
+        );
+        // A CFS model: the cap and the depression convert.
+        let text = model(&extra).replace("FLOW_UNITS CMS", "FLOW_UNITS CFS");
+        let (net, diags) = parse_network(&text);
+        let mesh = net.overland.expect("mesh");
+        // The vertex row: the address spelt VA has the inlet, although
+        // the later row `1 J1` names the same vertex — attachment is by
+        // spelling, at parse; resolution is the build's.
+        let va = mesh
+            .vertex_couplings
+            .iter()
+            .find(|r| r.address == "VA")
+            .expect("VA row");
+        let i = va.inlet.as_ref().expect("inlet");
+        assert_eq!(i.design, "G2");
+        assert_eq!(i.count, 2);
+        assert_eq!(i.pct_clogged, 10.0);
+        let (ft, cfs) = (0.3048, 0.028_316_846_592);
+        assert!((i.flow_limit - cfs).abs() < 1e-12);
+        assert!((i.local_depression - 0.5 * ft).abs() < 1e-12);
+        assert!((i.local_width - 2.0 * ft).abs() < 1e-12);
+        // The triangle rows: the later inlet row for TB replaced the
+        // first, and it sits on the LAST map row spelt TB (the O1 one),
+        // not the first.
+        assert!(
+            mesh.cell_couplings[0].inlet.is_none(),
+            "first TB row stays bare"
+        );
+        assert_eq!(mesh.cell_couplings[1].node, "O1");
+        let tb = mesh.cell_couplings[1].inlet.as_ref().expect("inlet");
+        assert_eq!((tb.design.as_str(), tb.count), ("G4", 3));
+        assert_eq!(tb.pct_clogged, 0.0);
+        assert_eq!(tb.flow_limit, 0.0);
+        // `TRIANGLE 0` names no map row (the map spelt it TB), and
+        // SQUARE is no kind: both are named and neither attaches.
+        let unresolved: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(&d.kind, DiagnosticKind::UnresolvedReference { id } if id == "TRIANGLE 0"))
+            .collect();
+        assert_eq!(unresolved.len(), 1, "{diags:?}");
+        assert!(diags
+            .iter()
+            .any(|d| matches!(&d.kind, DiagnosticKind::BadValue { token } if token == "SQUARE")));
+    }
+
+    const PARCELS: &str = "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES TS1\n\
+                           [TIMESERIES]\nTS1 0:00 50\n\
+                           [SUBCATCHMENTS]\nS1 RG1 S1 1 100 100 0.5 0\nS2 RG1 J1 1 100 100 0.5 0\n\
+                           [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\nS2 0.01 0.1 0.05 0.05 25 OUTLET\n\
+                           [INFILTRATION]\nS1 3 0.5 4 7 0\nS2 3 0.5 4 7 0\n";
+
+    /// §14.15 `[2D_RUNOFF_MAP]`: a subcatchment naming itself as its
+    /// outlet becomes a surface outlet with the row's point; one naming
+    /// a node is refused by name; an unknown subcatchment is
+    /// unresolved; a later row replaces; and the whole thing round-trips.
+    #[test]
+    fn a_runoff_row_turns_a_self_outlet_into_a_surface_outlet() {
+        use crate::engine_api::model::ParcelOutlet;
+        let extra = format!(
+            "{MESH}{PARCELS}[2D_RUNOFF_MAP]\nS1 VERTEX VA\nS1 TRIANGLE TB\nS2 TRIANGLE TB\n\
+             S9 TRIANGLE TB\nS1 SQUARE TB\n"
+        );
+        let (net, diags) = parse_network(&model(&extra));
+        assert_eq!(
+            net.parcels[0].outlet,
+            ParcelOutlet::Surface,
+            "S1 named itself"
+        );
+        assert_eq!(
+            net.parcels[1].outlet,
+            ParcelOutlet::Vertex(0),
+            "S2 still drains to J1"
+        );
+        let mesh = net.overland.as_ref().expect("mesh");
+        assert_eq!(mesh.runoff_map.len(), 1, "only S1's row took effect");
+        let s1 = mesh
+            .runoff_map
+            .iter()
+            .find(|r| r.parcel == "S1")
+            .expect("S1 row");
+        assert_eq!(
+            (s1.kind, s1.address.as_str()),
+            (SurfaceKind::Cell, "TB"),
+            "the later row replaced the vertex one"
+        );
+        assert!(diags.iter().any(
+            |d| matches!(&d.kind, DiagnosticKind::SurfaceOutletNamesAnother { parcel } if parcel == "S2")
+        ));
+        assert!(diags
+            .iter()
+            .any(|d| matches!(&d.kind, DiagnosticKind::UnresolvedReference { id } if id == "S9")));
+        assert!(diags
+            .iter()
+            .any(|d| matches!(&d.kind, DiagnosticKind::BadValue { token } if token == "SQUARE")));
+
+        // Round trip of the clean half.
+        let clean = format!("{MESH}{PARCELS}[2D_RUNOFF_MAP]\nS1 TRIANGLE TB\n");
+        let (net, diags) = parse_network(&model(&clean));
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let text = crate::dialect::inp_writer::write_inp(&net).expect("writable");
+        assert!(text.contains("[2D_RUNOFF_MAP]\nS1 TRIANGLE TB"), "{text}");
+        let (net2, diags) = parse_network(&text);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        assert_eq!(net2.parcels[0].outlet, ParcelOutlet::Surface);
+        assert_eq!(
+            net.overland.expect("mesh").runoff_map,
+            net2.overland.expect("mesh").runoff_map
+        );
+    }
+
+    /// §14.15 under US units: a model authored in feet and cfs exports
+    /// SI lengths under the header and flows in its own flow unit, and
+    /// re-imports to the same model — the inlet cap and a specified
+    /// boundary flow both being flows, which the header does not cover.
+    #[test]
+    fn a_us_mesh_with_flows_reimports_identically() {
+        let extra = format!(
+            "{MESH}[2D_TRIANGLE_NODE_MAP]\nTB J1 0.7 2.5\n\
+             [2D_INLETS]\nTRIANGLE TB G1 2 10 0.5 0.05 0.6\n\
+             [2D_BOUNDARY_CONDITIONS]\n1 1 SPECIFIED_FLOW 0.25\n"
+        );
+        let text = model(&extra).replace("FLOW_UNITS CMS", "FLOW_UNITS CFS");
+        let (net, diags) = parse_network(&text);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let written = crate::dialect::inp_writer::write_inp(&net).expect("writable");
+        let (net2, diags) = parse_network(&written);
+        assert!(diags.iter().all(|d| !d.kind.is_error()), "{diags:?}");
+        let (a, b) = (net.overland.expect("mesh"), net2.overland.expect("mesh"));
+        let cfs = 0.028_316_846_592;
+        let inlet = a.cell_couplings[0].inlet.as_ref().expect("inlet");
+        assert!(
+            (inlet.flow_limit - 0.5 * cfs).abs() < 1e-12,
+            "authored in cfs"
+        );
+        assert_eq!(a.cell_couplings, b.cell_couplings);
+        assert_eq!(a.boundaries, b.boundaries);
+        assert_eq!(a.verts, b.verts);
     }
 
     /// §15.7: `[SYMBOLS]` feeds gauge positions exactly when a mesh is

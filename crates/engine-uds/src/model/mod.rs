@@ -718,6 +718,9 @@ pub enum ParcelOutlet {
     Vertex(usize),
     /// Another parcel (overland cascade).
     Parcel(usize),
+    /// The overland surface (§15.7): runoff lands on the mesh at the
+    /// point its runoff map names for this parcel.
+    Surface,
 }
 
 /// The three sub-areas' parameters (§3.2).

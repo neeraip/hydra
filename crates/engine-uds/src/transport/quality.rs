@@ -33,10 +33,12 @@ pub enum MassSource {
     Sewer,
     /// Declared inflows and routing-interface inflows.
     External,
+    /// §15.11: drainage from a served overland mesh.
+    Surface,
 }
 
 impl MassSource {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     /// Position in a per-source array. Fixed, because the report's rows
     /// and the §11.1 partition both depend on the order.
     pub fn index(self) -> usize {
@@ -46,13 +48,18 @@ impl MassSource {
             Self::Subsurface => 2,
             Self::Sewer => 3,
             Self::External => 4,
+            Self::Surface => 5,
         }
     }
 }
 
 /// The lateral-mass planes assembled from the model's own boundary
 /// sections at a period start, in the order that assembly fills them.
-pub const BASE_SOURCES: [MassSource; 2] = [MassSource::DryWeather, MassSource::External];
+pub const BASE_SOURCES: [MassSource; 3] = [
+    MassSource::DryWeather,
+    MassSource::External,
+    MassSource::Surface,
+];
 
 /// The planes the hydrology clock fills, in the order it fills them.
 pub const HYDRO_SOURCES: [MassSource; 3] = [
@@ -186,6 +193,9 @@ pub struct NetworkQuality {
     pub seepage_mass: Vec<f64>,
     /// Mass carried out with flooded volume (unit·m³), §11.1.
     pub flooded_mass: Vec<f64>,
+    /// §15.11: mass spilled onto a served mesh — a coupled vertex's
+    /// negative lateral, at its concentration (unit·m³).
+    pub surface_spill_mass: Vec<f64>,
     /// Mass admitted from §8.1 sources (unit·m³).
     pub inflow_mass: Vec<f64>,
     /// The same mass split by where it entered (§11.2), per constituent
@@ -305,6 +315,7 @@ impl NetworkQuality {
             reacted: vec![0.0; np],
             seepage_mass: vec![0.0; np],
             flooded_mass: vec![0.0; np],
+            surface_spill_mass: vec![0.0; np],
             inflow_mass: vec![0.0; np],
             inflow_by_source: vec![[0.0; MassSource::COUNT]; np],
             initial_mass,
@@ -507,9 +518,15 @@ impl NetworkQuality {
                     c_new = 0.0;
                 }
                 // A negative lateral books an outflow at the vertex's
-                // concentration (§10.1).
+                // concentration (§10.1) — at a coupled vertex that is
+                // the §15.11 spill onto the surface, its own account.
                 if lat_flow[v] < 0.0 {
-                    self.outfall_mass[p] += -lat_flow[v] * dt * c_new;
+                    let m = -lat_flow[v] * dt * c_new;
+                    if router.is_coupled(v) {
+                        self.surface_spill_mass[p] += m;
+                    } else {
+                        self.outfall_mass[p] += m;
+                    }
                 }
                 self.c_vertex[p][v] = c_new;
             }
@@ -781,6 +798,7 @@ impl NetworkQuality {
             reacted,
             seepage_mass,
             flooded_mass,
+            surface_spill_mass,
             inflow_mass,
             inflow_by_source,
             initial_mass,
@@ -799,6 +817,7 @@ impl NetworkQuality {
             reacted,
             seepage_mass,
             flooded_mass,
+            surface_spill_mass,
             inflow_mass,
             initial_mass,
             vol_prev,
@@ -831,6 +850,7 @@ impl NetworkQuality {
             &mut self.reacted,
             &mut self.seepage_mass,
             &mut self.flooded_mass,
+            &mut self.surface_spill_mass,
             &mut self.inflow_mass,
             &mut self.initial_mass,
             &mut self.vol_prev,
@@ -884,12 +904,12 @@ mod mass_source_tests {
     fn count_is_the_number_of_sources_and_index_is_their_order() {
         use MassSource::*;
         let all: [MassSource; MassSource::COUNT] =
-            [DryWeather, WetWeather, Subsurface, Sewer, External];
+            [DryWeather, WetWeather, Subsurface, Sewer, External, Surface];
         for (i, s) in all.iter().enumerate() {
             assert_eq!(i, s.index(), "{s:?} out of order");
-            // Exhaustive: a sixth variant fails to compile here.
+            // Exhaustive: a seventh variant fails to compile here.
             match s {
-                DryWeather | WetWeather | Subsurface | Sewer | External => {}
+                DryWeather | WetWeather | Subsurface | Sewer | External | Surface => {}
             }
         }
     }

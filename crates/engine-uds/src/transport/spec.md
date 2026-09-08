@@ -24,7 +24,10 @@ precipitation volume mixed into the ponded store; control-measure drain
 flow at the parent parcel's concentration less any drain removal;
 subsurface inflow, sewer inflow, and sanitary flow at their constant
 concentrations; external inflow as a concentration on its flow or as a
-flow-free mass load; and routing-interface-file series. Two further paths
+flow-free mass load; routing-interface-file series; and, in a model that
+serves a mesh (§15), surface drainage from the coupled overland cells at
+their own concentration (§15.11), which is its own origin in §11.1's
+partition. Two further paths
 move mass within the system: an inflowing link delivers its previous-step
 concentration to its downstream vertex, and street inlets transfer captured
 mass to the sewer — returning as backflow under surcharge — at the donating

@@ -1137,7 +1137,9 @@ custom ones — are model semantics and are adopted
 exactly. On-grade capture is computed from the gutter-spread relation at the
 channel's longitudinal slope, as HEC-22 defines it; the method is inherently
 insensitive to backwater, which is a property of the standard, stated rather
-than obscured.
+than obscured. The on-sag forms and the open-area measure also serve §15.6's
+inlet at an overland coupling point, where the ponded depth is the mesh
+cell's and the cross slope is the cell's own bed plane.
 
 ### 7.9 Zero-Geometry Connectors
 

@@ -684,13 +684,20 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         line(w, "Groundwater Inflow", &col(2))?;
         line(w, "RDII Inflow", &col(3))?;
         line(w, "External Inflow", &col(4))?;
-        line(w, "External Outflow", &col(5))?;
-        line(w, "Flooding Loss", &col(6))?;
-        line(w, "Exfiltration Loss", &col(7))?;
-        line(w, "Mass Reacted", &col(8))?;
-        line(w, "Initial Stored Mass", &col(9))?;
-        line(w, "Final Stored Mass", &col(10))?;
-        let errs: Vec<f64> = inp.quality.iter().map(|(_, v)| v[11]).collect();
+        // §15.11: the surface pair is its own, as the volumetric one is.
+        if inp.overland.is_some() {
+            line(w, "Surface Drainage Inflow", &col(5))?;
+        }
+        line(w, "External Outflow", &col(6))?;
+        line(w, "Flooding Loss", &col(7))?;
+        line(w, "Exfiltration Loss", &col(8))?;
+        line(w, "Mass Reacted", &col(9))?;
+        if inp.overland.is_some() {
+            line(w, "Surface Spill Loss", &col(10))?;
+        }
+        line(w, "Initial Stored Mass", &col(11))?;
+        line(w, "Final Stored Mass", &col(12))?;
+        let errs: Vec<f64> = inp.quality.iter().map(|(_, v)| v[13]).collect();
         line(w, "Continuity Error (%)", &errs)?;
     }
 
@@ -709,6 +716,7 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         let row = |v: f64| [rv.big(v), rv.mgal(v)];
         line(w, "Initial Surface Storage", &row(ov.initial_storage))?;
         line(w, "Rainfall", &row(l.rain_in))?;
+        line(w, "Runoff Onto Surface", &row(l.runoff_in))?;
         line(w, "Evaporation", &row(l.evap_out))?;
         line(w, "Infiltration", &row(l.infiltration_out))?;
         line(w, "Junction Drainage", &row(l.junction_out))?;
@@ -718,13 +726,65 @@ fn write_continuity(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Resu
         line(w, "Boundary Inflow", &row(l.boundary_in))?;
         line(w, "Boundary Outflow", &row(l.boundary_out))?;
         line(w, "Final Surface Storage", &row(l.storage))?;
-        let inflow = ov.initial_storage + l.rain_in + l.junction_in + l.outfall_in + l.boundary_in;
+        let inflow = ov.initial_storage
+            + l.rain_in
+            + l.runoff_in
+            + l.junction_in
+            + l.outfall_in
+            + l.boundary_in;
         let err = if inflow > 1e-9 {
             100.0 * l.error / inflow
         } else {
             0.0
         };
         line(w, "Continuity Error (%)", &[err])?;
+
+        // §15.11: the mesh mass ledger per constituent, in the quality
+        // block's house style.
+        if !ov.quality.is_empty() {
+            let names: Vec<&str> = ov.quality.iter().map(|(id, _)| id.as_str()).collect();
+            let units: Vec<&str> = ov
+                .quality
+                .iter()
+                .map(|(id, _)| rv.load_word(constituent_units(inp, id)))
+                .collect();
+            continuity_head(
+                w,
+                "Overland Quality Continuity",
+                &names,
+                &units,
+                &vec![10; names.len()],
+            )?;
+            let col = |k: usize| -> Vec<f64> {
+                ov.quality
+                    .iter()
+                    .map(|(id, v)| rv.load(constituent_units(inp, id), v[k]))
+                    .collect()
+            };
+            line(w, "Initial Mass", &col(0))?;
+            line(w, "Runoff Onto Surface", &col(1))?;
+            line(w, "Junction Spill", &col(2))?;
+            line(w, "Outfall Injection", &col(3))?;
+            line(w, "Junction Drainage", &col(4))?;
+            line(w, "Outfall Withdrawal", &col(5))?;
+            line(w, "Boundary Outflow", &col(6))?;
+            line(w, "Infiltration", &col(7))?;
+            line(w, "Mass Reacted", &col(8))?;
+            line(w, "Final Mass", &col(9))?;
+            let errs: Vec<f64> = ov
+                .quality
+                .iter()
+                .map(|(_, v)| {
+                    let inflow = v[0] + v[1] + v[2] + v[3];
+                    if inflow > 1e-12 {
+                        100.0 * v[10] / inflow
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            line(w, "Continuity Error (%)", &errs)?;
+        }
     }
     Ok(())
 }

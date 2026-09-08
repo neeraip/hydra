@@ -407,6 +407,49 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         &mut diagnostics,
     );
 
+    // §14.15 `[2D_RUNOFF_MAP]`: the subcatchment side of a runoff row.
+    // The subcatchment must exist and must name itself as its outlet —
+    // the predecessor's spelling for runoff that leaves the parcel
+    // system and reaches no node — and then its outlet is the surface.
+    // A row the subcatchment side refuses is dropped from the mesh too,
+    // so the model never holds a runoff point nothing drains to.
+    if let Some(mesh) = net.overland.as_mut() {
+        for (sec, lines) in &s.sections {
+            if *sec != Section::TwoDRunoffMap {
+                continue;
+            }
+            for line in lines {
+                let Some(name) = line.tokens.first() else {
+                    continue;
+                };
+                use crate::engine_api::model::ParcelOutlet;
+                let refused = match s.resolve(ObjectKind::Parcel, name) {
+                    None => Some(DiagnosticKind::UnresolvedReference {
+                        id: name.to_string(),
+                    }),
+                    Some(&pi) => match net.parcels[pi].outlet {
+                        ParcelOutlet::Parcel(target) if target == pi => {
+                            net.parcels[pi].outlet = ParcelOutlet::Surface;
+                            None
+                        }
+                        ParcelOutlet::Surface => None,
+                        _ => Some(DiagnosticKind::SurfaceOutletNamesAnother {
+                            parcel: net.parcels[pi].id.clone(),
+                        }),
+                    },
+                };
+                if let Some(kind) = refused {
+                    mesh.runoff_map
+                        .retain(|r| !r.parcel.eq_ignore_ascii_case(name));
+                    diagnostics.push(Diagnostic {
+                        line: line.line,
+                        kind,
+                    });
+                }
+            }
+        }
+    }
+
     // §15.7: with a mesh present, `[SYMBOLS]` supplies the rain-gauge
     // positions the rainfall interpolation reads — the one recorded
     // exception to display metadata's semantics-free rule (§14.5). The

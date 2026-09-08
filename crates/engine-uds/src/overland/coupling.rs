@@ -117,9 +117,126 @@ pub fn exchange_conductance(
     g.max(0.0)
 }
 
+/// §15.6 inlet at a coupling point. Free on-sag capture `q_free`
+/// (already the placement's, m³/s at the pond's depth) while the node's
+/// grade stands below the ground `z_g`; the orifice on the open area
+/// once the node reaches it; blended C¹ over the rim band; the source
+/// side's wet ramp on the result. Positive drains the surface.
+#[allow(clippy::too_many_arguments)]
+pub fn inlet_q(
+    q_free: f64,
+    h_2d: f64,
+    h_1d: f64,
+    z_g: f64,
+    cd: f64,
+    a_open: f64,
+    depth_2d: f64,
+    depth_1d: f64,
+    dry_depth: f64,
+) -> f64 {
+    let s = smoothstep((h_1d - z_g) / RIM_BAND);
+    let dh = h_2d - h_1d;
+    let q_sub = if dh.abs() < 1e-12 {
+        0.0
+    } else {
+        dh.signum() * cd * a_open * (2.0 * G).sqrt() * orifice_phi(dh.abs())
+    };
+    let q = (1.0 - s) * q_free.max(0.0) + s * q_sub;
+    q * if q > 0.0 {
+        wet_ramp(depth_2d, dry_depth)
+    } else {
+        wet_ramp(depth_1d, dry_depth)
+    }
+}
+
+/// §15.6 inlet conductance $-\partial Q_{inlet}/\partial h_{1D} \geq 0$:
+/// free capture does not read the node's grade and contributes none;
+/// the submerged orifice contributes its slope, weighted by the blend.
+/// The blend's own derivative is dropped, as the rim law drops its
+/// gate's, so the term can only damp.
+#[allow(clippy::too_many_arguments)]
+pub fn inlet_conductance(
+    h_2d: f64,
+    h_1d: f64,
+    z_g: f64,
+    cd: f64,
+    a_open: f64,
+    depth_2d: f64,
+    depth_1d: f64,
+    dry_depth: f64,
+) -> f64 {
+    let s = smoothstep((h_1d - z_g) / RIM_BAND);
+    let g = s * cd * a_open * (2.0 * G).sqrt() * orifice_phi_prime((h_2d - h_1d).abs());
+    (g * wet_ramp(depth_2d.max(depth_1d), dry_depth)).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §15.6: below the ground the inlet captures at the free rate and
+    /// reads nothing of the node; once the node stands a band above the
+    /// ground the inlet is the orifice on its open area, spilling back
+    /// when the node is the higher; between, the blend is C¹ and stays
+    /// inside the two.
+    #[test]
+    fn the_inlet_is_free_below_ground_and_an_orifice_above() {
+        let (z_g, cd, a_open, dd) = (10.0, 0.65, 0.2, 0.001);
+        let q_free = 0.04;
+        let free = inlet_q(q_free, 10.1, 9.0, z_g, cd, a_open, 0.1, 0.5, dd);
+        assert!((free - q_free).abs() < 1e-12, "free capture: {free}");
+        assert_eq!(
+            inlet_q(q_free, 10.1, 9.0, z_g, cd, a_open, 0.1, 0.5, dd),
+            inlet_q(q_free, 10.1, 9.5, z_g, cd, a_open, 0.1, 0.5, dd),
+            "the node's grade is not read while it stands below ground"
+        );
+        assert_eq!(
+            inlet_conductance(10.1, 9.0, z_g, cd, a_open, 0.1, 0.5, dd),
+            0.0
+        );
+        // Submerged and draining: the orifice, ignoring q_free.
+        let h_1d = z_g + 2.0 * RIM_BAND;
+        let sub = inlet_q(q_free, 10.5, h_1d, z_g, cd, a_open, 0.5, 0.5, dd);
+        let orifice = cd * a_open * (2.0 * G).sqrt() * orifice_phi(10.5 - h_1d);
+        assert!((sub - orifice).abs() < 1e-12, "{sub} vs {orifice}");
+        assert_eq!(
+            sub,
+            inlet_q(0.0, 10.5, h_1d, z_g, cd, a_open, 0.5, 0.5, dd),
+            "free capture is fully blended out once submerged"
+        );
+        // Submerged and surcharging: it spills.
+        assert!(inlet_q(q_free, 10.2, 10.6, z_g, cd, a_open, 0.2, 0.6, dd) < 0.0);
+        // Mid-band: strictly between the two regimes' values.
+        let mid_h = z_g + RIM_BAND / 2.0;
+        let mid = inlet_q(q_free, 10.5, mid_h, z_g, cd, a_open, 0.5, 0.5, dd);
+        let lo = q_free.min(cd * a_open * (2.0 * G).sqrt() * orifice_phi(10.5 - mid_h));
+        let hi = q_free.max(cd * a_open * (2.0 * G).sqrt() * orifice_phi(10.5 - mid_h));
+        assert!(mid > lo && mid < hi, "{lo} < {mid} < {hi}");
+        // The blend is continuous across both band edges.
+        for h in [z_g, z_g + RIM_BAND] {
+            let d = 1e-9;
+            let a = inlet_q(q_free, 10.5, h - d, z_g, cd, a_open, 0.5, 0.5, dd);
+            let b = inlet_q(q_free, 10.5, h + d, z_g, cd, a_open, 0.5, 0.5, dd);
+            assert!((a - b).abs() < 1e-6, "step at {h}: {a} vs {b}");
+        }
+    }
+
+    /// The submerged inlet's conductance is the orifice's head slope,
+    /// and it is never negative anywhere.
+    #[test]
+    fn the_inlet_conductance_is_the_submerged_slope() {
+        let (z_g, cd, a_open, dd) = (10.0, 0.65, 0.2, 0.001);
+        let h_1d = z_g + 2.0 * RIM_BAND;
+        let d = 1e-7;
+        let numeric = -(inlet_q(0.03, 10.5, h_1d + d, z_g, cd, a_open, 0.5, 0.5, dd)
+            - inlet_q(0.03, 10.5, h_1d - d, z_g, cd, a_open, 0.5, 0.5, dd))
+            / (2.0 * d);
+        let g = inlet_conductance(10.5, h_1d, z_g, cd, a_open, 0.5, 0.5, dd);
+        assert!((g / numeric - 1.0).abs() < 1e-4, "{g} vs {numeric}");
+        for (a, b) in [(9.0, 8.0), (10.0, 10.0), (10.02, 10.0), (8.0, 12.0)] {
+            assert!(inlet_conductance(a, b, z_g, cd, a_open, 0.5, 0.5, dd) >= 0.0);
+        }
+    }
 
     /// φ meets the bare root with matched value and slope, and holds a
     /// finite slope at zero.

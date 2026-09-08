@@ -30,6 +30,8 @@ pub struct OverlandMesh {
     /// Cell-coupling rows (§15.6): rows accumulate, several nodes may
     /// couple to one cell.
     pub cell_couplings: Vec<CouplingRow>,
+    /// §15.7 runoff points: where a surface-outlet parcel's runoff lands.
+    pub runoff_map: Vec<RunoffRow>,
     /// Boundary-condition rows (§15.5), in file order.
     pub boundaries: Vec<BoundaryRow>,
     /// §15.7 per-cell losses; unlisted cells lose nothing.
@@ -141,6 +143,49 @@ pub struct CouplingRow {
     /// Whether the row authored its own area — an unauthored one is
     /// eligible for `COUPLING_AREA AUTO` derivation (§15.6).
     pub area_authored: bool,
+    /// §15.6: an inlet at the point, opening exchange below the rim.
+    pub inlet: Option<CouplingInlet>,
+}
+
+/// §15.7: a runoff point — the mesh vertex or cell a surface-outlet
+/// parcel discharges onto. Resolved at attach, like coupling rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunoffRow {
+    /// The parcel, as the model names it.
+    pub parcel: String,
+    /// Whether the address names a vertex or a cell.
+    pub kind: SurfaceKind,
+    /// The mesh vertex or cell as authored: an index where numeric and
+    /// in range, else a tag (§14.15).
+    pub address: String,
+}
+
+/// The two kinds of mesh element an address can name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceKind {
+    /// A mesh vertex; a rate spreads over its incident cells.
+    Vertex,
+    /// A mesh cell.
+    Cell,
+}
+
+/// §15.6: an inlet at a coupling point — a §7.8 design placed on the
+/// source cell's ground, with the placement modifiers §7.8 gives a
+/// street inlet. Resolved against the model's inlet designs at attach.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CouplingInlet {
+    /// The inlet design, as the model names it.
+    pub design: String,
+    /// Replicate count (at least one).
+    pub count: u32,
+    /// Clogged percentage.
+    pub pct_clogged: f64,
+    /// Per-inlet capture cap (m³/s); 0 = none.
+    pub flow_limit: f64,
+    /// Local depression depth (m).
+    pub local_depression: f64,
+    /// Local depression width (m).
+    pub local_width: f64,
 }
 
 /// One §15.5 boundary row: the condition attached to a cell's local edge.
@@ -832,6 +877,9 @@ pub struct LedgerRow {
     pub boundary_in: f64,
     pub boundary_out: f64,
     pub error: f64,
+    /// §15.7 parcel runoff in — the twelfth term, appended in format
+    /// version 2 (§14.16).
+    pub runoff_in: f64,
 }
 
 impl LedgerRow {
@@ -849,11 +897,15 @@ impl LedgerRow {
             boundary_in: m.boundary_in,
             boundary_out: m.boundary_out,
             error: m.ledger_error(),
+            runoff_in: m.runoff_in,
         }
     }
 
+    /// The number of terms §14.16's current version carries.
+    pub const TERMS: usize = 12;
+
     /// The §14.16 serialisation order, for the dialect tooling.
-    pub fn to_array(self) -> [f64; 11] {
+    pub fn to_array(self) -> [f64; LedgerRow::TERMS] {
         [
             self.storage,
             self.rain_in,
@@ -866,11 +918,13 @@ impl LedgerRow {
             self.boundary_in,
             self.boundary_out,
             self.error,
+            self.runoff_in,
         ]
     }
 
-    /// The §14.16 serialisation order's inverse.
-    pub fn from_array(a: [f64; 11]) -> LedgerRow {
+    /// The §14.16 serialisation order's inverse. A version-1 row hands
+    /// a zero twelfth term, which is what every such run had.
+    pub fn from_array(a: [f64; LedgerRow::TERMS]) -> LedgerRow {
         LedgerRow {
             storage: a[0],
             rain_in: a[1],
@@ -883,6 +937,7 @@ impl LedgerRow {
             boundary_in: a[8],
             boundary_out: a[9],
             error: a[10],
+            runoff_in: a[11],
         }
     }
 }

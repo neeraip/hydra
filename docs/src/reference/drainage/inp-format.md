@@ -59,8 +59,9 @@ The last row is the interesting one: a formula cannot be dimensionally converted
 > Treat a 2D model as something to try rather than something to depend
 > on, and expect the vocabulary to grow.
 
-A model may carry a two-dimensional overland surface in the same `.inp`, through the 2D sections SWMM's successor format defines, adopted section for section: `[2D_OPTIONS]`, `[2D_VERTICES]`, `[2D_TRIANGLES]`, `[2D_INITIAL_VELOCITY]`, the two node-coupling maps, `[2D_BOUNDARY_CONDITIONS]`, `[2D_INFILTRATION]`, `[2D_EDGE_CONVEYANCE]` and `[2D_MESH_FILE]` (an external mesh file, resolved beside the model like any other auxiliary file; export inlines it).
+A model may carry a two-dimensional overland surface in the same `.inp`, through the 2D sections SWMM's successor format defines, adopted section for section: `[2D_OPTIONS]`, `[2D_VERTICES]`, `[2D_TRIANGLES]`, `[2D_INITIAL_VELOCITY]`, the two node-coupling maps, `[2D_INLETS]` and `[2D_RUNOFF_MAP]` (Hydra's own: an inlet at a coupling point, and a subcatchment draining onto the surface, neither of which the successor format has), `[2D_BOUNDARY_CONDITIONS]`, `[2D_INFILTRATION]`, `[2D_EDGE_CONVEYANCE]` and `[2D_MESH_FILE]` (an external mesh file, resolved beside the model like any other auxiliary file; export inlines it).
 
+- `[2D_INLETS]` and `[2D_RUNOFF_MAP]` are provisional. SWMM's successor is pre-release and has neither capability, so Hydra names them itself. If the successor later spells either one differently, Hydra adopts that spelling and keeps reading its own as a retired alias, so files written today still open.
 - A retired or unknown `[2D_OPTIONS]` key is a warning, never a refusal, so a file written for a newer vocabulary still opens. SWMM 6 refuses the whole file.
 - `IGNORE_2D YES` runs the one-dimensional model alone, with the surface parsed, preserved and set aside, with notice.
 - Mesh geometry is SI by declaration (the one-way mesh-units header); a display-unit model has its 2D inputs scaled at import.

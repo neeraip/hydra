@@ -108,6 +108,8 @@ pub enum Section {
     TwoDInitialVelocity,
     TwoDVertexNodeMap,
     TwoDTriangleNodeMap,
+    TwoDInlets,
+    TwoDRunoffMap,
     TwoDBoundaryConditions,
     TwoDEdgeConveyance,
     TwoDMeshFile,
@@ -247,6 +249,8 @@ pub const SECTIONS: &[(&str, &str, Section)] = &[
         Section::TwoDEdgeConveyance,
     ),
     ("[2D_MESH_FILE", "[2D_MESH_FILE]", Section::TwoDMeshFile),
+    ("[2D_INLET", "[2D_INLETS]", Section::TwoDInlets),
+    ("[2D_RUNOFF_MAP", "[2D_RUNOFF_MAP]", Section::TwoDRunoffMap),
 ];
 
 /// A section-header match: which section, and whether the token was the
@@ -379,6 +383,8 @@ mod tests {
             .position(|(p, _, _)| *p == "[2D_TRIANGLES")
             .unwrap();
         assert!(tm < t, "[2D_TRIANGLE_NODE_MAP must precede [2D_TRIANGLES");
-        assert_eq!(SECTIONS.len(), 67);
+        // 67 of the predecessor's, plus §14.15's `[2D_INLETS]` and
+        // `[2D_RUNOFF_MAP]`.
+        assert_eq!(SECTIONS.len(), 69);
     }
 }

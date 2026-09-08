@@ -120,6 +120,7 @@ fn parcel_values(net: &Network, p: &hydra::uds::model::Parcel) -> HashMap<&'stat
         let outlet = match p.outlet {
             ParcelOutlet::Vertex(vi) => net.vertices.get(vi).map(|v| v.id.clone()),
             ParcelOutlet::Parcel(pi) => net.parcels.get(pi).map(|o| o.id.clone()),
+            ParcelOutlet::Surface => Some("the overland surface".to_string()),
         };
         if let Some(outlet) = outlet {
             m.insert("outlet", Text(outlet));

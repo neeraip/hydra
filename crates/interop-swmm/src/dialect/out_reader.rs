@@ -381,7 +381,8 @@ pub fn read_element_series(
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::dialect::overland_out::{
-    header_len, record_len, LedgerRow, MAGIC as OV_MAGIC, VERSION as OV_VERSION,
+    header_has_constituents, header_len, ledger_terms, record_len, LedgerRow, MAGIC as OV_MAGIC,
+    VERSION as OV_VERSION,
 };
 
 fn ov_read_u32(f: &mut File) -> Result<u32, String> {
@@ -455,6 +456,11 @@ pub struct OverlandRecord {
     pub exchange: Vec<f32>,
     /// The §15.8 ledger, cumulative (m³).
     pub ledger: LedgerRow,
+    /// §15.11 per constituent: each cell's concentration, and the mesh
+    /// mass ledger row (initial, runoff in, junction spill in, outfall
+    /// injection in, junction drainage out, outfall withdrawal out,
+    /// boundary out, infiltration out, reacted, final, error).
+    pub constituents: Vec<(Vec<f32>, [f64; 11])>,
 }
 
 /// An open §14.16 overland results file: header held, records served
@@ -475,6 +481,10 @@ pub struct OverlandResults {
     pub first_report_t: f64,
     /// Record count from the epilog.
     pub periods: usize,
+    /// The ledger width the file's version carries (§14.16).
+    ledger_terms: usize,
+    /// §15.11: constituents carried per record (version 3).
+    pub constituents: usize,
     records_at: u64,
 }
 
@@ -491,20 +501,25 @@ impl OverlandResults {
             return Err(format!("{}: not an overland results file", path.display()));
         }
         let version = ov_read_u32(&mut f).map_err(ctx)?;
-        if version != OV_VERSION {
+        let Some(terms) = ledger_terms(version) else {
             return Err(format!(
-                "{}: overland results version {version}, this reader serves {OV_VERSION}",
+                "{}: overland results version {version}, this reader serves up to {OV_VERSION}",
                 path.display()
             ));
-        }
+        };
         let nv = ov_read_u32(&mut f).map_err(ctx)? as usize;
         let nc = ov_read_u32(&mut f).map_err(ctx)? as usize;
         let np = ov_read_u32(&mut f).map_err(ctx)? as usize;
+        let nq = if header_has_constituents(version) {
+            ov_read_u32(&mut f).map_err(ctx)? as usize
+        } else {
+            0
+        };
         let start_epoch = ov_read_f64(&mut f).map_err(ctx)?;
         let report_step = ov_read_f64(&mut f).map_err(ctx)?;
         let first_report_t = ov_read_f64(&mut f).map_err(ctx)?;
-        let head = header_len(nv, nc, np);
-        let rec = record_len(nc, np);
+        let head = header_len(nv, nc, np, header_has_constituents(version));
+        let rec = record_len(nc, np, terms, nq);
         if len < head + 8 {
             return Err(format!(
                 "{}: the run this file records did not finish (no epilog)",
@@ -530,7 +545,16 @@ impl OverlandResults {
         }
         // The geometry, read once — and in one read: it is the bulk of
         // the header, and a mesh has as many fields as it has cells.
-        f.seek(SeekFrom::Start((4 * 5 + 8 * 3) as u64))
+        // The fixed prefix: magic, version, the counts (four of them
+        // since version 3), and the clock.
+        let prefix = 4 * 5
+            + if header_has_constituents(version) {
+                4
+            } else {
+                0
+            }
+            + 8 * 3;
+        f.seek(SeekFrom::Start(prefix as u64))
             .map_err(|e| ctx(e.to_string()))?;
         let geom = ov_read_block(&mut f, 24 * nv + 12 * nc + 4 * np).map_err(ctx)?;
         let verts = (0..nv)
@@ -555,6 +579,8 @@ impl OverlandResults {
         let points = &tris[12 * nc..];
         let point_cells = (0..np).map(|i| le_u32(points, i)).collect();
         Ok(OverlandResults {
+            ledger_terms: terms,
+            constituents: nq,
             path: path.to_path_buf(),
             verts,
             cells,
@@ -580,12 +606,16 @@ impl OverlandResults {
         let mut f = File::open(&self.path).map_err(|e| ctx(e.to_string()))?;
         let (nc, np) = (self.cells.len(), self.point_cells.len());
         f.seek(SeekFrom::Start(
-            self.records_at + record_len(nc, np) * i as u64,
+            self.records_at + record_len(nc, np, self.ledger_terms, self.constituents) * i as u64,
         ))
         .map_err(|e| ctx(e.to_string()))?;
         // One read, then decode: a record is one f64 and four f32 per
         // cell, and the canvas asks for a whole one on every step.
-        let block = ov_read_block(&mut f, record_len(nc, np) as usize).map_err(ctx)?;
+        let block = ov_read_block(
+            &mut f,
+            record_len(nc, np, self.ledger_terms, self.constituents) as usize,
+        )
+        .map_err(ctx)?;
         let t = le_f64(&block, 0);
         let vals = &block[8..];
         let cells = (0..nc)
@@ -601,15 +631,28 @@ impl OverlandResults {
         let ex = &vals[16 * nc..];
         let exchange = (0..np).map(|i| le_f32(ex, i)).collect();
         let led = &ex[4 * np..];
-        let mut ledger = [0.0f64; 11];
-        for (i, v) in ledger.iter_mut().enumerate() {
+        let mut ledger = [0.0f64; LedgerRow::TERMS];
+        for (i, v) in ledger.iter_mut().enumerate().take(self.ledger_terms) {
             *v = le_f64(led, i);
+        }
+        let mut rest = &led[8 * self.ledger_terms..];
+        let mut constituents = Vec::with_capacity(self.constituents);
+        for _ in 0..self.constituents {
+            let conc = (0..nc).map(|i| le_f32(rest, i)).collect();
+            let ml = &rest[4 * nc..];
+            let mut row = [0.0f64; 11];
+            for (i, v) in row.iter_mut().enumerate() {
+                *v = le_f64(ml, i);
+            }
+            constituents.push((conc, row));
+            rest = &ml[8 * 11..];
         }
         Ok(OverlandRecord {
             t,
             cells,
             exchange,
             ledger: LedgerRow::from_array(ledger),
+            constituents,
         })
     }
 
@@ -622,7 +665,7 @@ impl OverlandResults {
         }
         let ctx = |e: String| format!("{}: {e}", self.path.display());
         let mut f = File::open(&self.path).map_err(|e| ctx(e.to_string()))?;
-        let rec = record_len(nc, np);
+        let rec = record_len(nc, np, self.ledger_terms, self.constituents);
         let mut out = Vec::with_capacity(self.periods);
         for i in 0..self.periods {
             let at = self.records_at + rec * i as u64;
@@ -670,5 +713,87 @@ mod format_identifier_tests {
         }
         let offset = days_from_civil(1970, 1, 1) - days_from_civil(1899, 12, 30);
         assert_eq!(offset as f64, EPOCH_OFFSET_DAYS);
+    }
+}
+
+#[cfg(test)]
+mod sidecar_version_tests {
+    use super::*;
+
+    /// A §14.16 file with no geometry and one record, in the version
+    /// given, its ledger terms 1.0, 2.0, …, and — from version 3 — `nq`
+    /// constituents whose mass ledgers are 100.0, 101.0, ….
+    fn sidecar(version: u32, terms: usize, nq: usize) -> std::path::PathBuf {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend_from_slice(&OV_MAGIC.to_le_bytes());
+        b.extend_from_slice(&version.to_le_bytes());
+        for n in [0u32, 0, 0] {
+            b.extend_from_slice(&n.to_le_bytes());
+        }
+        if header_has_constituents(version) {
+            b.extend_from_slice(&(nq as u32).to_le_bytes());
+        }
+        for f in [0.0f64, 300.0, 0.0] {
+            b.extend_from_slice(&f.to_le_bytes());
+        }
+        b.extend_from_slice(&0.0f64.to_le_bytes());
+        for i in 0..terms {
+            b.extend_from_slice(&((i + 1) as f64).to_le_bytes());
+        }
+        for _ in 0..nq {
+            for i in 0..11 {
+                b.extend_from_slice(&((100 + i) as f64).to_le_bytes());
+            }
+        }
+        b.extend_from_slice(&1i32.to_le_bytes());
+        b.extend_from_slice(&OV_MAGIC.to_le_bytes());
+        // Unique per process and per call; the wall clock is off limits
+        // to the engine build these sources are mounted into.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "hydra-sidecar-v{version}-{}-{n}.2d.out",
+            std::process::id()
+        ));
+        std::fs::write(&path, b).expect("write");
+        path
+    }
+
+    /// §14.16: a version-1 file (eleven ledger terms) still opens, its
+    /// twelfth term read as zero and no constituents; version 2 carries
+    /// all twelve; version 3 adds the constituent count and blocks; a
+    /// version this reader does not know is refused.
+    #[test]
+    fn every_written_sidecar_version_reads_and_an_unknown_one_is_refused() {
+        let v1 = sidecar(1, 11, 0);
+        let r = OverlandResults::open(&v1).expect("v1 opens");
+        let rec = r.record(0).expect("record");
+        assert_eq!(rec.ledger.storage, 1.0);
+        assert_eq!(rec.ledger.error, 11.0);
+        assert_eq!(rec.ledger.runoff_in, 0.0, "version 1 had no runoff term");
+        assert!(rec.constituents.is_empty());
+        let _ = std::fs::remove_file(v1);
+
+        let v2 = sidecar(2, 12, 0);
+        let r = OverlandResults::open(&v2).expect("v2 opens");
+        assert_eq!(r.record(0).expect("record").ledger.runoff_in, 12.0);
+        assert_eq!(r.constituents, 0);
+        let _ = std::fs::remove_file(v2);
+
+        let v3 = sidecar(3, 12, 2);
+        let r = OverlandResults::open(&v3).expect("v3 opens");
+        assert_eq!(r.constituents, 2);
+        let rec = r.record(0).expect("record");
+        assert_eq!(rec.ledger.runoff_in, 12.0);
+        assert_eq!(rec.constituents.len(), 2);
+        assert_eq!(rec.constituents[1].1[0], 100.0, "initial mass");
+        assert_eq!(rec.constituents[1].1[10], 110.0, "error term");
+        let _ = std::fs::remove_file(v3);
+
+        let v4 = sidecar(4, 12, 0);
+        let err = OverlandResults::open(&v4).expect_err("unknown version");
+        assert!(err.contains("version 4"), "{err}");
+        let _ = std::fs::remove_file(v4);
     }
 }

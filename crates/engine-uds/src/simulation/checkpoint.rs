@@ -24,7 +24,7 @@ pub const STAMP: &[u8] = b"HYDRA-UDS-CHECKPOINT";
 /// checkpoint of any other version is refused rather than guessed at.
 /// v2: the swale's cross-step rate left the state — the §3.4 advance
 /// now uses this step's own start-of-step rate, which is not state.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 6;
 
 /// A 64-bit FNV-1a hash, used to fingerprint a model's identifiers.
 ///
@@ -239,6 +239,6 @@ mod format_version_tests {
     /// green: the round-trip tests write and read with the same binary.
     #[test]
     fn the_checkpoint_version_is_the_one_every_saved_file_carries() {
-        assert_eq!(4, super::VERSION);
+        assert_eq!(6, super::VERSION);
     }
 }

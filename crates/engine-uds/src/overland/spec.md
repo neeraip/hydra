@@ -418,7 +418,8 @@ $$Q = C_d\, A_{\!e}\ \mathrm{sign}(\Delta h)\, \sqrt{2g}\
   **rim** — the ground elevation, invert plus the node's full depth —
   evaluated at $\max(\eta_{2D}, h_{1D})$: exchange exists only when
   either side reaches the ground. Street drainage into a node whose
-  water stands below its rim is **not modelled** (recorded in §15.10).
+  water stands below its rim passes only through an **inlet** authored
+  at the point (below); a point without one exchanges at the rim alone.
   The predecessor's source calls this elevation the node's "crown"; the
   value is the rim, and this specification says rim, because §6 already
   uses *crown* for a conduit soffit and the two must not be confused.
@@ -455,6 +456,58 @@ and the network's grade must track it.
 > counted on both sides of the coupling. This engine adopts the
 > mechanism and the acknowledgement; removing the double count is a
 > recorded refinement, not an implementation liberty.
+
+**Inlet capture below the rim.** A coupling point may carry an inlet:
+a §7.8 inlet design with a replicate count, a clogged percentage, a
+per-inlet capture cap, and a local depression (depth and width). The
+inlet sits on the source cell's ground, $z_g$ (the cell's centroid bed,
+§15.3), and opens a second exchange path that does not wait for the
+rim. Its law is asymmetric, because the two regimes are different
+physics:
+
+- **Free capture**, while the node's grade stands below the ground at
+  the point: the surface drains at §7.8's on-sag capture,
+  $Q_{free}(\bar h) \geq 0$ — the HEC-22 weir and orifice forms with
+  their published transition depths, clogging, replicate count and cap
+  applied as §7.8 applies them — evaluated at the source cell's mean
+  depth $\bar h$, which is the ponded depth a cell can state. The
+  gutter cross slope the forms need is the magnitude of the cell's bed
+  plane gradient (the plane through its three vertices), steepened by
+  the local depression as §7.8 steepens a street's; a cell too flat to
+  have one is a level pond, for which the forms need no cross-slope
+  correction at all. A custom-curve design serves here only as a rating
+  curve on depth; a diversion curve wants an approach flow a pond does
+  not have, and such a design is refused at a coupling point.
+- **Submerged exchange**, once the node's grade reaches the ground: the
+  inlet is an orifice of its open area $A_o$ (the design's unclogged
+  open area, per replicate, as §7.8 measures it for backflow
+  apportionment) under the junction law's regularised form,
+  $Q_{sub} = C_d\, A_o\ \mathrm{sign}(\Delta h)\, \sqrt{2g}\,
+  \varphi(\lvert \Delta h \rvert)$ with the point's $C_d$ and the same
+  $\Delta h = \eta_{2D} - h_{1D}$, so a surcharging node spills back up
+  through the inlet as readily as the pond drained down it.
+
+The two regimes blend through the $C^1$ smoothstep $s$ of
+$(h_{1D} - z_g)$ over the same 50 mm band the rim gate uses:
+$Q_{inlet} = (1 - s)\, Q_{free} + s\, Q_{sub}$, times the source side's
+$R_{wet}$ ramp. At a point carrying both, the rim law and the inlet law
+sum; the drain cap ($\beta$ share of the source cell) and the spill
+ledger bound the sum, not each term. The inlet's conductance for the
+§6.4 damping is $s\, C_d A_o \sqrt{2g}\, \varphi'(\lvert \Delta h
+\rvert)$ — free capture does not depend on $h_{1D}$ and contributes
+none — and adds to the rim law's. Several points naming one node may
+each carry an inlet (their captures accumulate into the node's slot);
+two inlets resolving to one cell are refused, because both would read
+the same pond and capture it twice. A design the model does not have is
+refused by name, and so is an inlet at a point naming an outfall, whose
+coupling (below) has no orifice path for it to join.
+
+> **DEVIATION from SWMM6:** the successor has no two-dimensional inlet:
+> its coupling exchanges through the rim orifice alone, so a street
+> pond over a catch basin whose sewer runs part-full never drains. This
+> engine's inlet at a coupling point is its own design, reusing §7.8's
+> published capture forms so a modeller's inlet catalogue means the
+> same thing on a street channel and on the mesh.
 
 **Outfall coupling** is asymmetric. Surface→network: a coupled outfall's
 boundary stage reads the surface (the deepest wet stencil cell's
@@ -505,9 +558,34 @@ evaluation happen at tier-0 cadence within the advance, sequentially.
 
 A model carrying both parcels (§3) and rain-on-mesh over the same
 footprint double-counts that rainfall; import warns (§14.15), and
-nothing subtracts one from the other. Parcel runoff does **not** flow
-onto the mesh (§15.10): parcels drain to nodes exactly as without a
-mesh, and reach the surface only through a coupled node's exchange.
+nothing subtracts one from the other.
+
+**Runoff onto the mesh.** A parcel whose outlet is the *surface* (§3)
+discharges its runoff onto the mesh instead of a node, at a **runoff
+point** the mesh's runoff map names for it: a vertex or a cell,
+addressed as coupling points are. A cell point takes the parcel's
+runoff rate as a source over the cell, $\rho = Q/A$; a vertex point
+spreads it across the vertex's incident cells with the outfall
+injection's weights (§15.6) — down the surface slope, falling back to
+area on a flat or dry surface. The rate the surface receives over a
+co-advance is the parcel's runoff at the hydrology step the advance
+begins in, held constant over the advance, which is the same delivery
+the network's own laterals get (§10.1). It enters the §15.4.3 cell
+update beside rainfall and coupling, in the firing path and the lazy
+path alike, and books to the §15.8 ledger as its own term. Nothing
+returns: a runoff point is a source, never a sink, and the parcel's
+runoff continuity (§11.1) counts the water as runoff exactly as it
+would for a node. One parcel names one point; a map row for a parcel
+whose outlet is not the surface, a surface-outlet parcel with no row,
+and a row naming a parcel the model lacks are each refused by name.
+The runoff carries the parcel's mobilisation concentration (§8.3) onto
+the mesh, where §15.11 transports it.
+
+> **DEVIATION from SWMM6:** the successor routes parcel runoff to nodes
+> only, and its rain-on-mesh mode exists so a modeller can choose which
+> of the two captures a storm. This engine adds the third option — a
+> parcel that computes its runoff and puts it on the street — because
+> that is what a dual-drainage mesh is for.
 
 **Evaporation** applies the §3 potential rate through the §15.4.3 ramp.
 
@@ -541,9 +619,10 @@ identically in the lazy path for inactive cells. Both book to the
 ### 15.8 Conservation
 
 The overland ledger carries, in cubic metres over the reporting window:
-initial and final surface storage, rainfall in, evaporation out,
-infiltration out, exchange in and out with the network (junctions and
-outfalls separately), and boundary in and out. Interior conveyance never appears:
+initial and final surface storage, rainfall in, parcel runoff in
+(§15.7), evaporation out, infiltration out, exchange in and out with
+the network (junctions and outfalls separately), and boundary in and
+out; and, per constituent, the §15.11 mass ledger. Interior conveyance never appears:
 each interior edge books one antisymmetric mass pair, so interior
 transport conserves exactly, at every tier interface, by construction —
 and the continuity report measures only what crosses the subsystem's
@@ -552,7 +631,10 @@ its caps and clamps, never the volume requested.
 
 On the network side, the exchange enters §11's ledger as its own named
 pair — surface drainage (in) and surface spill (out) — rather than
-folding into existing terms.
+folding into existing terms. An inlet at a coupling point (§15.6) books
+into the junction pair on both sides: it is a second path of the same
+exchange at the same point, and the per-point exchanged volume the
+§14.16 stream carries is the sum of its paths.
 
 > **CORRESPONDENCE:** the predecessor books 1D→2D spill into its node
 > flooding total and 2D→1D drainage into external inflow, so a coupled
@@ -608,10 +690,13 @@ Typed, per §1.8 — each is a named absence, not an approximation:
   mesh fingerprint. The one deviation is recorded there: the §14.16
   sidecar of a resumed run begins at the resume instant. The
   predecessor's hotstart files carry no 2D state at all.
-- **Sub-rim street drainage.** Junction exchange opens only at the
-  rim; a surface film over a node whose water stands below ground does
-  not drain into it.
-- **Runoff-to-mesh.** Parcel runoff routes to nodes only.
+- **Sub-rim street drainage: resolved** as §15.6's inlet at a coupling
+  point, with two named residuals: an inlet is on-sag only (a pond has
+  no gutter flow for the on-grade forms to read), and a diversion-curve
+  custom design is refused there for the same reason.
+- **Runoff-to-mesh: resolved** as §15.7's surface outlet and runoff
+  map. The residual is transport's: a model with pollutants cannot use
+  it until the mesh carries constituents.
 - **Mesh infiltration: resolved** as §15.7's initial-loss/continuing-
   loss model. A soil column (Green–Ampt with recovery) remains absent;
   the initial loss never recovers.
@@ -623,8 +708,11 @@ Typed, per §1.8 — each is a named absence, not an approximation:
   terrain model, held per cell and per face) are a different modelling
   philosophy, not a refinement of this one; §15.3's closure interface is
   the seam one would attach to. Absent here as in the predecessor.
-- **Overland constituent transport**, **mesh adaptivity**: absent here
-  as in the predecessor.
+- **Overland constituent transport: resolved** as §15.11, with its
+  named absences: no wet deposition on the mesh, boundary inflow that
+  carries no constituent, no treatment and no co-pollutant potency on
+  the mesh.
+- **Mesh adaptivity**: absent here as in the predecessor.
 - **Report additions: resolved.** §14.9 specifies the overland flow
   continuity balance, the overland time-step summary, and the flow
   routing balance's §15.8 named pair.
@@ -641,3 +729,95 @@ Typed, per §1.8 — each is a named absence, not an approximation:
 - **Format churn.** The predecessor is pre-release; §14.15's retired-key
   mechanism absorbs option-vocabulary changes, and structural format
   changes are adopted deliberately, by amending this specification.
+
+### 15.11 Constituents on the Mesh
+
+A mesh in a model that declares constituents (§2.8) carries each of
+them as **mass per cell**, $M_{c,p}$ in the constituent's mass unit,
+beside the cell's volume. The concentration is $c_{c,p} = M_{c,p}/V_c$
+wherever the cell stands at or above the drying depth, and is reported
+as zero below it. The concentration field never influences flow.
+
+**Transport is first-order upwind on the face discharges.** When a
+face fires (§15.4.2) and moves the volume $\Delta M$ from its exporter
+to its importer, it moves the mass $c_{up,p}\,\Delta M$ with it, at the
+exporter's concentration at that firing. The transfer is one
+antisymmetric pair per face, exactly as the volume is, so interior
+transport conserves mass by construction at every tier interface. The
+positivity budget that bounds $\Delta M$ to a $\beta/3$ share of the
+exporter's volume bounds the mass to the same share of the exporter's
+mass, so no cell's mass goes negative. Explicit upwind under the
+§15.4.4 step is monotone and adds numerical diffusion; that is the
+scheme's known price, stated rather than hidden, and a sharper
+reconstruction is a refinement not an obligation.
+
+**Sources and sinks**, in the §15.4.3 cell update's order:
+
+- **Rainfall** carries no constituent. §8.1's direct wet deposition is
+  a parcel path, and there is no rain concentration on a mesh: a
+  recorded absence.
+- **Parcel runoff** (§15.7) carries the parcel's mobilisation
+  concentration (§8.3) at the hydrology step the co-advance begins in,
+  held over the advance with the flow.
+- **Junction spill** and **outfall injection** (§15.6) carry the node's
+  concentration frozen at the co-advance start, the same freeze the
+  node's grade has.
+- **Junction drainage** carries the source cell's concentration into
+  the node; **outfall withdrawal** likewise. The mass banks with the
+  volume and delivers next period as the network's **surface** lateral
+  mass, its own origin in §8.1's partition. The spilled mass is not
+  delivered back: the network loses it through the spill's negative
+  lateral at the node's own mixture when that lateral is applied, one
+  period later, while the surface booked it at the concentration frozen
+  for the advance. Each ledger closes on its own; their difference is
+  the node concentration's change over the delay, the same lag the
+  exchange volume already carries (§15.6).
+- **Boundary inflow** (§15.5) carries no constituent — a stage or
+  flow condition admits clean water, a recorded absence — and
+  **boundary outflow** carries the cell's concentration out.
+- **Infiltration** (§15.7) carries mass at the cell's concentration
+  into the ground: dissolved mass follows the water it is dissolved
+  in, the rule §8.4 gives storage seepage.
+- **Evaporation** concentrates: the mass stays, as in §8.4.
+- **Decay** is the constituent's first-order coefficient (§2.8),
+  $M \leftarrow M\,e^{-K_1 \Delta t}$ at every cell firing over the
+  cell's own interval, and over the owed interval on the lazy path
+  (§15.4.4), so an inactive cell decays exactly as an active one.
+
+**A drying cell keeps its mass.** The network flushes a dry element's
+mass to final storage because its reactor volume has vanished (§8.4);
+a cell's mass has somewhere to be — its bed — and the next wetting
+re-dissolves it. The ledger therefore never books a flush.
+
+> **DEVIATION from the network rule, within this engine:** the §8.4
+> flush exists because a channel below its dry threshold has no volume
+> to hold a concentration against. A cell is a place, and a residue on
+> it is a real thing a street has. Keeping it is the conservative
+> reading; a modeller who wants residue lost must say so in a future
+> option, not receive it silently.
+
+**Nothing else happens on the mesh.** Treatment (§8.5) is a node
+function; co-pollutant potency (§8.2–§8.3) is a loading relation and
+applies where the load is made, on the parcel; both are recorded
+absences here, not approximations.
+
+**Conservation.** Per constituent, the mesh ledger carries: initial
+mass, runoff in, junction spill in, outfall injection in, junction
+drainage out, outfall withdrawal out, boundary out, infiltration out,
+reacted, final mass, and the error as a signed mass. On the network
+side, the exchange enters §11.1's constituent ledger as its own pair —
+surface drainage (in, a sixth inflow origin) and surface spill (out) —
+as the volumetric exchange does. Every term books the mass actually
+moved, after the volume's caps.
+
+**Determinism and concurrency.** The ∥ face phase writes each face's
+mass transfer, per constituent, to that face's accumulator sides; the
+cell phase drains its own sides in fixed edge order; the ledger reduces
+serially in index order. Results are byte-identical at every §6.4
+width, as §15.4.5 requires of the volume.
+
+**Results and state.** The §14.16 stream carries, per reporting
+instant, each cell's concentration per constituent and each
+constituent's mesh ledger (format version 3). The §12.3 checkpoint
+carries the cell masses, the banked exchange mass, and the ledgers.
+
