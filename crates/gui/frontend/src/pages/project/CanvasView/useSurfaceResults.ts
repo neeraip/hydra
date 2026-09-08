@@ -472,12 +472,19 @@ export function shownSurface(
 
   // A result is a variable the instant has a column for; anything else
   // is a property of the mesh, and the ground is the one there is.
-  const column = periodData ? surfaceColumn(periodData, variable.id) : null;
-  if (column && periodData) {
+  const column =
+    periodData && meta
+      ? surfaceColumn(periodData, variable.id, meta.variables)
+      : null;
+  if (column && periodData && meta) {
     // Always flat. A cell is the solver's unit of state and the engine
     // publishes no vertex reading, so there is nothing between cell
     // centres that is ours to draw.
-    return flat(variable, column, periodData.depth, false);
+    // Depth is the wetness mask as well as a variable: a dry cell must
+    // not be shaded as though it held a clean, or a zero-concentration,
+    // film. It is addressed through the catalog like anything else.
+    const wet = surfaceColumn(periodData, "depth", meta.variables);
+    return flat(variable, column, wet, false);
   }
 
   // A result variable with no instant behind it yet (the first frame

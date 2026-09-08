@@ -12,8 +12,8 @@
 //! presence resolution (spec §6.2) when result reading lands.
 
 use hydra_common::{
-    AttributeDescriptor, ElementClass, ElementKind, ElementRole, OptionKind, QuantityDescriptor,
-    RampHint, VariableDescriptor,
+    AttributeDescriptor, ElementClass, ElementKind, ElementRole, ModelVariable, OptionKind,
+    QuantityDescriptor, RampHint, VariableDescriptor,
 };
 
 // ── Element kinds (spec §4.2) ─────────────────────────────────────────────────
@@ -383,7 +383,14 @@ pub const QUANTITIES: &[QuantityDescriptor] = &[
     q("precipitation", "mm", "in", 0.039_370_1, 0.0, 1, 2),
     q("area", "ha", "ac", 2.471_05, 0.0, 2, 2),
     q("volume", "m³", "ft³", 35.314_7, 0.0, 1, 0),
+    // A pollutant declares which of these three its concentrations are
+    // in (§2.8), so a result variable carries the key matching its own
+    // pollutant rather than one standing for all of them. None converts:
+    // the host format states concentrations the same way in either unit
+    // system.
     q("concentration", "mg/L", "mg/L", 1.0, 0.0, 2, 2),
+    q("concentrationMicro", "µg/L", "µg/L", 1.0, 0.0, 2, 2),
+    q("concentrationCount", "count/L", "count/L", 1.0, 0.0, 0, 0),
     q("percent", "%", "%", 1.0, 0.0, 1, 1),
     q("temperature", "°C", "°F", 1.8, 32.0, 1, 1),
 ];
@@ -1107,6 +1114,48 @@ pub fn surface_variables() -> Vec<VariableDescriptor> {
     ]
 }
 
+/// The §15 surface catalog published for one model (hydra-common §6.3):
+/// [`surface_variables`] followed by one concentration series per
+/// pollutant the model declares.
+///
+/// A pollutant's identity is the model's, not this engine's, so these
+/// cannot live in the static catalog above. The id is composed as
+/// `pollutant:<id>`, which cannot collide with a fixed variable's since
+/// no fixed id carries a colon, and stays stable while the pollutant
+/// keeps its name. Renaming one retires its variable, which §6.3 makes
+/// an absent variable rather than an error.
+///
+/// The order is the §14.16 record's own column order, so an application
+/// reading that stream can address columns by catalog position.
+pub fn surface_variables_for(net: &crate::model::Network) -> Vec<ModelVariable> {
+    let mut out: Vec<ModelVariable> = surface_variables()
+        .iter()
+        .map(ModelVariable::from)
+        .collect();
+    for c in &net.constituents {
+        out.push(ModelVariable {
+            id: format!("pollutant:{}", c.id),
+            label: c.id.clone(),
+            // §6.1 caps a symbol at three characters. Many pollutants are
+            // already that short and are known by exactly those letters;
+            // for the rest, no symbol is the honest answer, and the
+            // contract has the application derive its own fallback rather
+            // than receive a truncation that names a different substance.
+            symbol: (c.id.chars().count() <= 3).then(|| c.id.clone()),
+            quantity: Some(
+                match c.units {
+                    crate::model::ConcentrationUnits::MgPerL => "concentration",
+                    crate::model::ConcentrationUnits::UgPerL => "concentrationMicro",
+                    crate::model::ConcentrationUnits::CountPerL => "concentrationCount",
+                }
+                .to_string(),
+            ),
+            ramp: RampHint::Sequential,
+        });
+    }
+    out
+}
+
 /// Standing properties of the §15 mesh itself, in presentation order.
 ///
 /// Separate from [`surface_variables`] because these do not vary with
@@ -1481,6 +1530,102 @@ mod tests {
             assert!(p.quantity.is_some(), "{} carries no quantity", p.id);
         }
         assert!(surface_properties().iter().any(|v| v.id == "ground"));
+    }
+
+    /// hydra-common §6.3: the per-model surface catalog is the fixed one
+    /// followed by one series per declared pollutant, each carrying the
+    /// quantity its own declared units name. The order is the §14.16
+    /// record's column order, so an application addresses columns by
+    /// catalog position and a reordering here would recolour the map.
+    #[test]
+    fn the_per_model_surface_catalog_adds_one_series_per_pollutant() {
+        use crate::model::{ConcentrationUnits, Constituent};
+        let constituent = |id: &str, units| Constituent {
+            id: id.to_string(),
+            units,
+            c_rain: 0.0,
+            c_groundwater: 0.0,
+            c_rdii: 0.0,
+            decay: 0.0,
+            snow_only: false,
+            co_constituent: None,
+            co_fraction: 0.0,
+            c_dwf: 0.0,
+            c_init: 0.0,
+        };
+        let mut net = crate::model::Network::default();
+        // A model with no pollutants publishes exactly the fixed catalog.
+        let fixed: Vec<String> = surface_variables()
+            .iter()
+            .map(|v| v.id.to_string())
+            .collect();
+        let bare: Vec<String> = surface_variables_for(&net)
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
+        assert_eq!(bare, fixed);
+
+        net.constituents = vec![
+            constituent("TSS", ConcentrationUnits::MgPerL),
+            constituent("Lead", ConcentrationUnits::UgPerL),
+            constituent("Coliform", ConcentrationUnits::CountPerL),
+        ];
+        let vars = surface_variables_for(&net);
+        assert_eq!(vars.len(), fixed.len() + 3);
+        let ids: Vec<&str> = vars.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(&ids[..fixed.len()], &fixed[..], "the fixed catalog leads");
+        assert_eq!(
+            &ids[fixed.len()..],
+            &["pollutant:TSS", "pollutant:Lead", "pollutant:Coliform"],
+            "one series per pollutant, in the model's own order"
+        );
+
+        // Each carries the unit its pollutant declared, never one unit
+        // standing for all three.
+        let quantity = |id: &str| {
+            vars.iter()
+                .find(|v| v.id == id)
+                .and_then(|v| v.quantity.clone())
+                .expect("a concentration series is dimensioned")
+        };
+        assert_eq!(quantity("pollutant:TSS"), "concentration");
+        assert_eq!(quantity("pollutant:Lead"), "concentrationMicro");
+        assert_eq!(quantity("pollutant:Coliform"), "concentrationCount");
+
+        // §6.1 caps a symbol at three characters; a longer pollutant
+        // publishes none rather than a truncation naming something else.
+        let symbol = |id: &str| {
+            vars.iter()
+                .find(|v| v.id == id)
+                .and_then(|v| v.symbol.clone())
+        };
+        assert_eq!(symbol("pollutant:TSS").as_deref(), Some("TSS"));
+        assert_eq!(symbol("pollutant:Lead"), None);
+
+        // Every quantity named must exist, or the legend renders a
+        // concentration with no unit at all.
+        for v in &vars {
+            let key = v.quantity.as_deref().expect("dimensioned");
+            assert!(
+                QUANTITIES.iter().any(|q| q.key == key),
+                "{} names quantity '{key}', which the catalog lacks",
+                v.id
+            );
+        }
+
+        // Ids stay unique, and a pollutant cannot shadow a fixed variable
+        // however it is named.
+        let mut seen = HashSet::new();
+        for v in &vars {
+            assert!(seen.insert(v.id.clone()), "duplicate variable {}", v.id);
+        }
+        net.constituents = vec![constituent("depth", ConcentrationUnits::MgPerL)];
+        let ids: Vec<String> = surface_variables_for(&net)
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
+        assert_eq!(ids.iter().filter(|i| *i == "depth").count(), 1);
+        assert!(ids.contains(&"pollutant:depth".to_string()));
     }
 
     #[test]

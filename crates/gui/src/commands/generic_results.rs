@@ -44,6 +44,30 @@ pub struct GenericVariableDto {
 }
 
 impl GenericVariableDto {
+    /// The same, for a variable published against a model (§6.3) rather
+    /// than fixed in the engine's catalog.
+    pub fn from_model_variable(
+        v: &hydra::common::ModelVariable,
+        min: f64,
+        max: f64,
+        quantity: impl FnOnce(&str) -> Option<QuantityDescriptor>,
+    ) -> Self {
+        let (min, max) = if min.is_finite() && max.is_finite() {
+            (min, max)
+        } else {
+            (0.0, 0.0)
+        };
+        Self {
+            id: v.id.clone(),
+            label: v.label.clone(),
+            symbol: v.symbol.clone(),
+            quantity: v.quantity.as_deref().and_then(quantity),
+            ramp: v.ramp.clone(),
+            min,
+            max,
+        }
+    }
+
     /// Convert one declared variable, given the range this run produced for
     /// it and a lookup for the engine's §5 quantity catalog.
     pub fn from_descriptor(

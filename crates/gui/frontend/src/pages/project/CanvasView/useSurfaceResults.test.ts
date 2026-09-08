@@ -73,17 +73,22 @@ const meta = (nCells: number, nVertices = 3 * nCells): SurfaceMeta => ({
   periods: 4,
   reportStepS: 300,
   firstReportTS: 300,
-  variables: [variable("depth"), variable("speed")],
+  // The catalog and an instant's columns are one list in one order,
+  // so a fixture that names fewer than it carries would address the
+  // wrong column (hydra-common §6.4).
+  variables: [variable("depth"), variable("elevation"), variable("speed")],
 });
 
 /** One instant in which the first cell is wet and the rest are dry. */
 const period = (nCells: number): SurfacePeriod => ({
   t: 300,
-  depth: Float32Array.from(
-    Array.from({ length: nCells }, (_, i) => (i === 0 ? 0.5 : 0)),
-  ),
-  elevation: Float32Array.from(Array.from({ length: nCells }, () => 10)),
-  speed: Float32Array.from(Array.from({ length: nCells }, () => 0.25)),
+  columns: [
+    Float32Array.from(
+      Array.from({ length: nCells }, (_, i) => (i === 0 ? 0.5 : 0)),
+    ),
+    Float32Array.from(Array.from({ length: nCells }, () => 10)),
+    Float32Array.from(Array.from({ length: nCells }, () => 0.25)),
+  ],
 });
 
 /** Whether every cell was painted (nothing masked away). */
@@ -164,7 +169,7 @@ describe("shownSurface", () => {
     expect(allCellsPainted(wet.colors)).toBe(false);
     expect(allCellsPainted(ground.colors)).toBe(true);
     // And the dry threshold is what did the masking above.
-    expect(period(4).depth[1]).toBeLessThan(SURFACE_DRY_DEPTH_M);
+    expect(period(4).columns[0][1]).toBeLessThan(SURFACE_DRY_DEPTH_M);
   });
 
   it("falls back to a flat footprint only when there is nothing to show", () => {
@@ -175,15 +180,18 @@ describe("shownSurface", () => {
   });
 
   it("falls back to the catalog's first variable for an id it does not carry", () => {
+    // A pollutant series is named by the model (hydra-common §6.3), so a
+    // preference saved while the model declared one outlives it: renaming
+    // or deleting the pollutant retires the variable. §6.3 makes that an
+    // absent variable, which is the fallback every unknown id already
+    // takes, and never an error.
     const stale = shownSurface(
       geometry(4),
       GROUND,
       meta(4),
       period(4),
-      "elevation",
+      "pollutant:TSS",
     );
-    // The catalog here publishes depth and speed, and the properties
-    // publish ground; "elevation" is a preference from another run.
     expect(stale.variable?.id).toBe("depth");
   });
 
@@ -232,7 +240,7 @@ describe("the legend and the canvas agree on what is shown", () => {
     const ids = (m: SurfaceMeta | null) =>
       surfaceVariableList(g, GROUND, m).map((v) => v.id);
     // A corresponding run leads with its results; the ground follows.
-    expect(ids(meta(4))).toEqual(["depth", "speed", "ground"]);
+    expect(ids(meta(4))).toEqual(["depth", "elevation", "speed", "ground"]);
     // A run of a different mesh offers none of them: picking one could
     // only ever show something other than what it names.
     expect(ids(meta(9))).toEqual(["ground"]);

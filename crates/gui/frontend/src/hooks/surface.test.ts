@@ -6,8 +6,9 @@
  * sidecar reader — a drift on either side fails one of the two suites.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-
+import type { GenericVariable } from "./results";
 import {
   decodeSurfaceGeometry,
   decodeSurfacePeriod,
@@ -34,16 +35,25 @@ function geometryPayload(version = SURFACE_GEOMETRY_VERSION): ArrayBuffer {
   return buf;
 }
 
-function periodPayload(version = SURFACE_PERIOD_VERSION): ArrayBuffer {
-  const depth = [0.5, 0];
-  const elevation = [10.5, 10.4];
-  const speed = [0.25, 0];
-  const buf = new ArrayBuffer(16 + 4 * 6);
+function periodPayload(
+  version = SURFACE_PERIOD_VERSION,
+  nColumns = 3,
+): ArrayBuffer {
+  const values = [
+    0.5,
+    0,
+    10.5,
+    10.4,
+    0.25,
+    0,
+    ...Array(2 * (nColumns - 3)).fill(0),
+  ];
+  const buf = new ArrayBuffer(16 + 4 * 2 * nColumns);
   const dv = new DataView(buf);
   dv.setUint32(0, version, true);
   dv.setUint32(4, 2, true);
   dv.setFloat64(8, 300, true);
-  [...depth, ...elevation, ...speed].forEach((v, i) => {
+  values.forEach((v, i) => {
     dv.setFloat32(16 + 4 * i, v, true);
   });
   return buf;
@@ -114,24 +124,96 @@ describe("getMeshGeometry", () => {
   });
 });
 
+/** A catalog of the given ids, which is all the addressing needs. */
+const catalog = (...ids: string[]): GenericVariable[] =>
+  ids.map((id) => ({
+    id,
+    label: id,
+    ramp: { type: "sequential" },
+    min: 0,
+    max: 1,
+  }));
+
+const FIXED = catalog("depth", "elevation", "speed");
+
 describe("decodeSurfacePeriod", () => {
-  it("serves the three columns and the instant", () => {
+  it("serves the instant and one column per variable", () => {
     const p = decodeSurfacePeriod(periodPayload());
     expect(p.t).toBe(300);
-    expect(Array.from(p.depth)).toEqual([0.5, 0]);
-    expect(Array.from(p.elevation)).toEqual([10.5, 10.399999618530273]);
-    expect(Array.from(p.speed)).toEqual([0.25, 0]);
+    expect(p.columns.length).toBe(3);
+    expect(Array.from(p.columns[0])).toEqual([0.5, 0]);
+    expect(Array.from(p.columns[1])).toEqual([10.5, 10.399999618530273]);
+    expect(Array.from(p.columns[2])).toEqual([0.25, 0]);
+  });
+
+  it("reads as many columns as the payload carries", () => {
+    // A model declaring a pollutant publishes a fourth series, and the
+    // count is the model's answer rather than this decoder's.
+    const p = decodeSurfacePeriod(periodPayload(SURFACE_PERIOD_VERSION, 4));
+    expect(p.columns.length).toBe(4);
+    expect(Array.from(p.columns[3])).toEqual([0, 0]);
   });
 
   it("refuses a version it does not serve", () => {
     expect(() => decodeSurfacePeriod(periodPayload(9))).toThrow(/version 9/);
   });
 
-  it("selects a column by catalog id, and only catalog ids", () => {
+  it("refuses a payload that is not whole columns", () => {
+    const whole = periodPayload();
+    expect(() =>
+      decodeSurfacePeriod(whole.slice(0, whole.byteLength - 4)),
+    ).toThrow(/whole columns/);
+  });
+
+  // The encoder is Rust and this decoder is TypeScript, and neither
+  // language can check the other's idea of the layout; only a file both
+  // read fails when they diverge. Encoded by `commands/uds_surface.rs`
+  // from the same record its own fixture test uses; regenerate with
+  // `UPDATE_SNAPSHOT_FIXTURE=1 cargo test -p hydra-gui fixture`.
+  const fixture = () => {
+    const bytes = readFileSync(
+      new URL("../../../tests/fixtures/surface-period.bin", import.meta.url),
+    );
+    return bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+  };
+
+  it("reads the encoder's own bytes back at the values it put in", () => {
+    const p = decodeSurfacePeriod(fixture());
+    expect(p.t).toBe(300);
+    // Three fixed columns and the one pollutant series the record holds.
+    expect(p.columns.length).toBe(4);
+    expect(Array.from(p.columns[0])).toEqual([0.5, 0]);
+    expect(Array.from(p.columns[1])).toEqual([10.5, 10]);
+    expect(Array.from(p.columns[2])).toEqual([0.5, 0]);
+    expect(Array.from(p.columns[3])).toEqual([2, 0]);
+
+    // Addressed through a catalog of the shape the backend publishes.
+    const cat = catalog("depth", "elevation", "speed", "pollutant:TSS");
+    expect(Array.from(surfaceColumn(p, "pollutant:TSS", cat) ?? [])).toEqual([
+      2, 0,
+    ]);
+  });
+
+  it("selects a column by its place in the catalog", () => {
     const p = decodeSurfacePeriod(periodPayload());
-    expect(surfaceColumn(p, "depth")).toBe(p.depth);
-    expect(surfaceColumn(p, "elevation")).toBe(p.elevation);
-    expect(surfaceColumn(p, "speed")).toBe(p.speed);
-    expect(surfaceColumn(p, "volume")).toBeNull();
+    expect(surfaceColumn(p, "depth", FIXED)).toBe(p.columns[0]);
+    expect(surfaceColumn(p, "elevation", FIXED)).toBe(p.columns[1]);
+    expect(surfaceColumn(p, "speed", FIXED)).toBe(p.columns[2]);
+    expect(surfaceColumn(p, "volume", FIXED)).toBeNull();
+  });
+
+  it("addresses a pollutant series by catalog position, not by name", () => {
+    const p = decodeSurfacePeriod(periodPayload(SURFACE_PERIOD_VERSION, 4));
+    const withTss = catalog("depth", "elevation", "speed", "pollutant:TSS");
+    expect(surfaceColumn(p, "pollutant:TSS", withTss)).toBe(p.columns[3]);
+
+    // An instant written before the model declared the pollutant has no
+    // column for it, and that reads as no value rather than as the last
+    // column of something else.
+    const older = decodeSurfacePeriod(periodPayload());
+    expect(surfaceColumn(older, "pollutant:TSS", withTss)).toBeNull();
   });
 });

@@ -52,7 +52,7 @@ use super::uds_results::quantity_descriptor;
 /// Version stamped into the geometry payload header.
 const SURFACE_GEOMETRY_VERSION: u32 = 1;
 /// Version stamped into the period payload header.
-const SURFACE_PERIOD_VERSION: u32 = 1;
+const SURFACE_PERIOD_VERSION: u32 = 2;
 /// Records sampled for the per-variable ranges. A record is the whole
 /// surface, so unlike the network scan this is bounded by bytes read,
 /// not periods visited.
@@ -83,10 +83,30 @@ fn sample_indexes(n: usize, budget: usize) -> Vec<usize> {
 
 /// The meta for a sidecar on disk: counts, clock, and the catalog with
 /// sampled ranges.
-pub(crate) fn surface_meta_of(path: &Path) -> Result<SurfaceMetaDto, String> {
+pub(crate) fn surface_meta_of(
+    path: &Path,
+    net: Option<&hydra::uds::model::Network>,
+) -> Result<SurfaceMetaDto, String> {
     let r = OverlandResults::open(path)?;
+    // hydra-common §6.3: pollutant series are named by the model, so the
+    // catalog is the model's. The sidecar says how many series it holds,
+    // and a model edited since the run may no longer declare the same
+    // ones. Publishing the model's names against the file's columns would
+    // then label one pollutant with another's name, so the mismatch
+    // publishes the fixed catalog alone and the concentrations go unshown
+    // until the model is run again. An absent variable is a state §6.2
+    // already asks applications to handle; a mislabelled one is not.
+    let vars: Vec<hydra::common::ModelVariable> = match net {
+        Some(net) if net.constituents.len() == r.constituents => {
+            hydra::uds::descriptors::surface_variables_for(net)
+        }
+        _ => hydra::uds::descriptors::surface_variables()
+            .iter()
+            .map(hydra::common::ModelVariable::from)
+            .collect(),
+    };
     // One accumulator per catalog variable, in catalog order.
-    let vars = hydra::uds::descriptors::surface_variables();
+    let fixed = hydra::uds::descriptors::surface_variables().len();
     let mut lo = vec![f64::INFINITY; vars.len()];
     let mut hi = vec![f64::NEG_INFINITY; vars.len()];
     for i in sample_indexes(r.periods, RANGE_SCAN_MAX_RECORDS) {
@@ -105,11 +125,23 @@ pub(crate) fn surface_meta_of(path: &Path) -> Result<SurfaceMetaDto, String> {
                 }
             }
         }
+        for (k, (conc, _)) in rec.constituents.iter().enumerate() {
+            let Some(slot) = (fixed + k < vars.len()).then_some(fixed + k) else {
+                break;
+            };
+            for c in conc {
+                let val = f64::from(*c);
+                if val.is_finite() {
+                    lo[slot] = lo[slot].min(val);
+                    hi[slot] = hi[slot].max(val);
+                }
+            }
+        }
     }
     let variables = vars
         .iter()
         .enumerate()
-        .map(|(k, v)| GenericVariableDto::from_descriptor(v, lo[k], hi[k], quantity_descriptor))
+        .map(|(k, v)| GenericVariableDto::from_model_variable(v, lo[k], hi[k], quantity_descriptor))
         .collect();
     Ok(SurfaceMetaDto {
         n_vertices: r.verts.len() as u32,
@@ -220,9 +252,18 @@ pub(crate) fn mesh_geometry_of(net: &hydra::uds::model::Network) -> Vec<u8> {
 /// One instant's cell values (layout above).
 pub(crate) fn surface_period_of(path: &Path, period: usize) -> Result<Vec<u8>, String> {
     let r = OverlandResults::open(path)?;
-    let rec = r.record(period)?;
+    Ok(encode_surface_period(&r.record(period)?))
+}
+
+/// The period payload for one record (layout above).
+///
+/// Separate from reading a file so a fixture can be encoded from a
+/// record written here rather than from a run: results are bit-identical
+/// on one platform and not across, so bytes taken from a simulation
+/// would be a fixture only the machine that made it could match.
+fn encode_surface_period(rec: &hydra::swmm::out_reader::OverlandRecord) -> Vec<u8> {
     let nc = rec.cells.len();
-    let mut out = Vec::with_capacity(16 + 12 * nc);
+    let mut out = Vec::with_capacity(16 + 4 * nc * (3 + rec.constituents.len()));
     out.extend_from_slice(&SURFACE_PERIOD_VERSION.to_le_bytes());
     out.extend_from_slice(&(nc as u32).to_le_bytes());
     out.extend_from_slice(&rec.t.to_le_bytes());
@@ -235,7 +276,17 @@ pub(crate) fn surface_period_of(path: &Path, period: usize) -> Result<Vec<u8>, S
     for c in &rec.cells {
         out.extend_from_slice(&c[2].hypot(c[3]).to_le_bytes());
     }
-    Ok(out)
+    // §15.11 concentrations, one column per constituent, in the order the
+    // per-model catalog publishes them. The column count is not stated in
+    // the header: the payload is a whole number of equal columns, so a
+    // decoder divides, and one that expected three refuses the length
+    // rather than reading a concentration as a depth.
+    for (conc, _) in &rec.constituents {
+        for c in conc {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    out
 }
 
 /// The target's sidecar path, or `None` when it has none (never run,
@@ -257,11 +308,15 @@ fn sidecar_for(
 #[tauri::command(async)]
 pub fn load_surface_meta(
     app: tauri::AppHandle,
+    state: tauri::State<'_, super::network_dto::NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Option<SurfaceMetaDto>, String> {
     match sidecar_for(&app, &project_id, scenario_id.as_deref())? {
-        Some(path) => surface_meta_of(&path).map(Some),
+        Some(path) => {
+            let net = mesh_network_for(&app, &state, &project_id, scenario_id.as_deref())?;
+            surface_meta_of(&path, net.as_deref()).map(Some)
+        }
         None => Ok(None),
     }
 }
@@ -408,10 +463,125 @@ mod tests {
         path
     }
 
+    /// The same little mesh model, declaring a pollutant, so its run
+    /// writes §15.11 concentration columns.
+    const POLLUTED_MODEL: &str = "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n\
+         START_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+         END_DATE 01/01/2024\nEND_TIME 00:10:00\nREPORT_STEP 00:05:00\n\
+         [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO\n\
+         [2D_VERTICES]\n0 0 10.0\n1 0 10.2\n1 1 10.4\n0 1 10.6\n\
+         [2D_TRIANGLES]\n0 1 2 0.02 0.05\n0 2 3 0.03 0.05\n\
+         [2D_VERTEX_NODE_MAP]\n0 J1\n\
+         [JUNCTIONS]\nJ1 9 4 0 0 0\n[OUTFALLS]\nO1 8 FREE\n\
+         [CONDUITS]\nC1 J1 O1 100 0.013 0 0\n\
+         [XSECTIONS]\nC1 CIRCULAR 1 0 0 0\n";
+
+    fn polluted_sidecar(dir: &Path) -> std::path::PathBuf {
+        let (mut sim, _, _) = hydra::swmm::session::open(POLLUTED_MODEL).expect("open");
+        let path = dir.join("polluted.2d.out");
+        let sink = Box::new(std::fs::File::create(&path).expect("create"));
+        hydra::swmm::session::begin_overland_results(&mut sim, sink).expect("begin");
+        sim.run();
+        sim.finish_results().expect("finish");
+        path
+    }
+
+    /// hydra-common §6.3: a pollutant's series is named by the model, so
+    /// the catalog the meta publishes is the model's, and it carries the
+    /// quantity that pollutant's own declared units name.
+    #[test]
+    fn a_declared_pollutant_becomes_a_surface_variable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = polluted_sidecar(dir.path());
+        let (net, _) = hydra::swmm::objects::parse_network(POLLUTED_MODEL);
+        let meta = surface_meta_of(&path, Some(&net)).expect("meta");
+        let ids: Vec<&str> = meta.variables.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["depth", "elevation", "speed", "pollutant:TSS"]);
+        let tss = meta.variables.last().expect("the pollutant series");
+        assert_eq!(tss.label, "TSS");
+        assert_eq!(
+            tss.quantity.as_ref().map(|q| q.si_label),
+            Some("mg/L"),
+            "the legend must say what the concentration is in"
+        );
+        // The payload carries a column for it, in catalog order.
+        let bytes = surface_period_of(&path, 0).expect("period");
+        let nc = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        assert_eq!(bytes.len(), 16 + 4 * nc * meta.variables.len());
+    }
+
+    /// The sidecar's column count is the file's, the names are the
+    /// model's, and an edit between the run and the reading can part
+    /// them. The concentrations then go unshown rather than being
+    /// labelled with the wrong pollutant's name.
+    #[test]
+    fn a_model_edited_since_the_run_publishes_no_pollutant_series() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = polluted_sidecar(dir.path());
+        let fixed = ["depth", "elevation", "speed"];
+
+        // The model gained a second pollutant after the run.
+        let (mut net, _) = hydra::swmm::objects::parse_network(POLLUTED_MODEL);
+        let extra = net.constituents[0].clone();
+        net.constituents.push(extra);
+        let meta = surface_meta_of(&path, Some(&net)).expect("meta");
+        let ids: Vec<&str> = meta.variables.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, fixed, "a changed pollutant list publishes neither");
+
+        // And with no model to ask at all.
+        let meta = surface_meta_of(&path, None).expect("meta");
+        let ids: Vec<&str> = meta.variables.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, fixed);
+    }
+
+    /// The record the fixture and the frontend both describe. Written
+    /// here rather than taken from a run, so the bytes are the same on
+    /// every platform.
+    fn fixture_record() -> hydra::swmm::out_reader::OverlandRecord {
+        hydra::swmm::out_reader::OverlandRecord {
+            t: 300.0,
+            cells: vec![[0.5, 10.5, 0.3, 0.4], [0.0, 10.0, 0.0, 0.0]],
+            exchange: vec![0.25],
+            ledger: Default::default(),
+            constituents: vec![(vec![2.0, 0.0], [0.0; 11])],
+        }
+    }
+
+    /// The frontend decodes this payload, and nothing in either language
+    /// can check the other's idea of the layout. Only a file both read
+    /// fails when they diverge — the counterpart is in
+    /// `hooks/surface.test.ts`. Regenerate with
+    /// `UPDATE_SNAPSHOT_FIXTURE=1 cargo test -p hydra-gui fixture`.
+    #[test]
+    fn surface_period_fixture_is_the_bytes_the_frontend_decodes() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/surface-period.bin");
+        let encoded = encode_surface_period(&fixture_record());
+
+        if std::env::var_os("UPDATE_SNAPSHOT_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create dir");
+            std::fs::write(&path, &encoded).expect("write fixture");
+            return;
+        }
+        let stored = std::fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. Regenerate with UPDATE_SNAPSHOT_FIXTURE=1.",
+                path.display()
+            )
+        });
+        assert!(
+            stored == encoded,
+            "surface-period bytes changed ({} stored, {} encoded); regenerate the \
+             fixture and update the frontend decoder to match",
+            stored.len(),
+            encoded.len()
+        );
+    }
+
     #[test]
     fn meta_carries_the_engine_catalog_with_sampled_ranges() {
         let dir = tempfile::tempdir().unwrap();
-        let meta = surface_meta_of(&sidecar(dir.path())).expect("meta");
+        let meta = surface_meta_of(&sidecar(dir.path()), None).expect("meta");
         assert_eq!(meta.n_vertices, 4);
         assert_eq!(meta.n_cells, 2);
         assert!(meta.periods > 0);

@@ -1,6 +1,6 @@
 # Hydra — Foundation Contract
 
-Status: **v1.16 — 2026-08-17** (v1.1 added opaque per-block options
+Status: **v1.18 — 2026-09-08** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -40,7 +40,11 @@ and its key now resolves as unknown; v1.17 gave run diagnostics a neutral
 shape and made them a production input, §3.4.1, so a report can say what a
 run complained about — and, by separating "no diagnostics were recorded"
 from "the run raised none", stopped a report from claiming the second when
-it only knows the first).
+it only knows the first); v1.18 let a variable's identity come from the
+model, §6.3, so an engine can publish one series per pollutant a model
+declares — a catalog fixed in the engine's own code cannot name objects
+only the model names, which left applications unable to offer
+concentration at all.
 This document follows the same spec-first workflow as the engine specs:
 implementation changes flow from changes here, never the reverse.
 
@@ -1185,12 +1189,47 @@ Not every catalog variable exists in every run — a quality variable is
 absent from a run with quality disabled. An engine therefore reports,
 **for a given completed simulation's results**, which of its catalog
 variables are present, resolved the way block options are resolved against
-a model (§3.2.1): the catalog stays static, presence is per-run. An
-application offers only present variables and treats an absent one the way
-the report layer treats an unavailable block — an expected state, not an
-error.
+a model (§3.2.1): a catalog is not itself a claim about any one run,
+presence is per-run. (What a catalog *contains* can depend on the model,
+which is §6.3; the two are separate questions and answering them with one
+mechanism would conflate "this model has no such variable" with "this run
+did not produce it".)
 
-### 6.3 Addressing
+An application offers only present variables and treats an absent one the
+way the report layer treats an unavailable block — an expected state, not
+an error.
+
+### 6.3 Model-derived variables
+
+A catalog (§6.1) is fixed by the engine: its variables are the ones the
+engine always knows how to produce. Some variables instead take their
+identity from the model. One concentration series exists per pollutant a
+model declares, and nothing in the engine says how many there are or what
+they are called.
+
+An engine therefore publishes, **for a given model**, its catalog extended
+with those variables. They carry the §6.1 fields unchanged, and are
+offered, addressed and rendered exactly as fixed ones are. The only
+difference is where their identity came from, and that difference is the
+engine's to keep.
+
+- **Ids stay opaque and stay stable.** The engine composes an id from the
+  model object's own identifier, and it must not collide with a fixed
+  variable's. An application still treats the id as opaque and never
+  parses it to recover the object: a variable means what its label and its
+  quantity say, as every other variable does.
+- **A vanished id is an absent variable, never an error.** Renaming or
+  deleting the object retires its variable, so a saved view or a stored
+  preference referencing it resolves to nothing. §6.2 already obliges an
+  application to handle exactly that, and this needs no second mechanism.
+
+Identity comes from the model; presence (§6.2) still comes from the run.
+Keeping them apart is the point: a model that declares a pollutant and a
+run that produced its series are different facts, and a single answer
+covering both would leave an application unable to tell a model without
+the variable from a run without the values.
+
+### 6.4 Addressing
 
 Consumers address results by (element class, variable id, reporting
 period), and per-variable minimum/maximum envelopes are addressed by

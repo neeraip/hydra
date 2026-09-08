@@ -18,7 +18,7 @@ import type { GenericVariable } from "./results";
 /** Version this decoder serves (geometry payload header). */
 export const SURFACE_GEOMETRY_VERSION = 1;
 /** Version this decoder serves (period payload header). */
-export const SURFACE_PERIOD_VERSION = 1;
+export const SURFACE_PERIOD_VERSION = 2;
 
 /** What the backend reports about a target's surface results. */
 export interface SurfaceMeta {
@@ -55,9 +55,16 @@ export interface SurfaceGeometry {
 export interface SurfacePeriod {
   /** Run time (s). */
   t: number;
-  depth: Float32Array;
-  elevation: Float32Array;
-  speed: Float32Array;
+  /**
+   * One column per catalog variable, in the catalog's own order.
+   *
+   * Not three named fields: a model declaring pollutants publishes a
+   * concentration series per pollutant (hydra-common §6.3), so how many
+   * columns an instant carries is the model's answer and not this
+   * decoder's. §6.4 requires the addressing to come from the catalog for
+   * exactly that reason, and `surfaceColumn` is where it does.
+   */
+  columns: Float32Array[];
 }
 
 function surfaceDecodeError(detail: string): Error {
@@ -111,33 +118,46 @@ export function decodeSurfacePeriod(buf: ArrayBuffer): SurfacePeriod {
     );
   }
   const nCells = dv.getUint32(4, true);
-  const expected = 16 + 12 * nCells;
-  if (buf.byteLength !== expected) {
+  const stride = 4 * nCells;
+  const body = buf.byteLength - 16;
+  // The payload is a whole number of equal columns. Checking that it
+  // divides is what makes reading a variable count off the length safe:
+  // a truncated payload fails here rather than handing back a short last
+  // column that would colour the map from whatever followed it.
+  if (nCells === 0 || body < stride || body % stride !== 0) {
     throw surfaceDecodeError(
-      `period payload is ${buf.byteLength} bytes, expected ${expected}`,
+      `period payload is ${buf.byteLength} bytes, which is not a header and whole columns of ${nCells} cells`,
     );
   }
   const t = dv.getFloat64(8, true);
-  const column = (k: number) =>
-    new Float32Array(buf.slice(16 + 4 * k * nCells, 16 + 4 * (k + 1) * nCells));
-  return { t, depth: column(0), elevation: column(1), speed: column(2) };
+  const columns = Array.from(
+    { length: body / stride },
+    (_, k) =>
+      new Float32Array(buf.slice(16 + stride * k, 16 + stride * (k + 1))),
+  );
+  return { t, columns };
 }
 
-/** The column a catalog variable id selects, in the payload's order. */
+/**
+ * The column a catalog variable id selects.
+ *
+ * The payload's columns are the catalog's variables in the catalog's
+ * order, so position in that list is the address (hydra-common §6.4). A
+ * fixed list here would have to be edited whenever a model declared a
+ * pollutant, which is the closed-set coupling the contract exists to
+ * remove.
+ *
+ * `null` for an id the catalog does not carry, and for one it carries
+ * beyond the columns this instant holds, which is what an instant written
+ * before the model gained a pollutant looks like.
+ */
 export function surfaceColumn(
   period: SurfacePeriod,
   variableId: string,
+  variables: readonly GenericVariable[],
 ): Float32Array | null {
-  switch (variableId) {
-    case "depth":
-      return period.depth;
-    case "elevation":
-      return period.elevation;
-    case "speed":
-      return period.speed;
-    default:
-      return null;
-  }
+  const k = variables.findIndex((v) => v.id === variableId);
+  return k >= 0 && k < period.columns.length ? period.columns[k] : null;
 }
 
 /**

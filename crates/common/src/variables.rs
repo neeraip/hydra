@@ -102,9 +102,90 @@ pub struct VariableDescriptor {
     pub ramp: RampHint,
 }
 
+/// A variable published for a particular model (spec §6.3).
+///
+/// [`VariableDescriptor`] is a catalog entry, fixed in an engine's own
+/// code, so its text is `'static`. Some variables instead take their
+/// identity from the model — one concentration series per pollutant a
+/// model declares — and an engine cannot name those ahead of time. This
+/// is the same descriptor with owned text, so one list can carry both.
+///
+/// The fields mean exactly what §6.1 says they mean. In particular `id`
+/// stays opaque: an application never parses it to recover the model
+/// object it was composed from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelVariable {
+    /// Stable variable identifier, opaque to this layer.
+    pub id: String,
+    /// Human-facing name.
+    pub label: String,
+    /// Compact engine-authored notation (≤3 chars), or `None` for the
+    /// application's own fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// Key of the quantity the values carry (spec §5), or `None` for
+    /// dimensionless variables.
+    pub quantity: Option<String>,
+    /// How values map to a colour scale.
+    pub ramp: RampHint,
+}
+
+impl From<&VariableDescriptor> for ModelVariable {
+    fn from(v: &VariableDescriptor) -> Self {
+        ModelVariable {
+            id: v.id.to_string(),
+            label: v.label.to_string(),
+            symbol: v.symbol.map(str::to_string),
+            quantity: v.quantity.map(str::to_string),
+            ramp: v.ramp.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §6.3: a catalog entry converts to a model variable whole. A field
+    /// dropped here would silently un-publish a symbol or a quantity, and
+    /// a `Categorical` ramp reduced to its name would leave the states out
+    /// of a legend that has nothing else to draw them from.
+    #[test]
+    fn a_catalog_entry_converts_without_losing_a_field() {
+        let ramp = RampHint::Categorical {
+            items: vec![CategoryItem {
+                value: 1,
+                label: "Open".into(),
+                severity: None,
+            }],
+        };
+        let d = VariableDescriptor {
+            id: "depth",
+            label: "Depth",
+            symbol: Some("y"),
+            quantity: Some("depth"),
+            ramp: ramp.clone(),
+        };
+        let m = ModelVariable::from(&d);
+        assert_eq!(m.id, "depth");
+        assert_eq!(m.label, "Depth");
+        assert_eq!(m.symbol.as_deref(), Some("y"));
+        assert_eq!(m.quantity.as_deref(), Some("depth"));
+        assert_eq!(m.ramp, ramp);
+
+        // The optional fields survive being absent, rather than becoming
+        // empty strings a legend would render as a blank chip.
+        let bare = VariableDescriptor {
+            id: "x",
+            label: "X",
+            symbol: None,
+            quantity: None,
+            ramp: RampHint::Sequential,
+        };
+        let m = ModelVariable::from(&bare);
+        assert_eq!((m.symbol, m.quantity), (None, None));
+    }
 
     #[test]
     fn ramp_hint_serialises_tagged() {
