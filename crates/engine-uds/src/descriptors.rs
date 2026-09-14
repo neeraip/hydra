@@ -1120,8 +1120,11 @@ pub fn surface_variables() -> Vec<VariableDescriptor> {
 /// pollutant the model declares.
 ///
 /// A pollutant's identity is the model's, not this engine's, so these
-/// cannot live in the static catalog above. [`pollutant_variable`] is
-/// where one is composed.
+/// cannot live in the static catalog above. Each is composed with an id
+/// of `pollutant:<id>`, which no fixed variable can collide with since
+/// none carries a colon, and which stays stable while the pollutant
+/// keeps its name. Renaming one retires its variable, which §6.3 makes
+/// an absent variable rather than an error.
 ///
 /// The order is the §14.16 record's own column order, so an application
 /// reading that stream can address columns by catalog position.
