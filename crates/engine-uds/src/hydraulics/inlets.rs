@@ -154,6 +154,13 @@ impl SagInlet {
 
     /// Free capture at a ponded depth (m), in m³/s: §7.8's on-sag
     /// capture for the placement — a rating curve for a custom design.
+    ///
+    /// The placement count is the whole multiplier here, where §7.8's
+    /// `on_sag_capture` also multiplies by the street's side count. A
+    /// street has a gutter on each side and an `[INLET_USAGE]` row
+    /// places its inlets on each; a coupling point is a place on the
+    /// mesh, with no street and so no second side to repeat. Carrying
+    /// the factor over would drain a §15.6 pond at twice its inlets.
     pub(crate) fn capture(&self, depth: f64) -> f64 {
         if depth <= 0.0 {
             return 0.0;
