@@ -6,10 +6,11 @@
 //! results without SWMM knowledge. The subcatchment is the contract's
 //! region proof case — an areal element discharging to a point outlet.
 //!
-//! Pollutant concentration series are deliberately absent from the static
-//! variable catalog: their identities are properties of the model (one
-//! series per declared pollutant), so they arrive with the per-run
-//! presence resolution (spec §6.2) when result reading lands.
+//! Pollutant concentration series are absent from the static variable
+//! catalogs and arrive through the model-derived ones (the `_for`
+//! functions): one series exists per pollutant a model declares, so a
+//! catalog fixed in this engine's own code cannot name them at all
+//! (spec §6.3).
 
 use hydra_common::{
     AttributeDescriptor, ElementClass, ElementKind, ElementRole, ModelVariable, OptionKind,
@@ -1119,11 +1120,8 @@ pub fn surface_variables() -> Vec<VariableDescriptor> {
 /// pollutant the model declares.
 ///
 /// A pollutant's identity is the model's, not this engine's, so these
-/// cannot live in the static catalog above. The id is composed as
-/// `pollutant:<id>`, which cannot collide with a fixed variable's since
-/// no fixed id carries a colon, and stays stable while the pollutant
-/// keeps its name. Renaming one retires its variable, which §6.3 makes
-/// an absent variable rather than an error.
+/// cannot live in the static catalog above. [`pollutant_variable`] is
+/// where one is composed.
 ///
 /// The order is the §14.16 record's own column order, so an application
 /// reading that stream can address columns by catalog position.
@@ -1132,28 +1130,67 @@ pub fn surface_variables_for(net: &crate::model::Network) -> Vec<ModelVariable> 
         .iter()
         .map(ModelVariable::from)
         .collect();
-    for c in &net.constituents {
-        out.push(ModelVariable {
-            id: format!("pollutant:{}", c.id),
-            label: c.id.clone(),
-            // §6.1 caps a symbol at three characters. Many pollutants are
-            // already that short and are known by exactly those letters;
-            // for the rest, no symbol is the honest answer, and the
-            // contract has the application derive its own fallback rather
-            // than receive a truncation that names a different substance.
-            symbol: (c.id.chars().count() <= 3).then(|| c.id.clone()),
-            quantity: Some(
-                match c.units {
-                    crate::model::ConcentrationUnits::MgPerL => "concentration",
-                    crate::model::ConcentrationUnits::UgPerL => "concentrationMicro",
-                    crate::model::ConcentrationUnits::CountPerL => "concentrationCount",
-                }
-                .to_string(),
-            ),
-            ramp: RampHint::Sequential,
-        });
-    }
+    out.extend(net.constituents.iter().map(pollutant_variable));
     out
+}
+
+/// The §6 result catalog published for one model (hydra-common §6.3):
+/// [`result_variables`] for the class, followed by one concentration
+/// series per pollutant the model declares.
+///
+/// Every class the engine reports results for carries concentrations —
+/// a parcel's runoff, a vertex's water, a link's flow — so the same
+/// extension applies to all three. A class the engine reports nothing
+/// for gains nothing: there is no record for a concentration to sit in.
+///
+/// The variable is [`surface_variables_for`]'s, unchanged. One pollutant
+/// seen on the mesh and in the pipe below it is one substance, and a
+/// reader who met it under two names, two symbols or two units would have
+/// to work out for themselves that they are the same thing.
+///
+/// The order is the fixed catalog in its own order, then the pollutants
+/// in the order the model declares them.
+pub fn result_variables_for(
+    class: ElementClass,
+    net: &crate::model::Network,
+) -> Vec<ModelVariable> {
+    let mut out: Vec<ModelVariable> = result_variables(class)
+        .iter()
+        .map(ModelVariable::from)
+        .collect();
+    if out.is_empty() {
+        return out;
+    }
+    out.extend(net.constituents.iter().map(pollutant_variable));
+    out
+}
+
+/// One pollutant's concentration series as a §6.1 variable.
+///
+/// The id is composed as `pollutant:<id>`, which cannot collide with a
+/// fixed variable's since no fixed id carries a colon, and stays stable
+/// while the pollutant keeps its name. Renaming one retires its variable,
+/// which §6.3 makes an absent variable rather than an error.
+fn pollutant_variable(c: &crate::model::Constituent) -> ModelVariable {
+    ModelVariable {
+        id: format!("pollutant:{}", c.id),
+        label: c.id.clone(),
+        // §6.1 caps a symbol at three characters. Many pollutants are
+        // already that short and are known by exactly those letters; for
+        // the rest, no symbol is the honest answer, and the contract has
+        // the application derive its own fallback rather than receive a
+        // truncation that names a different substance.
+        symbol: (c.id.chars().count() <= 3).then(|| c.id.clone()),
+        quantity: Some(
+            match c.units {
+                crate::model::ConcentrationUnits::MgPerL => "concentration",
+                crate::model::ConcentrationUnits::UgPerL => "concentrationMicro",
+                crate::model::ConcentrationUnits::CountPerL => "concentrationCount",
+            }
+            .to_string(),
+        ),
+        ramp: RampHint::Sequential,
+    }
 }
 
 /// Standing properties of the §15 mesh itself, in presentation order.
@@ -1626,6 +1663,84 @@ mod tests {
             .collect();
         assert_eq!(ids.iter().filter(|i| *i == "depth").count(), 1);
         assert!(ids.contains(&"pollutant:depth".to_string()));
+    }
+
+    /// hydra-common §6.3 on the network's own classes: every class the
+    /// engine reports results for gains the same concentration series,
+    /// and a class it reports nothing for gains none — a subcatchment,
+    /// a vertex and a link all carry pollutants, a curve has no record
+    /// for one to sit in.
+    #[test]
+    fn the_per_model_result_catalog_adds_one_series_per_pollutant() {
+        use crate::model::{ConcentrationUnits, Constituent};
+        let constituent = |id: &str, units| Constituent {
+            id: id.to_string(),
+            units,
+            c_rain: 0.0,
+            c_groundwater: 0.0,
+            c_rdii: 0.0,
+            decay: 0.0,
+            snow_only: false,
+            co_constituent: None,
+            co_fraction: 0.0,
+            c_dwf: 0.0,
+            c_init: 0.0,
+        };
+        let mut net = crate::model::Network {
+            constituents: vec![
+                constituent("TSS", ConcentrationUnits::MgPerL),
+                constituent("Lead", ConcentrationUnits::UgPerL),
+            ],
+            ..Default::default()
+        };
+
+        for class in [
+            ElementClass::Point,
+            ElementClass::Polyline,
+            ElementClass::Region,
+        ] {
+            let fixed: Vec<String> = result_variables(class)
+                .iter()
+                .map(|v| v.id.to_string())
+                .collect();
+            let vars = result_variables_for(class, &net);
+            let ids: Vec<&str> = vars.iter().map(|v| v.id.as_str()).collect();
+            assert_eq!(
+                &ids[..fixed.len()],
+                &fixed[..],
+                "{class:?}: the fixed catalog leads, in its own order"
+            );
+            assert_eq!(
+                &ids[fixed.len()..],
+                &["pollutant:TSS", "pollutant:Lead"],
+                "{class:?}: one series per pollutant, in the model's own order"
+            );
+            // The same substance reads the same wherever it is met: the
+            // mesh's catalog and the pipe's must not diverge.
+            let surface = surface_variables_for(&net);
+            for id in ["pollutant:TSS", "pollutant:Lead"] {
+                let here = vars.iter().find(|v| v.id == id).expect("declared");
+                let there = surface.iter().find(|v| v.id == id).expect("declared");
+                assert_eq!(here, there, "{class:?}: {id} differs from the mesh's");
+            }
+        }
+
+        // A class with no results gains no pollutants: a collection has
+        // no record for a concentration to sit in, and offering one
+        // would promise a series nothing can serve.
+        assert!(result_variables_for(ElementClass::Collection, &net).is_empty());
+
+        // A model declaring nothing publishes exactly the fixed catalog.
+        net.constituents.clear();
+        let bare: Vec<String> = result_variables_for(ElementClass::Point, &net)
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
+        let fixed: Vec<String> = result_variables(ElementClass::Point)
+            .iter()
+            .map(|v| v.id.to_string())
+            .collect();
+        assert_eq!(bare, fixed);
     }
 
     #[test]

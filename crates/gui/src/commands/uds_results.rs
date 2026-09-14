@@ -4,8 +4,9 @@
 //!
 //! "Engines describe, applications render": every variable id, label,
 //! quantity, and ramp hint here comes from the engine's §6 catalog
-//! (`hydra::uds::descriptors::result_variables`) — nothing is invented in
-//! the GUI. Values are served in **SI** regardless of the file's declared
+//! (`hydra::uds::descriptors::result_variables_for`, which is the fixed
+//! catalog for the class plus one concentration series per pollutant the
+//! model declares) — nothing is invented in the GUI. Values are served in **SI** regardless of the file's declared
 //! unit system, each variable carrying its §5 quantity descriptor, so the
 //! frontend converts to the user's display-unit preference at the render
 //! boundary — the same discipline as wds results and the uds attribute
@@ -32,16 +33,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use hydra::common::{ElementClass, VariableDescriptor};
+use hydra::common::{ElementClass, ModelVariable};
 use hydra::swmm::out_reader::{scan_periods, OutMetadata, PeriodRecord};
+use hydra::uds::model::{ConcentrationUnits, Constituent, Network};
 
 use super::generic_results::{GenericResultMetaDto, GenericVariableDto};
 use super::uds_view::UdsView;
 
-/// File column and serving scale for a catalog variable (§14.9 record
-/// order). The catalog's presentation order deliberately differs from file
-/// order, and capacity is stored as a fraction — this map is the single
-/// place both facts live.
+/// File column and serving scale for a *fixed* catalog variable (§14.9
+/// record order). The catalog's presentation order deliberately differs
+/// from file order, and capacity is stored as a fraction — this map is the
+/// single place both facts live. Pollutant series are not here: they are
+/// the model's, and `pollutant_column` places them.
 fn column(class: ElementClass, id: &str) -> Option<(usize, f64)> {
     let col = match (class, id) {
         (ElementClass::Point, "depth") => (0, 1.0),
@@ -96,17 +99,74 @@ fn si_factor(meta: &OutMetadata, quantity: Option<&str>) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// How many fixed result columns a class's §14.9 record carries before its
+/// pollutant concentrations begin.
+///
+/// The writer's own counts (8 + pollutants per subcatchment, 6 per node,
+/// 5 per link). A collection has no record at all.
+fn fixed_columns(class: ElementClass) -> usize {
+    match class {
+        ElementClass::Point => 6,
+        ElementClass::Polyline => 5,
+        ElementClass::Region => 8,
+        ElementClass::Collection => 0,
+    }
+}
+
+/// The §14.9 file's concentration code for a declared unit (0 mg/L,
+/// 1 µg/L, 2 counts/L).
+fn units_code(units: ConcentrationUnits) -> i32 {
+    match units {
+        ConcentrationUnits::MgPerL => 0,
+        ConcentrationUnits::UgPerL => 1,
+        ConcentrationUnits::CountPerL => 2,
+    }
+}
+
+/// File column serving one model pollutant's concentration: the class's
+/// fixed columns, then the pollutants in the *file's* order.
+///
+/// Resolved by name and by unit, never by position. A model edited since
+/// the run can declare a different set, and laying the model's pollutants
+/// over the file's columns in order would then label one substance with
+/// another's name, or read µg/L as mg/L. A pollutant the file does not
+/// carry under the same name and unit has no column here, which hydra-common
+/// §6.2 already makes an absent variable rather than an error.
+fn pollutant_column(meta: &OutMetadata, class: ElementClass, c: &Constituent) -> Option<usize> {
+    let k = meta.pollutant_ids.iter().position(|p| *p == c.id)?;
+    (meta.pollutant_units.get(k).copied() == Some(units_code(c.units)))
+        .then(|| fixed_columns(class) + k)
+}
+
 /// The declared catalog variables that resolve to a file column, with the
 /// full serving scale (shape scale × file-to-SI factor), per class.
+///
+/// The catalog is the model's (hydra-common §6.3): the fixed variables,
+/// then one concentration series per pollutant the model declares. Without
+/// a model only the fixed ones can be named, since nothing else knows what
+/// the pollutants are called.
 fn resolved_variables(
     meta: &OutMetadata,
     class: ElementClass,
-) -> Vec<(VariableDescriptor, usize, f64)> {
-    hydra::uds::descriptors::result_variables(class)
-        .into_iter()
-        .filter_map(|v| {
-            let (col, shape) = column(class, v.id)?;
-            let scale = shape * si_factor(meta, v.quantity);
+    net: Option<&Network>,
+) -> Vec<(ModelVariable, usize, f64)> {
+    let fixed = hydra::uds::descriptors::result_variables(class);
+    let vars = match net {
+        Some(net) => hydra::uds::descriptors::result_variables_for(class, net),
+        None => fixed.iter().map(ModelVariable::from).collect(),
+    };
+    // The catalog composes the pollutants after the fixed variables, in
+    // the model's own order, so the tail lines up with `net.constituents`
+    // positionally without parsing an id to recover its pollutant.
+    let constituents: &[Constituent] = net.map(|n| &n.constituents[..]).unwrap_or(&[]);
+    vars.into_iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            let (col, shape) = match i.checked_sub(fixed.len()) {
+                None => column(class, &v.id)?,
+                Some(k) => (pollutant_column(meta, class, constituents.get(k)?)?, 1.0),
+            };
+            let scale = shape * si_factor(meta, v.quantity.as_deref());
             Some((v, col, scale))
         })
         .collect()
@@ -114,15 +174,19 @@ fn resolved_variables(
 
 /// Build the variable catalog with min/max ranges from one sequential pass
 /// over every period record.
-pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResultMetaDto, String> {
+pub fn generic_meta(
+    out_path: &Path,
+    meta: &OutMetadata,
+    net: Option<&Network>,
+) -> Result<GenericResultMetaDto, String> {
     let classes = [
         ElementClass::Point,
         ElementClass::Polyline,
         ElementClass::Region,
     ];
-    let vars: Vec<Vec<(VariableDescriptor, usize, f64)>> = classes
+    let vars: Vec<Vec<(ModelVariable, usize, f64)>> = classes
         .iter()
-        .map(|&c| resolved_variables(meta, c))
+        .map(|&c| resolved_variables(meta, c, net))
         .collect();
     // ranges[class][var] = (min, max)
     let mut ranges: Vec<Vec<(f64, f64)>> = vars
@@ -154,7 +218,7 @@ pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResult
                 .enumerate()
                 .map(|(vi, (v, _, _))| {
                     let (min, max) = ranges[ci][vi];
-                    GenericVariableDto::from_descriptor(v, min, max, quantity_descriptor)
+                    GenericVariableDto::from_model_variable(v, min, max, quantity_descriptor)
                 })
                 .collect(),
         );
@@ -191,10 +255,15 @@ fn out_index(ids: &[String]) -> HashMap<&str, usize> {
 
 /// Encode one period's values for every declared variable, in snapshot
 /// order (see the module docs for the layout).
-pub fn encode_generic_period(view: &UdsView, meta: &OutMetadata, rec: &PeriodRecord) -> Vec<u8> {
-    let point_vars = resolved_variables(meta, ElementClass::Point);
-    let polyline_vars = resolved_variables(meta, ElementClass::Polyline);
-    let region_vars = resolved_variables(meta, ElementClass::Region);
+pub fn encode_generic_period(
+    view: &UdsView,
+    meta: &OutMetadata,
+    rec: &PeriodRecord,
+    net: &Network,
+) -> Vec<u8> {
+    let point_vars = resolved_variables(meta, ElementClass::Point, Some(net));
+    let polyline_vars = resolved_variables(meta, ElementClass::Polyline, Some(net));
+    let region_vars = resolved_variables(meta, ElementClass::Region, Some(net));
 
     let n_values = point_vars.len() * view.points.len()
         + polyline_vars.len() * view.polylines.len()
@@ -217,7 +286,7 @@ pub fn encode_generic_period(view: &UdsView, meta: &OutMetadata, rec: &PeriodRec
 
     let mut write_class = |ids: Vec<&str>, index: &HashMap<&str, usize>, class: ElementClass| {
         let (values, n_vars) = class_values(rec, meta, class);
-        for (_, col, scale) in resolved_variables(meta, class) {
+        for (_, col, scale) in resolved_variables(meta, class, Some(net)) {
             for id in &ids {
                 let v = index
                     .get(id)
@@ -254,6 +323,7 @@ pub fn encode_generic_period(view: &UdsView, meta: &OutMetadata, rec: &PeriodRec
 pub fn stream_uds_results_csv(
     out_path: &Path,
     meta: &OutMetadata,
+    net: Option<&Network>,
     nodes_csv: &Path,
     links_csv: &Path,
     subcatchments_csv: &Path,
@@ -281,11 +351,11 @@ pub fn stream_uds_results_csv(
         if ids.is_empty() {
             continue;
         }
-        let vars = resolved_variables(meta, class);
+        let vars = resolved_variables(meta, class, net);
         let mut w = open(path)?;
         let header = vars
             .iter()
-            .map(|(v, _, _)| v.id)
+            .map(|(v, _, _)| v.id.as_str())
             .collect::<Vec<_>>()
             .join(",");
         writeln!(w, "id,time_s,{header}").map_err(werr)?;
@@ -371,12 +441,12 @@ pub fn element_series(
     let times: Vec<u32> = (0..meta.n_periods)
         .map(|i| ((i as i64 + 1) * meta.report_step_s as i64) as u32)
         .collect();
-    let fields = resolved_variables(&meta, class)
+    let fields = resolved_variables(&meta, class, Some(network))
         .into_iter()
         .filter_map(|(v, col, scale)| {
             let values = series.vars.get(col)?;
             Some(super::results::SeriesFieldDto {
-                name: v.id.to_string(),
+                name: v.id.clone(),
                 values: values.iter().map(|&x| x as f64 * scale).collect(),
             })
         })
@@ -409,6 +479,178 @@ fn scan_result(
 mod tests {
     use super::*;
 
+    /// A polluted model end to end: hydra-common §6.3 says the catalog is
+    /// the model's, so every reported class gains one concentration series
+    /// per declared pollutant, and every surface serving results (catalog,
+    /// period payload, CSV, element series) must agree about that.
+    #[test]
+    fn a_declared_pollutant_becomes_a_series_on_every_reported_class() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n\
+                     START_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+                     END_DATE 01/01/2024\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\n\
+                     [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\
+                     Lead UG/L 0 0 0 0 NO * 0 0 0\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [TIMESERIES]\nQ1 0:00 2.0\nQ1 2:00 2.0\n\
+                     CT 0:00 100\nCT 2:00 100\nCP 0:00 25\nCP 2:00 25\n\
+                     [INFLOWS]\nJ1 FLOW Q1\nJ1 TSS CT CONCENTRATION\n\
+                     J1 Lead CP CONCENTRATION\n\
+                     [REPORT]\nNODES ALL\nLINKS ALL\n\
+                     [COORDINATES]\nJ1 0 0\nO1 100 0\n";
+        let (sim, _diags, _findings) = hydra::swmm::session::open(model).expect("open uds model");
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
+            hydra::engines::EngineSession::from_uds(sim),
+            Some(out.clone()),
+            crate::commands::simulation::RunContext {
+                duration_seconds: 3600.0,
+                network_digest: None,
+                pre_run_warnings: Vec::new(),
+            },
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "uds run must succeed: {err:?}");
+
+        let meta = hydra::swmm::out_reader::read_metadata(&out).expect("readable");
+        let (network, _diags) = hydra::swmm::objects::parse_network(model);
+        let gm = generic_meta(&out, &meta, Some(&network)).expect("generic meta");
+
+        // Two series added to each class's fixed catalog, in the order the
+        // model declares them, after the fixed variables.
+        for (vars, fixed) in [
+            (&gm.point_vars, 6),
+            (&gm.polyline_vars, 4),
+            (&gm.region_vars, 3),
+        ] {
+            let ids: Vec<&str> = vars.iter().map(|v| v.id.as_str()).collect();
+            assert_eq!(
+                &ids[fixed..],
+                &["pollutant:TSS", "pollutant:Lead"],
+                "catalog was {ids:?}"
+            );
+        }
+        // Each carries its own declared unit, not one standing for both.
+        let var = |id: &str| gm.point_vars.iter().find(|v| v.id == id).unwrap();
+        assert_eq!(var("pollutant:TSS").quantity.unwrap().key, "concentration");
+        assert_eq!(
+            var("pollutant:Lead").quantity.unwrap().key,
+            "concentrationMicro"
+        );
+        // A concentration is stated the same way in either unit system, so
+        // it is served as stored. This is a CFS file, and the inflow runs
+        // at 100 mg/L: putting a concentration through the flow factor
+        // would report it as 2.83 or as 3531.
+        let tss = var("pollutant:TSS");
+        assert!(
+            tss.max > 50.0 && tss.max <= 100.0 + 1e-6,
+            "TSS range must be the file's own mg/L, got {}",
+            tss.max
+        );
+
+        // The period payload declares the same counts the catalog does —
+        // the frontend addresses columns by catalog position, so a
+        // disagreement here recolours the map with another variable.
+        let view = super::super::uds_view::build_view(&network);
+        let rec = hydra::swmm::out_reader::read_period(&out, &meta, 0).unwrap();
+        let payload = encode_generic_period(&view, &meta, &rec, &network);
+        let header: Vec<u32> = payload[..24]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(header, vec![2, 1, 0, 8, 6, 5]);
+
+        // CSV export and the inspector's series name them the same way.
+        let nodes_csv = dir.path().join("p-nodes.csv");
+        let links_csv = dir.path().join("p-links.csv");
+        let subs_csv = dir.path().join("p-subcatchments.csv");
+        stream_uds_results_csv(
+            &out,
+            &meta,
+            Some(&network),
+            &nodes_csv,
+            &links_csv,
+            &subs_csv,
+        )
+        .unwrap();
+        let nodes = std::fs::read_to_string(&nodes_csv).unwrap();
+        assert_eq!(
+            nodes.lines().next().unwrap(),
+            "id,time_s,depth,head,volume,lateralInflow,totalInflow,flooding,\
+             pollutant:TSS,pollutant:Lead"
+        );
+        let series = element_series(&out, &network, "link", 0)
+            .unwrap()
+            .expect("C1 series");
+        let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(&names[4..], &["pollutant:TSS", "pollutant:Lead"]);
+        // Named right and read from the right place: a link's pollutants
+        // begin after its five stored variables, and the one before them
+        // is a 0-1 capacity fraction that would pass any range check a
+        // concentration got.
+        let tss = &series.fields[4].values;
+        assert!(
+            tss.iter().cloned().fold(0.0, f64::max) > 50.0,
+            "link TSS series reads the wrong column: {tss:?}"
+        );
+
+        // The columns themselves, since a concentration read one place
+        // early is still a plausible-looking number: the fixed variables
+        // of the class, then the pollutants in the file's own order.
+        for (class, fixed) in [
+            (ElementClass::Point, 6),
+            (ElementClass::Polyline, 5),
+            (ElementClass::Region, 8),
+        ] {
+            let cols: Vec<usize> = resolved_variables(&meta, class, Some(&network))
+                .into_iter()
+                .filter(|(v, _, _)| v.id.starts_with("pollutant:"))
+                .map(|(_, col, _)| col)
+                .collect();
+            assert_eq!(cols, vec![fixed, fixed + 1], "{class:?}");
+        }
+
+        // Reconciliation: the file names its pollutants, so a model edited
+        // since the run resolves by name and unit rather than by position.
+        // Renaming one retires its series; the other is still the same
+        // substance in the same column and stays.
+        let mut renamed = network.clone();
+        renamed.constituents[1].id = "Pb".to_string();
+        let ids: Vec<String> = resolved_variables(&meta, ElementClass::Point, Some(&renamed))
+            .into_iter()
+            .map(|(v, _, _)| v.id)
+            .collect();
+        assert!(ids.contains(&"pollutant:TSS".to_string()));
+        assert!(
+            !ids.iter().any(|i| i.starts_with("pollutant:P")),
+            "a pollutant the file does not carry has no column: {ids:?}"
+        );
+
+        // Changing a pollutant's units retires it too: the stored numbers
+        // are the old unit's, and publishing them under the new one would
+        // read µg/L as mg/L rather than say nothing.
+        let mut redeclared = network.clone();
+        redeclared.constituents[0].units = hydra::uds::model::ConcentrationUnits::UgPerL;
+        let ids: Vec<String> = resolved_variables(&meta, ElementClass::Point, Some(&redeclared))
+            .into_iter()
+            .map(|(v, _, _)| v.id)
+            .collect();
+        assert!(!ids.contains(&"pollutant:TSS".to_string()), "{ids:?}");
+        assert!(ids.contains(&"pollutant:Lead".to_string()), "{ids:?}");
+
+        // With no model to name them, only the fixed catalog can be
+        // published — the file's columns are still there, but nothing
+        // knows what they are called.
+        let ids: Vec<String> = resolved_variables(&meta, ElementClass::Point, None)
+            .into_iter()
+            .map(|(v, _, _)| v.id)
+            .collect();
+        assert_eq!(ids.len(), 6, "{ids:?}");
+    }
+
     /// Run a tiny drainage model end-to-end and check the provider's two
     /// halves against each other: the catalog meta's variable counts and
     /// unit labels, and the period payload's header + length against the
@@ -440,7 +682,8 @@ mod tests {
         assert!(err.is_none(), "uds run must succeed: {err:?}");
 
         let meta = hydra::swmm::out_reader::read_metadata(&out).expect("readable");
-        let gm = generic_meta(&out, &meta).expect("generic meta");
+        let (network, _diags) = hydra::swmm::objects::parse_network(model);
+        let gm = generic_meta(&out, &meta, Some(&network)).expect("generic meta");
         // The §6 catalog: 6 point, 4 polyline, 3 region variables.
         assert_eq!(gm.point_vars.len(), 6);
         assert_eq!(gm.polyline_vars.len(), 4);
@@ -471,12 +714,11 @@ mod tests {
         // Ranges came from a real scan: ordered and finite.
         assert!(depth.min <= depth.max && depth.max.is_finite());
 
-        let (network, _diags) = hydra::swmm::objects::parse_network(model);
         let view = super::super::uds_view::build_view(&network);
         assert_eq!(view.points.len(), 2);
         assert_eq!(view.polylines.len(), 1);
         let rec = hydra::swmm::out_reader::read_period(&out, &meta, 0).unwrap();
-        let payload = encode_generic_period(&view, &meta, &rec);
+        let payload = encode_generic_period(&view, &meta, &rec, &network);
         let header: Vec<u32> = payload[..24]
             .chunks_exact(4)
             .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
@@ -495,7 +737,15 @@ mod tests {
         let nodes_csv = dir.path().join("r-nodes.csv");
         let links_csv = dir.path().join("r-links.csv");
         let subs_csv = dir.path().join("r-subcatchments.csv");
-        stream_uds_results_csv(&out, &meta, &nodes_csv, &links_csv, &subs_csv).unwrap();
+        stream_uds_results_csv(
+            &out,
+            &meta,
+            Some(&network),
+            &nodes_csv,
+            &links_csv,
+            &subs_csv,
+        )
+        .unwrap();
         let nodes = std::fs::read_to_string(&nodes_csv).unwrap();
         let mut lines = nodes.lines();
         assert_eq!(

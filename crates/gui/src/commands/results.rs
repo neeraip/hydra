@@ -290,6 +290,7 @@ const RANGE_SCAN_MAX_SAMPLES: usize = 2048;
 /// Parse result metadata (timestep count, reporting period) from `results.out`.
 pub fn load_result_meta(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Option<ResultMetaDto>, String> {
@@ -311,7 +312,14 @@ pub fn load_result_meta(
             let times: Vec<f64> = (0..meta.n_periods)
                 .map(|i| (i as f64 + 1.0) * step)
                 .collect();
-            let generic = super::uds_results::generic_meta(&out_path, &meta)?;
+            // hydra-common §6.3: the pollutant series are named by the
+            // model, so the catalog needs it. A model that will not load
+            // is not a reason to refuse the results that exist, so the
+            // fixed catalog is published alone and the concentrations go
+            // unshown, which §6.2 already asks applications to handle.
+            let net =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref()).ok();
+            let generic = super::uds_results::generic_meta(&out_path, &meta, net.as_deref())?;
             let run = crate::commands::simulation::read_run_meta(&out_path);
             return Ok(Some(ResultMetaDto {
                 times,
@@ -417,7 +425,7 @@ pub fn get_period_results(
                 uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             let view = super::uds_view::build_view(&network);
             return Ok(tauri::ipc::Response::new(
-                super::uds_results::encode_generic_period(&view, &meta, &rec),
+                super::uds_results::encode_generic_period(&view, &meta, &rec, &network),
             ));
         }
         // Engines without a period provider serve the empty "no results"
@@ -971,10 +979,17 @@ pub async fn export_results_csv(
         }
         "uds" => {
             let meta = hydra::swmm::out_reader::read_metadata(&out_path)?;
+            let network =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
             let out_path = out_path.clone();
             Box::new(move |nodes_csv, links_csv, subs_csv| {
                 super::uds_results::stream_uds_results_csv(
-                    &out_path, &meta, nodes_csv, links_csv, subs_csv,
+                    &out_path,
+                    &meta,
+                    Some(&network),
+                    nodes_csv,
+                    links_csv,
+                    subs_csv,
                 )
             })
         }
