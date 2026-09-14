@@ -8,9 +8,12 @@
  * refactor back to one-attribute-per-input (which fails shader linking with
  * "Too many attributes") cannot land silently.
  *
- * `getShaders()` never touches the GL device — it only reads
- * `this.context.defaultShaderModules` — so it is called here on a bare
- * instance with a stubbed layer context.
+ * `getShaders()` issues no GL calls, so it is called here on a bare
+ * instance with a stubbed layer context. It does read that context: for
+ * `defaultShaderModules`, and since deck.gl 9.4 for `device.type`, which
+ * decides whether the WebGPU clip extension joins the module list. The
+ * stub says `webgl`, which is what the app runs and what the attribute
+ * budget below is a property of.
  */
 import { describe, expect, it } from "vitest";
 import { FlowPathLayer } from "./FlowPathLayer";
@@ -37,8 +40,10 @@ function getShadersOnBareInstance(): Shaders {
   const layer = new FlowPathLayer({});
   // Layer.getShaders reads only context.defaultShaderModules; no GL device.
   (
-    layer as unknown as { context: { defaultShaderModules: unknown[] } }
-  ).context = { defaultShaderModules: [] };
+    layer as unknown as {
+      context: { defaultShaderModules: unknown[]; device: { type: string } };
+    }
+  ).context = { defaultShaderModules: [], device: { type: "webgl" } };
   return layer.getShaders() as Shaders;
 }
 
