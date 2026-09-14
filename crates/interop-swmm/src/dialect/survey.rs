@@ -160,6 +160,17 @@ pub enum DiagnosticKind {
         /// The value as written.
         token: String,
     },
+    /// §14.15: a `[2D_INLETS]` row places an inlet at a point no node
+    /// map addresses the same way. Its own kind rather than an
+    /// unresolved reference, because the point itself may exist: an
+    /// inlet attaches to a map row by spelling, so an index cannot
+    /// find a row written with a tag.
+    InletNamesNoMapRow {
+        /// `VERTEX` or `TRIANGLE`, as the row spelt it.
+        kind: &'static str,
+        /// The address as written.
+        address: String,
+    },
     /// §14.15: a `[2D_RUNOFF_MAP]` row names a subcatchment whose
     /// `[SUBCATCHMENTS]` outlet is a node or another subcatchment, not
     /// itself — the file would route the runoff two ways.
@@ -294,6 +305,12 @@ impl std::fmt::Display for DiagnosticKind {
             DiagnosticKind::CappedValue { what, token } => {
                 write!(f, "{what} {token:?} capped to its accepted range")
             }
+            DiagnosticKind::InletNamesNoMapRow { kind, address } => write!(
+                f,
+                "an inlet is placed at {kind} {address:?}, which no node map row addresses \
+                 that way; an inlet attaches to the map row spelt the same, so an index \
+                 does not find a row written with a tag"
+            ),
             DiagnosticKind::SurfaceOutletNamesAnother { parcel } => write!(
                 f,
                 "subcatchment {parcel:?} is mapped onto the 2D surface but its outlet \

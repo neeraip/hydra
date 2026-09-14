@@ -359,8 +359,9 @@ fn parse_inlets(
         let Some(row) = rows.iter_mut().rev().find(|r| r.address == t[1]) else {
             diags.push(err(
                 line.line,
-                DiagnosticKind::UnresolvedReference {
-                    id: format!("{} {}", KINDS[kind], t[1]),
+                DiagnosticKind::InletNamesNoMapRow {
+                    kind: KINDS[kind],
+                    address: t[1].to_string(),
                 },
             ));
             continue;
@@ -1126,7 +1127,10 @@ TRIANGLE TB G1 2 10 0.5 0.05 0.6
         // SQUARE is no kind: both are named and neither attaches.
         let unresolved: Vec<_> = diags
             .iter()
-            .filter(|d| matches!(&d.kind, DiagnosticKind::UnresolvedReference { id } if id == "TRIANGLE 0"))
+            .filter(|d| {
+                matches!(&d.kind, DiagnosticKind::InletNamesNoMapRow { kind, address }
+                    if *kind == "TRIANGLE" && address == "0")
+            })
             .collect();
         assert_eq!(unresolved.len(), 1, "{diags:?}");
         assert!(diags
@@ -1196,6 +1200,30 @@ TRIANGLE TB G1 2 10 0.5 0.05 0.6
         assert_eq!(
             net.overland.expect("mesh").runoff_map,
             net2.overland.expect("mesh").runoff_map
+        );
+    }
+
+    /// §14.15: a runoff row the mesh side refused is not a row, so the
+    /// subcatchment side must not act on it. Reading the section's raw
+    /// lines instead turned a self-outlet subcatchment into a surface
+    /// outlet with no point behind it, which the file cannot describe
+    /// and the engine refuses to open.
+    #[test]
+    fn a_refused_runoff_row_leaves_the_subcatchment_alone() {
+        use crate::engine_api::model::ParcelOutlet;
+        let extra = format!("{MESH}{PARCELS}[2D_RUNOFF_MAP]\nS1 SQUARE TB\n");
+        let (net, diags) = parse_network(&model(&extra));
+        assert!(diags
+            .iter()
+            .any(|d| matches!(&d.kind, DiagnosticKind::BadValue { token } if token == "SQUARE")));
+        assert!(
+            net.overland.as_ref().expect("mesh").runoff_map.is_empty(),
+            "the mesh side kept no row"
+        );
+        assert_eq!(
+            net.parcels[0].outlet,
+            ParcelOutlet::Parcel(0),
+            "S1 still names itself; it was never mapped onto the surface"
         );
     }
 

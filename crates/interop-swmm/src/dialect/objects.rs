@@ -413,39 +413,48 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
     // system and reaches no node — and then its outlet is the surface.
     // A row the subcatchment side refuses is dropped from the mesh too,
     // so the model never holds a runoff point nothing drains to.
+    //
+    // Read from the rows the mesh side kept, not from the section's raw
+    // lines: a line that side already refused is not a row, and acting
+    // on it would turn a subcatchment's outlet to the surface with no
+    // point behind it. The line number for a diagnostic is looked up
+    // from the section by the row's own spelling.
     if let Some(mesh) = net.overland.as_mut() {
-        for (sec, lines) in &s.sections {
-            if *sec != Section::TwoDRunoffMap {
-                continue;
-            }
-            for line in lines {
-                let Some(name) = line.tokens.first() else {
-                    continue;
-                };
-                use crate::engine_api::model::ParcelOutlet;
-                let refused = match s.resolve(ObjectKind::Parcel, name) {
-                    None => Some(DiagnosticKind::UnresolvedReference {
-                        id: name.to_string(),
+        let line_of = |name: &str| {
+            s.sections
+                .iter()
+                .filter(|(sec, _)| *sec == Section::TwoDRunoffMap)
+                .flat_map(|(_, lines)| lines.iter())
+                .find(|l| {
+                    l.tokens
+                        .first()
+                        .is_some_and(|t| t.eq_ignore_ascii_case(name))
+                })
+                .map_or(0, |l| l.line)
+        };
+        let names: Vec<String> = mesh.runoff_map.iter().map(|r| r.parcel.clone()).collect();
+        for name in names {
+            use crate::engine_api::model::ParcelOutlet;
+            let refused = match s.resolve(ObjectKind::Parcel, &name) {
+                None => Some(DiagnosticKind::UnresolvedReference { id: name.clone() }),
+                Some(&pi) => match net.parcels[pi].outlet {
+                    ParcelOutlet::Parcel(target) if target == pi => {
+                        net.parcels[pi].outlet = ParcelOutlet::Surface;
+                        None
+                    }
+                    ParcelOutlet::Surface => None,
+                    _ => Some(DiagnosticKind::SurfaceOutletNamesAnother {
+                        parcel: net.parcels[pi].id.clone(),
                     }),
-                    Some(&pi) => match net.parcels[pi].outlet {
-                        ParcelOutlet::Parcel(target) if target == pi => {
-                            net.parcels[pi].outlet = ParcelOutlet::Surface;
-                            None
-                        }
-                        ParcelOutlet::Surface => None,
-                        _ => Some(DiagnosticKind::SurfaceOutletNamesAnother {
-                            parcel: net.parcels[pi].id.clone(),
-                        }),
-                    },
-                };
-                if let Some(kind) = refused {
-                    mesh.runoff_map
-                        .retain(|r| !r.parcel.eq_ignore_ascii_case(name));
-                    diagnostics.push(Diagnostic {
-                        line: line.line,
-                        kind,
-                    });
-                }
+                },
+            };
+            if let Some(kind) = refused {
+                mesh.runoff_map
+                    .retain(|r| !r.parcel.eq_ignore_ascii_case(&name));
+                diagnostics.push(Diagnostic {
+                    line: line_of(&name),
+                    kind,
+                });
             }
         }
     }
