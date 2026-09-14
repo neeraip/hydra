@@ -212,7 +212,7 @@ typecheck-frontend:
 em-dashes:
     python3 scripts/em_dashes.py
 
-# Run every static check, Rust and frontend — no tests
+# Fast static checks, Rust and frontend — no tests, and not the CI-only ones
 lint: fmt-check clippy check-wasm typecheck-frontend lint-frontend em-dashes
 
 # ── Security ──────────────────────────────────────────────────────────────────
@@ -415,9 +415,10 @@ site-serve: site
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 
-# Skips the slower CI-only steps (deny, docs-api, catalog drift, lockfile
-# check, python scripts); run `just ci` for the full set.
-# Fast local gate: every static check plus the Rust and frontend test suites
+# Skips the CI-only steps: deny, docs-api, catalog drift, licence notices,
+# lockfile check, frontend build, python scripts. Each is a red build of its
+# own, so run `just ci` for the full set before calling a task done.
+# Fast local gate: lint plus the Rust and frontend test suites — not the CI gate
 verify: lint test test-wasm test-frontend test-layout
 
 # Fails when package.json and pnpm-lock.yaml have drifted (e.g. a hand-edited

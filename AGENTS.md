@@ -277,7 +277,19 @@ joining it with a dash.
 - **Numeric precision:** All hydraulic and quality quantities use `f64`. Never narrow to `f32` for intermediate values.
 - **Parallelism:** Only parallelise operations marked **∥** in the owning spec. Do not introduce parallelism for anything else without updating the spec first.
 - **Error handling:** Solver and model crates return `Result` with domain-specific error types. No `unwrap()` or `expect()` outside test code. Every `unsafe` block requires a `// SAFETY:` comment.
-- **Testing:** Use fast, targeted commands during iteration (`cargo check`, `cargo test -p <crate> <name>`, and in `crates/gui/frontend` `npx tsc --noEmit` / `npx biome check <file>` for pinpoint checks). But the check that declares a task **complete** must be a `just` recipe, because only the recipes carry the exact flags and whole-tree scope CI enforces (`clippy -D warnings`, `--locked`, `RUSTDOCFLAGS=-D warnings`, frozen lockfile, whole-tree Biome, the `tauri/custom-protocol` feature): `just lint` (all static checks), `just verify` (adds the full Rust + frontend test suites), or `just ci` (the complete CI gate). A green targeted run is not proof CI is green — note that `cargo test` never exercises the React/TypeScript frontend at all.
+- **Testing:** Use fast, targeted commands during iteration (`cargo check`, `cargo test -p <crate> <name>`, and in `crates/gui/frontend` `npx tsc --noEmit` / `npx biome check <file>` for pinpoint checks). But the check that declares a task **complete** must be a `just` recipe, because only the recipes carry the exact flags and whole-tree scope CI enforces (`clippy -D warnings`, `--locked`, `RUSTDOCFLAGS=-D warnings`, frozen lockfile, whole-tree Biome, the `tauri/custom-protocol` feature): `just lint` (formatting, clippy, the wasm check, the frontend typecheck and Biome, the em-dash sweep), `just verify` (adds the full Rust + frontend test suites), or `just ci` (the complete CI gate). A green targeted run is not proof CI is green — note that `cargo test` never exercises the React/TypeScript frontend at all.
+
+  **`just lint` is not the whole static gate, and neither is `just verify`.**
+  Only `just ci` matches what CI runs. It adds `docs-api` (rustdoc under
+  `RUSTDOCFLAGS=-D warnings`), `deny`, `licenses-check`, `check-crs-catalog`,
+  `check-frontend-lockfile`, `build-frontend` and `test-scripts` — every one of
+  which is a red build if it fails, and none of which the other two recipes
+  touch. This has already shipped a broken `main`: a doc comment on a public
+  item linking to a private one fails `docs-api` and nothing else, so
+  `just lint` was green and CI was not. Run `just ci` before declaring a task
+  complete, or at least the extra recipe covering what you touched — `docs-api`
+  for doc comments, `deny` and `licenses-check` for dependency changes,
+  `test-scripts` for `scripts/`, `check-frontend-lockfile` for `package.json`.
 
 ---
 
