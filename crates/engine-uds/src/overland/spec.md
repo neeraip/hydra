@@ -772,6 +772,28 @@ reconstruction is a refinement not an obligation.
   for the advance. Each ledger closes on its own; their difference is
   the node concentration's change over the delay, the same lag the
   exchange volume already carries (§15.6).
+
+  That loss is booked from **the surface's own share** of the node's
+  lateral, never from the sign of the lateral as a whole. A node's
+  lateral is the sum of everything reaching it, and a coupled junction
+  that also receives parcel runoff can take more than it spills while
+  the surface is still drawing water off it. Reading the total's sign
+  would then record no spill at all, although one happened and the node
+  paid for it, and the constituent balance would carry the difference as
+  an unexplained error. The two shares are known apart, so they are
+  booked apart.
+
+  The exchange is a **net** over the delivery window, for mass as for
+  volume (§15.6), and one residual follows. Where the window's net
+  volume and its net mass disagree in sign — the surface drained the
+  larger volume while the node spilled the larger mass, which needs the
+  node to be the more concentrated by more than the volume ratio — the
+  net mass has no channel to travel on, since the node gained water. It
+  is not delivered, and the difference stands in the constituent
+  balance. Bounded by the same freeze lag as the rest of the exchange,
+  and recorded here rather than removed, because removing it would mean
+  delivering the two directions separately while the volume they ride
+  on is netted.
 - **Boundary inflow** (§15.5) carries no constituent — a stage or
   flow condition admits clean water, a recorded absence — and
   **boundary outflow** carries the cell's concentration out.

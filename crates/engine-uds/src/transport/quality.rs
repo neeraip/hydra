@@ -224,6 +224,23 @@ pub struct NetworkQuality {
     cv_flow: f64,
 }
 
+/// How a vertex's leaving lateral splits between the §15.11 surface
+/// spill and an ordinary external outflow (§10.1), as non-negative
+/// rates: `(onto the surface, out of the system)`.
+///
+/// The split is on the surface's **own share** of the lateral, never
+/// on the total's sign. A vertex's lateral is the sum of everything
+/// reaching it, so a coupled junction that also receives parcel runoff
+/// can read positive while the surface is drawing water off it: the
+/// spill happened, the node paid for it through its volume, and the
+/// total says nothing about it. Reading the total would leave the
+/// spill account empty and the difference standing in the constituent
+/// balance as an unexplained error.
+pub(crate) fn lateral_outflow_split(lat_flow: f64, surface_lat: f64) -> (f64, f64) {
+    let other = lat_flow - surface_lat;
+    ((-surface_lat).max(0.0), (-other).max(0.0))
+}
+
 impl NetworkQuality {
     /// Seed the state: initial concentrations only on elements wet at
     /// start (§8.4), and compile the §8.5 treatment expressions against
@@ -381,6 +398,7 @@ impl NetworkQuality {
         net: &Network,
         lat_flow: &[f64],
         lat_mass: &SourceMass,
+        surface_lat: &[f64],
         dt: f64,
     ) {
         let chans = router.channel_transport();
@@ -518,16 +536,20 @@ impl NetworkQuality {
                     c_new = 0.0;
                 }
                 // A negative lateral books an outflow at the vertex's
-                // concentration (§10.1) — at a coupled vertex that is
-                // the §15.11 spill onto the surface, its own account.
-                if lat_flow[v] < 0.0 {
-                    let m = -lat_flow[v] * dt * c_new;
-                    if router.is_coupled(v) {
-                        self.surface_spill_mass[p] += m;
-                    } else {
-                        self.outfall_mass[p] += m;
-                    }
-                }
+                // concentration (§10.1), split by where it went: the
+                // §15.11 surface spill has its own account, and the
+                // rest is an external outflow.
+                //
+                // The split is on the surface's *own share* of the
+                // lateral, never on the total's sign. A coupled
+                // junction also receiving parcel runoff can read a
+                // positive total while the surface draws water off it,
+                // and reading the total would book no spill at all
+                // though the node paid for one.
+                let (spill, external) =
+                    lateral_outflow_split(lat_flow[v], surface_lat.get(v).copied().unwrap_or(0.0));
+                self.surface_spill_mass[p] += spill * dt * c_new;
+                self.outfall_mass[p] += external * dt * c_new;
                 self.c_vertex[p][v] = c_new;
             }
         }
@@ -887,6 +909,41 @@ mod threshold_tests {
     fn the_dry_thresholds_are_a_litre_and_a_millimetre() {
         assert_eq!(1.0e-3, super::ZERO_VOL);
         assert_eq!(1.0e-3, super::DRY_DEPTH);
+    }
+}
+
+#[cfg(test)]
+mod lateral_split_tests {
+    use super::lateral_outflow_split;
+
+    /// §15.11: the spill is the surface's own share, and the external
+    /// outflow is everything else that left. The case that matters is
+    /// the third: a coupled junction taking more runoff than the
+    /// surface draws off it reads a positive total, and booking from
+    /// that sign would record no spill at all.
+    #[test]
+    fn the_spill_is_the_surfaces_own_share_not_the_totals_sign() {
+        // Nothing leaves.
+        assert_eq!(lateral_outflow_split(5.0, 0.0), (0.0, 0.0));
+        assert_eq!(lateral_outflow_split(5.0, 2.0), (0.0, 0.0));
+        // An uncoupled vertex shedding water: all of it is external.
+        assert_eq!(lateral_outflow_split(-3.0, 0.0), (0.0, 3.0));
+        // The defect this function exists for: the surface draws 4 off
+        // a junction taking 10 of runoff. The total is +6.
+        assert_eq!(lateral_outflow_split(6.0, -4.0), (4.0, 0.0));
+        // And the mirror: a spilling surface at a vertex that is also
+        // shedding water elsewhere. Each account takes its own.
+        assert_eq!(lateral_outflow_split(-7.0, -4.0), (4.0, 3.0));
+        // The surface drains in while something else leaves.
+        assert_eq!(lateral_outflow_split(-1.0, 2.0), (0.0, 3.0));
+        // Both rates are non-negative whatever the signs, so neither
+        // account can be credited backwards.
+        for lat in [-9.0, -1.0, 0.0, 1.0, 9.0] {
+            for surf in [-9.0, -1.0, 0.0, 1.0, 9.0] {
+                let (spill, external) = lateral_outflow_split(lat, surf);
+                assert!(spill >= 0.0 && external >= 0.0, "{lat} {surf}");
+            }
+        }
     }
 }
 

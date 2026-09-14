@@ -61,6 +61,15 @@ pub struct CoupledSurface {
     /// §15.11: exchanged mass awaiting delivery (unit·m³ per
     /// constituent per slot, positive = into the node).
     pending_mass: Vec<Vec<f64>>,
+    /// §15.11: the rate this surface last delivered into each network
+    /// vertex's lateral (m³/s, negative = drawn onto the surface).
+    ///
+    /// The network's own lateral is the sum of everything reaching a
+    /// vertex, so its sign cannot say whether the surface took water:
+    /// a coupled junction receiving parcel runoff can read positive
+    /// while the surface is drawing water off it. This is the share
+    /// that is the surface's, which is what the spill books from.
+    surface_lat: Vec<f64>,
 }
 
 impl CoupledSurface {
@@ -114,6 +123,7 @@ impl CoupledSurface {
             delivered_out: 0.0,
             report_exchange: Vec::new(),
             pending_mass: Vec::new(),
+            surface_lat: vec![0.0; net.vertices.len()],
         })
     }
 
@@ -167,9 +177,13 @@ impl CoupledSurface {
                 *m = 0.0;
             }
         }
+        for r in &mut self.surface_lat {
+            *r = 0.0;
+        }
         for (slot, p) in self.pending.iter_mut().enumerate() {
             if *p != 0.0 {
                 lat[self.slot_vertex[slot]] += *p / period;
+                self.surface_lat[self.slot_vertex[slot]] += *p / period;
                 // §15.8: the exchange is its own named ledger pair on
                 // the network side, never folded into external inflow.
                 if *p > 0.0 {
@@ -180,6 +194,17 @@ impl CoupledSurface {
                 *p = 0.0;
             }
         }
+    }
+
+    /// §15.11: the rate this surface contributed to each network
+    /// vertex's lateral over the period now being stepped (m³/s,
+    /// negative = drawn onto the surface).
+    ///
+    /// The constituent ledger books the spill from this rather than
+    /// from the vertex's total lateral, for the reason the field's own
+    /// documentation gives.
+    pub fn surface_lateral(&self) -> &[f64] {
+        &self.surface_lat
     }
 
     /// §15.6: co-advance the surface over the period the network just

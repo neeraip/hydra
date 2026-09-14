@@ -1766,11 +1766,6 @@ impl Router {
         self.verts[vi].ponded_area = footprint;
     }
 
-    /// §15.6: whether a vertex is coupled to the overland mesh.
-    pub fn is_coupled(&self, vi: usize) -> bool {
-        self.verts[vi].coupled
-    }
-
     /// §15.6: refresh a coupled vertex's exchange conductance for the
     /// coming period. Clamped non-negative — the term only ever damps.
     pub fn set_coupling_conductance(&mut self, vi: usize, g: f64) {

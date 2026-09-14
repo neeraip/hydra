@@ -2066,6 +2066,21 @@ impl Simulation {
             if let Some(cs) = self.coupled.as_mut() {
                 cs.deliver_laterals(&mut base, &mut base_mass[2], period_end - t);
             }
+            // §15.11: the surface's own share of each vertex's lateral,
+            // which the constituent ledger books the spill from rather
+            // than from the vertex's total. A §12.4 override replaces
+            // the whole lateral, the surface's part with it, so an
+            // overridden vertex has no share left to book.
+            let mut surface_lat: Vec<f64> = self
+                .coupled
+                .as_ref()
+                .map(|cs| cs.surface_lateral().to_vec())
+                .unwrap_or_default();
+            for &v in self.lateral_override.keys() {
+                if v < surface_lat.len() {
+                    surface_lat[v] = 0.0;
+                }
+            }
             self.vol_dwf += self.last_dwf_total * (period_end - t);
             self.vol_ext += self.last_ext_total * (period_end - t);
             // §10.1: hydrology outputs interpolate linearly to routing
@@ -2168,7 +2183,14 @@ impl Simulation {
                                 f,
                             );
                         }
-                        q.update(&self.router, &self.net, &lat, &mass, self.router.last_dt());
+                        q.update(
+                            &self.router,
+                            &self.net,
+                            &lat,
+                            &mass,
+                            &surface_lat,
+                            self.router.last_dt(),
+                        );
                         self.quality = Some(q);
                     }
                 }
