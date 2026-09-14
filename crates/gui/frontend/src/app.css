@@ -606,6 +606,15 @@ body,
   border-radius: 10px;
   transition: background var(--t-fast);
 }
+/* The track's rules are grouped here in ascending specificity. The focus
+   outline and the checked background set different properties, so their
+   order changes nothing that renders, but a less specific selector sitting
+   after a more specific one for the same element is worth avoiding on
+   sight: the next rule added to either block would silently lose. */
+.toggle:focus-within .toggle-track {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
 .toggle input:checked + .toggle-track {
   background: var(--accent);
 }
@@ -623,11 +632,6 @@ body,
 .toggle input:checked ~ .toggle-thumb {
   transform: translateX(16px);
 }
-.toggle:focus-within .toggle-track {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
 /* ── Badge / chip atoms ─────────────────────────────────────────────────────
    Small inline labels: engine pill, "Draft", "1,247 nodes", etc. Designed
    for `<span>` content only — never put onClick on a badge.                   */
