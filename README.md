@@ -15,11 +15,15 @@ Correctness is defined by conservation laws and Hydra's own convergence criteria
 | **Water Distribution** (`wds`) | Pressurised supply networks: hydraulics, water quality, energy | EPANET `.inp` (2.x) |
 | **Urban Drainage** (`uds`) | Stormwater and wastewater collection: runoff, routing, quality | SWMM `.inp` |
 
-Both engines run from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model and, since GUI 2.17.0, is edited like any other: network elements, hydrology, pollutants and LID controls.
+Both engines run from all three surfaces, and model *editing* in the desktop app covers both: a drainage project is created by importing a SWMM model, then edited like any other: network elements, hydrology, pollutants and LID controls.
 
 **[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/docs/)**
 
 The browser demo runs the real engines, compiled to WebAssembly: drop an EPANET or SWMM model (or pick a bundled example) and read the same report the CLI prints. Everything runs in your tab. Models are never uploaded. Each library release also attaches it as a single `hydra-try-<version>.html` you can keep and run offline.
+
+![The canvas view: a drainage network in plan, mid playback, with depth and velocity legends, an element list on the left, and the selected subcatchment's properties and time series on the right.](site/shots/canvas.webp)
+
+<sub>The canvas: the network in plan, results played back in time.</sub>
 
 ## Water distribution engine
 
@@ -33,9 +37,18 @@ Inputs are EPANET `.inp` files (local or via HTTP URL), any 2.x release, since t
 
 ## Urban drainage engine
 
-Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; two-dimensional overland flow on an unstructured triangular mesh, coupled to the network; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; two-dimensional overland flow on an unstructured triangular mesh; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
+
+The surface and the pipes work as dual drainage. Inlets drain a flooded street into a sewer running part full, a subcatchment can discharge onto the surface instead of at a node, and pollutants travel across the surface and exchange with the network.
 
 Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report (a mesh model also writes its surface results to a `.2d.out` sidecar). Routing runs in parallel when the model's own `THREADS` option asks for width, with results byte-identical at any width. Available from the CLI (`hydra run model.inp`; the model's own sections identify the engine), the SDK (the `hydra::uds` module), and the desktop app, where a drainage model can be imported, edited, run and explored.
+
+## The desktop app
+
+| | |
+|---|---|
+| ![The editor view: conduits in a table with length, roughness and cross-section columns, and every element kind listed in a sidebar.](site/shots/editor.webp)<br><sub>**The editor.** Every element in tables built for bulk edits.</sub> | ![The results view: tables of node extremes, link extremes, a flooding summary and an outfall summary.](site/shots/results.webp)<br><sub>**Results.** Node and link extremes, flooding and outfall summaries.</sub> |
+| ![The report builder: a reorderable list of sections beside a PDF preview showing a run summary, a system balance and a flow chart.](site/shots/report.webp)<br><sub>**The report builder.** Charts and tables from saved templates.</sub> | ![The projects list with the task monitor open: a large model solving at 69 percent with two more runs queued behind it.](site/shots/run-queue.webp)<br><sub>**The run queue.** Simulations solve in the background while you work.</sub> |
 
 ## Install
 
@@ -72,7 +85,7 @@ hydra-sdk = "17"
 ```
 
 ```rust
-use hydra_sdk::{io, Simulation, NodeQuantity};
+use hydra_sdk::{io, Simulation};
 
 let network = io::parse(&std::fs::read("network.inp")?)?;
 let mut sim = Simulation::create();
@@ -115,18 +128,13 @@ Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md
 Hydra is published under the [GNU Affero General Public License v3.0](LICENSE), with a
 [commercial license](COMMERCIAL_LICENSE.md) available for the cases the AGPL does not fit.
 
-**Using Hydra asks nothing of you.** Run the CLI, drive it from a script, model in the desktop app,
-check its results against another engine, or change it for your own purposes. None of that carries
-an obligation. Your models, your results, and whatever else you run alongside Hydra stay yours, and
-you may use them commercially.
+Using Hydra asks nothing of you. Run the CLI, drive it from a script, model in the desktop app, or
+change it for your own purposes. Your models and your results stay yours, and you may use them
+commercially.
 
-**Building Hydra into something you distribute is what the AGPL governs.** Link the crates into your
-own application and ship it, or run a modified Hydra as a network service, and that work carries the
-same license with its source made available. Calling `hydra` as a separate program (handing it a
-file, reading what it writes) is use, not incorporation.
+The AGPL governs building Hydra into something you distribute: linking the crates into your own
+application and shipping it, or running a modified Hydra as a network service. Calling `hydra` as a
+separate program is use, not incorporation. If that reciprocity does not suit, the
+[commercial license](COMMERCIAL_LICENSE.md) grants the same rights without it.
 
-If reciprocity does not suit (a proprietary product, a hosted service you cannot open), the
-[commercial license](COMMERCIAL_LICENSE.md) grants those same rights without it.
-
-This is a summary and not legal advice: the [license text](LICENSE) is what governs, and a case near
-the line deserves a lawyer rather than a README.
+The [license text](LICENSE) is what governs, and a case near the line deserves a lawyer.
