@@ -19,19 +19,26 @@ hydra-sdk = "17"
 ## Quick start
 
 ```rust
-use hydra_sdk::{io, Simulation, NodeQuantity, LinkQuantity};
+use hydra_sdk::{io, LinkQuantity, NodeQuantity, Simulation};
 
 let bytes = std::fs::read("network.inp").unwrap();
 let network = io::parse(&bytes).unwrap();
 
 let mut sim = Simulation::create();
 sim.load(network).unwrap();
-sim.run().unwrap();
 
-for t in sim.snapshot_times() {
-    let head = sim.get_node_result("J1", NodeQuantity::Head, t).unwrap();
-    let flow = sim.get_link_result("P1", LinkQuantity::Flow, t).unwrap();
-    println!("t={t:.0}s  head={head:.3}  flow={flow:.6}");
+// A session holds one instant at a time, so a series is read by
+// walking the run. `sim.run()` goes straight to the end instead.
+loop {
+    let dt = sim.step_hydraulics().unwrap();
+    if let Some(t) = sim.current_time() {
+        let head = sim.get_node_result("J1", NodeQuantity::Head).unwrap();
+        let flow = sim.get_link_result("P1", LinkQuantity::Flow).unwrap();
+        println!("t={t:.0}s  head={head:.3}  flow={flow:.6}");
+    }
+    if dt == 0.0 {
+        break;
+    }
 }
 ```
 

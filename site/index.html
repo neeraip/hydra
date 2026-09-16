@@ -433,7 +433,7 @@
             <div class="term-bar">
               <span class="cmd">main.rs</span>
             </div>
-            <pre class="term code"><span><span class="kw">use</span> hydra_sdk::{io, Simulation, NodeQuantity};</span><span></span><span><span class="kw">let</span> network = io::parse(&amp;bytes)?;</span><span><span class="kw">let mut</span> sim = Simulation::create();</span><span>sim.load(network)?;</span><span>sim.run()?;</span><span></span><span><span class="kw">for</span> t <span class="kw">in</span> sim.snapshot_times() {</span><span>    <span class="kw">let</span> head = sim.get_node_result(<span class="st">"J1"</span>, NodeQuantity::Head, t)?;</span><span>    println!(<span class="st">"t={t:.0}s  head={head:.3}"</span>);</span><span>}</span></pre>
+            <pre class="term code"><span><span class="kw">use</span> hydra_sdk::{io, NodeQuantity, Simulation};</span><span></span><span><span class="kw">let</span> network = io::parse(&amp;bytes)?;</span><span><span class="kw">let mut</span> sim = Simulation::create();</span><span>sim.load(network)?;</span><span></span><span><span class="kw">loop</span> {</span><span>    <span class="kw">let</span> dt = sim.step_hydraulics()?;</span><span>    <span class="kw">if let</span> Some(t) = sim.current_time() {</span><span>        <span class="kw">let</span> head = sim.get_node_result(<span class="st">"J1"</span>, NodeQuantity::Head)?;</span><span>        println!(<span class="st">"t={t:.0}s  head={head:.3}"</span>);</span><span>    }</span><span>    <span class="kw">if</span> dt == 0.0 { <span class="kw">break</span>; }</span><span>}</span></pre>
           </div>
         </div>
       </section>

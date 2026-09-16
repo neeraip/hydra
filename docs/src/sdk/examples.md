@@ -3,7 +3,7 @@
 ## Parse an INP file and run a full simulation
 
 ```rust
-use hydra_sdk::{io, Simulation, NodeQuantity, LinkQuantity};
+use hydra_sdk::{io, LinkQuantity, NodeQuantity, Simulation};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read("network.inp")?;
@@ -11,13 +11,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut sim = Simulation::create();
     sim.load(network)?;
-    sim.run()?;
 
-    for t in sim.snapshot_times() {
-        let head = sim.get_node_result("J1", NodeQuantity::Head, t)?;
-        let pressure = sim.get_node_result("J1", NodeQuantity::GaugePressure, t)?;
-        let flow = sim.get_link_result("P1", LinkQuantity::Flow, t)?;
-        println!("t={t:.0}s  head={head:.3}  pressure={pressure:.3}  flow={flow:.6}");
+    // A session holds one instant at a time. Step the run to see every
+    // reporting time; `sim.run()` goes straight to the last one.
+    loop {
+        let dt = sim.step_hydraulics()?;
+        if let Some(t) = sim.current_time() {
+            let head = sim.get_node_result("J1", NodeQuantity::Head)?;
+            let pressure = sim.get_node_result("J1", NodeQuantity::GaugePressure)?;
+            let flow = sim.get_link_result("P1", LinkQuantity::Flow)?;
+            println!("t={t:.0}s  head={head:.3}  pressure={pressure:.3}  flow={flow:.6}");
+        }
+        if dt == 0.0 {
+            break;
+        }
     }
 
     for w in sim.warnings() {
