@@ -46,7 +46,7 @@ jobs:
           cache: false
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           # Restore everywhere, save from main only: the repo cache budget is
           # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
@@ -79,7 +79,7 @@ jobs:
       # rather than left to wasm-pack, which fetches the newest one and 404s
       # whenever the runner image lags a Chrome major.
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.23.0
+        uses: cargo-bins/cargo-binstall@v1.26.1
 
       # `command -v` first, and `--force` when it misses: the rust-cache
       # restore can carry binstall's install manifest from a main run without
@@ -134,7 +134,7 @@ jobs:
           cache: false
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           # Restore everywhere, save from main only: the repo cache budget is
           # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
@@ -178,7 +178,7 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           key: stable
           save-if: ${{ github.ref == 'refs/heads/main' }}

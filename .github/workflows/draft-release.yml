@@ -95,7 +95,7 @@ jobs:
           target: ${{ matrix.target }}
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           # Release runs execute on tag refs. Caches saved under a tag ref can
           # never be restored by any later run (each release is a new tag), so
@@ -104,7 +104,7 @@ jobs:
           # Restore from main's caches; never save.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.23.0
+      - uses: cargo-bins/cargo-binstall@v1.26.1
         if: matrix.cross
 
       - name: Install cross
@@ -191,13 +191,13 @@ jobs:
           target: wasm32-unknown-unknown
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           # Same policy as the CLI job above: restore from main, never save
           # under a tag ref nothing can restore from.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.23.0
+      - uses: cargo-bins/cargo-binstall@v1.26.1
 
       # Same guard as cargo-ci: a restored cache can carry binstall's install
       # manifest without the binary, and binstall trusts the manifest. Trust
@@ -280,7 +280,7 @@ jobs:
           target: ${{ matrix.target }}
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           # Release runs execute on tag refs. Caches saved under a tag ref can
           # never be restored by any later run (each release is a new tag), so
@@ -289,7 +289,7 @@ jobs:
           # Restore from main's caches; never save.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.23.0
+      - uses: cargo-bins/cargo-binstall@v1.26.1
 
       - name: Cache Tauri CLI
         id: cache-tauri-cli
