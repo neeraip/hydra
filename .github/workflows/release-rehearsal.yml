@@ -61,7 +61,7 @@ jobs:
       - name: Install Tauri system dependencies
         uses: ./.github/actions/tauri-deps
 
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10
 
@@ -73,7 +73,7 @@ jobs:
         working-directory: crates/gui/frontend
         run: pnpm install --frozen-lockfile
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
         with:
           target: ${{ matrix.target }}
           cache: false
@@ -85,7 +85,7 @@ jobs:
           # evict the caches every other workflow depends on.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.26.1
+      - uses: cargo-bins/cargo-binstall@v1.26.2
 
       - name: Cache Tauri CLI
         uses: actions/cache@v6

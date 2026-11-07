@@ -66,7 +66,7 @@ jobs:
           path: release
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.26.1
+        uses: cargo-bins/cargo-binstall@v1.26.2
 
       # mdBook is pinned: docs/theme/index.hbs and docs/hydra-book.css are
       # written against this version's template and variables. Bump the pin
@@ -75,7 +75,7 @@ jobs:
         run: cargo binstall mdbook@0.5.4 mdbook-katex@0.10.0 wasm-pack --no-confirm
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+        uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
         with:
           target: wasm32-unknown-unknown
           cache: false
