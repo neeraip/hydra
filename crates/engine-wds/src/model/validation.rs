@@ -358,7 +358,6 @@ impl Network {
 
         // Lookup tables reused across checks.
         let pattern_ids: HashSet<&str> = self.patterns.iter().map(|p| p.id.as_str()).collect();
-        let node_ids: HashSet<&str> = self.nodes.iter().map(|n| n.base.id.as_str()).collect();
         let curve_by_id: HashMap<&str, &Curve> =
             self.curves.iter().map(|c| (c.id.as_str(), c)).collect();
 
@@ -420,7 +419,9 @@ impl Network {
             chk_pattern!("options", pat_id);
         }
         if let Some(ref nid) = self.options.trace_node {
-            if !node_ids.contains(nid.as_str()) {
+            // One lookup, so a scan: hashing every node id to answer it
+            // cost more than the rest of validation's lookups together.
+            if !self.nodes.iter().any(|n| n.base.id == *nid) {
                 errors.push(ValidationError::UnknownNodeIdRef {
                     object_id: "options".to_string(),
                     node_id: nid.clone(),

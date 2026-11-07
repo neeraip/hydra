@@ -35,14 +35,12 @@ pub(super) fn junction_mass_residual_sum(
         ctx.residual_xflow[ctx.link_from[k]] -= q;
         ctx.residual_xflow[ctx.link_to[k]] += q;
     }
+    // `junction_rows` lists exactly the solved junctions in ascending node
+    // order, so this sums the same terms in the same order as a walk over
+    // every node that skips the rest.
     let mut sum = 0.0;
-    for (i, node) in network.nodes.iter().enumerate() {
-        if !matches!(node.kind, NodeKind::Junction(_)) {
-            continue;
-        }
-        if ctx.node_junc_step_opt[i].is_none() {
-            continue;
-        }
+    for &(i, _) in &ctx.junction_rows {
+        let i = i as usize;
         let demand = if is_pda && ctx.junction_demands[i] > 0.0 {
             ctx.pda_demand_flows[i]
         } else {
