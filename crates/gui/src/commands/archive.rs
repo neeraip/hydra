@@ -326,7 +326,7 @@ fn walk_zip(
             continue;
         }
         budget.count_entry()?;
-        let entry_path = entry.name().to_string();
+        let entry_path = entry.name().map_err(|e| e.to_string())?.into_owned();
         let declared = entry.size();
         let bytes = read(&entry_path)
             .then(|| read_bounded(&mut entry, declared, &mut budget))
