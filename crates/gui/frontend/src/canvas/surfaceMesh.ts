@@ -178,8 +178,8 @@ export function surfaceEdgeData(
     ]) {
       // Undirected: order the pair so the two cells sharing an edge
       // produce one key, not two.
-      const lo = u < v ? u : v;
-      const hi = u < v ? v : u;
+      const lo = Math.min(u, v);
+      const hi = Math.max(u, v);
       // Packed into one number so the Set holds primitives. 2^26 caps
       // the mesh at ~67M vertices, far past anything that renders.
       const key = lo * 67_108_864 + hi;

@@ -63,7 +63,7 @@ export function placeSegments(
 ): SketchSegment[] {
   const aspect =
     Number.isFinite(sketch.aspect) && sketch.aspect > 0 ? sketch.aspect : 1;
-  const w = aspect >= 1 ? 1 : aspect;
+  const w = Math.min(aspect, 1);
   const h = aspect >= 1 ? 1 / aspect : 1;
   const ox = (1 - w) / 2;
   const oy = (1 - h) / 2;

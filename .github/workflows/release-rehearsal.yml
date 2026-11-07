@@ -73,19 +73,19 @@ jobs:
         working-directory: crates/gui/frontend
         run: pnpm install --frozen-lockfile
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
         with:
           target: ${{ matrix.target }}
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           # Read the caches main saves; never save from here. A release-profile
           # target directory is large and this runs weekly, so saving would
           # evict the caches every other workflow depends on.
           save-if: false
 
-      - uses: cargo-bins/cargo-binstall@v1.23.0
+      - uses: cargo-bins/cargo-binstall@v1.26.1
 
       - name: Cache Tauri CLI
         uses: actions/cache@v6
