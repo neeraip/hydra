@@ -34,56 +34,81 @@ type SecLine<'a> = (usize, &'a str);
 // Pass 1 — split file into named sections
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// The upper-cased name of a section header line, or `None` if the
+/// (already trimmed) line is not one. Shared by [`split_sections`] and
+/// [`section_names`] so recognition and parsing agree on what a header is.
+fn section_header(trimmed: &str) -> Option<String> {
+    let rest = trimmed.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    Some(rest[..end].to_ascii_uppercase())
+}
+
 /// Collect section name → Vec of `(line_number, data_line)` pairs (comments
 /// and blanks stripped).  Line numbers are 1-based positions in the input
 /// text, retained so parse errors can point at the offending line.
 fn split_sections(text: &str) -> HashMap<String, Vec<SecLine<'_>>> {
-    let mut sections: HashMap<String, Vec<SecLine<'_>>> = HashMap::new();
-    let mut current: Option<String> = None;
+    // Lines accumulate per section by index, so a data line costs a push and
+    // nothing else; the name map is consulted only at headers. A section that
+    // appears twice continues its first occurrence's list.
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut lists: Vec<(String, Vec<SecLine<'_>>)> = Vec::new();
+    let mut current: Option<usize> = None;
 
     for (idx, line) in text.lines().enumerate() {
         let line_no = idx + 1;
         let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            if let Some(end) = trimmed.find(']') {
-                let name = trimmed[1..end].to_ascii_uppercase();
-                if name == "END" {
-                    break;
-                }
-                current = Some(name.clone());
-                sections.entry(name).or_default();
-                continue;
+        if let Some(name) = section_header(trimmed) {
+            if name == "END" {
+                break;
             }
+            let next = lists.len();
+            let slot = *index.entry(name.clone()).or_insert(next);
+            if slot == next {
+                lists.push((name, Vec::new()));
+            }
+            current = Some(slot);
+            continue;
         }
-        if let Some(ref sec) = current {
-            // Skip comment lines and blank lines.
-            if trimmed.is_empty() || trimmed.starts_with(';') {
-                continue;
-            }
-            // TITLE section: preserve raw lines (EPANET copies the full
-            // line including any `;` characters as literal title text).
-            if sec == "TITLE" {
-                sections
-                    .entry(sec.clone())
-                    .or_default()
-                    .push((line_no, trimmed));
-                continue;
-            }
-            // Strip trailing comments (after `;`).
-            let data = if let Some(pos) = trimmed.find(';') {
-                trimmed[..pos].trim()
-            } else {
-                trimmed
-            };
-            if !data.is_empty() {
-                sections
-                    .entry(sec.clone())
-                    .or_default()
-                    .push((line_no, data));
-            }
+        let Some(slot) = current else {
+            continue;
+        };
+        // Skip comment lines and blank lines.
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+        let (name, list) = &mut lists[slot];
+        // TITLE section: preserve raw lines (EPANET copies the full
+        // line including any `;` characters as literal title text).
+        if name == "TITLE" {
+            list.push((line_no, trimmed));
+            continue;
+        }
+        // Strip trailing comments (after `;`).
+        let data = if let Some(pos) = trimmed.find(';') {
+            trimmed[..pos].trim()
+        } else {
+            trimmed
+        };
+        if !data.is_empty() {
+            list.push((line_no, data));
         }
     }
-    sections
+    lists.into_iter().collect()
+}
+
+/// The set of section names [`split_sections`] would produce, without
+/// collecting any data line. Recognition needs only this.
+fn section_names(text: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for line in text.lines() {
+        if let Some(name) = section_header(line.trim()) {
+            if name == "END" {
+                break;
+            }
+            names.insert(name);
+        }
+    }
+    names
 }
 
 /// Sections that exist in SWMM's input format and in no EPANET 2.3 file
@@ -189,16 +214,13 @@ const EPANET_ONLY_SECTIONS: &[&str] = &[
 /// first.
 pub(super) fn recognize_dialect(bytes: &[u8]) -> Recognition {
     let text = String::from_utf8_lossy(bytes);
-    let sections = split_sections(&text);
+    let sections = section_names(&text);
 
     // A foreign marker settles it, and outranks any shared section that
     // might otherwise look like evidence for us. Name what we think it is:
     // §2.5's optional reason turns a bare refusal into something an
     // application can actually report.
-    if let Some(section) = SWMM_ONLY_SECTIONS
-        .iter()
-        .find(|s| sections.contains_key(**s))
-    {
+    if let Some(section) = SWMM_ONLY_SECTIONS.iter().find(|s| sections.contains(**s)) {
         return Recognition::No {
             reason: Some(format!(
                 "this looks like a SWMM model, not an EPANET one \
@@ -206,10 +228,7 @@ pub(super) fn recognize_dialect(bytes: &[u8]) -> Recognition {
             )),
         };
     }
-    if EPANET_ONLY_SECTIONS
-        .iter()
-        .any(|s| sections.contains_key(*s))
-    {
+    if EPANET_ONLY_SECTIONS.iter().any(|s| sections.contains(*s)) {
         return Recognition::Definite;
     }
     // INP-shaped, nothing foreign, nothing exclusive: genuinely
