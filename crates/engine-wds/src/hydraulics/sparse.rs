@@ -131,6 +131,27 @@ impl SparseSolver {
     }
 
     /// Scalar left-looking Cholesky factorisation + solve (§3.6 EPANET kernel).
+    ///
+    /// Every array access is unchecked. On a distribution network the factor
+    /// averages under three non-zeros per column, so the cost is the
+    /// per-column bookkeeping (the elimination lists, column bounds, the
+    /// pivot entry) rather than the short inner loops, and a bounds check on
+    /// each of those reads was a third of the kernel's time. The invariants
+    /// that make the accesses sound are structural — fixed by `new` and never
+    /// mutated after it — and are listed once here:
+    ///
+    /// - `aii`, `f`, `temp`, `link_chain`, `first_ptr` have length `n`;
+    ///   `xlnz` has length `n + 1`; `nzsub` and `aij` have length
+    ///   `xlnz[n] = n_coeff`. Checked on entry, since they are O(1).
+    /// - `xlnz` is non-decreasing and every `nzsub` entry is `< n` (by
+    ///   construction in `build_csc`; asserted in debug builds).
+    /// - `link_chain` holds only values in `0..=n`, `n` being the list
+    ///   terminator: it is filled with `n` and thereafter assigned only a
+    ///   column index `j < n`, a list head `k < n`, or another of its own
+    ///   entries.
+    /// - `first_ptr[k]`, for a column `k` on an elimination list, is a
+    ///   position in `xlnz[k]..xlnz[k + 1]`: it is set to `xlnz[k]` when `k`
+    ///   is linked and advanced only while `< xlnz[k + 1]`.
     fn factorize_solve_scalar(&mut self) -> Result<(), usize> {
         let n = self.n;
         self.link_chain.fill(n);
@@ -144,126 +165,145 @@ impl SparseSolver {
             "factorize_solve_scalar: temp buffer not clean on entry"
         );
 
-        let xlnz = &self.xlnz;
-        let nzsub = &self.nzsub;
-        let aij = &mut self.aij;
-        let aii = &mut self.aii;
-        let f = &mut self.f;
-        let temp = &mut self.temp;
-        let link_chain = &mut self.link_chain;
-        let first_ptr = &mut self.first_ptr;
+        let xlnz = &self.xlnz[..];
+        let nzsub = &self.nzsub[..];
+        let aij = &mut self.aij[..];
+        let aii = &mut self.aii[..];
+        let temp = &mut self.temp[..];
+        let link_chain = &mut self.link_chain[..];
+        let first_ptr = &mut self.first_ptr[..];
 
-        debug_assert!(self.nzsub.iter().all(|&s| s < n));
-        debug_assert!(*xlnz.last().unwrap_or(&0) <= aij.len());
+        let n_coeff = aij.len();
+        assert!(
+            aii.len() == n
+                && temp.len() == n
+                && link_chain.len() == n
+                && first_ptr.len() == n
+                && xlnz.len() == n + 1
+                && nzsub.len() == n_coeff
+                && xlnz[n] == n_coeff,
+            "sparse solver storage does not match its structure"
+        );
+        debug_assert!(nzsub.iter().all(|&s| s < n));
+        debug_assert!(xlnz.windows(2).all(|w| w[0] <= w[1]));
 
-        for j in 0..n {
-            let mut diagj = 0.0f64;
-            let mut k = link_chain[j];
-            while k != n {
-                let newk = link_chain[k];
-                let kfirst = first_ptr[k];
-                let ljk = aij[kfirst];
-                diagj += ljk * ljk;
-                let istrt = kfirst + 1;
-                let istop = xlnz[k + 1];
-                if istrt < istop {
-                    first_ptr[k] = istrt;
-                    let isub = nzsub[istrt];
-                    link_chain[k] = link_chain[isub];
-                    link_chain[isub] = k;
-                    // SAFETY: `istrt..istop` are within `aij` and `nzsub` (both
-                    // length `n_coeff`, bounded by `xlnz[k+1]` ≤ n_coeff).
-                    // `nzsub` entries are all < n, so `temp.get_unchecked_mut(isub)`
-                    // is in bounds. The debug_assert! above validates both invariants.
-                    unsafe {
-                        let mut row_ptr = nzsub.as_ptr().add(istrt);
-                        let mut val_ptr = aij.as_ptr().add(istrt);
-                        let row_end = nzsub.as_ptr().add(istop);
-                        while row_ptr != row_end {
-                            let isub = *row_ptr;
-                            *temp.get_unchecked_mut(isub) += *val_ptr * ljk;
-                            row_ptr = row_ptr.add(1);
-                            val_ptr = val_ptr.add(1);
+        // SAFETY: every index below is in bounds by the invariants in the doc
+        // comment above, the length ones having just been asserted.
+        unsafe {
+            for j in 0..n {
+                let mut diagj = 0.0f64;
+                let mut k = *link_chain.get_unchecked(j);
+                while k != n {
+                    let newk = *link_chain.get_unchecked(k);
+                    let kfirst = *first_ptr.get_unchecked(k);
+                    let ljk = *aij.get_unchecked(kfirst);
+                    diagj += ljk * ljk;
+                    let istrt = kfirst + 1;
+                    let istop = *xlnz.get_unchecked(k + 1);
+                    if istrt < istop {
+                        *first_ptr.get_unchecked_mut(k) = istrt;
+                        let isub = *nzsub.get_unchecked(istrt);
+                        *link_chain.get_unchecked_mut(k) = *link_chain.get_unchecked(isub);
+                        *link_chain.get_unchecked_mut(isub) = k;
+                        let rows = nzsub.get_unchecked(istrt..istop);
+                        let vals = aij.get_unchecked(istrt..istop);
+                        for (&isub, &v) in rows.iter().zip(vals) {
+                            *temp.get_unchecked_mut(isub) += v * ljk;
                         }
                     }
+                    k = newk;
                 }
-                k = newk;
-            }
 
-            diagj = aii[j] - diagj;
-            if diagj <= 0.0 {
-                // The column scatter above may have left partial sums in
-                // `temp`; restore the all-zeros invariant so the caller can
-                // safely retry factorisation after adjusting the matrix.
-                temp.fill(0.0);
-                return Err(j);
-            }
-            diagj = diagj.sqrt();
-            aii[j] = diagj;
+                diagj = *aii.get_unchecked(j) - diagj;
+                if diagj <= 0.0 {
+                    // The column scatter above may have left partial sums in
+                    // `temp`; restore the all-zeros invariant so the caller can
+                    // safely retry factorisation after adjusting the matrix.
+                    temp.fill(0.0);
+                    return Err(j);
+                }
+                diagj = diagj.sqrt();
+                *aii.get_unchecked_mut(j) = diagj;
 
-            let istrt = xlnz[j];
-            let istop = xlnz[j + 1];
-            if istrt < istop {
-                first_ptr[j] = istrt;
-                let isub = nzsub[istrt];
-                link_chain[j] = link_chain[isub];
-                link_chain[isub] = j;
-                // SAFETY: same invariants as the first unsafe block above:
-                // `istrt..istop` ⊆ `0..n_coeff`, all `nzsub` entries < n,
-                // so all `temp` / `aij` / `f` accesses stay in bounds.
-                unsafe {
-                    let mut row_ptr = nzsub.as_ptr().add(istrt);
-                    let mut val_ptr = aij.as_mut_ptr().add(istrt);
-                    let row_end = nzsub.as_ptr().add(istop);
-                    while row_ptr != row_end {
-                        let isub = *row_ptr;
-                        let bj = (*val_ptr - *temp.get_unchecked(isub)) / diagj;
-                        *val_ptr = bj;
-                        *temp.get_unchecked_mut(isub) = 0.0;
-                        row_ptr = row_ptr.add(1);
-                        val_ptr = val_ptr.add(1);
+                let istrt = *xlnz.get_unchecked(j);
+                let istop = *xlnz.get_unchecked(j + 1);
+                if istrt < istop {
+                    *first_ptr.get_unchecked_mut(j) = istrt;
+                    let isub = *nzsub.get_unchecked(istrt);
+                    *link_chain.get_unchecked_mut(j) = *link_chain.get_unchecked(isub);
+                    *link_chain.get_unchecked_mut(isub) = j;
+                    let rows = nzsub.get_unchecked(istrt..istop);
+                    let vals = aij.get_unchecked_mut(istrt..istop);
+                    for (&isub, v) in rows.iter().zip(vals) {
+                        let t = temp.get_unchecked_mut(isub);
+                        *v = (*v - *t) / diagj;
+                        *t = 0.0;
                     }
                 }
             }
         }
 
-        for j in 0..n {
-            let bj = f[j] / aii[j];
-            f[j] = bj;
-            // SAFETY: `i` ranges over `xlnz[j]..xlnz[j+1]` ⊆ `0..n_coeff`;
-            // `nzsub[i] < n` (debug_assert! above) so `f.get_unchecked_mut` is valid.
-            unsafe {
-                let mut row_ptr = nzsub.as_ptr().add(xlnz[j]);
-                let mut val_ptr = aij.as_ptr().add(xlnz[j]);
-                let row_end = nzsub.as_ptr().add(xlnz[j + 1]);
-                while row_ptr != row_end {
-                    let isub = *row_ptr;
-                    *f.get_unchecked_mut(isub) -= *val_ptr * bj;
-                    row_ptr = row_ptr.add(1);
-                    val_ptr = val_ptr.add(1);
-                }
-            }
-        }
-
-        for j in (0..n).rev() {
-            let mut bj = f[j];
-            // SAFETY: same range invariants as the forward solve above;
-            // `f.get_unchecked(isub)` is valid because all `nzsub` entries < n.
-            unsafe {
-                let mut row_ptr = nzsub.as_ptr().add(xlnz[j]);
-                let mut val_ptr = aij.as_ptr().add(xlnz[j]);
-                let row_end = nzsub.as_ptr().add(xlnz[j + 1]);
-                while row_ptr != row_end {
-                    let isub = *row_ptr;
-                    bj -= *val_ptr * *f.get_unchecked(isub);
-                    row_ptr = row_ptr.add(1);
-                    val_ptr = val_ptr.add(1);
-                }
-            }
-            f[j] = bj / aii[j];
-        }
-
+        self.substitute();
         Ok(())
+    }
+
+    /// Solves `A x = f` in place with the factor already held in `aii`/`aij`,
+    /// by forward and back substitution only (§3.6 Phase 3, without the
+    /// factorisation).
+    ///
+    /// Valid only after a successful [`factorize_solve`](Self::factorize_solve)
+    /// whose factor has not been overwritten since: `clear` or another
+    /// factorisation replaces it. The tank corrector's linearised step
+    /// (simulation spec §5.3) is the caller.
+    pub(crate) fn solve_factored(&mut self) {
+        self.substitute();
+    }
+
+    /// Forward then back substitution with the held factor, in place in `f`.
+    /// Shares the invariants listed on `factorize_solve_scalar`.
+    fn substitute(&mut self) {
+        let n = self.n;
+        let xlnz = &self.xlnz[..];
+        let nzsub = &self.nzsub[..];
+        let aij = &self.aij[..];
+        let aii = &self.aii[..];
+        let f = &mut self.f[..];
+        assert!(
+            aii.len() == n
+                && f.len() == n
+                && xlnz.len() == n + 1
+                && nzsub.len() == aij.len()
+                && xlnz[n] == aij.len(),
+            "sparse solver storage does not match its structure"
+        );
+        // SAFETY: as in `factorize_solve_scalar`: `xlnz` is non-decreasing
+        // and bounded by `n_coeff`, every `nzsub` entry is `< n`, and the
+        // lengths have just been asserted.
+        unsafe {
+            for j in 0..n {
+                let bj = *f.get_unchecked(j) / *aii.get_unchecked(j);
+                *f.get_unchecked_mut(j) = bj;
+                let lo = *xlnz.get_unchecked(j);
+                let hi = *xlnz.get_unchecked(j + 1);
+                let rows = nzsub.get_unchecked(lo..hi);
+                let vals = aij.get_unchecked(lo..hi);
+                for (&isub, &v) in rows.iter().zip(vals) {
+                    *f.get_unchecked_mut(isub) -= v * bj;
+                }
+            }
+
+            for j in (0..n).rev() {
+                let mut bj = *f.get_unchecked(j);
+                let lo = *xlnz.get_unchecked(j);
+                let hi = *xlnz.get_unchecked(j + 1);
+                let rows = nzsub.get_unchecked(lo..hi);
+                let vals = aij.get_unchecked(lo..hi);
+                for (&isub, &v) in rows.iter().zip(vals) {
+                    bj -= v * *f.get_unchecked(isub);
+                }
+                *f.get_unchecked_mut(j) = bj / *aii.get_unchecked(j);
+            }
+        }
     }
 
     fn factorize_solve_timed(&mut self) -> Result<(), usize> {

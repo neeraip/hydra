@@ -1865,3 +1865,153 @@ fn mass_residual_vanishes_when_converged_and_registers_a_perturbation() {
     let after = junction_mass_residual_sum(&net, &mut ctx, false);
     assert_relative_eq!(after, 2.0 * bump, epsilon = 2.0 * before + 1e-12);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Simulation spec §5.3 — linearised tank corrector step
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Reservoir feeding a tank by two routes, one through an active PRV:
+///
+/// ```text
+///   R1 ──P1── J1 ──V1(PRV)── J2 ──P2── T1
+///              └──────────P3───────────┘
+/// ```
+///
+/// Moving the tank changes the flow in every link, the PRV's included: its
+/// flow is J2's demand plus whatever P2 carries to the tank.
+fn prv_tank_network() -> TestNetworkBuilder {
+    TestNetworkBuilder::new()
+        .reservoir("R1", 120.0)
+        .junction("J1", 0.0, 100.0)
+        .junction("J2", 0.0, 50.0)
+        .tank("T1", 0.0, 40.0, 5.0, 150.0, 40.0)
+        .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+        .valve("V1", "J1", "J2", ValveType::Prv, 8.0, 30.0)
+        .hw_pipe("P2", "J2", "T1", 2000.0, 8.0, 100.0)
+        .hw_pipe("P3", "J1", "T1", 3000.0, 6.0, 100.0)
+}
+
+/// Node and link positions in [`prv_tank_network`], in builder order.
+const T1: usize = 3;
+const V1: usize = 1;
+
+/// Tank net flow and PRV flow after a tank move of `move_ft`: at the
+/// opening solve, from the §5.3 linearised step, and from an ordinary
+/// re-solve at the moved head. Returned as `[(opening, linearised, resolved)]`.
+fn corrector_responses(move_ft: f64) -> [(f64, f64, f64); 2] {
+    use crate::hydraulics::{linearised_corrector, CorrectorStep};
+
+    let ucf = make_ucf(FlowUnits::Gpm, 1.0);
+    let dh = move_ft / ucf.elev;
+
+    let (mut net, mut ns, mut ls, favad) = prv_tank_network().build_with_favad();
+    // Converge far past the default accuracy: the comparison is between two
+    // answers, and the re-solve's own tolerance must not be what it measures.
+    net.options.flow_tol = 1e-12;
+    let mut ctx = build_solver_context(&net, &favad).unwrap();
+    let opening =
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    assert_eq!(opening, SolveResult::Converged);
+    assert_eq!(
+        ls[V1].status,
+        crate::LinkStatus::Active,
+        "fixture's PRV must be active"
+    );
+    let before = (ns[T1].net_flow, ls[V1].flow);
+    ns[T1].head += dh;
+    let switched = linearised_corrector(&net, &mut ctx, &mut ns, &mut ls, &[(T1, dh)], no_pswitch);
+    assert_eq!(
+        switched,
+        CorrectorStep::Smooth,
+        "a move inside a wide band reclassifies nothing"
+    );
+    let lin = (ns[T1].net_flow, ls[V1].flow);
+
+    let (mut net, mut ns, mut ls, favad) = prv_tank_network().build_with_favad();
+    // Converge far past the default accuracy: the comparison is between two
+    // answers, and the re-solve's own tolerance must not be what it measures.
+    net.options.flow_tol = 1e-12;
+    let mut ctx = build_solver_context(&net, &favad).unwrap();
+    solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    ns[T1].head += dh;
+    let resolve =
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    assert_eq!(resolve, SolveResult::Converged);
+    let reference = (ns[T1].net_flow, ls[V1].flow);
+
+    [
+        (before.0, lin.0, reference.0),
+        (before.1, lin.1, reference.1),
+    ]
+}
+
+/// The §5.3 linearised step is one Newton step from the converged opening
+/// solve, so its error against an ordinary re-solve must be second order in
+/// the tank move: halving the move cuts it about fourfold. A response wrong
+/// by any constant factor (none at all, the wrong sign, or a PRV left
+/// unchanged because its conductance is zero) fails that, since its error
+/// would only halve. The moves are asserted to matter, so a fixture whose
+/// flows barely respond cannot pass vacuously.
+#[test]
+fn linearised_corrector_error_is_second_order_in_the_tank_move() {
+    let coarse = corrector_responses(6.0);
+    let fine = corrector_responses(3.0);
+    for (i, what) in ["tank net flow", "PRV flow"].into_iter().enumerate() {
+        let (before, lin, reference) = coarse[i];
+        let change = (reference - before).abs();
+        assert!(
+            change > 0.05 * before.abs(),
+            "fixture too gentle: {what} moved only {change:.3e} of {before:.3e}"
+        );
+        let err_coarse = (lin - reference).abs();
+        assert!(
+            err_coarse < 0.1 * change,
+            "{what}: linearised {lin:.6e} vs re-solved {reference:.6e} \
+             (opening {before:.6e}) is not a first-order-exact response"
+        );
+        let (_, lin_f, ref_f) = fine[i];
+        let ratio = err_coarse / (lin_f - ref_f).abs();
+        assert!(
+            (3.0..5.5).contains(&ratio),
+            "{what}: halving the move scaled the error by 1/{ratio:.2}, \
+             not the ~1/4 of a second-order residual"
+        );
+    }
+}
+
+/// A tank driven to its minimum while still draining must fail §5.3's
+/// smoothness precondition: the §3.9 tank test would close its outlet. A
+/// small move inside the band must not.
+#[test]
+fn linearised_corrector_reports_a_tank_reaching_its_limit() {
+    use crate::hydraulics::{linearised_corrector, CorrectorStep};
+
+    let build = || {
+        TestNetworkBuilder::new()
+            .tank("T1", 0.0, 10.0, 9.0, 50.0, 30.0)
+            .junction("J1", 0.0, 200.0)
+            .hw_pipe("P1", "T1", "J1", 500.0, 8.0, 100.0)
+            .build_with_favad()
+    };
+    let ucf = make_ucf(FlowUnits::Gpm, 1.0);
+
+    for (move_ft, expected) in [
+        (-0.01, CorrectorStep::Smooth),
+        (-1.0, CorrectorStep::Switched),
+    ] {
+        let (net, mut ns, mut ls, favad) = build();
+        let mut ctx = build_solver_context(&net, &favad).unwrap();
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+        assert!(ns[0].net_flow < 0.0, "fixture tank must be draining");
+        let dh = move_ft / ucf.elev;
+        ns[0].head += dh;
+        let switched =
+            linearised_corrector(&net, &mut ctx, &mut ns, &mut ls, &[(0, dh)], no_pswitch);
+        assert_eq!(switched, expected, "tank moved {move_ft} ft");
+        assert_eq!(
+            ls[0].status,
+            crate::LinkStatus::Open,
+            "the check must not apply what it finds"
+        );
+    }
+}

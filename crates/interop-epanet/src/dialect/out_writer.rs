@@ -98,6 +98,10 @@ pub struct OutStreamWriter<W: Write + Seek> {
     /// `Some` when `STATISTIC != NONE`: report periods are folded into a single
     /// aggregated period on `finish` rather than streamed individually (§4.3).
     stats: Option<PeriodStats>,
+    /// One period's bytes, reused across periods: the buffer is the same
+    /// size every time, so allocating and faulting in a fresh one per period
+    /// would be pure overhead.
+    period: Vec<u8>,
 }
 
 impl<W: Write + Seek> OutStreamWriter<W> {
@@ -146,6 +150,7 @@ impl<W: Write + Seek> OutStreamWriter<W> {
                 let n_values = network.nodes.len() * 4 + network.links.len() * 8;
                 Some(PeriodStats::new(options.statistic, n_values))
             },
+            period: Vec::new(),
         })
     }
 
@@ -186,13 +191,13 @@ impl<W: Write + Seek> OutStreamWriter<W> {
             self.next_rtime += self.report_step;
         }
 
-        let period_bytes = dynamic_snapshot_bytes(network, instant, &self.ucf);
+        dynamic_snapshot_bytes(network, instant, &self.ucf, &mut self.period);
         if let Some(stats) = &mut self.stats {
             // STATISTIC aggregation: fold this period in; the single
             // aggregated period is emitted on finish().
-            stats.accumulate(&period_bytes);
+            stats.accumulate(&self.period);
         } else {
-            self.writer.write_all(&period_bytes)?;
+            self.writer.write_all(&self.period)?;
             self.n_periods += 1;
         }
 
@@ -638,62 +643,70 @@ fn dynamic_snapshot_bytes(
     network: &crate::engine_api::Network,
     snapshot: &crate::dialect::HydSnapshot,
     ucf: &Ucf,
-) -> Vec<u8> {
+    buf: &mut Vec<u8>,
+) {
     let n_nodes = network.nodes.len();
     let n_links = network.links.len();
     // 4 node variables + 8 link variables, 4 bytes each (see file layout above).
     let snapshot_bytes = (n_nodes * 4 + n_links * 8) * 4;
-    let mut buf: Vec<u8> = Vec::with_capacity(snapshot_bytes);
+    debug_assert_eq!(snapshot.node_states.len(), n_nodes);
+    debug_assert_eq!(snapshot.link_states.len(), n_links);
+    // Sized once and filled section by section through zipped chunk
+    // iterators: one bounds decision per section instead of a length update
+    // per four-byte value.
+    buf.clear();
+    buf.resize(snapshot_bytes, 0);
+    let mut rest: &mut [u8] = &mut buf[..];
 
     // Demand
-    for (i, node) in network.nodes.iter().enumerate() {
-        let node_state = &snapshot.node_states[i];
+    for (dst, (node, node_state)) in
+        take(&mut rest, n_nodes).zip(network.nodes.iter().zip(&snapshot.node_states))
+    {
         let demand = match &node.kind {
             NodeKind::Junction(_) => {
                 node_state.demand_flow + node_state.emitter_flow + node_state.leakage_flow
             }
             NodeKind::Reservoir(_) | NodeKind::Tank(_) => node_state.net_flow,
         };
-        buf.extend_from_slice(&((demand * ucf.flow) as f32).to_le_bytes());
+        dst.copy_from_slice(&((demand * ucf.flow) as f32).to_le_bytes());
     }
 
     // Head
-    for (i, _node) in network.nodes.iter().enumerate() {
-        let node_state = &snapshot.node_states[i];
-        buf.extend_from_slice(&((node_state.head * ucf.elev) as f32).to_le_bytes());
+    for (dst, node_state) in take(&mut rest, n_nodes).zip(&snapshot.node_states) {
+        dst.copy_from_slice(&((node_state.head * ucf.elev) as f32).to_le_bytes());
     }
 
     // Pressure
-    for (i, node) in network.nodes.iter().enumerate() {
-        let node_state = &snapshot.node_states[i];
+    for (dst, (node, node_state)) in
+        take(&mut rest, n_nodes).zip(network.nodes.iter().zip(&snapshot.node_states))
+    {
         let physical_elevation = match &node.kind {
             NodeKind::Tank(t) => node.base.elevation - t.min_level,
             _ => node.base.elevation,
         };
         let pressure_ft = node_state.head - physical_elevation;
-        buf.extend_from_slice(&((pressure_ft * ucf.pressure) as f32).to_le_bytes());
+        dst.copy_from_slice(&((pressure_ft * ucf.pressure) as f32).to_le_bytes());
     }
 
     // Node quality
-    for (i, _node) in network.nodes.iter().enumerate() {
-        let node_state = &snapshot.node_states[i];
-        buf.extend_from_slice(&(node_state.quality as f32).to_le_bytes());
+    for (dst, node_state) in take(&mut rest, n_nodes).zip(&snapshot.node_states) {
+        dst.copy_from_slice(&(node_state.quality as f32).to_le_bytes());
     }
 
     // Link flow
-    for (i, _link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
+    for (dst, link_state) in take(&mut rest, n_links).zip(&snapshot.link_states) {
         let flow = if is_closed(link_state.status) {
             0.0
         } else {
             link_state.flow
         };
-        buf.extend_from_slice(&((flow * ucf.flow) as f32).to_le_bytes());
+        dst.copy_from_slice(&((flow * ucf.flow) as f32).to_le_bytes());
     }
 
     // Velocity
-    for (i, link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
+    for (dst, (link, link_state)) in
+        take(&mut rest, n_links).zip(network.links.iter().zip(&snapshot.link_states))
+    {
         let velocity = if is_closed(link_state.status) {
             0.0
         } else {
@@ -717,12 +730,13 @@ fn dynamic_snapshot_bytes(
                 }
             }
         };
-        buf.extend_from_slice(&(velocity as f32).to_le_bytes());
+        dst.copy_from_slice(&(velocity as f32).to_le_bytes());
     }
 
     // Headloss
-    for (i, link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
+    for (dst, (link, link_state)) in
+        take(&mut rest, n_links).zip(network.links.iter().zip(&snapshot.link_states))
+    {
         let from_node_index = link.base.from_idx();
         let to_node_index = link.base.to_idx();
         let headloss = if is_closed(link_state.status) {
@@ -752,24 +766,23 @@ fn dynamic_snapshot_bytes(
                 }
             }
         };
-        buf.extend_from_slice(&(headloss as f32).to_le_bytes());
+        dst.copy_from_slice(&(headloss as f32).to_le_bytes());
     }
 
     // Link quality
-    for (i, _link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
-        buf.extend_from_slice(&(link_state.quality as f32).to_le_bytes());
+    for (dst, link_state) in take(&mut rest, n_links).zip(&snapshot.link_states) {
+        dst.copy_from_slice(&(link_state.quality as f32).to_le_bytes());
     }
 
     // Status
-    for (i, _link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
-        buf.extend_from_slice(&status_out_code(link_state.status).to_le_bytes());
+    for (dst, link_state) in take(&mut rest, n_links).zip(&snapshot.link_states) {
+        dst.copy_from_slice(&status_out_code(link_state.status).to_le_bytes());
     }
 
     // Setting
-    for (i, link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
+    for (dst, (link, link_state)) in
+        take(&mut rest, n_links).zip(network.links.iter().zip(&snapshot.link_states))
+    {
         let setting = match &link.kind {
             // Pipe "setting" is the roughness coefficient. Hazen-Williams C and
             // Manning n are dimensionless; Darcy-Weisbach roughness is written
@@ -798,18 +811,18 @@ fn dynamic_snapshot_bytes(
                 }
             }
         };
-        buf.extend_from_slice(&(setting as f32).to_le_bytes());
+        dst.copy_from_slice(&(setting as f32).to_le_bytes());
     }
 
     // Reaction rate
-    for (i, _link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
-        buf.extend_from_slice(&(link_state.reaction_rate as f32).to_le_bytes());
+    for (dst, link_state) in take(&mut rest, n_links).zip(&snapshot.link_states) {
+        dst.copy_from_slice(&(link_state.reaction_rate as f32).to_le_bytes());
     }
 
     // Friction factor
-    for (i, link) in network.links.iter().enumerate() {
-        let link_state = &snapshot.link_states[i];
+    for (dst, (link, link_state)) in
+        take(&mut rest, n_links).zip(network.links.iter().zip(&snapshot.link_states))
+    {
         let friction_factor = if let LinkKind::Pipe(p) = &link.kind {
             // A closed pipe's residual seepage flow makes the derived factor
             // meaningless (multi-million values); EPANET writes 0 there and
@@ -833,10 +846,15 @@ fn dynamic_snapshot_bytes(
         } else {
             0.0
         };
-        buf.extend_from_slice(&(friction_factor as f32).to_le_bytes());
+        dst.copy_from_slice(&(friction_factor as f32).to_le_bytes());
     }
+}
 
-    buf
+/// The next `n` four-byte values of a period buffer, as chunks.
+fn take<'a>(rest: &mut &'a mut [u8], n: usize) -> std::slice::ChunksExactMut<'a, u8> {
+    let (head, tail) = std::mem::take(rest).split_at_mut(n * 4);
+    *rest = tail;
+    head.chunks_exact_mut(4)
 }
 
 // ── Network Reactions ─────────────────────────────────────────────────────────

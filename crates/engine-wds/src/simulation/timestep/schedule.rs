@@ -10,6 +10,21 @@ use crate::{LinkKind, LinkState, Network, NodeKind, NodeState, TriggerType};
 /// for quality transport purposes (§6.3.1 of quality/spec.md).
 const QZERO: f64 = 1.0e-6;
 
+/// A predicted time to a tank limit or level-control threshold, in the whole
+/// seconds the step works in (§5.2, §5.2.1).
+///
+/// Zero or less means not approaching, or already there: no event. A
+/// positive time rounds to the nearest second, but never to zero: a tank
+/// short of its limit has not reached it, and dropping its time would let
+/// the next step run its full length past the crossing (§5.2 deviation note).
+pub(crate) fn whole_seconds_until(seconds: f64) -> f64 {
+    if seconds > 0.0 {
+        seconds.round().max(1.0)
+    } else {
+        0.0
+    }
+}
+
 /// Computes the adaptive hydraulic time step (§5.2).
 ///
 /// Returns $
@@ -78,7 +93,7 @@ pub(crate) fn adaptive_timestep(t: f64, network: &Network, node_states: &[NodeSt
                     let v_min = tank.volume_from_level(tank.min_level, &network.curves);
                     (ns.volume - v_min).max(0.0)
                 };
-                let dt_tank_i = (dv_available / q_net.abs()).round();
+                let dt_tank_i = whole_seconds_until(dv_available / q_net.abs());
                 if dt_tank_i <= 0.0 {
                     return None;
                 }
@@ -146,7 +161,7 @@ pub(crate) fn control_timestep(
                 let v_at_grade = tank.volume_from_level(level_at_grade, &network.curves);
                 let v_current = node_states[node_idx].volume;
                 let v_diff = v_at_grade - v_current;
-                tc = (v_diff / q).round();
+                tc = whole_seconds_until(v_diff / q);
             }
             TriggerType::Timer => {
                 if let Some(trigger_time) = ctrl.trigger_time {
@@ -499,6 +514,48 @@ mod tests {
     }
 
     #[test]
+    fn whole_seconds_until_never_rounds_an_approach_away() {
+        use super::whole_seconds_until;
+        assert_eq!(
+            whole_seconds_until(0.4),
+            1.0,
+            "short of the limit is one second"
+        );
+        assert_eq!(whole_seconds_until(1e-9), 1.0);
+        assert_eq!(whole_seconds_until(2.4), 2.0);
+        assert_eq!(whole_seconds_until(2.6), 3.0);
+        assert_eq!(whole_seconds_until(0.0), 0.0, "at the limit is no event");
+        assert_eq!(whole_seconds_until(-5.0), 0.0, "moving away is no event");
+    }
+
+    #[test]
+    fn a_tank_under_half_a_second_from_empty_takes_a_one_second_step() {
+        // §5.2 deviation: 0.4 s from empty rounds to zero. Skipping the tank
+        // would leave dt at the full hour, overshooting the limit by nearly
+        // all of it; it must cap the step at the one-second floor instead.
+        let a = std::f64::consts::PI * 25.0;
+        let q_net: f64 = -0.01;
+        let opts = SimulationOptions {
+            duration: 86400.0,
+            hyd_step: 3600.0,
+            report_step: 3600.0,
+            pattern_step: 3600.0,
+            pattern_start: 0.0,
+            ..SimulationOptions::default()
+        };
+        let tank = cylindrical_tank_node(1, 0.0, 0.0, 10.0, 5.0, 10.0, false);
+        let (net, _) = network_with_tank(opts, tank);
+        let dv = 0.4 * q_net.abs();
+        let node_states = vec![NodeState {
+            volume: dv,
+            level: dv / a,
+            net_flow: q_net,
+            ..NodeState::default()
+        }];
+        assert_eq!(adaptive_timestep(0.0, &net, &node_states), 1.0);
+    }
+
+    #[test]
     fn control_timestep_ignores_out_of_range_trigger_node() {
         use super::control_timestep;
         use crate::{LinkState, SimpleControl, TriggerType};
@@ -534,5 +591,48 @@ mod tests {
                 "out-of-range trigger node must be skipped, got dt={dt}"
             );
         }
+    }
+
+    #[test]
+    fn a_level_control_under_half_a_second_away_takes_a_one_second_step() {
+        // §5.2.1: a HILEVEL threshold 0.4 s above a filling tank rounds to a
+        // zero time. Skipping it would let the control fire a whole step
+        // late; it must schedule the one-second floor.
+        use super::control_timestep;
+        use crate::{LinkState, SimpleControl, TriggerType};
+
+        let a = std::f64::consts::PI * 25.0;
+        let q_net: f64 = 0.01;
+        let opts = SimulationOptions {
+            duration: 86400.0,
+            hyd_step: 3600.0,
+            report_step: 3600.0,
+            pattern_step: 3600.0,
+            pattern_start: 0.0,
+            ..SimulationOptions::default()
+        };
+        let tank = cylindrical_tank_node(1, 0.0, 0.0, 10.0, 5.0, 10.0, false);
+        let (mut net, _) = network_with_tank(opts, tank);
+        let grade = 5.0;
+        net.controls = vec![SimpleControl {
+            link: 1,
+            trigger_type: TriggerType::HiLevel,
+            trigger_time: None,
+            trigger_node: Some(1),
+            trigger_grade: Some(grade),
+            action_status: Some(LinkStatus::Closed),
+            action_setting: None,
+            enabled: true,
+        }];
+        let level = grade - 0.4 * q_net / a;
+        let node_states = vec![NodeState {
+            head: level,
+            level,
+            volume: level * a,
+            net_flow: q_net,
+            ..NodeState::default()
+        }];
+        let link_states = vec![LinkState::default()];
+        assert_eq!(control_timestep(0.0, &net, &node_states, &link_states), 1.0);
     }
 }
