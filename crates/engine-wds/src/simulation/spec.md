@@ -208,11 +208,50 @@ This is the trajectory rule-based controls evaluate against (§4.2); it is first
 
 The update is applied unconditionally: Hydra intentionally does not skip it when $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ (as EPANET does) — the update is exact at any flow magnitude, and the difference is numerically negligible.
 
-**Corrector.** At the end of the hydraulic period — after rule evaluation has fixed the actually-advanced interval $\Delta t$ and the predictor has produced $V^{*}$ for every tank — the network equilibrium is solved once more at the predicted tank levels and end-of-period settings, yielding $Q_{\text{net}}^{*}$, and each tank's volume is corrected trapezoidally:
+**Corrector.** At the end of the hydraulic period — after rule evaluation has fixed the actually-advanced interval $\Delta t$ and the predictor has produced $V^{*}$ for every tank — the net tank flows at the predicted tank levels and end-of-period settings, $Q_{\text{net}}^{*}$, are evaluated, and each tank's volume is corrected trapezoidally:
 
 $$V_{\text{new}} = V_{\text{old}} + \frac{\Delta t}{2}\left(Q_{\text{net}}^{t} + Q_{\text{net}}^{*}\right)$$
 
-The corrector solve is an ordinary §3 solve; implementations should warm-start it from the predictor state, from which it typically converges in a small number of iterations. The next hydraulic period's opening solve then proceeds from the corrected volumes, so the algebraic constraint always holds at the state the simulation reports and continues from.
+$Q_{\text{net}}^{*}$ is obtained by the **linearised corrector step** below when its conditions hold, and otherwise by the **corrector solve**. The next hydraulic period's opening solve then proceeds from the corrected volumes, so the algebraic constraint always holds at the state the simulation reports and continues from.
+
+**Linearised corrector step.** The period's opening solve converged (`../hydraulics/spec.md` §3.8), so the network was in equilibrium at the start-of-period tank heads $H_n^{t}$. Moving each tank $n$ to its predicted head $H_n^{*}$ (the head at $V_n^{*}$), by
+
+$$\Delta H_n = H_n^{*} - H_n^{t},$$
+
+changes only the boundary-head term of the linear system's right-hand side (`../hydraulics/spec.md` §3.4). Let $\mathbf{A} = \mathbf{L}\mathbf{L}^{\top}$ be the factored matrix of the opening solve's final iteration, with link conductances $P_k$ (`../hydraulics/spec.md` §3.3–§3.6). The junction-head response $\delta\mathbf{H}$ solves
+
+$$\mathbf{A}\,\delta\mathbf{H} = \mathbf{b}, \qquad b_i = \sum_{k \,\in\, \mathcal{T}(i)} P_k\,\Delta H_{n(k)},$$
+
+where $\mathcal{T}(i)$ is the set of links joining junction $i$ to a tank $n(k)$. This reuses the existing factor: forward and back substitution only, with no re-linearisation, assembly or factorisation. Each link's flow response follows the §3.7 flow update without its residual term,
+
+$$\delta Q_k = P_k\left(\delta H_{\text{from}(k)} - \delta H_{\text{to}(k)}\right),$$
+
+taking $\delta H$ of a tank endpoint as its $\Delta H_n$ and of a reservoir as $0$. An active PRV or PSV has $P_k = 0$ and takes its flow from the balance at the node it pins (`../hydraulics/spec.md` §3.5), so its response is that node's change in balance from its other links: for a PRV pinning its downstream node $j$,
+
+$$\delta Q_k = \sum_{m \neq k:\,\text{from}(m)=j} \delta Q_m \;-\; \sum_{m \neq k:\,\text{to}(m)=j} \delta Q_m,$$
+
+and for a PSV pinning its upstream node $i$, $\delta Q_k = \sum_{m \neq k:\,\text{to}(m)=i} \delta Q_m - \sum_{m \neq k:\,\text{from}(m)=i} \delta Q_m$. The pinned node's head response is zero to within $1/C_{\infty}$, so its nodal outflows do not change. §2.9 forbids two such valves sharing a node, so each pinned node's balance excludes every other pinning valve.
+
+Because $P_k = 0$, $\mathbf{A}$ does not carry this coupling: the valve's flow change also leaves (PRV) or enters (PSV) the junction at its other, exposed end, and the single substitution above does not see it. The responses are therefore settled by repeated substitution with the same factor. Starting from $\delta Q_v = 0$ for every active PRV and PSV $v$, each sweep solves
+
+$$\mathbf{A}\,\delta\mathbf{H} = \mathbf{b} + \sum_{v} s_v\,\delta Q_v\,\mathbf{e}_{u(v)},$$
+
+where $u(v)$ is the valve's exposed junction, $\mathbf{e}_{u}$ its unit vector, and $s_v = -1$ for a PRV and $+1$ for a PSV; then recomputes the link responses and each $\delta Q_v$ from them as above. The sweeps stop once $\sum_v \lvert \delta Q_v^{\text{new}} - \delta Q_v^{\text{old}} \rvert \leq \varepsilon_Q \sum_v \lvert \delta Q_v^{\text{new}} \rvert + n_v\,Q_{\text{zero}}$, with $\varepsilon_Q$ the solve's relative flow accuracy (`../hydraulics/spec.md` §3.8), $n_v$ the number of active PRVs and PSVs, and $Q_{\text{zero}}$ as in §5.2. A network with none needs exactly one sweep. Sweeps are capped at 8; responses that have not settled by then are a condition failure, below.
+
+Nodal outflows elsewhere (emitters, leakage, pressure-dependent demand) are carried unchanged. The predicted flows are $Q_k^{*} = Q_k^{t} + \delta Q_k$, junction heads $H_i^{*} = H_i^{t} + \delta H_i$, and $Q_{\text{net}}^{*}$ follows from the $Q_k^{*}$ by the sum at the head of this section. The working flows and heads are set to $Q^{*}, H^{*}$, which warm-start the next period's opening solve.
+
+With the valve responses settled, this is the exact first-order response of the network equilibrium to the tank head changes, taken at the converged opening state. It reuses the opening solve's Jacobian instead of re-linearising at $Q^{t}$, and it omits the opening solve's residual; both differences are bounded by the §3.8 tolerances the opening solve met. Its remaining error is second order in $\Delta H$, and $\Delta H$ is itself $O(\Delta t)$ by the predictor, so the local error it adds to $V_{\text{new}}$ is $O(\Delta t^{3})$, the order of the scheme's own truncation error. It does not lower the scheme's order. Without the valve sweeps it would: an unsettled valve coupling leaves a first-order error in $Q_{\text{net}}^{*}$, which is $O(\Delta t^{2})$ in tank volume, the order of the predecessor's Euler step.
+
+The step's cost is one forward and one back substitution per sweep, plus a pass over the links per sweep, whatever the number of tanks: the right-hand side carries every tank's head change at once.
+
+The linearised step is used only when all of the following hold. When any fails, the corrector solve is used instead.
+
+1. The opening solve converged. An unbalanced solve (`../hydraulics/spec.md` §3.8) is not an equilibrium to linearise about.
+2. No simple control, rule action or pattern change has altered any link's status or setting since the opening solve. The factor describes the opening solve's statuses and settings, and the corrector must see the end-of-period ones.
+3. The opening solve's factor is still held. An implementation that has performed a corrector solve since (for example in a rejected trial of the same period, below) no longer holds it.
+4. The active PRV and PSV responses settle within the sweep cap. When they do not, the step leaves the working state untouched.
+
+**Corrector solve.** The network equilibrium is solved once more at the predicted tank levels and end-of-period settings, as an ordinary §3 solve, yielding $Q_{\text{net}}^{*}$. Implementations should warm-start it from the predictor state, from which it typically converges in a small number of iterations.
 
 A tank whose predictor level was clamped by boundary enforcement during this period (below) takes its predictor value for the period and is excluded from the error estimate: the trapezoid would otherwise average across the flow discontinuity the clamp introduces, and the adaptive step (§5.2) already lands boundary crossings exactly.
 
@@ -222,9 +261,11 @@ $$e_h = \max_{\text{tanks}} \frac{\lvert V_{\text{new}} - V^{*} \rvert}{A(h_{\te
 
 where $A(h)$ is the tank's surface area at level $h$ (for a volume-curve tank, the local slope $\mathrm{d}V/\mathrm{d}h$ of the active curve segment).
 
-**Smoothness precondition.** The gap above is a truncation error only where $Q_{\text{net}}$ varies smoothly across the interval. The corrector re-solves the equilibrium at the predicted levels, and that solve may reclassify link statuses under `../hydraulics/spec.md` §3.9 — a pump driven past its maximum head, a check valve closing, a PRV or PSV changing mode. When it does, $Q_{\text{net}}^{t}$ and $Q_{\text{net}}^{*}$ are samples of two different flow regimes, and $e_h$ measures the size of the switch, not the integrator's error.
+**Smoothness precondition.** The gap above is a truncation error only where $Q_{\text{net}}$ varies smoothly across the interval. The corrector re-solves the equilibrium at the predicted levels, and that solve may reclassify link statuses under `../hydraulics/spec.md` §3.9 — a pump driven past its maximum head, a check valve closing, a PRV or PSV changing mode — or through its post-convergence control re-evaluation (`../hydraulics/spec.md` §3.8), when a junction-head control's threshold is crossed at the predicted heads. When it does, $Q_{\text{net}}^{t}$ and $Q_{\text{net}}^{*}$ are samples of two different flow regimes, and $e_h$ measures the size of the switch, not the integrator's error.
 
-Only §3.9 can do this. Simple controls (§4.1) are applied once at the period's opening and rules (§4.2) are evaluated outside the corrector, so neither can fire within it.
+The linearised corrector step performs no solve, so it reclassifies nothing by itself. Instead, the checks a solve applies upon convergence, the §3.9 status tests and the §3.8 post-convergence control re-evaluation, are evaluated at the predicted state $Q^{*}, H^{*}$ without changing any status or setting. If any check would change one, the step is treated exactly as a corrector solve that reclassified: the smoothness precondition fails.
+
+Only those two can do this. Simple controls (§4.1) are otherwise applied once at the period's opening, and rules (§4.2) are evaluated outside the corrector, so neither can fire within it.
 
 On such a step every tank takes its **predictor** value $V^{*}$ — exactly as a clamped tank does above — and the step is accepted and excluded from the error estimate. The trapezoid is deliberately not used: averaging $Q_{\text{net}}^{t}$ with a $Q_{\text{net}}^{*}$ drawn from a different regime integrates neither of them. The predictor is regime-consistent across the interval and first-order, and §5.2 is what keeps that interval short.
 

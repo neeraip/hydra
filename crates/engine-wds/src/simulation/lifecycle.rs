@@ -1,4 +1,5 @@
 use super::*;
+use crate::hydraulics::CorrectorStep;
 
 impl Default for Simulation {
     fn default() -> Self {
@@ -433,6 +434,10 @@ impl Simulation {
             .map(|&i| self.node_states[i].net_flow)
             .collect();
 
+        // §5.3 linearised corrector, condition 3: the opening solve's factor
+        // is held until a corrector solve replaces it.
+        let mut factor_held = result == SolveResult::Converged;
+
         const DT_FLOOR: f64 = 1.0;
         let mut step_overflow: f64;
         let mut rejections = 0u32;
@@ -507,20 +512,58 @@ impl Simulation {
                 break;
             }
 
-            // ── §5.3 corrector: re-solve at the predicted levels and average ──
+            // ── §5.3 corrector: evaluate Q*_net at the predicted levels ──
             let v_star: Vec<f64> = tank_indices
                 .iter()
                 .map(|&i| self.node_states[i].volume)
                 .collect();
-            // Statuses as the predictor left them. The corrector's own solve
-            // may reclassify a link under ../hydraulics §3.9 — a pump past
-            // its maximum head, a check valve closing, a PRV changing mode —
-            // and that makes its flows a sample of a different regime (§5.3
-            // smoothness precondition). Simple controls and rules cannot do
-            // this: they are applied outside the corrector.
-            let status_before: Vec<LinkStatus> =
-                self.link_states.iter().map(|l| l.status).collect();
-            {
+            let (pre_nodes, pre_links) = pre_trial
+                .as_ref()
+                .expect("invariant: correcting implies a snapshot");
+            // Condition 2: no control or rule has touched a link since the
+            // opening solve, whose factor describes its statuses and settings.
+            let links_as_opened = links_unchanged(&self.link_states, pre_links);
+            let linear = if factor_held && links_as_opened {
+                // Linearised step: substitutions with the opening factor.
+                let tank_dh: Vec<(usize, f64)> = tank_indices
+                    .iter()
+                    .map(|&i| (i, self.node_states[i].head - pre_nodes[i].head))
+                    .collect();
+                let network = self
+                    .network
+                    .as_ref()
+                    .expect("invariant: network set in load()");
+                let solver_ctx = self
+                    .solver_ctx
+                    .as_mut()
+                    .expect("invariant: solver_ctx set in load()");
+                match hydraulics::linearised_corrector(
+                    network,
+                    solver_ctx,
+                    &mut self.node_states,
+                    &mut self.link_states,
+                    &tank_dh,
+                    controls::pswitch,
+                ) {
+                    CorrectorStep::Smooth => Some(false),
+                    CorrectorStep::Switched => Some(true),
+                    // Valve responses did not settle: nothing was written,
+                    // and the corrector solve takes over.
+                    CorrectorStep::Unresolved => None,
+                }
+            } else {
+                None
+            };
+            let switched = if let Some(switched) = linear {
+                switched
+            } else {
+                // Statuses as the predictor left them. The corrector's own
+                // solve may reclassify a link under ../hydraulics §3.9 or its
+                // §3.8 post-convergence controls, and that makes its flows a
+                // sample of a different regime (§5.3 smoothness
+                // precondition).
+                let status_before: Vec<LinkStatus> =
+                    self.link_states.iter().map(|l| l.status).collect();
                 let network = self
                     .network
                     .as_ref()
@@ -545,13 +588,13 @@ impl Simulation {
                     controls::pswitch,
                 )
                 .map_err(SessionError::HydraulicSolve)?;
-            }
-
-            let switched = self
-                .link_states
-                .iter()
-                .zip(&status_before)
-                .any(|(l, before)| l.status != *before);
+                // The solve refactored: the opening factor is gone (condition 3).
+                factor_held = false;
+                self.link_states
+                    .iter()
+                    .zip(&status_before)
+                    .any(|(l, before)| l.status != *before)
+            };
 
             if switched {
                 // §5.3: the predictor is regime-consistent across the
@@ -714,6 +757,18 @@ impl Simulation {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+/// Whether every link holds the status and setting it had at the period's
+/// opening solve: §5.3's second condition for the linearised corrector,
+/// whose factor describes exactly those. A valve with no setting holds NaN,
+/// and NaN against NaN is unchanged, not a difference.
+fn links_unchanged(now: &[LinkState], opened: &[LinkState]) -> bool {
+    now.len() == opened.len()
+        && now.iter().zip(opened).all(|(now, then)| {
+            now.status == then.status
+                && (now.setting == then.setting || (now.setting.is_nan() && then.setting.is_nan()))
+        })
+}
 
 #[cfg(test)]
 mod tests {
@@ -1018,5 +1073,52 @@ Headloss  H-W
         let net = crate::dialect::parse(inp).expect("parse");
         let sess = Simulation::from_network(net).expect("load");
         assert!(sess.warnings().is_empty());
+    }
+
+    #[test]
+    fn links_unchanged_sees_status_and_setting_but_not_nan_or_flow() {
+        let link = |status: LinkStatus, setting: f64, flow: f64| LinkState {
+            status,
+            setting,
+            flow,
+            ..LinkState::default()
+        };
+        let opened = [
+            link(LinkStatus::Open, 1.0, 0.5),
+            link(LinkStatus::Active, f64::NAN, 0.2),
+        ];
+        // A flow change is the corrector's own business, not a control's.
+        let flowed = [
+            link(LinkStatus::Open, 1.0, 0.9),
+            link(LinkStatus::Active, f64::NAN, 0.1),
+        ];
+        assert!(
+            links_unchanged(&flowed, &opened),
+            "NaN setting reads as unchanged"
+        );
+        let reset = [
+            link(LinkStatus::Open, 0.8, 0.5),
+            link(LinkStatus::Active, f64::NAN, 0.2),
+        ];
+        assert!(
+            !links_unchanged(&reset, &opened),
+            "a changed setting is a change"
+        );
+        let given = [
+            link(LinkStatus::Open, 1.0, 0.5),
+            link(LinkStatus::Active, 40.0, 0.2),
+        ];
+        assert!(
+            !links_unchanged(&given, &opened),
+            "NaN to a value is a change"
+        );
+        let closed = [
+            link(LinkStatus::Closed, 1.0, 0.5),
+            link(LinkStatus::Active, f64::NAN, 0.2),
+        ];
+        assert!(
+            !links_unchanged(&closed, &opened),
+            "a changed status is a change"
+        );
     }
 }

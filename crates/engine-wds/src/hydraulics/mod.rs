@@ -28,4 +28,5 @@ use valve::{bad_valve, check_link_status, check_valve_status};
 pub(crate) use shared::Q_CLOSED;
 pub use shared::{HydraulicError, SolveResult};
 pub use solve::{build_solver_context, solve_hydraulic_step, SolverContext};
+pub(crate) use solve::{linearised_corrector, CorrectorStep};
 pub(crate) use sparse::SparseSolver;

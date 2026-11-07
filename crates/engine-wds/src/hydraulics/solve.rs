@@ -250,6 +250,13 @@ pub struct SolverContext {
     /// contain none at all; walking every link to look for them is the
     /// dominant cost of that check on a large model.
     pub(super) prv_psv_links: Vec<usize>,
+    /// Per-node head response of the linearised tank corrector (simulation
+    /// spec §5.3): the tank head changes going in, the junction responses
+    /// coming out. All zero between uses.
+    corrector_dh: Vec<f64>,
+    /// Per-node balance of the corrector's link flow responses, from which an
+    /// active PRV or PSV takes its own. All zero between uses.
+    corrector_balance: Vec<f64>,
     initialised: bool,
 }
 
@@ -632,6 +639,8 @@ pub fn build_solver_context(
         link_tank_adjacent,
         favad_node_indices,
         pda_node_indices,
+        corrector_dh: vec![0.0; n_nodes],
+        corrector_balance: vec![0.0; n_nodes],
         initialised: false,
     };
 
@@ -1262,31 +1271,7 @@ pub fn solve_hydraulic_step(
         ls.setting = ctx.settings[k];
     }
 
-    // Net flow is reported for fixed-grade nodes only, so both the clear and
-    // the accumulation walk what feeds them rather than the whole network.
-    // The previous pass zeroed one entry per node and visited every link to
-    // fill fifteen of them on the 46k benchmark.
-    for &i in &ctx.source_nodes {
-        ctx.net_flow_accum[i] = 0.0;
-    }
-    for &k in &ctx.source_links {
-        if matches!(
-            ctx.statuses[k],
-            LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
-        ) {
-            continue;
-        }
-        let flow = ctx.flows[k];
-        // A link may have a fixed-grade node at both ends, so both are
-        // tested rather than one being inferred from the other.
-        let (from, to) = (ctx.link_from[k], ctx.link_to[k]);
-        if ctx.node_is_source[from] {
-            ctx.net_flow_accum[from] -= flow;
-        }
-        if ctx.node_is_source[to] {
-            ctx.net_flow_accum[to] += flow;
-        }
-    }
+    accumulate_source_net_flows(ctx);
 
     // Node-state writes, by kind rather than by a match on every node: a
     // `Node` carries an id string this pass never reads.
@@ -1308,6 +1293,232 @@ pub fn solve_hydraulic_step(
     }
 
     Ok(result)
+}
+
+/// Net flow into each fixed-grade node at the context's current flows,
+/// left in `net_flow_accum` (§5.3's $Q_{\text{net}}$ for a tank).
+///
+/// Net flow is reported for fixed-grade nodes only, so both the clear and
+/// the accumulation walk what feeds them rather than the whole network.
+/// The previous pass zeroed one entry per node and visited every link to
+/// fill fifteen of them on the 46k benchmark.
+fn accumulate_source_net_flows(ctx: &mut SolverContext) {
+    for &i in &ctx.source_nodes {
+        ctx.net_flow_accum[i] = 0.0;
+    }
+    for &k in &ctx.source_links {
+        if matches!(
+            ctx.statuses[k],
+            LinkStatus::Closed | LinkStatus::XHead | LinkStatus::TempClosed
+        ) {
+            continue;
+        }
+        let flow = ctx.flows[k];
+        // A link may have a fixed-grade node at both ends, so both are
+        // tested rather than one being inferred from the other.
+        let (from, to) = (ctx.link_from[k], ctx.link_to[k]);
+        if ctx.node_is_source[from] {
+            ctx.net_flow_accum[from] -= flow;
+        }
+        if ctx.node_is_source[to] {
+            ctx.net_flow_accum[to] += flow;
+        }
+    }
+}
+
+/// What the linearised tank corrector step (simulation spec §5.3) found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CorrectorStep {
+    /// Applied; the predicted state reclassifies nothing.
+    Smooth,
+    /// Applied; the checks a solve runs upon convergence would change a
+    /// status or setting at the predicted state, failing §5.3's smoothness
+    /// precondition. Nothing they would change has been applied.
+    Switched,
+    /// The active PRV/PSV responses did not settle within
+    /// [`CORRECTOR_SWEEPS`]. Nothing has been written to the working state,
+    /// and the caller must use the corrector solve.
+    Unresolved,
+}
+
+/// Substitution sweeps the linearised corrector allows its active PRV/PSV
+/// responses to settle in (simulation spec §5.3). One suffices without such
+/// valves; with them the responses typically settle in two or three.
+pub(crate) const CORRECTOR_SWEEPS: usize = 8;
+
+/// Simulation spec §5.2's negligible flow $Q_{\text{zero}}$, the absolute
+/// floor under the corrector's settling test.
+const CORRECTOR_Q_ZERO: f64 = 1.0e-6;
+
+/// The linearised tank corrector step (simulation spec §5.3).
+///
+/// Call only after the period's opening solve converged, with the context
+/// still holding that solve's factor and conductances, and with no link
+/// status or setting changed since. `link_states` and the junction heads in
+/// `node_states` must be the opening solve's ($Q^t$, $H^t$); the tank heads
+/// in `node_states` are the predicted $H^{*}$, and `tank_dh` gives each
+/// tank's $\Delta H_n = H_n^{*} - H_n^{t}$.
+///
+/// Unless the result is [`CorrectorStep::Unresolved`], the working state
+/// holds the predicted flows and junction heads on return, and every
+/// fixed-grade node's `net_flow` is $Q_{\text{net}}^{*}$.
+pub(crate) fn linearised_corrector(
+    network: &Network,
+    ctx: &mut SolverContext,
+    node_states: &mut [NodeState],
+    link_states: &mut [LinkState],
+    tank_dh: &[(usize, f64)],
+    pswitch_fn: fn(&Network, &[NodeState], &mut [LinkStatus], &mut [f64]) -> bool,
+) -> CorrectorStep {
+    let options = &network.options;
+
+    // Active PRVs and PSVs, each as (link, pinned node, exposed node, sign of
+    // its flow in the exposed node's balance). Their conductance is zero, so
+    // the matrix does not carry their coupling (hydraulics §3.5): a change in
+    // valve flow is fed back to the exposed node and the substitution
+    // repeated until the valve flows settle.
+    let pinning: Vec<(usize, usize, usize, f64)> = ctx
+        .prv_psv_links
+        .iter()
+        .filter(|&&k| matches!(link_states[k].status, LinkStatus::Active))
+        .filter_map(|&k| match &network.links[k].kind {
+            LinkKind::Valve(v) if v.valve_type == ValveType::Prv => {
+                Some((k, ctx.link_to[k], ctx.link_from[k], -1.0))
+            }
+            LinkKind::Valve(v) if v.valve_type == ValveType::Psv => {
+                Some((k, ctx.link_from[k], ctx.link_to[k], 1.0))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut valve_dq = vec![0.0_f64; pinning.len()];
+
+    for &(i, dh) in tank_dh {
+        ctx.corrector_dh[i] = dh;
+    }
+    let mut settled = false;
+    for _ in 0..CORRECTOR_SWEEPS {
+        // Right-hand side: the boundary-head term through the links that
+        // join a junction to a tank (all among the links with a fixed-grade
+        // end), plus each pinning valve's flow change at its exposed node.
+        ctx.sparse.f.fill(0.0);
+        for &k in &ctx.source_links {
+            let (from, to) = (ctx.link_from[k], ctx.link_to[k]);
+            let pk = ctx.p[k];
+            if ctx.node_is_source[to] {
+                if let Some(ji) = ctx.node_junc_step_opt[from] {
+                    ctx.sparse.f[ctx.sparse.row[ji]] += pk * ctx.corrector_dh[to];
+                }
+            }
+            if ctx.node_is_source[from] {
+                if let Some(ji) = ctx.node_junc_step_opt[to] {
+                    ctx.sparse.f[ctx.sparse.row[ji]] += pk * ctx.corrector_dh[from];
+                }
+            }
+        }
+        for (&(_, _, exposed, sign), &dq) in pinning.iter().zip(&valve_dq) {
+            if let Some(ji) = ctx.node_junc_step_opt[exposed] {
+                ctx.sparse.f[ctx.sparse.row[ji]] += sign * dq;
+            }
+        }
+        ctx.sparse.solve_factored();
+        for &(i, row) in &ctx.junction_rows {
+            ctx.corrector_dh[i as usize] = ctx.sparse.f[row as usize];
+        }
+
+        // Link responses, and each node's balance of them; the pinning
+        // valves are left out and take theirs from that balance.
+        ctx.corrector_balance.fill(0.0);
+        let mut next = 0;
+        for k in 0..network.links.len() {
+            if pinning.get(next).is_some_and(|v| v.0 == k) {
+                next += 1;
+                continue;
+            }
+            let (from, to) = (ctx.link_from[k], ctx.link_to[k]);
+            let dq = ctx.p[k] * (ctx.corrector_dh[from] - ctx.corrector_dh[to]);
+            ctx.flows[k] = link_states[k].flow + dq;
+            ctx.corrector_balance[from] -= dq;
+            ctx.corrector_balance[to] += dq;
+        }
+        // A PRV's flow enters the node it pins and a PSV's leaves it, and
+        // hydraulics §2.9 forbids two such valves sharing a node, so the
+        // pinned node's balance over its other links is the valve's flow
+        // change with the sign that closes it.
+        let mut moved = 0.0;
+        let mut size = 0.0;
+        for (&(_, pinned, _, sign), dq) in pinning.iter().zip(valve_dq.iter_mut()) {
+            let new = sign * ctx.corrector_balance[pinned];
+            moved += (new - *dq).abs();
+            size += new.abs();
+            *dq = new;
+        }
+        if moved <= options.flow_tol * size + CORRECTOR_Q_ZERO * pinning.len() as f64 {
+            settled = true;
+            break;
+        }
+    }
+    if !settled {
+        ctx.corrector_dh.fill(0.0);
+        ctx.corrector_balance.fill(0.0);
+        return CorrectorStep::Unresolved;
+    }
+    for (&(k, ..), &dq) in pinning.iter().zip(&valve_dq) {
+        ctx.flows[k] = link_states[k].flow + dq;
+    }
+
+    // Write the predicted state: it is what the checks read and what the
+    // next opening solve warm-starts from.
+    for (k, ls) in link_states.iter_mut().enumerate() {
+        ls.flow = ctx.flows[k];
+    }
+    for &(i, _) in &ctx.junction_rows {
+        let i = i as usize;
+        node_states[i].head += ctx.corrector_dh[i];
+    }
+    for (i, h) in ctx.node_heads.iter_mut().enumerate() {
+        *h = node_states[i].head;
+    }
+    accumulate_source_net_flows(ctx);
+    for &i in &ctx.source_nodes {
+        node_states[i].net_flow = ctx.net_flow_accum[i];
+    }
+    ctx.corrector_dh.fill(0.0);
+    ctx.corrector_balance.fill(0.0);
+
+    // §5.3 smoothness precondition, on copies so nothing is applied.
+    let mut statuses: Vec<LinkStatus> = link_states.iter().map(|l| l.status).collect();
+    let mut settings: Vec<f64> = link_states.iter().map(|l| l.setting).collect();
+    let valve = check_valve_status(
+        network,
+        &ctx.prv_psv_links,
+        &mut statuses,
+        &settings,
+        &ctx.flows,
+        node_states,
+        &ctx.node_elevations,
+        options.head_tol,
+        options.flow_change_tol,
+    );
+    let link = check_link_status(
+        network,
+        &mut statuses,
+        &settings,
+        &ctx.flows,
+        node_states,
+        &ctx.node_h_min,
+        &ctx.node_h_max,
+        &ctx.link_tank_adjacent,
+        options.head_tol,
+        options.flow_change_tol,
+        &ctx.pump_coeffs,
+    );
+    let control = pswitch_fn(network, node_states, &mut statuses, &mut settings);
+    if valve || link || control {
+        CorrectorStep::Switched
+    } else {
+        CorrectorStep::Smooth
+    }
 }
 
 /// Computes P/Y linearisation coefficients for all links (§3.3).

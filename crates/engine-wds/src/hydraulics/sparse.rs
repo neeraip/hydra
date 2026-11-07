@@ -169,7 +169,6 @@ impl SparseSolver {
         let nzsub = &self.nzsub[..];
         let aij = &mut self.aij[..];
         let aii = &mut self.aii[..];
-        let f = &mut self.f[..];
         let temp = &mut self.temp[..];
         let link_chain = &mut self.link_chain[..];
         let first_ptr = &mut self.first_ptr[..];
@@ -177,7 +176,6 @@ impl SparseSolver {
         let n_coeff = aij.len();
         assert!(
             aii.len() == n
-                && f.len() == n
                 && temp.len() == n
                 && link_chain.len() == n
                 && first_ptr.len() == n
@@ -243,7 +241,45 @@ impl SparseSolver {
                     }
                 }
             }
+        }
 
+        self.substitute();
+        Ok(())
+    }
+
+    /// Solves `A x = f` in place with the factor already held in `aii`/`aij`,
+    /// by forward and back substitution only (§3.6 Phase 3, without the
+    /// factorisation).
+    ///
+    /// Valid only after a successful [`factorize_solve`](Self::factorize_solve)
+    /// whose factor has not been overwritten since: `clear` or another
+    /// factorisation replaces it. The tank corrector's linearised step
+    /// (simulation spec §5.3) is the caller.
+    pub(crate) fn solve_factored(&mut self) {
+        self.substitute();
+    }
+
+    /// Forward then back substitution with the held factor, in place in `f`.
+    /// Shares the invariants listed on `factorize_solve_scalar`.
+    fn substitute(&mut self) {
+        let n = self.n;
+        let xlnz = &self.xlnz[..];
+        let nzsub = &self.nzsub[..];
+        let aij = &self.aij[..];
+        let aii = &self.aii[..];
+        let f = &mut self.f[..];
+        assert!(
+            aii.len() == n
+                && f.len() == n
+                && xlnz.len() == n + 1
+                && nzsub.len() == aij.len()
+                && xlnz[n] == aij.len(),
+            "sparse solver storage does not match its structure"
+        );
+        // SAFETY: as in `factorize_solve_scalar`: `xlnz` is non-decreasing
+        // and bounded by `n_coeff`, every `nzsub` entry is `< n`, and the
+        // lengths have just been asserted.
+        unsafe {
             for j in 0..n {
                 let bj = *f.get_unchecked(j) / *aii.get_unchecked(j);
                 *f.get_unchecked_mut(j) = bj;
@@ -268,8 +304,6 @@ impl SparseSolver {
                 *f.get_unchecked_mut(j) = bj / *aii.get_unchecked(j);
             }
         }
-
-        Ok(())
     }
 
     fn factorize_solve_timed(&mut self) -> Result<(), usize> {
