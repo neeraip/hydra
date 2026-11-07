@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -118,14 +118,7 @@ function entry(undo: EditSet, redo: EditSet = {}): UndoEntry {
 }
 
 function harness(): { undo: () => void; redo: () => void } {
-  let api: { undo: () => void; redo: () => void } | null = null;
-  function Probe() {
-    api = useUndoRedo();
-    return null;
-  }
-  render(<Probe />);
-  if (!api) throw new Error("hook never ran");
-  return api;
+  return renderHook(() => useUndoRedo()).result.current;
 }
 
 describe("applyEditSet order", () => {

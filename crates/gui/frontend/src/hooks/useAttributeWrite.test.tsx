@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearAllStacks, getUndoStacks, stackKey } from "./undoStack";
@@ -79,23 +79,7 @@ vi.mock("../AppContext", () => ({
 }));
 
 function harness() {
-  const calls: Array<
-    (
-      id: string,
-      key: string,
-      v: number | string,
-      previous?: number | string,
-      kind?: string,
-    ) => Promise<void>
-  > = [];
-  function Probe() {
-    calls.push(useElementAttributeWrite());
-    return null;
-  }
-  render(<Probe />);
-  const write = calls[0];
-  if (!write) throw new Error("hook never ran");
-  return write;
+  return renderHook(() => useElementAttributeWrite()).result.current;
 }
 
 beforeEach(() => {
@@ -228,23 +212,7 @@ describe("recordEntryLabel", () => {
  */
 describe("useElementMoveWrite", () => {
   function harnessMove() {
-    const calls: Array<
-      (
-        id: string,
-        before: readonly [number, number] | null | undefined,
-        x: number,
-        y: number,
-        kind?: string,
-      ) => Promise<void>
-    > = [];
-    function Probe() {
-      calls.push(useElementMoveWrite());
-      return null;
-    }
-    render(<Probe />);
-    const move = calls[0];
-    if (!move) throw new Error("hook never ran");
-    return move;
+    return renderHook(() => useElementMoveWrite()).result.current;
   }
 
   it("patches, saves, and marks the results stale", async () => {
@@ -280,15 +248,7 @@ describe("useElementMoveWrite", () => {
 
 describe("useElementRemoveWrite", () => {
   function harnessRemove() {
-    const calls: Array<(kind: string, id: string) => Promise<unknown>> = [];
-    function Probe() {
-      calls.push(useElementRemoveWrite());
-      return null;
-    }
-    render(<Probe />);
-    const remove = calls[0];
-    if (!remove) throw new Error("hook never ran");
-    return remove;
+    return renderHook(() => useElementRemoveWrite()).result.current;
   }
 
   it("saves the model and marks the results stale", async () => {

@@ -109,6 +109,37 @@ function formatExtent(reading: CoordinateReading): string {
   return `${round(reading.minX)} → ${round(reading.maxX)} across, ${round(reading.minY)} → ${round(reading.maxY)} up`;
 }
 
+/**
+ * The mark that says a row is an option.
+ *
+ * Without it a row carried no resting affordance at all: no border, no
+ * fill, ordinary text, and `cursor: pointer` — which cannot be seen
+ * until the pointer is already on it. The tint on the current answer
+ * only says *which* one is chosen; it says nothing about the rest being
+ * choosable, and when nothing matches, no row is tinted and the whole
+ * list reads as static text.
+ *
+ * A radio rather than a chevron or a button face: these are
+ * mutually-exclusive answers staged as a draft and committed by the
+ * button below, which is exactly what a radio means. A chevron would
+ * promise navigation, and a button face would promise the click acts.
+ */
+const RadioMark = ({ on }: { on: boolean }) => (
+  <span
+    aria-hidden="true"
+    style={{
+      width: 13,
+      height: 13,
+      borderRadius: "50%",
+      flexShrink: 0,
+      marginTop: 2,
+      border: `1px solid ${on ? "var(--accent)" : "var(--border-hover)"}`,
+      background: on ? "var(--accent)" : "transparent",
+      boxShadow: on ? "inset 0 0 0 2.5px var(--bg-card)" : undefined,
+    }}
+  />
+);
+
 export function CrsPicker() {
   const {
     activeProjectId,
@@ -348,37 +379,6 @@ export function CrsPicker() {
     margin: 0,
     pointerEvents: "none",
   };
-
-  /**
-   * The mark that says a row is an option.
-   *
-   * Without it a row carried no resting affordance at all: no border, no
-   * fill, ordinary text, and `cursor: pointer` — which cannot be seen
-   * until the pointer is already on it. The tint on the current answer
-   * only says *which* one is chosen; it says nothing about the rest being
-   * choosable, and when nothing matches, no row is tinted and the whole
-   * list reads as static text.
-   *
-   * A radio rather than a chevron or a button face: these are
-   * mutually-exclusive answers staged as a draft and committed by the
-   * button below, which is exactly what a radio means. A chevron would
-   * promise navigation, and a button face would promise the click acts.
-   */
-  const RadioMark = ({ on }: { on: boolean }) => (
-    <span
-      aria-hidden="true"
-      style={{
-        width: 13,
-        height: 13,
-        borderRadius: "50%",
-        flexShrink: 0,
-        marginTop: 2,
-        border: `1px solid ${on ? "var(--accent)" : "var(--border-hover)"}`,
-        background: on ? "var(--accent)" : "transparent",
-        boxShadow: on ? "inset 0 0 0 2.5px var(--bg-card)" : undefined,
-      }}
-    />
-  );
 
   return (
     <ModalBackdrop onDismiss={dismiss} zIndex={70}>
