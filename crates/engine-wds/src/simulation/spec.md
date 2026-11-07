@@ -164,10 +164,12 @@ One further cap applies: when the previous period was accepted only after one or
 |---|---|
 | $\Delta t_h$ | User-specified nominal hydraulic time step |
 | $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant. When $t$ lands exactly on a reporting instant the expression is zero; the term is then a **full** $\Delta t_{\text{rep}}$, since the boundary sought is the strictly next one |
-| $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (tanks with $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ are skipped; $\Delta t_h$ if no tank qualifies). $Q_{\text{zero}} = 10^{-6}$ m³/s is the negligible-flow threshold (the same value as $Q_0$ in `../hydraulics/spec.md` §3.10); its SI value relative to EPANET's $10^{-6}$ ft³/s is covered by the DEVIATION note in `../hydraulics/spec.md` §3.9 |
+| $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate, $\Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$, rounded to the nearest whole second (tanks with $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ are skipped, as are tanks already at the limit they are approaching, $\Delta V_{\text{available}} = 0$; $\Delta t_h$ if no tank qualifies). A tank short of its limit whose time rounds to zero contributes one second, not nothing (see the deviation note below the table). $Q_{\text{zero}} = 10^{-6}$ m³/s is the negligible-flow threshold (the same value as $Q_0$ in `../hydraulics/spec.md` §3.10); its SI value relative to EPANET's $10^{-6}$ ft³/s is covered by the DEVIATION note in `../hydraulics/spec.md` §3.9 |
 | $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$. As with the reporting term, this is zero whenever $t + t_{\text{pstart}}$ is an exact multiple of $\Delta t_p$ — including $t = 0$ — and the term is then a **full** $\Delta t_p$. Without that guard the step would collapse to zero at every pattern boundary |
 | $\Delta t_{\text{control}}$ | Shortest time until a simple control fires (§5.2.1) |
 | $t_{\text{duration}} - t$ | Time remaining until end of simulation |
+
+> **DEVIATION from EPANET:** EPANET rounds a tank's time to its limit, and a level control's time to its threshold (§5.2.1), to whole seconds and ignores any that round to zero. A tank less than half a second short of a limit or a control threshold therefore shortens no step: the next step runs its full length, the tank crosses partway through, and the outlet closure or control action lands late by up to that whole step. Under Hydra's corrector (§5.3) the corrected volume routinely sits a fraction of a second short of the limit the predictor landed on, so this happens in practice, not only by chance. Hydra takes such a time as one second, the step floor, so the crossing lands on the next step. Results differ from EPANET only where a tank or level control comes within half a second of its limit at a step boundary.
 
 #### 5.2.1 Control Time Step
 
@@ -182,7 +184,7 @@ For each enabled simple control $c$:
 
   $$t_c = \operatorname{round}\!\left(\frac{V(G_c) - V_{\text{current}}}{Q_{\text{net}}}\right)$$
 
-  where $V(G_c)$ is the tank volume at head $G_c$ and $V_{\text{current}}$ is the current tank volume. The result is rounded to the nearest whole second.
+  where $V(G_c)$ is the tank volume at head $G_c$ and $V_{\text{current}}$ is the current tank volume. The result is rounded to the nearest whole second; a time that rounds to zero is taken as one second, since the tank is approaching the threshold and has not reached it (see the deviation note in §5.2).
 
 2. **Timer controls**: if $t_{\text{trigger}} > t + \varepsilon_t$ (the trigger has not yet fired at $t$; see §4.1), then $t_c = t_{\text{trigger}} - t$.
 
