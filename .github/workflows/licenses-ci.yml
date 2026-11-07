@@ -73,7 +73,7 @@ jobs:
       # dependencies have to be present — this is the one check that spans
       # the two ecosystems, which is why it is its own workflow.
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+        uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
         with:
           cache: false
 
@@ -88,7 +88,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6.1.0
+        uses: pnpm/action-setup@v6.1.1
         with:
           version: 10
 
