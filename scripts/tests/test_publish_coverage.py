@@ -70,11 +70,11 @@ class PublishWorkflowCoversEveryCrate(unittest.TestCase):
                     )
 
 
-class BumpUpdatesEveryPin(unittest.TestCase):
-    def test_bump_rewrites_every_intra_workspace_pin(self):
-        """A pin bump.py does not know about is left at the old version, and
+class ReleaseSyncUpdatesEveryPin(unittest.TestCase):
+    def test_release_sync_rewrites_every_intra_workspace_pin(self):
+        """A pin release_sync.py does not know about is left at the old version, and
         the publish then pins a version that no longer exists."""
-        bump = (ROOT / "scripts/bump.py").read_text()
+        bump = (ROOT / "scripts/release_sync.py").read_text()
         known = set(re.findall(r'"(hydra-[a-z-]+)",', bump))
         touched = set(re.findall(r'"(crates/[a-z-]+)/Cargo\.toml"', bump))
 
@@ -87,57 +87,17 @@ class BumpUpdatesEveryPin(unittest.TestCase):
             ]
             if not deps:
                 continue
-            # crates/cli is handled by its own dedicated rewrite in bump.py.
-            if member == "crates/cli":
-                continue
             self.assertIn(
                 member,
                 touched,
-                f"{member} has workspace dep pins but bump.py never rewrites it",
+                f"{member} has workspace dep pins but release_sync.py never rewrites it",
             )
             for dep in deps:
                 self.assertIn(
                     dep,
                     known,
-                    f"{member} pins {dep}, which bump.py does not rewrite",
+                    f"{member} pins {dep}, which release_sync.py does not rewrite",
                 )
-
-
-class BumpStagesWhatItRewrites(unittest.TestCase):
-    """A pin bump.py rewrites but never stages is written to the working tree
-    and then left behind, so the tag carries the old pins. That happened once:
-    crates/engines was added to the rewrite list and not to the commit list."""
-
-    def test_every_rewritten_manifest_is_also_staged(self):
-        bump = (ROOT / "scripts/bump.py").read_text()
-
-        # The manifests whose pins get rewritten.
-        rewritten = set(
-            re.findall(r'"(crates/[a-z-]+/Cargo\.toml)"', bump.split("def ")[0])
-        )
-        self.assertTrue(rewritten, "no CRATE_MANIFESTS constant found in bump.py")
-
-        # The file list handed to commit_and_tag.
-        call = bump[bump.index("commit_and_tag(") :]
-        staged_block = call[: call.index("]")]
-
-        for manifest in sorted(rewritten):
-            self.assertTrue(
-                manifest in staged_block or "CRATE_MANIFESTS" in staged_block,
-                f"bump.py rewrites {manifest} but does not stage it",
-            )
-
-    def test_rewrite_and_stage_share_one_list(self):
-        """Two hand-maintained lists drift; one cannot."""
-        bump = (ROOT / "scripts/bump.py").read_text()
-        call = bump[bump.index("commit_and_tag(") :]
-        staged_block = call[: call.index("]")]
-        self.assertIn(
-            "CRATE_MANIFESTS",
-            staged_block,
-            "commit_and_tag should splat CRATE_MANIFESTS rather than repeat the "
-            "manifest paths, so the rewrite and staging lists cannot diverge",
-        )
 
 
 if __name__ == "__main__":

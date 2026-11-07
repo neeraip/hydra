@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "separate-pull-requests": true,
+  "draft": true,
+  "force-tag-creation": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "What's New" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "refactor", "section": "Internal", "hidden": true },
+    { "type": "build", "section": "Internal", "hidden": true },
+    { "type": "chore", "section": "Internal", "hidden": true },
+    { "type": "ci", "section": "Internal", "hidden": true },
+    { "type": "docs", "section": "Internal", "hidden": true },
+    { "type": "style", "section": "Internal", "hidden": true },
+    { "type": "test", "section": "Internal", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "component": "library",
+      "include-component-in-tag": false,
+      "exclude-paths": ["crates/cli", "crates/gui", "site", ".github"],
+      "extra-files": [
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" }
+      ]
+    },
+    "crates/cli": {
+      "component": "cli",
+      "extra-files": [
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.package.version" }
+      ]
+    },
+    "crates/gui": {
+      "component": "gui",
+      "extra-files": [
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.package.version" },
+        { "type": "json", "path": "tauri.conf.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "frontend/package.json", "jsonpath": "$.version" }
+      ]
+    }
+  }
+}

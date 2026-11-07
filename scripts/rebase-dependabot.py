@@ -9,8 +9,8 @@ are already current are not churned, and never while a PR still has
 checks running, since the refresh would throw that run away.
 
 The command posted depends on the branch: `@dependabot rebase` on a
-clean one, `@dependabot recreate` where CI has pushed a commit onto it
-(the licences workflow completes GUI bumps that way), because Dependabot
+clean one, `@dependabot recreate` where someone has pushed a commit onto
+it (no workflow does any more; a person still can), because Dependabot
 refuses to rebase a branch holding a commit it did not author and says
 so instead of acting.
 
@@ -52,7 +52,7 @@ def command_for(pr: dict) -> str:
     """The refresh command this PR will actually obey.
 
     Dependabot refuses to rebase a branch holding a commit it did not
-    author (the licences workflow pushes one onto GUI bumps), and only
+    author (anyone's push onto its branch adds one), and only
     `recreate` works from then on. Missing commit data reads as clean:
     the worst case is a refusal comment from Dependabot naming the fix.
     """

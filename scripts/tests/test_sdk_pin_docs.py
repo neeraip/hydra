@@ -12,7 +12,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# Kept in step with SDK_PIN_DOCS in scripts/bump.py; the last test below
+# Kept in step with SDK_PIN_DOCS in scripts/release_sync.py; the last test below
 # fails if that list gains an entry this one does not know about.
 PIN_DOCS = ("README.md", "crates/sdk/README.md", "docs/src/sdk/overview.md")
 
@@ -43,15 +43,15 @@ class TestSdkPinDocs(unittest.TestCase):
                 f"later major, so readers would resolve to an old release",
             )
 
-    def test_bump_script_owns_every_documented_pin(self):
+    def test_release_sync_owns_every_documented_pin(self):
         # A doc added to one list and not the other is exactly how the pin
         # went stale before: the bump would stop updating it silently.
-        bump = (ROOT / "scripts" / "bump.py").read_text()
+        bump = (ROOT / "scripts" / "release_sync.py").read_text()
         for doc in PIN_DOCS:
             self.assertIn(
                 doc,
                 bump,
-                f"{doc} carries an sdk pin but bump.py does not update it",
+                f"{doc} carries an sdk pin but release_sync.py does not update it",
             )
 
     def test_no_undocumented_pin_escapes_the_list(self):

@@ -222,9 +222,9 @@ deny:
     cargo deny check
 
 # The notices the app shows under Settings → About, generated from the GUI's
-# own dependency graph. Run after any dependency change, Rust or frontend,
-# and commit the result — `just ci` fails on a stale file, because notices
-# that no longer describe the binary are not notices.
+# own dependency graph. Every release PR regenerates them (release-sync), and
+# a GUI release refuses to build from stale ones, so main may lag between
+# releases and `just ci` does not check them.
 # Regenerate the bundled third-party licence notices
 licenses:
     python3 scripts/licenses.py
@@ -430,33 +430,17 @@ check-frontend-lockfile:
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog licenses-check build-frontend test-frontend test-layout test-scripts
+ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog build-frontend test-frontend test-layout test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
-# When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
-# Usage: just bump patch|minor|major [--push|--no-push] (omit flag to be prompted)
-# Bump the workspace library version (common, engines, report, sdk) and tag v{version}
-bump version push_flag="":
-    @python3 scripts/bump.py {{version}} {{push_flag}}
-
-# Usage: just bump-cli patch|minor|major [--push|--no-push] (omit flag to be prompted)
-# Bump the CLI application version independently and tag cli-v{version}
-bump-cli version push_flag="":
-    @python3 scripts/bump-cli.py {{version}} {{push_flag}}
-
-# Usage: just bump-gui patch|minor|major [--push|--no-push] (omit flag to be prompted)
-# Bump the GUI application version independently and tag gui-v{version}
-bump-gui version push_flag="":
-    @python3 scripts/bump-gui.py {{version}} {{push_flag}}
-
-# Release CANDIDATES are determined by changed files (reliable). Version SEVERITY
-# is left to your discretion — commit-message signals are shown as hints only,
-# never as an authoritative bump. Optionally focus on one track: e.g.
-#   just release-status gui
-# Show which tracks have unreleased changes; you choose the semver bump.
-release-status track="":
-    @python3 scripts/release-status.py {{track}}
+# Releases are cut by release-please, not from here: it keeps a release PR
+# open per track and tags the merge. See RELEASING.md. This recipe is what
+# the release workflow runs on each release PR; run it locally only to see
+# what a release branch would need.
+# Move pins, Cargo.lock and licence notices to the workspace version
+release-sync:
+    python3 scripts/release_sync.py
 
 # Ask Dependabot to refresh its open PRs that are behind main — `rebase` on
 # clean branches, `recreate` where CI pushed a commit onto one (Dependabot

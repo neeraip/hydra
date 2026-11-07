@@ -28,6 +28,19 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 COMPARED = ("uses", "run", "working-directory", "with")
 
 
+def comparable(step: dict, field: str):
+    """A step's `field`, minus the one difference the two jobs must have.
+
+    The release checks out the tag it is building; the rehearsal builds main.
+    Which commit is checked out is the point of each, not drift between them,
+    so the checkout's `ref` is left out. Nothing else is.
+    """
+    value = step.get(field)
+    if field == "with" and isinstance(value, dict) and step.get("uses", "").startswith("actions/checkout@"):
+        value = {k: v for k, v in value.items() if k != "ref"}
+    return value
+
+
 def steps_by_name(workflow: str, job: str) -> dict[str, dict]:
     spec = yaml.safe_load((WORKFLOWS / workflow).read_text())["jobs"][job]
     out = {}
@@ -50,8 +63,8 @@ class ReleaseRehearsalTests(unittest.TestCase):
             a, b = self.release[name], self.rehearsal[name]
             for field in COMPARED:
                 self.assertEqual(
-                    a.get(field),
-                    b.get(field),
+                    comparable(a, field),
+                    comparable(b, field),
                     f"step {name!r} differs on {field!r}: the rehearsal would "
                     "not exercise what the release does",
                 )
