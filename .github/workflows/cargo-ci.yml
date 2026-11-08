@@ -23,6 +23,11 @@ permissions:
 jobs:
   # Lint, formatting, docs, and dependency checks are platform-independent —
   # run them once on Ubuntu rather than repeating them per-OS.
+  #
+  # Every check below is a `just` recipe, run by name: the recipes are the
+  # authoritative gate (AGENTS.md), so CI runs exactly them and cannot drift
+  # from them. Before this, CI's test step had quietly lost two of the
+  # commands `just test` runs.
   lint:
     name: Cargo Lint
     runs-on: ubuntu-latest
@@ -53,14 +58,19 @@ jobs:
           # saves were evicting the main caches every run depends on.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Install just
+        uses: taiki-e/install-action@v2.90.2
+        with:
+          tool: just
+
       - name: Check dependencies (cargo-deny)
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Check formatting (just fmt-check)
+        run: just fmt-check
 
-      - name: Lint (clippy)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Lint (just clippy)
+        run: just clippy
 
       # The engines run in a browser (crates/demo). This catches a dependency
       # that will not build for this target at all; the runtime failures — a
@@ -70,7 +80,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Check WebAssembly build (just check-wasm)
-        run: cargo check -p hydra-sdk --target wasm32-unknown-unknown --locked
+        run: just check-wasm
 
       # The only step that *executes* engine code on wasm. Both bugs found
       # while bringing the browser build up compiled cleanly and passed every
@@ -90,15 +100,10 @@ jobs:
         run: command -v wasm-pack || cargo binstall wasm-pack --no-confirm --force
 
       - name: Test in a browser (just test-wasm)
-        run: |
-          wasm-pack test --headless --chrome \
-            --chromedriver "$(python3 scripts/wasm_chromedriver.py)" \
-            crates/demo --test browser
+        run: just test-wasm
 
-      - name: Check documentation
-        run: cargo doc --workspace --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
+      - name: Check documentation (just docs-api)
+        run: just docs-api
 
   test:
     name: Cargo Test / ${{ matrix.os }}
@@ -117,6 +122,10 @@ jobs:
       # cache. Backtraces still name frames via debug-assertions panics.
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Link Windows test binaries with LLVM's linker rather than MSVC's
+      # link.exe, the slow step of the Windows job. Read only when building
+      # for that target, so the other runners ignore it.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
 
     steps:
       - name: Checkout repository
@@ -141,8 +150,20 @@ jobs:
           # saves were evicting the main caches every run depends on.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Run tests
-        run: cargo test --workspace --all-targets --locked
+      - name: Install just
+        uses: taiki-e/install-action@v2.90.2
+        with:
+          tool: just
+
+      - name: Run tests (just test-workspace)
+        run: just test-workspace
+
+      # The rest of `just test`: the drainage engine's other feature
+      # configurations. They do not depend on the platform, so they run
+      # once, on the fastest runner, off the Windows critical path.
+      - name: Run the drainage engine's configurations (just test-uds-configs)
+        if: runner.os == 'Linux'
+        run: just test-uds-configs
 
   # Forward-compatibility canary: the workspace pins the MSRV toolchain via
   # rust-toolchain.toml, so nothing else exercises the latest stable compiler.

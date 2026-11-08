@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::{f64, time::SystemTime};
+use std::time::SystemTime;
 
 use super::accounting::{self, AccountingState};
 use super::controls;
