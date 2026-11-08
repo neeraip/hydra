@@ -81,9 +81,26 @@ jobs:
           done
 
   # ── 2. Build the CLI binary for each target and attach it. ───────────────
+  # The CLI's binaries are built from the workspace at its tag; its crates.io
+  # package against the hydra-sdk it pins. Refuse to build if those are two
+  # different engines, i.e. library changes are still unreleased.
+  cli-library-check:
+    name: CLI builds the library it pins
+    if: startsWith(inputs.tag, 'cli-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Compare the library at this tag with the pinned release
+        run: python3 scripts/cli_release_guard.py "$RELEASE_TAG"
+
   cli:
     name: CLI / ${{ matrix.target }}
-    needs: prepare-release
+    needs: [prepare-release, cli-library-check]
     if: startsWith(inputs.tag, 'cli-v')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

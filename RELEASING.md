@@ -29,6 +29,8 @@ Draft releases are invisible to the updater and the in-app What's New feed, so n
 1. Merge and publish the library release. Wait for `publish-crates` to go green. Its release PR moved the CLI's `hydra-sdk` pin on main.
 2. Merge and publish the CLI release PR. One exists if the CLI itself has a `feat` or `fix` since its last release. The pin move alone does not open one, because the library release merges as a `chore`. To ship the CLI only to pick up library changes, land a commit such as `fix(cli): build on hydra-sdk 17.1.0` touching `crates/cli`, or put a `Release-As: x.y.z` footer in one.
 
+A CLI release PR merged while library changes are still unreleased stops at its build: the downloaded binary would run the unreleased engine and `cargo install hydra-cli` the last published one. The draft's `CLI builds the library it pins` job lists the library files that differ (`scripts/cli_release_guard.py`). Merge and publish the library release, then ship the CLI as the next version.
+
 If the CLI is published first anyway, its `publish-crates` job waits up to half an hour for the pinned `hydra-sdk` to appear, then fails and says which release to publish first. Re-run the job afterwards.
 
 CLI and GUI releases are independent of each other.
