@@ -1,9 +1,12 @@
 name: Scripts CI
 
+# Always runs on pull requests and in the merge queue: it is fast, and the
+# tests read files from all over the repository (manifests, workflows, docs),
+# so no path could safely skip it. Not on push to main: the merge queue
+# already tested that exact commit.
 on:
-  push:
-    branches: [main]
   pull_request:
+  merge_group:
   workflow_dispatch:
   # Weekly safety net: catch toolchain/registry drift during push-quiet weeks.
   schedule:
@@ -11,10 +14,6 @@ on:
 
 concurrency:
   group: scripts-ci-${{ github.event.pull_request.number || github.ref }}
-  # Cancel superseded runs on PRs only. On main a cancelled run destroys the
-  # verdict for that commit: the sweep in 1941d116 was caught here and then
-  # cancelled 31 seconds later by the next push, so a broken release build was
-  # the first thing to notice it. cargo-ci.yml guards this the same way.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -44,5 +43,19 @@ jobs:
       - name: Install test dependencies
         run: python3 -m pip install --disable-pip-version-check pyyaml==6.0.3
 
-      - name: Run Python script tests
-        run: python3 -m unittest discover -s scripts/tests -p "test_*.py" -v
+      - name: Install just and actionlint
+        uses: taiki-e/install-action@v2.90.2
+        with:
+          tool: just,actionlint@1.7.12
+
+      - name: Run Python script tests (just test-scripts)
+        run: just test-scripts
+
+      # `just lint` runs this, but until here no workflow did, so an em dash
+      # in user-facing copy could merge green. It reads the whole tree, like
+      # the tests above, so it belongs in the job no path skips.
+      - name: No em dashes in user-facing copy (just em-dashes)
+        run: just em-dashes
+
+      - name: Lint the workflows (just lint-workflows)
+        run: just lint-workflows

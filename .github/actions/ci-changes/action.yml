@@ -1,0 +1,50 @@
+name: Decide which CI a change needs
+description: >
+  Lists the files a pull request or merge-queue group changes and asks
+  scripts/ci_changes.py which checks they need. Any other event, or a
+  change whose files cannot be listed, runs everything.
+
+outputs:
+  rust:
+    description: "full, gui or none"
+    value: ${{ steps.decide.outputs.rust }}
+  frontend:
+    description: "true or false"
+    value: ${{ steps.decide.outputs.frontend }}
+
+runs:
+  using: composite
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        EVENT: ${{ github.event_name }}
+        PR: ${{ github.event.pull_request.number }}
+        BASE: ${{ github.event.merge_group.base_sha }}
+        HEAD: ${{ github.event.merge_group.head_sha }}
+      run: |
+        set -euo pipefail
+        files=$(mktemp)
+        case "$EVENT" in
+          pull_request)
+            # Renames list both names: the old path's checks matter too.
+            gh api --paginate "repos/$REPO/pulls/$PR/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)' > "$files"
+            ;;
+          merge_group)
+            # The compare API stops at 300 files; past that, run everything.
+            gh api "repos/$REPO/compare/$BASE...$HEAD" \
+              --jq 'if (.files | length) >= 300 then "TOO-MANY" else .files[] | .filename, (.previous_filename // empty) end' > "$files"
+            ;;
+          *)
+            echo "TOO-MANY" > "$files"
+            ;;
+        esac
+        # The pull request files API stops at 3000.
+        if grep -qx "TOO-MANY" "$files" || [ "$(wc -l < "$files")" -ge 3000 ]; then
+          python3 scripts/ci_changes.py --unknown | tee -a "$GITHUB_OUTPUT"
+        else
+          python3 scripts/ci_changes.py < "$files" | tee -a "$GITHUB_OUTPUT"
+        fi

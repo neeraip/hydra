@@ -48,8 +48,8 @@ setup-tools:
 test: test-workspace test-uds-configs
 
 # Run the whole workspace's tests (CI runs this on every OS)
-test-workspace:
-    cargo test --workspace --all-targets --locked
+test-workspace *args:
+    cargo test --workspace --all-targets --locked {{args}}
 
 # Workspace unification switches the drainage engine's `threads` feature on
 # (the apps enable it), so `test-workspace` tests the threaded
@@ -59,9 +59,9 @@ test-workspace:
 # Linux only.
 #
 # Test the drainage engine's serial and threads configurations
-test-uds-configs:
-    cargo test -p hydra-engine-uds --locked
-    cargo test -p hydra-engine-uds --features threads --test threads --locked
+test-uds-configs *args:
+    cargo test -p hydra-engine-uds --locked {{args}}
+    cargo test -p hydra-engine-uds --features threads --test threads --locked {{args}}
 
 # Run hydra-engine-wds tests only
 test-engine:
@@ -212,6 +212,15 @@ lint-frontend:
 # Type-check frontend source files
 typecheck-frontend:
     cd crates/gui/frontend && pnpm exec tsc --noEmit
+
+# The workflows' expressions decide which checks a change skips, and a
+# typo there fails open or never runs. actionlint type-checks them and
+# runs shellcheck over every `run:` script (warnings and up; style notes
+# are not failures). Install: `brew install actionlint`.
+#
+# Lint the GitHub workflows
+lint-workflows:
+    SHELLCHECK_OPTS="-S warning" actionlint
 
 # Find em dashes in user-facing copy: GUI text, CLI and demo diagnostics,
 # report text, the docs site, the marketing site, the READMEs. Comments,
@@ -438,7 +447,7 @@ check-frontend-lockfile:
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog build-frontend test-frontend test-layout test-scripts
+ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog build-frontend test-frontend test-layout test-scripts lint-workflows
 
 # ── Release ───────────────────────────────────────────────────────────────────
 

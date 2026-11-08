@@ -25,7 +25,9 @@ jobs:
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
           (steps.metadata.outputs.update-type == '' && steps.metadata.outputs.dependency-type == 'direct:development')
-        run: gh pr merge --auto --squash "$PR_URL"
+        # Queues the PR once its checks pass. No merge method: the merge
+        # queue's own setting chooses it, and gh refuses one alongside it.
+        run: gh pr merge --auto "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,6 +4,11 @@ name: PR Title
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
+  # Every required check must also report in the merge queue. The title was
+  # validated on the pull request; editing it after queueing does not change
+  # what lands (the squash takes the title at merge time, and the queue is
+  # re-entered if the PR changes), so the queue run only reports success.
+  merge_group:
 
 permissions:
   pull-requests: write
@@ -15,7 +20,12 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Validated on the pull request
+        if: github.event_name == 'merge_group'
+        run: echo "The title was validated when the pull request was opened or edited."
+
       - uses: amannn/action-semantic-pull-request@v6.1.2
+        if: github.event_name == 'pull_request_target'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -39,6 +49,7 @@ jobs:
       # release-notes category — other types (docs/style/test/build/revert)
       # are left unlabeled and fall into the default "Other Changes" bucket.
       - name: Label by commit type
+        if: github.event_name == 'pull_request_target'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TITLE: ${{ github.event.pull_request.title }}
