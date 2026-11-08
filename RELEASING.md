@@ -1,59 +1,45 @@
 # Releasing Hydra
 
-CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the library stack (`hydra-common`, the engine crates `hydra-engine-wds`/`hydra-engine-uds`, the dialect crates `hydra-interop-swmm`/`hydra-interop-epanet`, `hydra-engines`, `hydra-report`, `hydra-sdk`). The library stack shares a single workspace version.
+Hydra has three release tracks, each with its own version, tag and changelog:
 
-| Command | What it bumps | Tag created | Triggers |
+| Track | What it versions | Tag | Changelog |
 |---|---|---|---|
-| `just bump [patch\|minor\|major] [--push\|--no-push]` | Workspace version (common + engines + report + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
-| `just bump-cli [patch\|minor\|major] [--push\|--no-push]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
-| `just bump-gui [patch\|minor\|major] [--push\|--no-push]` | `crates/gui/Cargo.toml` + `tauri.conf.json` + `crates/gui/frontend/package.json` | `gui-v{version}` | GUI installer release |
+| Library | The workspace version shared by `hydra-common`, the engine crates (`hydra-engine-wds`, `hydra-engine-uds`), the dialect crates (`hydra-interop-swmm`, `hydra-interop-epanet`), `hydra-engines`, `hydra-report` and `hydra-sdk` | `v{version}` | `CHANGELOG.md` |
+| CLI | `hydra-cli` | `cli-v{version}` | `crates/cli/CHANGELOG.md` |
+| GUI | `hydra-gui` (`Cargo.toml`, `tauri.conf.json`, the frontend `package.json`) | `gui-v{version}` | `crates/gui/CHANGELOG.md` |
 
-By default, each bump command asks: `Push commit and tags now? [y/N]`.
+Releases are cut by [release-please](https://github.com/googleapis/release-please) (`.github/workflows/release.yml`, configured in `release-please-config.json`). Nobody bumps a version or pushes a tag by hand.
 
-- Pass `--push` to skip the prompt and push immediately.
-- Pass `--no-push` to skip the prompt and avoid pushing.
+## How a release happens
 
-## Release patterns
+1. **Merge to main as usual.** release-please keeps one release PR open per track that has unreleased changes. Each shows the next version and the changelog, worked out from the Conventional Commit titles of what touched that track since its last tag: `feat` is a minor, `fix` and `perf` a patch, `!` or a `BREAKING CHANGE` footer a major. A commit is assigned to a track by the files it touches.
+2. **The release PR completes itself.** After release-please updates a release PR, the workflow pushes one more commit onto it (`scripts/release_sync.py`, also `just release-sync`): every intra-workspace dependency pin and the documented `hydra-sdk = "N"` pin move to the new version, `Cargo.lock` is refreshed, and the third-party licence notices are regenerated. Both release-please and this step push with the workflow's own token, which starts no workflow by itself: approve the pending workflows on the release PR to run its CI.
+3. **Merge the release PR when CI is green.** release-please tags the merge commit and opens a **draft** GitHub release with the changelog as its notes. The workflow then builds every asset onto the draft: CLI binaries for a `cli-v*` release, GUI installers for `gui-v*`, the single-file browser demo for `v*`. A GUI release refuses to build if the notices are stale.
+4. **Review the notes and publish the draft.** Edit the notes into consumer-facing language first (see *Release notes* below): the GUI shows them in its What's New panel. Publishing is what releases. It triggers:
+   - `publish-crates`: the library crates for `v*`, `hydra-cli` for `cli-v*`;
+   - `updater-manifest`: installed GUIs see a published `gui-v*` release;
+   - `site`: the hosted demo at /try rebuilds from the latest `v*` release.
 
-### Pattern 1 — Library + CLI/GUI (library changed)
+Draft releases are invisible to the updater and the in-app What's New feed, so nothing reaches users before step 4.
 
-`hydra-cli` depends on `hydra-sdk`, which must be indexed on crates.io before the CLI publish can succeed. Push the library tag first and wait for the `publish-crates` workflow to complete before pushing CLI/GUI tags.
+## Releasing the library and the CLI together
 
-```sh
-just bump minor
-# respond y to the push prompt (or run: just bump minor --push)
+`hydra-cli` depends on `hydra-sdk` by version, so a CLI release that follows a library change needs that library version on crates.io. The order is:
 
-# 1. The draft-release workflow attaches hydra-try-<version>.html — the
-#    browser demo as one portable file, the engines at exactly this tag.
-#    Wait for its job before publishing so the asset is on the draft.
-# 2. Review and publish the library draft release from the GitHub releases page
-# 3. Publishing triggers the publish-crates workflow — wait for it to go green
-#    (hydra-sdk must be on crates.io before the CLI publish can succeed)
-# 4. Publishing the library release also redeploys the Pages site: /try
-#    is built from the latest v* tag (page, theme, and wasm together), so
-#    the hosted demo updates to this release on its own. No manual
-#    dispatch needed.
+1. Merge and publish the library release. Wait for `publish-crates` to go green. Its release PR moved the CLI's `hydra-sdk` pin on main.
+2. Merge and publish the CLI release PR. One exists if the CLI itself has a `feat` or `fix` since its last release. The pin move alone does not open one, because the library release merges as a `chore`. To ship the CLI only to pick up library changes, land a commit such as `fix(cli): build on hydra-sdk 17.1.0` touching `crates/cli`, or put a `Release-As: x.y.z` footer in one.
 
-just bump-cli minor
-just bump-gui minor
-# respond y to each push prompt (or run each with --push)
-```
+If the CLI is published first anyway, its `publish-crates` job waits up to half an hour for the pinned `hydra-sdk` to appear, then fails and says which release to publish first. Re-run the job afterwards.
 
-### Pattern 2 — CLI and/or GUI only (no library change)
-
-CLI and GUI are independent of each other and can be pushed together.
-
-```sh
-just bump-cli patch   # and/or just bump-gui patch
-# respond y to the push prompt (or pass --push)
-```
+CLI and GUI releases are independent of each other.
 
 ## Important rules
 
-- **The bump refuses a stale checkout.** It fetches `origin/main` first and stops if this branch is behind or has diverged. A release tag here is immutable, so one cut from a checkout missing someone else's commits cannot be moved afterwards — only superseded by another version.
-- **Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag.** The CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
-- **Regenerate the third-party notices whenever dependencies moved** — `just licenses`, committed. The app shows them under Settings → About, and the licences of the packages Hydra ships ask that their copyright notices travel with the binary. The `Licence Notices` workflow fails a pull request whose dependencies no longer match the committed file, so this lands with the dependency change rather than at release time. It did not always: the check lived only in `just ci`, which nobody runs on an auto-merged dependency bump, and the file drifted for a release at a time before anyone noticed.
-- **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml`, `tauri.conf.json`, and `crates/gui/frontend/package.json` files directly, run `cargo update --workspace`, and commit — no tag.
+- **Release PRs are release-please's.** Don't edit one by hand: it rewrites its branch whenever main moves. To change a version, change the commits (or use a `Release-As: x.y.z` footer in a commit body on main). Change the notes on the draft release instead.
+- **Keep breaking changes in one track.** A commit marked `!` bumps the major of every track whose files it touches. Split an engine API break and its GUI follow-up into separate commits so the GUI does not take a major it has no public API to justify.
+- **Approve the release PR's workflows.** CI on a release PR waits for a maintainer to approve it. Merge only once the required checks pass. Never bypass a failed check.
+- **Licence notices are regenerated per release, not per change.** `main` may carry stale notices between releases. That is expected: every release PR regenerates them, and the GUI build checks them. `just licenses` regenerates them locally if you want them current sooner.
+- **Never delete a tag or a published release.** This repository has immutable releases; a deleted release permanently retires its tag name. Supersede a bad release with the next version instead.
 
 ## GUI self-updater
 

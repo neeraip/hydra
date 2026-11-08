@@ -29,21 +29,16 @@ Examples:
 
 **Testing**: how the change was verified: new fixtures, unit tests, manual checks, or regression runs.
 
-**Version Bump**: analyze the diff and recommend whether a semver bump is warranted and at what severity. Use the following rules:
+**Release**: say whether the change releases, and which tracks. Versions are bumped by release-please, not by hand (see RELEASING.md). It reads the PR title:
 
-- **none** — no public API or observable behaviour change (e.g. docs, tests, internal refactors, comments, CI changes)
-- **patch** — bug fix or internal change that corrects incorrect behaviour without adding new capabilities
-- **minor** — new feature or capability added in a backward-compatible way
-- **major** — breaking change to a public API or behaviour that existing callers depend on
+- **fix** / **perf** — a patch release of each track the PR touches
+- **feat** — a minor release
+- **`!`** after the type, or a `BREAKING CHANGE:` footer — a major release
+- any other type (`chore`, `docs`, `refactor`, `test`, `ci`, `build`, `style`) — no release
 
-Determine which version track(s) are affected:
-- **Library** (`just bump patch|minor|major`) — changes to any workspace-versioned crate (`hydra-common`, `hydra-engine-wds`, `hydra-engine-uds`, `hydra-engines`, `hydra-report`, `hydra-sdk`)
-- **CLI** (`just bump-cli patch|minor|major`) — changes to `hydra-cli` or its user-facing behaviour
-- **GUI** (`just bump-gui patch|minor|major`) — changes to `hydra-gui` or the frontend
+The track is chosen by the files changed, not the scope:
+- **Library** — any workspace-versioned crate (`hydra-common`, `hydra-engine-wds`, `hydra-engine-uds`, `hydra-interop-swmm`, `hydra-interop-epanet`, `hydra-engines`, `hydra-report`, `hydra-sdk`)
+- **CLI** — `crates/cli`
+- **GUI** — `crates/gui`, including the frontend
 
-If multiple tracks are affected, list each one. If no bump is needed, write "none".
-
-Example outputs:
-- `just bump-cli patch` — fixed a crash in the CLI argument parser
-- `just bump minor` + `just bump-cli minor` — added a new solver option exposed through both the SDK and CLI
-- none — updated a comment in the engine crate
+So pick the type that describes the change for its users, and keep a breaking change to the track that actually breaks.

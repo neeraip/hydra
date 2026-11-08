@@ -1,18 +1,33 @@
 name: Draft Release
 
+# Builds and attaches every asset for one release, onto the draft that
+# release-please created when its release PR merged (see release.yml). Called
+# from there with the tag; dispatch it by hand only to rebuild a draft's
+# assets. Immutable releases are on, so all of this must happen while the
+# release is still a draft: publishing freezes its assets.
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'cli-v[0-9]+.[0-9]+.[0-9]+'
-      - 'gui-v[0-9]+.[0-9]+.[0-9]+'
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z, cli-vX.Y.Z or gui-vX.Y.Z)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z, cli-vX.Y.Z or gui-vX.Y.Z) whose draft to rebuild"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
 
 permissions:
   contents: write
 
 # Never cancel a release in flight.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -26,32 +41,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 1
 
       - name: Create draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ github.ref_name }}" == cli-v* ]]; then
-            title="Hydra CLI ${GITHUB_REF_NAME#cli-}"
-          elif [[ "${{ github.ref_name }}" == gui-v* ]]; then
-            title="Hydra GUI ${GITHUB_REF_NAME#gui-}"
+          if [[ "${{ inputs.tag }}" == cli-v* ]]; then
+            title="Hydra CLI ${RELEASE_TAG#cli-}"
+          elif [[ "${{ inputs.tag }}" == gui-v* ]]; then
+            title="Hydra GUI ${RELEASE_TAG#gui-}"
           else
-            title="Hydra Library ${GITHUB_REF_NAME}"
+            title="Hydra Library ${RELEASE_TAG}"
           fi
           # A draft release cannot be fetched by tag — GitHub's by-tag
           # endpoint serves published releases only — so existence is a
           # paginated list lookup, the same one the uploads do.
           exists() {
             gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
-              --jq '.[].tag_name' 2>/dev/null | grep -qx "${GITHUB_REF_NAME}"
+              --jq '.[].tag_name' 2>/dev/null | grep -qx "${RELEASE_TAG}"
           }
           for attempt in 1 2 3 4 5 6 7 8; do
             if exists; then
-              echo "${GITHUB_REF_NAME} already exists; leaving it alone."
+              echo "${RELEASE_TAG} already exists; leaving it alone."
               exit 0
             fi
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${RELEASE_TAG}" \
               --draft \
               --generate-notes \
               --title "${title}" && exit 0
@@ -68,7 +84,7 @@ jobs:
   cli:
     name: CLI / ${{ matrix.target }}
     needs: prepare-release
-    if: startsWith(github.ref_name, 'cli-v')
+    if: startsWith(inputs.tag, 'cli-v')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
@@ -88,6 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 1
 
       - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
@@ -123,7 +140,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#cli-v}"
+          version="${RELEASE_TAG#cli-v}"
           bin="target/${{ matrix.target }}/release/hydra"
           archive="hydra-cli-${version}-${{ matrix.target }}.tar.gz"
           tar -czf "${archive}" -C "$(dirname "${bin}")" "$(basename "${bin}")"
@@ -133,7 +150,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^cli-v', ''
+          $version = $env:RELEASE_TAG -replace '^cli-v', ''
           $archive = "hydra-cli-${version}-${{ matrix.target }}.zip"
           Compress-Archive -Path "target/${{ matrix.target }}/release/hydra.exe" -DestinationPath $archive
           "ARCHIVE=${archive}" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -149,7 +166,7 @@ jobs:
           # is what makes a retry safe — without it, retrying an upload
           # that actually succeeded fails on the existing asset.
           for attempt in 1 2 3 4 5 6 7 8; do
-            gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber && exit 0
+            gh release upload "${{ inputs.tag }}" "${{ env.ARCHIVE }}" --clobber && exit 0
             if [ "$attempt" = 8 ]; then
               echo "gh release upload failed after 8 attempts" >&2
               exit 1
@@ -174,7 +191,7 @@ jobs:
   wasm:
     name: Browser demo
     needs: prepare-release
-    if: startsWith(github.ref_name, 'v')
+    if: startsWith(inputs.tag, 'v')
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -184,6 +201,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 1
 
       - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
@@ -216,13 +234,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           asset="hydra-try-${version}.html"
           cp crates/demo/www/hydra.html "${asset}"
           # Retried like the others: this job races nothing, but a draft
           # lookup or a plain 5xx should not cost the release its demo.
           for attempt in 1 2 3 4 5 6 7 8; do
-            gh release upload "${{ github.ref_name }}" "${asset}" --clobber && exit 0
+            gh release upload "${{ inputs.tag }}" "${asset}" --clobber && exit 0
             if [ "$attempt" = 8 ]; then
               echo "gh release upload failed after 8 attempts" >&2
               exit 1
@@ -231,10 +249,52 @@ jobs:
           done
 
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
+  # ── The licence notices must describe the binary this release ships. ────
+  # The app shows them under Settings -> About, and the licences of the
+  # packages it bundles ask that their notices travel with it. release.yml
+  # regenerates them on every release PR; this refuses to build a GUI from
+  # a commit where that did not happen, rather than ship notices that name
+  # versions the installer does not contain (as gui-v2.19.0 once did).
+  notices:
+    name: Licence notices
+    if: startsWith(inputs.tag, 'gui-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
+        with:
+          cache: false
+
+      # `cargo metadata` is read unfiltered, so the registry must hold every
+      # platform's dependencies, not just this runner's.
+      - name: Fetch Cargo dependencies
+        run: cargo fetch --locked
+
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install frontend dependencies
+        working-directory: crates/gui/frontend
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check the notices match the dependencies
+        run: python3 scripts/licenses.py --check
+
   gui:
     name: GUI / ${{ matrix.platform }}
-    needs: prepare-release
-    if: startsWith(github.ref_name, 'gui-v')
+    needs: [prepare-release, notices]
+    if: startsWith(inputs.tag, 'gui-v')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
 
@@ -250,6 +310,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 1
 
       - name: Install Tauri system dependencies
@@ -333,7 +394,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
           TARGET: ${{ matrix.target }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag }}
         run: |
           python3 << 'EOF'
           import json, os, shutil, subprocess, time
@@ -426,7 +487,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           case "$tag" in
             cli-v*)
               version="${tag#cli-v}"

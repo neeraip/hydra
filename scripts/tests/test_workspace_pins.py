@@ -12,7 +12,7 @@ minors, and stopped the first major bump dead — halfway through, with the
 manifests already rewritten.
 
 Two claims are asserted here. Every pin equals the workspace version, and
-every manifest carrying one is a manifest the bump script rewrites: the
+every manifest carrying one is a manifest the release sync rewrites: the
 first catches drift, the second catches a crate the bump has never heard
 of, which is the shape the failure actually took.
 """
@@ -58,16 +58,16 @@ class TestWorkspacePins(unittest.TestCase):
                     f"and never notices; the next major bump refuses to.",
                 )
 
-    def test_the_bump_script_rewrites_every_manifest_that_has_one(self):
+    def test_the_release_sync_rewrites_every_manifest_that_has_one(self):
         # The failure was not a wrong pin but an unknown manifest: a crate
         # added after the bump script was written, carrying a pin the bump
         # had no idea existed.
-        bump = (ROOT / "scripts" / "bump.py").read_text()
+        bump = (ROOT / "scripts" / "release_sync.py").read_text()
         for name in manifests_with_pins():
             self.assertIn(
                 f'"{name}"',
                 bump,
-                f"{name} carries an intra-workspace pin that scripts/bump.py "
+                f"{name} carries an intra-workspace pin that scripts/release_sync.py "
                 f"does not rewrite — add it to CRATE_MANIFESTS, or drop the "
                 f"version from the dependency if the crate is unpublished",
             )

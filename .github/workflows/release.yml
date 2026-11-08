@@ -1,0 +1,146 @@
+name: Release
+
+# Release Please keeps one release PR open per track (library v*, CLI cli-v*,
+# GUI gui-v*), each with the next version and its changelog, worked out from
+# the Conventional Commit titles that touched that track since its last tag.
+# Configuration: release-please-config.json and .release-please-manifest.json.
+#
+# 1. Every push to main refreshes the release PRs. The second job below then
+#    completes each one with what release-please cannot do: dependency pins,
+#    Cargo.lock and the licence notices (scripts/release_sync.py).
+# 2. Merging a release PR makes release-please tag the merge commit and open
+#    a DRAFT release with the changelog as its notes. The build jobs below
+#    attach every asset to that draft (draft-release.yml).
+# 3. A maintainer reviews the notes and publishes the draft. Publishing is
+#    what releases: it triggers publish-crates, the GUI updater manifest and
+#    the Pages site, exactly as a hand-made release did.
+#
+# Releases, tags and pushes made with this workflow's token trigger no other
+# workflow on their own, which is why the builds are called from here rather
+# than triggered by the tag. The release PRs are opened and completed with
+# that token too, so their CI waits for a maintainer: approve the pending
+# workflows on the release PR, and merge only once the required checks pass.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      prs: ${{ steps.release.outputs.prs }}
+      library_created: ${{ steps.release.outputs.release_created }}
+      library_tag: ${{ steps.release.outputs.tag_name }}
+      cli_created: ${{ steps.release.outputs['crates/cli--release_created'] }}
+      cli_tag: ${{ steps.release.outputs['crates/cli--tag_name'] }}
+      gui_created: ${{ steps.release.outputs['crates/gui--release_created'] }}
+      gui_tag: ${{ steps.release.outputs['crates/gui--tag_name'] }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  complete-release-prs:
+    name: Complete release PR (${{ matrix.pr.headBranchName }})
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.release-please.outputs.prs) }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ matrix.pr.headBranchName }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
+        with:
+          cache: false
+
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'pnpm'
+          cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        # --ignore-scripts: the notices generator reads package metadata and
+        # licence text only, and this job holds a token that can write here.
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: crates/gui/frontend
+
+      - name: Move pins, refresh Cargo.lock, regenerate the notices
+        run: python3 scripts/release_sync.py
+
+      - name: Push the completed release PR
+        env:
+          BRANCH: ${{ matrix.pr.headBranchName }}
+        run: |
+          if git diff --quiet; then
+            echo "Already complete; nothing to push." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: move pins, Cargo.lock and licence notices to this release"
+          git push origin "HEAD:${BRANCH}"
+
+  build-library:
+    name: Build library release
+    needs: release-please
+    if: needs.release-please.outputs.library_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/draft-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.library_tag }}
+    secrets: inherit
+
+  build-cli:
+    name: Build CLI release
+    needs: release-please
+    if: needs.release-please.outputs.cli_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/draft-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.cli_tag }}
+    secrets: inherit
+
+  build-gui:
+    name: Build GUI release
+    needs: release-please
+    if: needs.release-please.outputs.gui_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/draft-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.gui_tag }}
+    secrets: inherit
