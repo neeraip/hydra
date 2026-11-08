@@ -520,10 +520,13 @@ impl Simulation {
             let (pre_nodes, pre_links) = pre_trial
                 .as_ref()
                 .expect("invariant: correcting implies a snapshot");
-            // Condition 2: no control or rule has touched a link since the
-            // opening solve, whose factor describes its statuses and settings.
-            let links_as_opened = links_unchanged(&self.link_states, pre_links);
-            let linear = if factor_held && links_as_opened {
+            // §5.3: the corrector samples the interval's own regime. A rule
+            // that ended the period at a sub-step takes effect at t + Δt, so
+            // its actions are withheld while the corrector runs, and put
+            // back once it has. The opening factor then describes the
+            // statuses the corrector sees, whichever way it is taken.
+            let withheld = withhold_interval_actions(&mut self.link_states, pre_links);
+            let linear = if factor_held {
                 // Linearised step: substitutions with the opening factor.
                 let tank_dh: Vec<(usize, f64)> = tank_indices
                     .iter()
@@ -595,6 +598,8 @@ impl Simulation {
                     .zip(&status_before)
                     .any(|(l, before)| l.status != *before)
             };
+            // The rule's actions are in force for the next period.
+            reinstate(&mut self.link_states, withheld);
 
             if switched {
                 // §5.3: the predictor is regime-consistent across the
@@ -758,16 +763,42 @@ impl Simulation {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-/// Whether every link holds the status and setting it had at the period's
-/// opening solve: §5.3's second condition for the linearised corrector,
-/// whose factor describes exactly those. A valve with no setting holds NaN,
-/// and NaN against NaN is unchanged, not a difference.
-fn links_unchanged(now: &[LinkState], opened: &[LinkState]) -> bool {
-    now.len() == opened.len()
-        && now.iter().zip(opened).all(|(now, then)| {
-            now.status == then.status
-                && (now.setting == then.setting || (now.setting.is_nan() && then.setting.is_nan()))
-        })
+/// Whether a link holds the status and setting it had at the period's
+/// opening solve. A valve with no setting holds NaN, and NaN against NaN is
+/// unchanged, not a difference. Flow is not compared: it is the solver's.
+fn link_unchanged(now: &LinkState, opened: &LinkState) -> bool {
+    now.status == opened.status
+        && (now.setting == opened.setting || (now.setting.is_nan() && opened.setting.is_nan()))
+}
+
+/// Put every link a rule changed during the interval back as the period's
+/// opening solve left it, and return the changed links' end-of-period
+/// states for [`reinstate`].
+///
+/// §5.3: a rule that ends the period at a sub-step takes effect at t + Δt,
+/// so the corrector, which closes the interval, must not see its actions.
+/// The whole link state is restored, not only status and setting: an
+/// action can also move a link's flow (a reopened pump restarts from its
+/// design flow), and the corrector starts from the opening flows.
+fn withhold_interval_actions(
+    now: &mut [LinkState],
+    opened: &[LinkState],
+) -> Vec<(usize, LinkState)> {
+    let mut withheld = Vec::new();
+    for (k, (link, then)) in now.iter_mut().zip(opened).enumerate() {
+        if !link_unchanged(link, then) {
+            withheld.push((k, std::mem::replace(link, then.clone())));
+        }
+    }
+    withheld
+}
+
+/// Put the interval's rule actions back in force once the corrector has
+/// run, exactly as they were applied.
+fn reinstate(now: &mut [LinkState], withheld: Vec<(usize, LinkState)>) {
+    for (k, state) in withheld {
+        now[k] = state;
+    }
 }
 
 #[cfg(test)]
@@ -1076,49 +1107,79 @@ Headloss  H-W
     }
 
     #[test]
-    fn links_unchanged_sees_status_and_setting_but_not_nan_or_flow() {
+    fn link_unchanged_sees_status_and_setting_but_not_nan_or_flow() {
         let link = |status: LinkStatus, setting: f64, flow: f64| LinkState {
             status,
             setting,
             flow,
             ..LinkState::default()
         };
-        let opened = [
-            link(LinkStatus::Open, 1.0, 0.5),
-            link(LinkStatus::Active, f64::NAN, 0.2),
-        ];
+        let open = link(LinkStatus::Open, 1.0, 0.5);
+        let valve = link(LinkStatus::Active, f64::NAN, 0.2);
         // A flow change is the corrector's own business, not a control's.
-        let flowed = [
-            link(LinkStatus::Open, 1.0, 0.9),
-            link(LinkStatus::Active, f64::NAN, 0.1),
-        ];
+        assert!(link_unchanged(&link(LinkStatus::Open, 1.0, 0.9), &open));
         assert!(
-            links_unchanged(&flowed, &opened),
+            link_unchanged(&link(LinkStatus::Active, f64::NAN, 0.1), &valve),
             "NaN setting reads as unchanged"
         );
-        let reset = [
-            link(LinkStatus::Open, 0.8, 0.5),
-            link(LinkStatus::Active, f64::NAN, 0.2),
-        ];
         assert!(
-            !links_unchanged(&reset, &opened),
+            !link_unchanged(&link(LinkStatus::Open, 0.8, 0.5), &open),
             "a changed setting is a change"
         );
-        let given = [
-            link(LinkStatus::Open, 1.0, 0.5),
-            link(LinkStatus::Active, 40.0, 0.2),
-        ];
         assert!(
-            !links_unchanged(&given, &opened),
+            !link_unchanged(&link(LinkStatus::Active, 40.0, 0.2), &valve),
             "NaN to a value is a change"
         );
-        let closed = [
-            link(LinkStatus::Closed, 1.0, 0.5),
-            link(LinkStatus::Active, f64::NAN, 0.2),
-        ];
         assert!(
-            !links_unchanged(&closed, &opened),
+            !link_unchanged(&link(LinkStatus::Closed, 1.0, 0.5), &open),
             "a changed status is a change"
         );
+    }
+
+    #[test]
+    fn rule_actions_are_withheld_from_the_corrector_and_then_reinstated() {
+        let link = |status: LinkStatus, setting: f64, flow: f64| LinkState {
+            status,
+            setting,
+            flow,
+            ..LinkState::default()
+        };
+        let opened = vec![
+            link(LinkStatus::Closed, 0.0, 0.0),
+            link(LinkStatus::Open, 1.0, 0.3),
+        ];
+        // A rule reopened pump 0 at a sub-step, restarting it from its
+        // design flow; link 1 only carries the predictor's flow.
+        let mut now = vec![
+            link(LinkStatus::Open, 1.0, 0.25),
+            link(LinkStatus::Open, 1.0, 0.31),
+        ];
+        let withheld = withhold_interval_actions(&mut now, &opened);
+
+        assert_eq!(withheld.len(), 1, "only the link the rule changed");
+        assert_eq!(
+            now[0].status,
+            LinkStatus::Closed,
+            "the corrector sees the interval's status"
+        );
+        assert_eq!(now[0].setting, 0.0);
+        assert_eq!(
+            now[0].flow, 0.0,
+            "and its opening flow, not the action's restart flow"
+        );
+        assert_eq!(now[1].flow, 0.31, "an unchanged link is left alone");
+
+        // The corrector writes its own flows; then the action is put back.
+        now[0].flow = 0.01;
+        now[1].flow = 0.32;
+        reinstate(&mut now, withheld);
+        assert_eq!(
+            now[0].status,
+            LinkStatus::Open,
+            "in force for the next period"
+        );
+        assert_eq!(now[0].setting, 1.0);
+        assert_eq!(now[0].flow, 0.25, "exactly as the action applied it");
+        assert_eq!(now[1].flow, 0.32, "the corrector's flow elsewhere survives");
     }
 }

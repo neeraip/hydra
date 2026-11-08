@@ -62,7 +62,7 @@ $\delta t_r$ is a user-settable parameter (`rule_timestep`; default: $\Delta t_h
 
 The rule sub-step loop runs until either a rule fires or the full $\Delta t_h$ is consumed.
 
-**How rule firing interacts with hydraulic solving**: when the loop terminates due to a rule firing after $\delta$ seconds, the hydraulic period is **shortened** to $\delta$ seconds. Tank levels have already been advanced by $\delta$; the rule actions are in force. The outer time stepper then begins the next hydraulic period — a fresh hydraulic solve at time $t + \delta$ with the new settings applied. There is no nested re-solve within the remainder of the original period; the step simply ends at the firing point.
+**How rule firing interacts with hydraulic solving**: when the loop terminates due to a rule firing after $\delta$ seconds, the hydraulic period is **shortened** to $\delta$ seconds. Tank levels have already been advanced by $\delta$; the rule actions are in force from $t + \delta$, and held at no instant before it, so the §5.3 corrector that closes the shortened period evaluates it without them. The outer time stepper then begins the next hydraulic period — a fresh hydraulic solve at time $t + \delta$ with the new settings applied. There is no nested re-solve within the remainder of the original period; the step simply ends at the firing point.
 
 If no rules fire, the step proceeds at its full $\Delta t_h$.
 
@@ -210,9 +210,11 @@ This is the trajectory rule-based controls evaluate against (§4.2); it is first
 
 The update is applied unconditionally: Hydra intentionally does not skip it when $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ (as EPANET does) — the update is exact at any flow magnitude, and the difference is numerically negligible.
 
-**Corrector.** At the end of the hydraulic period — after rule evaluation has fixed the actually-advanced interval $\Delta t$ and the predictor has produced $V^{*}$ for every tank — the net tank flows at the predicted tank levels and end-of-period settings, $Q_{\text{net}}^{*}$, are evaluated, and each tank's volume is corrected trapezoidally:
+**Corrector.** At the end of the hydraulic period — after rule evaluation has fixed the actually-advanced interval $\Delta t$ and the predictor has produced $V^{*}$ for every tank — the net tank flows at the predicted tank levels and under the **interval's own link statuses and settings**, $Q_{\text{net}}^{*}$, are evaluated, and each tank's volume is corrected trapezoidally:
 
 $$V_{\text{new}} = V_{\text{old}} + \frac{\Delta t}{2}\left(Q_{\text{net}}^{t} + Q_{\text{net}}^{*}\right)$$
+
+The interval's statuses and settings are those of the period's opening solve. A rule that fires at a sub-step ends the period there (§4.2.1), so its actions take effect at $t + \Delta t$ and held at no instant inside $[t, t + \Delta t)$. The corrector therefore evaluates $Q_{\text{net}}^{*}$ with those actions withheld, and they are put back in force once it has done so, for the next period's opening solve. Evaluating it under the actions instead would sample the regime that follows the interval, not the one that governed it. The trapezoid would then average two different flow regimes, the error the smoothness precondition below exists to exclude.
 
 $Q_{\text{net}}^{*}$ is obtained by the **linearised corrector step** below when its conditions hold, and otherwise by the **corrector solve**. The next hydraulic period's opening solve then proceeds from the corrected volumes, so the algebraic constraint always holds at the state the simulation reports and continues from.
 
@@ -249,11 +251,10 @@ The step's cost is one forward and one back substitution per sweep, plus a pass 
 The linearised step is used only when all of the following hold. When any fails, the corrector solve is used instead.
 
 1. The opening solve converged. An unbalanced solve (`../hydraulics/spec.md` §3.8) is not an equilibrium to linearise about.
-2. No simple control, rule action or pattern change has altered any link's status or setting since the opening solve. The factor describes the opening solve's statuses and settings, and the corrector must see the end-of-period ones.
-3. The opening solve's factor is still held. An implementation that has performed a corrector solve since (for example in a rejected trial of the same period, below) no longer holds it.
-4. The active PRV and PSV responses settle within the sweep cap. When they do not, the step leaves the working state untouched.
+2. The opening solve's factor is still held. An implementation that has performed a corrector solve since (for example in a rejected trial of the same period, below) no longer holds it.
+3. The active PRV and PSV responses settle within the sweep cap. When they do not, the step leaves the working state untouched.
 
-**Corrector solve.** The network equilibrium is solved once more at the predicted tank levels and end-of-period settings, as an ordinary §3 solve, yielding $Q_{\text{net}}^{*}$. Implementations should warm-start it from the predictor state, from which it typically converges in a small number of iterations.
+**Corrector solve.** The network equilibrium is solved once more at the predicted tank levels and the interval's statuses and settings, as an ordinary §3 solve, yielding $Q_{\text{net}}^{*}$. Implementations should warm-start it from the predictor state, from which it typically converges in a small number of iterations.
 
 A tank whose predictor level was clamped by boundary enforcement during this period (below) takes its predictor value for the period and is excluded from the error estimate: the trapezoid would otherwise average across the flow discontinuity the clamp introduces, and the adaptive step (§5.2) already lands boundary crossings exactly.
 

@@ -202,3 +202,84 @@ fn an_unachievable_tolerance_bottoms_out_at_the_floor_and_says_so() {
         "no degraded-accuracy warning despite an unachievable tolerance"
     );
 }
+
+/// Two pipes fill the tank until a rule closes one of them when the tank
+/// passes 27 ft. That happens at the 0:24 rule sub-step, inside the first
+/// 1 h hydraulic step, so the rule ends that period at 0:24 (§4.2.1). A
+/// level premise, unlike a time one, cannot be scheduled ahead: only the
+/// sub-step loop sees it.
+const RULE_ENDED_INP: &str = "
+[RESERVOIRS]
+ R1    150
+
+[TANKS]
+ T1  0     20       5       100     40    0
+
+[PIPES]
+ P1  R1     T1     2000    8     100
+ P2  R1     T1     2000    8     100
+
+[RULES]
+RULE CLOSE_P2
+IF TANK T1 LEVEL ABOVE 27
+THEN PIPE P2 STATUS IS CLOSED
+
+[TIMES]
+ DURATION            2:00
+ HYDRAULIC TIMESTEP  1:00
+ RULE TIMESTEP       0:06
+ REPORT TIMESTEP     0:24
+
+[OPTIONS]
+ UNITS     GPM
+ HEADLOSS  H-W
+
+[END]
+";
+
+/// The first hydraulic step's length, and the tank head recorded at its
+/// end, 0:24. A session reports the instant it last recorded, and the 0:24
+/// instant is recorded by the second step's opening solve, which leaves
+/// tank heads as the first step's corrector set them.
+fn first_step(inp: &str) -> (f64, f64) {
+    let mut network = io::parse(inp.as_bytes()).expect("fixture parses");
+    // Corrector on, but loose enough that no step is halved: the rule alone
+    // must set the step length.
+    network.options.level_err_tol = 1.0;
+    let mut sim = Simulation::from_network(network).expect("loads");
+    let dt = sim.step_hydraulics().expect("steps");
+    sim.step_hydraulics().expect("steps");
+    assert_eq!(sim.current_time(), Some(1440.0), "reading the 0:24 instant");
+    (dt, final_tank_head(&sim))
+}
+
+#[test]
+fn a_rule_that_ends_the_period_does_not_reach_back_into_its_corrector() {
+    // §5.3: the rule's action takes effect at 0:24 and held at no instant
+    // before it, so the interval it ends integrates exactly as the same
+    // interval does with no rule at all. The twin drops the rule and takes
+    // a 0:24 step instead.
+    let twin_inp = RULE_ENDED_INP
+        .replace(
+            "RULE CLOSE_P2\nIF TANK T1 LEVEL ABOVE 27\nTHEN PIPE P2 STATUS IS CLOSED\n",
+            "",
+        )
+        .replace("HYDRAULIC TIMESTEP  1:00", "HYDRAULIC TIMESTEP  0:24");
+    assert!(
+        !twin_inp.contains("CLOSE_P2"),
+        "the twin must actually drop the rule"
+    );
+
+    let (dt_rule, with_rule) = first_step(RULE_ENDED_INP);
+    let (dt_twin, twin) = first_step(&twin_inp);
+    assert_eq!(
+        dt_rule, 1440.0,
+        "the rule must end the first period at 0:24"
+    );
+    assert_eq!(dt_twin, 1440.0);
+    assert!(
+        (with_rule - twin).abs() < 1.0e-9,
+        "the rule's action leaked into the interval it ended: tank head \
+         {with_rule:.9} m with the rule against {twin:.9} m without it"
+    );
+}
