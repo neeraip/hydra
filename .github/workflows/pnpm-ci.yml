@@ -1,9 +1,12 @@
 name: PNPM CI
 
+# Runs on pull requests and in the merge queue, when the change needs it
+# (scripts/ci_changes.py), and weekly. Not on push to main: the merge queue
+# already tested that exact commit, and nothing here warms a cache other
+# runs share (the weekly run on main saves the pnpm store).
 on:
-  push:
-    branches: [main]
   pull_request:
+  merge_group:
   workflow_dispatch:
   # Weekly safety net: catch toolchain/registry drift during push-quiet weeks.
   schedule:
@@ -11,21 +14,43 @@ on:
 
 concurrency:
   group: pnpm-ci-${{ github.event.pull_request.number || github.ref }}
-  # Cancel superseded runs on PRs only. On main a cancelled run destroys the
-  # verdict for that commit: the sweep in 1941d116 was caught here and then
-  # cancelled 31 seconds later by the next push, so a broken release build was
-  # the first thing to notice it. cargo-ci.yml guards this the same way.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Decide which checks run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend: ${{ steps.decide.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts/ci_changes.py
+            .github/actions/ci-changes
+          sparse-checkout-cone-mode: false
+      - id: decide
+        uses: ./.github/actions/ci-changes
+
+  # Both jobs below skip when the change needs no frontend checks; a skipped
+  # job satisfies a required check. `!cancelled()` with `!= 'false'` fails
+  # safe: if the decision job fails, its output is empty and they run.
+
   # Static checks + supply chain, mirroring Cargo Lint (which carries
   # cargo-deny): the standalone PNPM Audit workflow only runs on a schedule
   # for time-based advisories.
   lint:
     name: PNPM Lint
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.frontend != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -73,6 +98,8 @@ jobs:
 
   test:
     name: PNPM Test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.frontend != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

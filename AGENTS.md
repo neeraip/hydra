@@ -199,6 +199,8 @@ See [RELEASING.md](RELEASING.md) for the release process and version bump comman
 
 **The `just ci` recipe is the authoritative pre-commit gate.** Before committing, everything the `just ci` recipe checks must pass — never commit on a red tree. You do not have to invoke `just ci` literally: run the individual recipes it chains (`just fmt-check`, `just clippy`, `just docs-api`, `just test`, `just lint-frontend`, …), the subset relevant to the files you touched, or `just ci` as one batch — whatever is fastest. What matters is that everything the recipe would check is green, not how you run it. Note that `rustfmt`, `clippy -D warnings`, and rustdoc warnings are CI failures even when the test suite passes, so a green `cargo test` alone is not sufficient.
 
+**`main` changes only through a pull request and the merge queue.** Nobody pushes to it directly. The queue tests each change as the exact commit that will land, so CI does not test again on push; the push run only rebuilds the shared caches. On a pull request, CI runs only the checks the changed paths can affect (`scripts/ci_changes.py`). A new top-level directory runs everything until it is classified there, and a new place where one area reads another's files (as `hydra-gui`'s tests read three frontend files) must be added to it, or a change on one side will skip the other side's checks.
+
 **Never create git tags** unless the user explicitly asks for a tag or release.
 
 **Commit messages follow Conventional Commits:**

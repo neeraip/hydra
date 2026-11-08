@@ -48,9 +48,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ inputs.tag }}" == cli-v* ]]; then
+          if [[ "${RELEASE_TAG}" == cli-v* ]]; then
             title="Hydra CLI ${RELEASE_TAG#cli-}"
-          elif [[ "${{ inputs.tag }}" == gui-v* ]]; then
+          elif [[ "${RELEASE_TAG}" == gui-v* ]]; then
             title="Hydra GUI ${RELEASE_TAG#gui-}"
           else
             title="Hydra Library ${RELEASE_TAG}"
@@ -183,7 +183,7 @@ jobs:
           # is what makes a retry safe — without it, retrying an upload
           # that actually succeeded fails on the existing asset.
           for attempt in 1 2 3 4 5 6 7 8; do
-            gh release upload "${{ inputs.tag }}" "${{ env.ARCHIVE }}" --clobber && exit 0
+            gh release upload "${RELEASE_TAG}" "${{ env.ARCHIVE }}" --clobber && exit 0
             if [ "$attempt" = 8 ]; then
               echo "gh release upload failed after 8 attempts" >&2
               exit 1
@@ -257,7 +257,7 @@ jobs:
           # Retried like the others: this job races nothing, but a draft
           # lookup or a plain 5xx should not cost the release its demo.
           for attempt in 1 2 3 4 5 6 7 8; do
-            gh release upload "${{ inputs.tag }}" "${asset}" --clobber && exit 0
+            gh release upload "${RELEASE_TAG}" "${asset}" --clobber && exit 0
             if [ "$attempt" = 8 ]; then
               echo "gh release upload failed after 8 attempts" >&2
               exit 1

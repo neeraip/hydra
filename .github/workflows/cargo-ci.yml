@@ -1,11 +1,22 @@
 name: Cargo CI
 
+# What runs when:
+#
+# - pull_request and merge_group: the checks the change needs, decided from
+#   its paths by scripts/ci_changes.py. The merge queue is the final gate:
+#   it tests each change as the exact commit that will land on main.
+# - push to main: no tests. Everything that lands was already tested as
+#   that exact commit in the merge queue. The jobs only build, to save the
+#   caches every pull request restores (a pull request's own cache is
+#   visible to it alone, so only main can warm them for everyone).
+# - schedule and workflow_dispatch: everything, plus the latest-stable
+#   canary. The weekly run catches toolchain and registry drift.
 on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
   workflow_dispatch:
-  # Weekly safety net: catch toolchain/registry drift during push-quiet weeks.
   schedule:
     - cron: "0 6 * * 1"
 
@@ -20,16 +31,46 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # A push to main only warms caches (see the header).
+  WARM_ONLY: ${{ github.event_name == 'push' }}
+
 jobs:
+  changes:
+    name: Decide which checks run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.decide.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts/ci_changes.py
+            .github/actions/ci-changes
+          sparse-checkout-cone-mode: false
+      - id: decide
+        uses: ./.github/actions/ci-changes
+
   # Lint, formatting, docs, and dependency checks are platform-independent —
   # run them once on Ubuntu rather than repeating them per-OS.
   #
   # Every check below is a `just` recipe, run by name: the recipes are the
   # authoritative gate (AGENTS.md), so CI runs exactly them and cannot drift
-  # from them. Before this, CI's test step had quietly lost two of the
-  # commands `just test` runs.
+  # from them.
+  #
+  # Skipped when the change needs no Rust checks, or only the GUI's tests. A
+  # skipped job satisfies a required check. `!cancelled()` and the `!=`
+  # comparisons fail safe: if the decision job itself fails, its outputs are
+  # empty and this job runs.
   lint:
     name: Cargo Lint
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'none' && needs.changes.outputs.rust != 'gui' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -54,8 +95,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.3
         with:
           # Restore everywhere, save from main only: the repo cache budget is
-          # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
-          # saves were evicting the main caches every run depends on.
+          # 10 GB, and caches saved on any other ref are visible only there.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
@@ -64,11 +104,15 @@ jobs:
           tool: just
 
       - name: Check dependencies (cargo-deny)
+        if: env.WARM_ONLY != 'true'
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
       - name: Check formatting (just fmt-check)
+        if: env.WARM_ONLY != 'true'
         run: just fmt-check
 
+      # Clippy, the wasm check and the docs build are also the warm-up: they
+      # are the builds whose artifacts this job's cache holds.
       - name: Lint (just clippy)
         run: just clippy
 
@@ -100,6 +144,7 @@ jobs:
         run: command -v wasm-pack || cargo binstall wasm-pack --no-confirm --force
 
       - name: Test in a browser (just test-wasm)
+        if: env.WARM_ONLY != 'true'
         run: just test-wasm
 
       - name: Check documentation (just docs-api)
@@ -107,6 +152,12 @@ jobs:
 
   test:
     name: Cargo Test / ${{ matrix.os }}
+    needs: changes
+    # Never skipped at the job level: a skipped matrix job reports under its
+    # unexpanded name ("Cargo Test / ${{ matrix.os }}"), so the required
+    # "Cargo Test / ubuntu-latest" would never arrive and the PR would
+    # block. The steps skip instead, on RUN below.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
@@ -117,6 +168,10 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
+      # What this runner does: `workspace` (the whole suite), `gui` (only
+      # hydra-gui's tests, for a change to the frontend files they read;
+      # Linux only) or `none`. An empty decision runs the whole suite.
+      RUN: ${{ needs.changes.outputs.rust == 'none' && 'none' || needs.changes.outputs.rust == 'gui' && (matrix.os == 'ubuntu-latest' && 'gui' || 'none') || 'workspace' }}
       # CI never attaches a debugger: skipping debuginfo roughly halves the
       # cold Windows build (MSVC PDB generation and linking) and shrinks every
       # cache. Backtraces still name frames via debug-assertions panics.
@@ -128,52 +183,68 @@ jobs:
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
 
     steps:
+      - name: Nothing to test
+        if: env.RUN == 'none'
+        run: echo "This change needs no Rust checks on this runner."
+
       - name: Checkout repository
+        if: env.RUN != 'none'
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install Tauri system dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.RUN != 'none'
         uses: ./.github/actions/tauri-deps
 
       - name: Install Rust toolchain
+        if: env.RUN != 'none'
         uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
         with:
           cache: false
 
       - name: Cache Cargo artifacts
+        if: env.RUN != 'none'
         uses: Swatinem/rust-cache@v2.9.3
         with:
-          # Restore everywhere, save from main only: the repo cache budget is
-          # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
-          # saves were evicting the main caches every run depends on.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
+        if: env.RUN != 'none'
         uses: taiki-e/install-action@v2.90.2
         with:
           tool: just
 
       - name: Run tests (just test-workspace)
+        if: env.RUN == 'workspace' && env.WARM_ONLY != 'true'
         run: just test-workspace
 
       # The rest of `just test`: the drainage engine's other feature
       # configurations. They do not depend on the platform, so they run
       # once, on the fastest runner, off the Windows critical path.
       - name: Run the drainage engine's configurations (just test-uds-configs)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.RUN == 'workspace' && env.WARM_ONLY != 'true'
         run: just test-uds-configs
+
+      - name: Run the GUI's tests (frontend files they read changed)
+        if: env.RUN == 'gui' && env.WARM_ONLY != 'true'
+        run: cargo test -p hydra-gui --locked
+
+      # Main only: build exactly what the tests build, for the cache.
+      - name: Build the tests for the cache (main)
+        if: env.RUN == 'workspace' && env.WARM_ONLY == 'true'
+        shell: bash
+        run: |
+          just test-workspace --no-run
+          if [ "$RUNNER_OS" = "Linux" ]; then just test-uds-configs --no-run; fi
 
   # Forward-compatibility canary: the workspace pins the MSRV toolchain via
   # rust-toolchain.toml, so nothing else exercises the latest stable compiler.
-  # Non-blocking — breakage here is an early warning, never a merge blocker.
+  # Non-blocking, and weekly: breakage here is an early warning, never a
+  # merge blocker, and a new stable arrives every six weeks.
   test-stable:
     name: Cargo Test / latest stable (non-blocking)
-    # Drift canary, not a merge gate (continue-on-error): running it per-PR
-    # spends ~9 runner-minutes without adding any PR safety. Main pushes and
-    # the weekly schedule keep the early warning.
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
