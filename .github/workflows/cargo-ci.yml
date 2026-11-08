@@ -196,11 +196,16 @@ jobs:
       # Windows builds are slow mostly because of NTFS and the virus
       # scanner, not the compiler. A Dev Drive is a ReFS volume the scanner
       # treats as trusted. The build runs in a copy of the workspace on it.
+      #
+      # The mount point is fixed. A cache restores only to the paths it was
+      # saved from, and the default mount is whichever drive letter is free,
+      # so a letter that ever moved would turn every Windows run cold.
       - name: Set up a Dev Drive (Windows)
         if: runner.os == 'Windows' && env.RUN != 'none'
         uses: samypr100/setup-dev-drive@v4.1.0
         with:
           drive-size: 12GB
+          mount-path: C:\dev-drive
           workspace-copy: true
           trusted-dev-drive: true
 
