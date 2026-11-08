@@ -15,13 +15,11 @@ name: Release
 #    what releases: it triggers publish-crates, the GUI updater manifest and
 #    the Pages site, exactly as a hand-made release did.
 #
-# Releases and tags made with this workflow's token trigger no other
-# workflow, which is why the builds are called from here rather than
-# triggered by the tag. The release PRs themselves are opened with that
-# token too, so they get no CI until the completion step pushes to them with
-# RELEASE_BOT_TOKEN (a fine-grained PAT with `contents: write` on this
-# repository, stored as an Actions secret): pushes made with a PAT do
-# trigger CI, and the release PR must pass it before merging.
+# Releases, tags and pushes made with this workflow's token trigger no other
+# workflow on their own, which is why the builds are called from here rather
+# than triggered by the tag. The release PRs are opened and completed with
+# that token too, so their CI waits for a maintainer: approve the pending
+# workflows on the release PR, and merge only once the required checks pass.
 
 on:
   push:
@@ -65,6 +63,8 @@ jobs:
     if: needs.release-please.outputs.prs_created == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -72,19 +72,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - name: Require the bot token
-        env:
-          HAS_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN != '' }}
-        run: |
-          if [ "$HAS_TOKEN" != "true" ]; then
-            echo "::error::RELEASE_BOT_TOKEN is not set, so the release PR cannot be completed or tested. See this workflow's header."
-            exit 1
-          fi
-
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ matrix.pr.headBranchName }}
-          token: ${{ secrets.RELEASE_BOT_TOKEN }}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
         with:
