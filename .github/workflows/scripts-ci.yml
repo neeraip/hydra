@@ -43,10 +43,24 @@ jobs:
       - name: Install test dependencies
         run: python3 -m pip install --disable-pip-version-check pyyaml==6.0.3
 
-      - name: Install just and actionlint
+      - name: Install just
         uses: taiki-e/install-action@v2.90.2
         with:
-          tool: just,actionlint@1.7.12
+          tool: just
+
+      # install-action does not carry actionlint. The release binary is
+      # fetched by version and checked against its published SHA-256.
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          tarball="actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -sSfLO "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${tarball}"
+          echo "${SHA256}  ${tarball}" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$tarball" -C "$HOME/.local/bin" actionlint
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Python script tests (just test-scripts)
         run: just test-scripts
