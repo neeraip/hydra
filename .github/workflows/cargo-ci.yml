@@ -193,22 +193,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Windows builds are slow mostly because of NTFS and the virus
-      # scanner, not the compiler. A Dev Drive is a ReFS volume the scanner
-      # treats as trusted. The build runs in a copy of the workspace on it.
-      #
-      # The mount point is fixed. A cache restores only to the paths it was
-      # saved from, and the default mount is whichever drive letter is free,
-      # so a letter that ever moved would turn every Windows run cold.
-      - name: Set up a Dev Drive (Windows)
-        if: runner.os == 'Windows' && env.RUN != 'none'
-        uses: samypr100/setup-dev-drive@v4.1.0
-        with:
-          drive-size: 12GB
-          mount-path: C:\dev-drive
-          workspace-copy: true
-          trusted-dev-drive: true
-
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux' && env.RUN != 'none'
         uses: ./.github/actions/tauri-deps
@@ -223,7 +207,6 @@ jobs:
         if: env.RUN != 'none'
         uses: Swatinem/rust-cache@v2.9.3
         with:
-          workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
@@ -234,7 +217,6 @@ jobs:
 
       - name: Run tests (just test-workspace)
         if: env.RUN == 'workspace' && env.WARM_ONLY != 'true'
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: just test-workspace
 
       # The rest of `just test`: the drainage engine's other feature
@@ -251,7 +233,6 @@ jobs:
       # Main only: build exactly what the tests build, for the cache.
       - name: Build the tests for the cache (main)
         if: env.RUN == 'workspace' && env.WARM_ONLY == 'true'
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         shell: bash
         run: |
           just test-workspace --no-run
