@@ -110,10 +110,11 @@ class TestPlatformKey(unittest.TestCase):
 
 
 class TestBothCallersUseIt(unittest.TestCase):
-    """The recipe and the CI step are hand-mirrored, so assert each side.
+    """CI runs the recipe by name, so the recipe is the one place to check.
 
-    Either one reverting to a bare `wasm-pack test --chrome` restores the
-    defect, and nothing else in the suite would notice.
+    The recipe reverting to a bare `wasm-pack test --chrome` restores the
+    defect, and so would CI going back to its own hand-written copy of the
+    command. Each is asserted.
     """
 
     def test_the_justfile_recipe_resolves_a_driver_first(self):
@@ -122,11 +123,10 @@ class TestBothCallersUseIt(unittest.TestCase):
         self.assertIn("wasm_chromedriver.py", recipe)
         self.assertIn("--chromedriver", recipe)
 
-    def test_the_ci_step_resolves_a_driver_first(self):
+    def test_ci_runs_the_recipe_rather_than_its_own_copy(self):
         text = (ROOT / ".github/workflows/cargo-ci.yml").read_text()
-        self.assertIn("wasm_chromedriver.py", text)
-        self.assertIn("--chromedriver", text)
-
+        self.assertIn("run: just test-wasm", text)
+        self.assertNotIn("wasm-pack test", text)
 
 if __name__ == "__main__":
     unittest.main()

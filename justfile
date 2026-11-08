@@ -45,13 +45,21 @@ setup-tools:
 
 # Benches/examples compile too and the lockfile must be current.
 # Run all tests with the same flags CI uses
-test:
+test: test-workspace test-uds-configs
+
+# Run the whole workspace's tests (CI runs this on every OS)
+test-workspace:
     cargo test --workspace --all-targets --locked
-    # Workspace unification switches the drainage engine's `threads`
-    # feature on (the apps enable it), so the line above tests the
-    # threaded configuration. These two keep the other configurations
-    # honest: the engine's serial-only compile, and the 6.4 width
-    # contract even if the apps ever drop the feature.
+
+# Workspace unification switches the drainage engine's `threads` feature on
+# (the apps enable it), so `test-workspace` tests the threaded
+# configuration. These two keep the other configurations honest: the
+# engine's serial-only compile, and the 6.4 width contract even if the apps
+# ever drop the feature. Neither depends on the platform, so CI runs them on
+# Linux only.
+#
+# Test the drainage engine's serial and threads configurations
+test-uds-configs:
     cargo test -p hydra-engine-uds --locked
     cargo test -p hydra-engine-uds --features threads --test threads --locked
 

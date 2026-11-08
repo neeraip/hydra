@@ -54,6 +54,16 @@ opt-level = 2
 opt-level = 2
 codegen-units = 1
 
+# Tests never need the GUI's runtime speed, and the dev settings above
+# (opt-level 2 at one codegen unit) make it the slowest crate in the
+# workspace to build: a single-threaded optimised compile. Measured on the
+# workspace's own test build, these cut a rebuild of the workspace crates
+# from 38 s to 14 s. The engines keep opt-level 2: their tests run
+# simulations, and are faster optimised than not.
+[profile.test.package.hydra-gui]
+opt-level = 0
+codegen-units = 256
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

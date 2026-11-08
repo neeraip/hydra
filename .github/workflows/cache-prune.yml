@@ -1,0 +1,38 @@
+name: Cache Prune
+
+# Deletes the Cargo caches on main that a newer save has superseded
+# (scripts/prune_caches.py says why). Runs after each workflow that saves
+# one from main, and weekly as a backstop.
+on:
+  workflow_run:
+    workflows: ["Cargo CI", "Release"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cache-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune superseded caches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts/prune_caches.py
+          sparse-checkout-cone-mode: false
+
+      - name: Delete superseded caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/prune_caches.py
