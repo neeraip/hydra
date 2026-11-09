@@ -19,6 +19,14 @@ name: Updater Manifest
 on:
   release:
     types: [published]
+  # Called by release.yml once it has published a GUI release itself (a
+  # release published with the workflow token creates no `release` event).
+  workflow_call:
+    inputs:
+      tag:
+        description: "Published GUI release tag (gui-vX.Y.Z)"
+        required: true
+        type: string
   # Manual recovery/testing: rebuild the manifest from any published GUI
   # release without republishing it.
   workflow_dispatch:
@@ -39,7 +47,7 @@ concurrency:
 jobs:
   publish-manifest:
     name: Publish latest.json
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'gui-v')
+    if: inputs.tag != '' || startsWith(github.event.release.tag_name, 'gui-v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
