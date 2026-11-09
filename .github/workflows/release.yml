@@ -11,13 +11,18 @@ name: Release
 # 2. Merging a release PR makes release-please tag the merge commit and open
 #    a DRAFT release with the changelog as its notes. The build jobs below
 #    attach every asset to that draft (draft-release.yml).
-# 3. A maintainer reviews the notes and publishes the draft. Publishing is
-#    what releases: it triggers publish-crates, the GUI updater manifest and
-#    the Pages site, exactly as a hand-made release did.
+# 3. Once every asset is attached and verified, the publish jobs below
+#    publish the draft and run what a published release triggers:
+#    publish-crates, the GUI updater manifest and the Pages site. Assets go
+#    on while it is a draft because immutable releases freeze them on
+#    publishing; the notes stay editable afterwards.
 #
 # Releases, tags and pushes made with this workflow's token trigger no other
-# workflow on their own, which is why the builds are called from here rather
-# than triggered by the tag. The release PRs are opened and completed with
+# workflow on their own, which is why the builds and the publishing
+# workflows are called from here rather than triggered by the tag or the
+# release. If a build fails, the release stays a draft: fix it, rebuild with
+# draft-release.yml, and publish the draft by hand, which triggers the same
+# workflows through their `release` event. The release PRs are opened and completed with
 # that token too, so their CI waits for a maintainer: approve the pending
 # workflows on the release PR, and merge only once the required checks pass.
 
@@ -144,3 +149,114 @@ jobs:
     with:
       tag: ${{ needs.release-please.outputs.gui_tag }}
     secrets: inherit
+
+  # ── Publish. Each track publishes only after its own build verified every
+  # asset; a failed build leaves the draft for a maintainer (see the header).
+
+  publish-library:
+    name: Publish library release
+    needs: [release-please, build-library]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release-please.outputs.library_tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
+      # "Latest" stays on the GUI: it is what most visitors download.
+      - name: Publish the draft
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  crates-library:
+    name: Publish library crates
+    needs: [release-please, publish-library]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-crates.yml
+    with:
+      tag: ${{ needs.release-please.outputs.library_tag }}
+    secrets: inherit
+
+  site:
+    name: Redeploy the site
+    needs: publish-library
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/site.yml
+
+  publish-cli:
+    name: Publish CLI release
+    needs: [release-please, build-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release-please.outputs.cli_tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
+      - name: Publish the draft
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  crates-cli:
+    name: Publish CLI crate
+    needs: [release-please, publish-cli]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-crates.yml
+    with:
+      tag: ${{ needs.release-please.outputs.cli_tag }}
+    secrets: inherit
+
+  publish-gui:
+    name: Publish GUI release
+    needs: [release-please, build-gui]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release-please.outputs.gui_tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
+      - name: Publish the draft
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  updater-manifest:
+    name: Publish the GUI updater manifest
+    needs: [release-please, publish-gui]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/updater-manifest.yml
+    with:
+      tag: ${{ needs.release-please.outputs.gui_tag }}

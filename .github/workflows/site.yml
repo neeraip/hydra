@@ -25,6 +25,10 @@ on:
       - '.github/workflows/site.yml'
   release:
     types: [published]
+  # release.yml calls this once it has published a library release itself:
+  # a release published with the workflow token creates no `release` event.
+  # The call runs on main, so the main deployment policy covers it.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
