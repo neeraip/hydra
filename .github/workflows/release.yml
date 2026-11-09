@@ -160,10 +160,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      pull-requests: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.release-please.outputs.library_tag }}
     steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
       # "Latest" stays on the GUI: it is what most visitors download.
       - name: Publish the draft
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
@@ -194,10 +203,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      pull-requests: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.release-please.outputs.cli_tag }}
     steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
       - name: Publish the draft
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
 
@@ -218,10 +236,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      pull-requests: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.release-please.outputs.gui_tag }}
     steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: scripts/release_notes.py
+          sparse-checkout-cone-mode: false
+      # A "# Release Notes" comment on the release PR replaces the notes
+      # release-please took from its description (scripts/release_notes.py).
+      - name: Take the notes from a "# Release Notes" comment, if any
+        run: python3 scripts/release_notes.py "$TAG" "$GITHUB_SHA"
       - name: Publish the draft
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 

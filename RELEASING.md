@@ -18,7 +18,7 @@ Releases are cut by [release-please](https://github.com/googleapis/release-pleas
    - `publish-crates`: the library crates for `v*`, `hydra-cli` for `cli-v*`;
    - `updater-manifest`: installed GUIs see a published `gui-v*` release;
    - `site`: the hosted demo at /try rebuilds from the latest `v*` release.
-4. **Edit the notes if they need it.** The GUI shows them in its What's New panel, read live from the release, so an edit after publishing reaches users too (see *Release notes* below). Assets cannot change once published; the notes can.
+4. **To write the notes yourself, comment on the release PR before merging it.** Start the comment with a `# Release Notes` heading: everything under it becomes the release's notes (`scripts/release_notes.py`). Only comments by people with write access count, and the newest one wins. Without such a comment the notes are the changelog release-please put in the PR description. Editing the description itself does not stick, because release-please rewrites it whenever main moves. The GUI shows the notes in its What's New panel, read live from the release, so an edit on the published release reaches users too (see *Release notes* below).
 
 If a build fails, the release stays a draft and nothing reaches users. Fix the cause, rebuild the draft's assets with the `Draft Release` workflow (Actions → Draft Release → Run workflow, with the tag), and publish the draft by hand. A hand-published release runs the same three workflows.
 
@@ -37,7 +37,7 @@ CLI and GUI releases are independent of each other.
 
 ## Important rules
 
-- **Release PRs are release-please's.** Don't edit one by hand: it rewrites its branch whenever main moves. To change a version, change the commits (or use a `Release-As: x.y.z` footer in a commit body on main). Change the notes on the published release instead.
+- **Release PRs are release-please's.** Don't edit one by hand: it rewrites its branch whenever main moves. To change a version, change the commits (or use a `Release-As: x.y.z` footer in a commit body on main). Write the notes in a `# Release Notes` comment instead, or edit the published release.
 - **Keep breaking changes in one track.** A commit marked `!` bumps the major of every track whose files it touches. Split an engine API break and its GUI follow-up into separate commits so the GUI does not take a major it has no public API to justify.
 - **Approve the release PR's workflows.** CI on a release PR waits for a maintainer to approve it. Merge only once the required checks pass. Never bypass a failed check.
 - **Licence notices are regenerated per release, not per change.** `main` may carry stale notices between releases. That is expected: every release PR regenerates them, and the GUI build checks them. `just licenses` regenerates them locally if you want them current sooner.
