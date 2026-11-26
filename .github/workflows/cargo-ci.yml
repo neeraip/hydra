@@ -99,13 +99,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
-        uses: taiki-e/install-action@v2.90.2
+        uses: taiki-e/install-action@v2.90.8
         with:
           tool: just
 
       - name: Check dependencies (cargo-deny)
         if: env.WARM_ONLY != 'true'
-        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@v2.1.3
 
       - name: Check formatting (just fmt-check)
         if: env.WARM_ONLY != 'true'
@@ -133,7 +133,7 @@ jobs:
       # rather than left to wasm-pack, which fetches the newest one and 404s
       # whenever the runner image lags a Chrome major.
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.26.2
+        uses: cargo-bins/cargo-binstall@v1.28.0
 
       # `command -v` first, and `--force` when it misses: the rust-cache
       # restore can carry binstall's install manifest from a main run without
@@ -211,7 +211,7 @@ jobs:
 
       - name: Install just
         if: env.RUN != 'none'
-        uses: taiki-e/install-action@v2.90.2
+        uses: taiki-e/install-action@v2.90.8
         with:
           tool: just
 
